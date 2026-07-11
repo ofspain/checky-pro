@@ -1,0 +1,5 @@
+# Attestation-critical paths require owner review (see ARCHITECTURE.md §6)
+/services/crypto/   @ofspain
+/contracts/         @ofspain
+/infra/stacks/      @ofspain
+/SECURITY-THREAT-MODEL.md @ofspain

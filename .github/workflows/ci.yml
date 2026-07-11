@@ -1,0 +1,35 @@
+# Path-filtered CI — placeholder until service skeletons land.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      auth: ${{ steps.filter.outputs.auth }}
+      payment: ${{ steps.filter.outputs.payment }}
+      crypto: ${{ steps.filter.outputs.crypto }}
+      notification: ${{ steps.filter.outputs.notification }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      infra: ${{ steps.filter.outputs.infra }}
+      contracts: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            auth: ['services/auth/**', 'libs/java/**', 'contracts/**']
+            payment: ['services/payment/**', 'libs/java/**', 'contracts/**']
+            crypto: ['services/crypto/**', 'libs/java/**', 'contracts/**']
+            notification: ['services/notification/**', 'libs/java/**', 'contracts/**']
+            frontend: ['frontend/**', 'libs/ts/**', 'contracts/api/**']
+            infra: ['infra/**']
+            contracts: ['contracts/**']
+
+  # Per-component build/test jobs plug in here, gated on the outputs above,
+  # once the Gradle/pnpm skeletons exist.

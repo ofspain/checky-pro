@@ -1,0 +1,35 @@
+# Claude Code / session artifacts
+.claude/
+scratch/
+claude_session_tracker.txt
+
+# Local business documents (not for VCS)
+/*.pdf
+
+# Java / Gradle
+.gradle/
+build/
+out/
+*.class
+
+# Node / TypeScript
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# CDK
+cdk.out/
+cdk.context.json
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Env / secrets — never commit
+.env
+.env.*
+*.pem
+*.key
