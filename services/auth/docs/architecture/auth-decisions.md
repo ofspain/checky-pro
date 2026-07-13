@@ -151,3 +151,19 @@ mapping: `gap-analysis.md`.
 - **Trade-offs:** One extra migration file for what could have been right in V1; accepted since V1 was written before the authz module's design was finalized, and this is cheap to fix pre-data.
 - **Impact:** `RoleService` and its repositories never import anything from `com.themistra.auth.account`; `TokenClaimsCustomizer` resolves roles for the interactive principal (`sub` = account UUID) directly.
 - **Reference influence:** None (reference's `identity_role`/role-template mapper tables key on the shared `commons-netra` `Identity.id` — exactly the cross-module coupling this decision avoids).
+
+## D-018 · Outbox implemented locally in services/auth; extraction to libs/java/outbox deferred
+
+- **Context:** The monorepo scaffold reserves `libs/java/outbox` as a shared library (root `libs/README.md`), but no second service exists yet with real code to share it with.
+- **Alternatives:** (a) build `libs/java/outbox` now as a shared Maven module; (b) implement the outbox entity/repository/publisher/relay directly in `services/auth`'s `events` module, extract later.
+- **Selected:** (b).
+- **Trade-offs:** Payment/notification/crypto services will need to re-implement (or, better, prompt an extraction PR) the same mechanism when they're built. Accepted: building a shared library against a single consumer risks guessing at an abstraction shape that doesn't fit the second consumer either — the "rule of three" applies, and the project's own principles reject designing for hypothetical future requirements.
+- **Impact:** `OutboxEvent`, `OutboxEventRepository`, `OutboxPublisher`, `OutboxRelay`, `EventTopics` all live in `com.themistra.auth.events`. If/when a second service needs identical behavior, extract these classes into `libs/java/outbox` verbatim — the design was kept domain-agnostic specifically to make that extraction mechanical.
+- **Reference influence:** None (reference has no messaging at all).
+
+## D-019 · Explicit Kafka producer bean instead of Boot's autoconfigured KafkaTemplate
+
+- **Context:** `OutboxRelay` needs a `KafkaTemplate<String, String>`. Spring Boot autoconfigures a `KafkaTemplate` bean from `spring-kafka` on the classpath, but its exact generic type resolution is version-sensitive and not part of a contract worth depending on blindly (the same category of risk flagged in D-016 for `JdbcOAuth2AuthorizationService`'s internals).
+- **Selected:** `KafkaProducerConfig` declares an explicit `ProducerFactory<String, String>` (built directly from `ProducerConfig` constants and the configured bootstrap-servers) and a `KafkaTemplate<String, String>` bean over it — using only long-stable, directly-documented `kafka-clients`/`spring-kafka` public API, avoiding any dependency on Boot autoconfiguration's inferred generics.
+- **Impact:** One small, explicit config class; no ambiguity for future readers about which producer settings are in effect (`acks=all`, idempotence enabled).
+- **Reference influence:** None.

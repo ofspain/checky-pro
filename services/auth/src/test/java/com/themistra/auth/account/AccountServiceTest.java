@@ -2,6 +2,8 @@ package com.themistra.auth.account;
 
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
+import com.themistra.auth.account.event.UserLifecycleEventPayload;
+import com.themistra.auth.events.OutboxPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -11,13 +13,18 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -27,6 +34,7 @@ class AccountServiceTest {
 
     private static final String RAW_PASSWORD = "correct-horse-battery";
     private static final String ENCODED = "{bcrypt}encoded";
+    private static final Instant NOW = Instant.parse("2026-07-13T00:00:00Z");
 
     @Mock
     private AccountRepository accountRepository;
@@ -34,11 +42,15 @@ class AccountServiceTest {
     @Mock
     private PasswordEncoder passwordEncoder;
 
+    @Mock
+    private OutboxPublisher outboxPublisher;
+
     private AccountService service;
 
     @BeforeEach
     void setUp() {
-        service = new AccountService(accountRepository, passwordEncoder);
+        Clock fixed = Clock.fixed(NOW, ZoneOffset.UTC);
+        service = new AccountService(accountRepository, passwordEncoder, outboxPublisher, fixed);
     }
 
     @Test
@@ -59,6 +71,19 @@ class AccountServiceTest {
 
         assertThat(response.email()).isEqualTo("merchant@example.com");
         assertThat(response.status()).isEqualTo(AccountStatus.PENDING_VERIFICATION);
+    }
+
+    @Test
+    void registerNeverPublishesAnEvent() {
+        // auth.user.registered fires at email confirmation, not at initial signup (target-design §9)
+        when(accountRepository.existsByEmail(anyString())).thenReturn(false);
+        when(passwordEncoder.encode(anyString())).thenReturn(ENCODED);
+        when(accountRepository.saveAndFlush(any(Account.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.register(new RegisterAccountRequest("merchant@example.com", RAW_PASSWORD));
+
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
     }
 
     @Test
@@ -86,7 +111,7 @@ class AccountServiceTest {
     }
 
     @Test
-    void activateEmailTransitionsThroughAggregate() {
+    void activateEmailTransitionsThroughAggregateAndPublishesRegistered() {
         Account account = Account.register("user@example.com", ENCODED);
         when(accountRepository.findByAccountUuid(account.getAccountUuid()))
                 .thenReturn(Optional.of(account));
@@ -95,6 +120,15 @@ class AccountServiceTest {
 
         assertThat(response.status()).isEqualTo(AccountStatus.ACTIVE);
         assertThat(response.emailVerified()).isTrue();
+
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(outboxPublisher).publish(
+                eq("account"), eq(account.getAccountUuid().toString()), eq("user.registered"),
+                eq(1), payload.capture());
+        var event = (UserLifecycleEventPayload) payload.getValue();
+        assertThat(event.accountUuid()).isEqualTo(account.getAccountUuid());
+        assertThat(event.status()).isEqualTo(AccountStatus.ACTIVE);
+        assertThat(event.occurredAt()).isEqualTo(NOW);
     }
 
     @Test
@@ -107,7 +141,7 @@ class AccountServiceTest {
     }
 
     @Test
-    void suspendAndReinstateRoundTrip() {
+    void suspendAndReinstateRoundTripPublishBothEvents() {
         Account account = Account.register("user@example.com", ENCODED);
         account.activateEmail();
         when(accountRepository.findByAccountUuid(account.getAccountUuid()))
@@ -117,6 +151,22 @@ class AccountServiceTest {
                 .isEqualTo(AccountStatus.SUSPENDED);
         assertThat(service.reinstate(account.getAccountUuid()).status())
                 .isEqualTo(AccountStatus.ACTIVE);
+
+        verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.suspended"), eq(1), any());
+        verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.reinstated"), eq(1), any());
+    }
+
+    @Test
+    void deletePublishesDeletedEvent() {
+        Account account = Account.register("user@example.com", ENCODED);
+        account.activateEmail();
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+                .thenReturn(Optional.of(account));
+
+        AccountResponse response = service.delete(account.getAccountUuid());
+
+        assertThat(response.status()).isEqualTo(AccountStatus.DELETED);
+        verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.deleted"), eq(1), any());
     }
 
     @Test
@@ -144,12 +194,14 @@ class AccountServiceTest {
     }
 
     @Test
-    void illegalTransitionPropagatesInvalidState() {
+    void illegalTransitionPropagatesInvalidStateWithoutPublishing() {
         Account account = Account.register("user@example.com", ENCODED);
         when(accountRepository.findByAccountUuid(account.getAccountUuid()))
                 .thenReturn(Optional.of(account));
 
         assertThatThrownBy(() -> service.reinstate(account.getAccountUuid()))
                 .isInstanceOf(InvalidAccountStateException.class);
+
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
     }
 }

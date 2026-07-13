@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/auth/user-lifecycle.v1.schema.json",
+  "title": "auth.user.lifecycle (schema_version 1)",
+  "description": "Published by the auth service's account module via the outbox (D-009) whenever an account's lifecycle state changes. Partition key = accountUuid. event_type is one of user.registered | user.suspended | user.reinstated | user.deleted.",
+  "type": "object",
+  "required": ["accountUuid", "status", "occurredAt"],
+  "properties": {
+    "accountUuid": {
+      "type": "string",
+      "format": "uuid",
+      "description": "External account identifier — the same value used as the JWT 'sub' claim."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["PENDING_VERIFICATION", "ACTIVE", "LOCKED", "SUSPENDED", "DELETED"]
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}
