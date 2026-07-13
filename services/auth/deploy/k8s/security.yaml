@@ -1,0 +1,64 @@
+# Secrets sync (External Secrets Operator, D-010) and network isolation.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: auth-service-secrets
+  namespace: checky
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  target:
+    name: auth-service-secrets
+    creationPolicy: Owner
+  data:
+    - secretKey: DB_URL
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: db_url }
+    - secretKey: DB_USERNAME
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: db_username }
+    - secretKey: DB_PASSWORD
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: db_password }
+    - secretKey: KAFKA_BOOTSTRAP_SERVERS
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: kafka_bootstrap_servers }
+    - secretKey: AUTH_ISSUER_URI
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: issuer_uri }
+    - secretKey: JWT_SIGNING_KEYS            # current+previous JWKS material (D-011)
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: jwt_signing_keys }
+    - secretKey: MFA_SEED_KEK_ARN            # KMS key for TOTP-seed envelope encryption
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: mfa_seed_kek_arn }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: auth-service
+  namespace: checky
+spec:
+  podSelector:
+    matchLabels:
+      app: auth-service
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Edge (ingress-nginx) and sibling services in-namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector: {}
+      ports:
+        - port: 8080
+  egress:
+    - to: []                                  # DNS
+      ports:
+        - port: 53
+          protocol: UDP
+    - to: []                                  # RDS
+      ports:
+        - port: 5432
+    - to: []                                  # MSK
+      ports:
+        - port: 9092
+        - port: 9098
+    - to: []                                  # AWS APIs (Secrets Manager, KMS) + HIBP range API
+      ports:
+        - port: 443

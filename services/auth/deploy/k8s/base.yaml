@@ -1,0 +1,96 @@
+# Core workload manifests. Image tag and IRSA role ARN are stamped by the CDK service
+# stack / CI at deploy time — the ${...} placeholders are substituted, never hand-edited.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: auth-service
+  namespace: checky
+  annotations:
+    eks.amazonaws.com/role-arn: ${AUTH_SERVICE_IRSA_ROLE_ARN}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: checky
+  labels:
+    app: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: checky
+  labels:
+    app: auth-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: auth-service
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: auth-service
+          image: ${ECR_REGISTRY}/auth-service:${IMAGE_TAG}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: ${ENVIRONMENT}
+          envFrom:
+            - secretRef:
+                name: auth-service-secrets   # synced by ExternalSecret (security.yaml)
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            periodSeconds: 10
+      volumes:
+        - name: tmp
+          emptyDir: {}

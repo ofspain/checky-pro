@@ -1,9 +1,0 @@
-rootProject.name = 'checky-pro'
-
-include 'services:auth'
-include 'services:payment'
-include 'services:crypto'
-include 'services:notification'
-include 'libs:java:outbox'
-include 'libs:java:kafka-core'
-include 'libs:java:security-core'

@@ -31,5 +31,18 @@ jobs:
             infra: ['infra/**']
             contracts: ['contracts/**']
 
-  # Per-component build/test jobs plug in here, gated on the outputs above,
-  # once the Gradle/pnpm skeletons exist.
+  auth:
+    needs: changes
+    if: needs.changes.outputs.auth == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - run: mvn -B -pl services/auth verify
+
+  # Further per-component jobs plug in here (Maven for Java services, pnpm for TS), gated on
+  # the path-filter outputs above.

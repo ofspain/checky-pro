@@ -6,9 +6,8 @@ claude_session_tracker.txt
 # Local business documents (not for VCS)
 /*.pdf
 
-# Java / Gradle
-.gradle/
-build/
+# Java / Maven
+target/
 out/
 *.class
 
