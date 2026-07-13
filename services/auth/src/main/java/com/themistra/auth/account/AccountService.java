@@ -72,45 +72,55 @@ public class AccountService {
         }
     }
 
-    /** Marks the email verified and activates the account (token validation happens upstream). */
+    /**
+     * Marks the email verified and activates the account.
+     *
+     * <p>Interim (D-024): the intended self-service flow is a single-use, hashed, TTL'd
+     * verification token emailed to the user — that flow is not yet built. Until it is, this is
+     * reachable only via an authenticated ADMIN endpoint, which makes it an admin action worth
+     * auditing (unlike the self-service activation this will become, {@code actorUuid} is
+     * always a real admin here, never null).</p>
+     */
     @Transactional
-    public AccountResponse activateEmail(UUID accountUuid) {
+    public AccountResponse activateEmail(UUID accountUuid, UUID actorUuid) {
         Account account = getAccount(accountUuid);
         account.activateEmail();
         publishLifecycleEvent(account, "user.registered");
+        recordAudit("account.activated", accountUuid, actorUuid);
         return AccountResponse.from(account);
     }
 
     /**
      * Suspend/reinstate/delete are audited (target-design §15) as well as published — they are
      * typically admin/compliance-initiated and security-relevant, unlike the routine self-service
-     * email-verification step. {@code actorUuid} is null until the admin API stage plumbs the
-     * authenticated caller through; recorded honestly as "unknown actor," never fabricated.
+     * email-verification step. {@code actorUuid} is the authenticated admin/compliance caller,
+     * threaded through from the controller layer; pass {@code null} only for genuinely
+     * system-initiated transitions (there are none yet).
      */
     @Transactional
-    public AccountResponse suspend(UUID accountUuid) {
+    public AccountResponse suspend(UUID accountUuid, UUID actorUuid) {
         Account account = getAccount(accountUuid);
         account.suspend();
         publishLifecycleEvent(account, "user.suspended");
-        recordAudit("account.suspended", accountUuid);
+        recordAudit("account.suspended", accountUuid, actorUuid);
         return AccountResponse.from(account);
     }
 
     @Transactional
-    public AccountResponse reinstate(UUID accountUuid) {
+    public AccountResponse reinstate(UUID accountUuid, UUID actorUuid) {
         Account account = getAccount(accountUuid);
         account.reinstate();
         publishLifecycleEvent(account, "user.reinstated");
-        recordAudit("account.reinstated", accountUuid);
+        recordAudit("account.reinstated", accountUuid, actorUuid);
         return AccountResponse.from(account);
     }
 
     @Transactional
-    public AccountResponse delete(UUID accountUuid) {
+    public AccountResponse delete(UUID accountUuid, UUID actorUuid) {
         Account account = getAccount(accountUuid);
         account.markDeleted();
         publishLifecycleEvent(account, "user.deleted");
-        recordAudit("account.deleted", accountUuid);
+        recordAudit("account.deleted", accountUuid, actorUuid);
         return AccountResponse.from(account);
     }
 
@@ -131,9 +141,9 @@ public class AccountService {
                         account.getAccountUuid(), account.getPasswordHash(), account.getStatus()));
     }
 
-    private void recordAudit(String eventType, UUID accountUuid) {
+    private void recordAudit(String eventType, UUID accountUuid, UUID actorUuid) {
         auditService.record(new RecordAuditEventRequest(
-                eventType, AuditOutcome.SUCCESS, accountUuid, null, null, null, null, null));
+                eventType, AuditOutcome.SUCCESS, accountUuid, actorUuid, null, null, null, null));
     }
 
     private void publishLifecycleEvent(Account account, String eventType) {

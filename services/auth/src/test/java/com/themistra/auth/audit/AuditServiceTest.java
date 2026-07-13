@@ -8,6 +8,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -20,6 +22,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class AuditServiceTest {
@@ -110,5 +113,42 @@ class AuditServiceTest {
         ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
         verify(outboxPublisher).publish(eq("audit"), keyCaptor.capture(), any(), anyInt(), any());
         assertThat(keyCaptor.getValue()).isNotBlank();
+    }
+
+    @Test
+    void listWithoutFilterDelegatesToFindAllAndParsesDetails() {
+        AuditEvent event = AuditEvent.record(NOW, "account.suspended", AuditOutcome.SUCCESS,
+                ACCOUNT_UUID, ACTOR_UUID, "203.0.113.7", "hash", "trace-1", "{\"reason\":\"fraud-hold\"}");
+        var pageable = PageRequest.of(0, 50);
+        when(repository.findAll(pageable)).thenReturn(new PageImpl<>(java.util.List.of(event)));
+
+        var page = service.list(null, pageable);
+
+        assertThat(page.getContent()).hasSize(1);
+        var response = page.getContent().getFirst();
+        assertThat(response.eventType()).isEqualTo("account.suspended");
+        assertThat(response.details()).containsEntry("reason", "fraud-hold");
+    }
+
+    @Test
+    void listWithAccountFilterDelegatesToFindByAccountUuid() {
+        var pageable = PageRequest.of(0, 50);
+        when(repository.findByAccountUuid(ACCOUNT_UUID, pageable)).thenReturn(new PageImpl<>(java.util.List.of()));
+
+        service.list(ACCOUNT_UUID, pageable);
+
+        verify(repository).findByAccountUuid(ACCOUNT_UUID, pageable);
+    }
+
+    @Test
+    void listToleratesUnparseableDetailsWithoutThrowing() {
+        AuditEvent event = AuditEvent.record(NOW, "account.suspended", AuditOutcome.SUCCESS,
+                ACCOUNT_UUID, null, null, null, null, "not-valid-json");
+        var pageable = PageRequest.of(0, 50);
+        when(repository.findAll(pageable)).thenReturn(new PageImpl<>(java.util.List.of(event)));
+
+        var page = service.list(null, pageable);
+
+        assertThat(page.getContent().getFirst().details()).isEmpty();
     }
 }

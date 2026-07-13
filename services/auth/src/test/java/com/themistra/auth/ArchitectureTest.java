@@ -5,8 +5,11 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.RestController;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 /**
@@ -70,4 +73,17 @@ class ArchitectureTest {
             .because("the CI-enforceable unauthenticated-path list is consumed by exactly one "
                     + "security configuration (SecurityChainsConfig) — see gap-analysis §2's "
                     + "reference-project lesson on 'temporary' unauthenticated whitelists");
+
+    @ArchTest
+    static final ArchRule admin_controller_handlers_require_preauthorize = methods()
+            .that().arePublic()
+            .and().areDeclaredInClassesThat().haveSimpleNameStartingWith("Admin")
+            .and().areDeclaredInClassesThat().areAnnotatedWith(RestController.class)
+            .should().beAnnotatedWith(PreAuthorize.class)
+            .because("this is the endpoint-authentication sweep D-023 deferred until real admin "
+                    + "controllers existed (D-024): every handler in an Admin* controller must "
+                    + "explicitly declare its required role. The reference project's 'testing "
+                    + "only' permitAll on /api/roles/** (gap-analysis §2) was exactly this "
+                    + "failure one layer up; this rule catches the authorization-layer version "
+                    + "of the same mistake — an admin method that forgot its @PreAuthorize");
 }

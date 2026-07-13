@@ -87,7 +87,7 @@ class AccountPersistenceIntegrationTest {
         String email = uniqueEmail();
         AccountResponse registered = accountService.register(new RegisterAccountRequest(email, "correct-horse-battery"));
 
-        accountService.activateEmail(registered.accountUuid());
+        accountService.activateEmail(registered.accountUuid(), UUID.randomUUID());
 
         Awaitility.await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
             ConsumerRecords<String, String> records = testConsumer.poll(Duration.ofMillis(500));

@@ -1,5 +1,7 @@
 package com.themistra.auth.authz;
 
+import com.themistra.auth.audit.AuditService;
+import com.themistra.auth.audit.RecordAuditEventRequest;
 import com.themistra.auth.authz.dto.CreateRoleRequest;
 import com.themistra.auth.authz.dto.CreateRoleTemplateRequest;
 import com.themistra.auth.authz.dto.RoleResponse;
@@ -7,6 +9,7 @@ import com.themistra.auth.authz.dto.RoleTemplateResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -45,13 +48,17 @@ class RoleServiceTest {
     @Mock
     private AccountRoleTemplateAssignmentRepository accountRoleTemplateAssignmentRepository;
 
+    @Mock
+    private AuditService auditService;
+
     private RoleService service;
 
     @BeforeEach
     void setUp() {
         Clock fixed = Clock.fixed(Instant.parse("2026-07-13T00:00:00Z"), ZoneOffset.UTC);
         service = new RoleService(roleRepository, roleTemplateRepository,
-                accountRoleAssignmentRepository, accountRoleTemplateAssignmentRepository, fixed);
+                accountRoleAssignmentRepository, accountRoleTemplateAssignmentRepository,
+                auditService, fixed);
     }
 
     @Test
@@ -114,7 +121,7 @@ class RoleServiceTest {
     }
 
     @Test
-    void assignRoleIsIdempotentWhenAlreadyAssigned() {
+    void assignRoleIsIdempotentWhenAlreadyAssignedAndDoesNotAudit() {
         Role role = roleWithId(1L, "MERCHANT");
         when(roleRepository.findByName("MERCHANT")).thenReturn(Optional.of(role));
         when(accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(ACCOUNT_UUID, 1L))
@@ -123,10 +130,11 @@ class RoleServiceTest {
         service.assignRole(ACCOUNT_UUID, "MERCHANT", ADMIN_UUID);
 
         verify(accountRoleAssignmentRepository, never()).save(any());
+        verify(auditService, never()).record(any());
     }
 
     @Test
-    void assignRoleSavesNewAssignment() {
+    void assignRoleSavesNewAssignmentAndAuditsWithActor() {
         Role role = roleWithId(1L, "MERCHANT");
         when(roleRepository.findByName("MERCHANT")).thenReturn(Optional.of(role));
         when(accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(ACCOUNT_UUID, 1L))
@@ -135,6 +143,12 @@ class RoleServiceTest {
         service.assignRole(ACCOUNT_UUID, "MERCHANT", ADMIN_UUID);
 
         verify(accountRoleAssignmentRepository).save(any());
+        ArgumentCaptor<RecordAuditEventRequest> captor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("role.assigned");
+        assertThat(captor.getValue().accountUuid()).isEqualTo(ACCOUNT_UUID);
+        assertThat(captor.getValue().actorUuid()).isEqualTo(ADMIN_UUID);
+        assertThat(captor.getValue().details()).containsEntry("name", "MERCHANT");
     }
 
     @Test
@@ -146,13 +160,51 @@ class RoleServiceTest {
     }
 
     @Test
-    void removeRoleDelegatesToRepository() {
+    void removeRoleDeletesAndAuditsWhenAssigned() {
         Role role = roleWithId(1L, "MERCHANT");
         when(roleRepository.findByName("MERCHANT")).thenReturn(Optional.of(role));
+        when(accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(ACCOUNT_UUID, 1L))
+                .thenReturn(true);
 
-        service.removeRole(ACCOUNT_UUID, "MERCHANT");
+        service.removeRole(ACCOUNT_UUID, "MERCHANT", ADMIN_UUID);
 
         verify(accountRoleAssignmentRepository).deleteByAccountUuidAndRoleId(ACCOUNT_UUID, 1L);
+        ArgumentCaptor<RecordAuditEventRequest> captor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("role.removed");
+    }
+
+    @Test
+    void removeRoleIsIdempotentWhenNotAssigned() {
+        Role role = roleWithId(1L, "MERCHANT");
+        when(roleRepository.findByName("MERCHANT")).thenReturn(Optional.of(role));
+        when(accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(ACCOUNT_UUID, 1L))
+                .thenReturn(false);
+
+        service.removeRole(ACCOUNT_UUID, "MERCHANT", ADMIN_UUID);
+
+        verify(accountRoleAssignmentRepository, never()).deleteByAccountUuidAndRoleId(any(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void listRolesMapsAllRolesToResponses() {
+        when(roleRepository.findAll()).thenReturn(List.of(
+                roleWithId(1L, "USER"), roleWithId(2L, "ADMIN")));
+
+        assertThat(service.listRoles())
+                .extracting(RoleResponse::name)
+                .containsExactlyInAnyOrder("USER", "ADMIN");
+    }
+
+    @Test
+    void listRoleTemplatesMapsAllTemplatesToResponses() {
+        RoleTemplate template = RoleTemplate.create("power-merchant", "desc", Set.of(roleWithId(1L, "MERCHANT")));
+        when(roleTemplateRepository.findAll()).thenReturn(List.of(template));
+
+        assertThat(service.listRoleTemplates())
+                .extracting(RoleTemplateResponse::name)
+                .containsExactly("power-merchant");
     }
 
     @Test

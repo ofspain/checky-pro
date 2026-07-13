@@ -9,6 +9,7 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.oauth2.jwt.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
@@ -20,12 +21,9 @@ import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
  * 1. SAS protocol chain — /oauth2/*, /.well-known/*, /userinfo, OIDC enabled. Browser flows
  *    without a session are sent to /login; the MFA step (D-014) plugs into this chain's
  *    authentication in a later stage.
- * 2. Application chain — everything else: the CI-enforced public list, then JWT-authenticated
- *    APIs (this service is a resource server for its own management endpoints), plus form
- *    login for the interactive authorize flow.
- *
- * Interim (replaced in the JWT stage, D-015): token signing uses Boot's autoconfigured
- * in-memory dev JWKS, and authorizations live in SAS's default in-memory store.
+ * 2. Application chain — the CI-enforced public list (PublicEndpoints), then JWT-authenticated
+ *    APIs (this service is a resource server for its own management endpoints) with the
+ *    {@code roles} claim mapped to ROLE_* authorities so method security means something.
  */
 @Configuration
 @EnableWebSecurity
@@ -51,17 +49,29 @@ public class SecurityChainsConfig {
 
     @Bean
     @Order(2)
-    public SecurityFilterChain applicationChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain applicationChain(
+            HttpSecurity http, JwtAuthenticationConverter jwtAuthenticationConverter) throws Exception {
         http
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(PublicEndpoints.PATTERNS).permitAll()
-                        .anyRequest().authenticated())
+                .authorizeHttpRequests(auth -> {
+                    auth.requestMatchers(PublicEndpoints.PATTERNS).permitAll();
+                    PublicEndpoints.METHOD_SCOPED.forEach(
+                            m -> auth.requestMatchers(m.method(), m.pattern()).permitAll());
+                    auth.anyRequest().authenticated();
+                })
                 // APIs are bearer-authenticated and stateless; CSRF protects only the
                 // session-backed login/authorize pages
                 .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**"))
-                .oauth2ResourceServer(rs -> rs.jwt(Customizer.withDefaults()))
+                .oauth2ResourceServer(rs -> rs.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
                 .formLogin(Customizer.withDefaults());
 
         return http.build();
+    }
+
+    @Bean
+    public JwtAuthenticationConverter jwtAuthenticationConverter(
+            JwtRoleAuthoritiesConverter rolesConverter) {
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(rolesConverter);
+        return converter;
     }
 }

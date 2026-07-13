@@ -67,7 +67,7 @@ class RoleAssignmentIntegrationTest {
         roleService.assignRoleTemplate(accountUuid, templateName, null);
         assertThat(roleService.resolveEffectiveRoles(accountUuid)).contains(directRole, templateRole);
 
-        roleService.removeRoleTemplate(accountUuid, templateName);
+        roleService.removeRoleTemplate(accountUuid, templateName, null);
 
         assertThat(roleService.resolveEffectiveRoles(accountUuid))
                 .contains(directRole)

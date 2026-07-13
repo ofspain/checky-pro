@@ -37,6 +37,7 @@ class AccountServiceTest {
     private static final String RAW_PASSWORD = "correct-horse-battery";
     private static final String ENCODED = "{bcrypt}encoded";
     private static final Instant NOW = Instant.parse("2026-07-13T00:00:00Z");
+    private static final UUID ACTOR_UUID = UUID.randomUUID();
 
     @Mock
     private AccountRepository accountRepository;
@@ -117,12 +118,12 @@ class AccountServiceTest {
     }
 
     @Test
-    void activateEmailTransitionsThroughAggregateAndPublishesRegistered() {
+    void activateEmailTransitionsThroughAggregatePublishesAndAudits() {
         Account account = Account.register("user@example.com", ENCODED);
         when(accountRepository.findByAccountUuid(account.getAccountUuid()))
                 .thenReturn(Optional.of(account));
 
-        AccountResponse response = service.activateEmail(account.getAccountUuid());
+        AccountResponse response = service.activateEmail(account.getAccountUuid(), ACTOR_UUID);
 
         assertThat(response.status()).isEqualTo(AccountStatus.ACTIVE);
         assertThat(response.emailVerified()).isTrue();
@@ -136,8 +137,12 @@ class AccountServiceTest {
         assertThat(event.status()).isEqualTo(AccountStatus.ACTIVE);
         assertThat(event.occurredAt()).isEqualTo(NOW);
 
-        // routine self-service email verification is not itself a security audit event
-        verify(auditService, never()).record(any());
+        // activation is now an admin-only stopgap (D-024), so it IS audited, with the real actor
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
+                ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().eventType()).isEqualTo("account.activated");
+        assertThat(auditCaptor.getValue().actorUuid()).isEqualTo(ACTOR_UUID);
     }
 
     @Test
@@ -156,9 +161,9 @@ class AccountServiceTest {
         when(accountRepository.findByAccountUuid(account.getAccountUuid()))
                 .thenReturn(Optional.of(account));
 
-        assertThat(service.suspend(account.getAccountUuid()).status())
+        assertThat(service.suspend(account.getAccountUuid(), ACTOR_UUID).status())
                 .isEqualTo(AccountStatus.SUSPENDED);
-        assertThat(service.reinstate(account.getAccountUuid()).status())
+        assertThat(service.reinstate(account.getAccountUuid(), ACTOR_UUID).status())
                 .isEqualTo(AccountStatus.ACTIVE);
 
         verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.suspended"), eq(1), any());
@@ -171,7 +176,10 @@ class AccountServiceTest {
                 .extracting(RecordAuditEventRequest::eventType)
                 .containsExactly("account.suspended", "account.reinstated");
         assertThat(auditCaptor.getAllValues())
-                .allSatisfy(req -> assertThat(req.accountUuid()).isEqualTo(account.getAccountUuid()));
+                .allSatisfy(req -> {
+                    assertThat(req.accountUuid()).isEqualTo(account.getAccountUuid());
+                    assertThat(req.actorUuid()).isEqualTo(ACTOR_UUID);
+                });
     }
 
     @Test
@@ -181,7 +189,7 @@ class AccountServiceTest {
         when(accountRepository.findByAccountUuid(account.getAccountUuid()))
                 .thenReturn(Optional.of(account));
 
-        AccountResponse response = service.delete(account.getAccountUuid());
+        AccountResponse response = service.delete(account.getAccountUuid(), ACTOR_UUID);
 
         assertThat(response.status()).isEqualTo(AccountStatus.DELETED);
         verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.deleted"), eq(1), any());
@@ -191,6 +199,7 @@ class AccountServiceTest {
         verify(auditService).record(auditCaptor.capture());
         assertThat(auditCaptor.getValue().eventType()).isEqualTo("account.deleted");
         assertThat(auditCaptor.getValue().accountUuid()).isEqualTo(account.getAccountUuid());
+        assertThat(auditCaptor.getValue().actorUuid()).isEqualTo(ACTOR_UUID);
     }
 
     @Test
@@ -223,7 +232,7 @@ class AccountServiceTest {
         when(accountRepository.findByAccountUuid(account.getAccountUuid()))
                 .thenReturn(Optional.of(account));
 
-        assertThatThrownBy(() -> service.reinstate(account.getAccountUuid()))
+        assertThatThrownBy(() -> service.reinstate(account.getAccountUuid(), ACTOR_UUID))
                 .isInstanceOf(InvalidAccountStateException.class);
 
         verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
