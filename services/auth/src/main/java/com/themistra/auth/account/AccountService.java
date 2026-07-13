@@ -1,6 +1,7 @@
 package com.themistra.auth.account;
 
 import com.themistra.auth.account.dto.AccountResponse;
+import com.themistra.auth.account.dto.LoginView;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -10,6 +11,7 @@ import org.springframework.validation.annotation.Validated;
 
 import jakarta.validation.Valid;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -74,6 +76,18 @@ public class AccountService {
     @Transactional(readOnly = true)
     public AccountResponse getByUuid(UUID accountUuid) {
         return AccountResponse.from(getAccount(accountUuid));
+    }
+
+    /**
+     * Credential lookup for interactive login (authn module). Deleted accounts are
+     * indistinguishable from unknown emails — both return empty.
+     */
+    @Transactional(readOnly = true)
+    public Optional<LoginView> findLoginView(String email) {
+        return accountRepository.findByEmail(normalize(email))
+                .filter(account -> account.getStatus() != AccountStatus.DELETED)
+                .map(account -> new LoginView(
+                        account.getAccountUuid(), account.getPasswordHash(), account.getStatus()));
     }
 
     private Account getAccount(UUID accountUuid) {

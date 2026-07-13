@@ -125,3 +125,10 @@ mapping: `gap-analysis.md`.
 - **Selected:** (b). Resource servers stay dumb (zero trust means they shouldn't re-implement MFA policy); tokens carry `amr`/`acr` as facts, not gates.
 - **Trade-offs:** Requires SAS authentication-flow customization (named spike in the roadmap — highest technical risk in the service, prototyped first).
 - **Impact:** Mandatory for `MERCHANT`/`ADMIN` roles; enrollment enforced at next login after role grant.
+
+## D-015 · OAuth2 stage interims: dev JWKS + in-memory authorization store
+
+- **Context:** Stage ordering (user template 2026-07-13) puts OAuth2 wiring before the JWT stage.
+- **Selected:** This stage ships with Boot's autoconfigured in-memory JWKS (fresh dev key per boot) and SAS's default in-memory OAuth2AuthorizationService. Registered clients DO persist (JDBC, deterministic ids) so stored authorizations stay resolvable later.
+- **Impact:** Not deployable multi-replica yet — sessions/authorizations are per-instance and tokens don't survive restarts. **Both interims are replaced in the JWT stage** (Secrets-Manager JWKS with kid rotation per D-011; customized JDBC authorization persistence with hashed values + families per D-003). This entry is deleted when that lands.
+- **Reference influence:** None; sequencing convenience only.

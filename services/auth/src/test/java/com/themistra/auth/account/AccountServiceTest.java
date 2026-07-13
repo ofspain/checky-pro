@@ -120,6 +120,30 @@ class AccountServiceTest {
     }
 
     @Test
+    void loginViewNormalizesEmailAndCarriesCredential() {
+        Account account = Account.register("user@example.com", ENCODED);
+        account.activateEmail();
+        when(accountRepository.findByEmail("user@example.com")).thenReturn(Optional.of(account));
+
+        var view = service.findLoginView("  User@Example.COM ");
+
+        assertThat(view).isPresent();
+        assertThat(view.get().accountUuid()).isEqualTo(account.getAccountUuid());
+        assertThat(view.get().passwordHash()).isEqualTo(ENCODED);
+        assertThat(view.get().status()).isEqualTo(AccountStatus.ACTIVE);
+    }
+
+    @Test
+    void loginViewHidesDeletedAccountsLikeUnknownEmails() {
+        Account account = Account.register("gone@example.com", ENCODED);
+        account.activateEmail();
+        account.markDeleted();
+        when(accountRepository.findByEmail("gone@example.com")).thenReturn(Optional.of(account));
+
+        assertThat(service.findLoginView("gone@example.com")).isEmpty();
+    }
+
+    @Test
     void illegalTransitionPropagatesInvalidState() {
         Account account = Account.register("user@example.com", ENCODED);
         when(accountRepository.findByAccountUuid(account.getAccountUuid()))
