@@ -142,3 +142,12 @@ mapping: `gap-analysis.md`.
 - **Impact:** V2 migration adds `refresh_token_family` / `refresh_token_archive` and drops the now-unused `family_id`/`device_label` columns from `oauth2_authorization` (V1). Column-level hashing of the delegate's own table is deferred.
 - **Revisit trigger:** Testing-stage integration tests (Testcontainers, real SAS refresh-grant flow against the pinned Spring Boot 3.5.4 / Spring Security version) should (1) confirm end-to-end rotation/reuse behavior against the real token endpoint, and (2) evaluate whether hashing the delegate's own columns is worth the version-specific mapper work once verified against a running SAS instance rather than guessed at.
 - **Reference influence:** None (reference stored refresh tokens in plaintext with no family concept at all — gap-analysis §1 #5).
+
+## D-017 · RBAC keys on account_uuid, not the internal account id
+
+- **Context:** V1's `account_roles`/`account_role_templates` FK'd `accounts.id` (bigint). `Account`'s own invariant (its Javadoc, target-design §3) is that the internal id never leaves the account module — every other module (token, authn) already addresses accounts purely by UUID.
+- **Alternatives:** (a) keep the bigint FK and add a method on `AccountService` resolving UUID→internal id for authz to call; (b) rekey the join tables on `accounts.account_uuid` (a unique column, so still FK-able) and give authz zero dependency on the account module.
+- **Selected:** (b) — V3 migration drops and recreates both tables before any data exists in them (V1/V2 are otherwise untouched, migrations stay immutable).
+- **Trade-offs:** One extra migration file for what could have been right in V1; accepted since V1 was written before the authz module's design was finalized, and this is cheap to fix pre-data.
+- **Impact:** `RoleService` and its repositories never import anything from `com.themistra.auth.account`; `TokenClaimsCustomizer` resolves roles for the interactive principal (`sub` = account UUID) directly.
+- **Reference influence:** None (reference's `identity_role`/role-template mapper tables key on the shared `commons-netra` `Identity.id` — exactly the cross-module coupling this decision avoids).
