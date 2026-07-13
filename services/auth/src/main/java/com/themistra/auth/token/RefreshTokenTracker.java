@@ -92,25 +92,27 @@ public class RefreshTokenTracker {
                                 familyId, family.getPrincipalName());
                         family.revoke("REUSE_DETECTED", clock.instant());
                     }
-                    return ReuseCheckResult.reuseDetected(family.getAuthorizationId());
+                    return ReuseCheckResult.reuseDetected(
+                            family.getAuthorizationId(), family.getPrincipalName());
                 })
                 .orElseGet(ReuseCheckResult::unknown);
     }
 
-    public record ReuseCheckResult(Outcome outcome, String authorizationIdToPurge) {
+    /** {@code principalName} is populated only for REUSE_DETECTED — the account UUID to audit. */
+    public record ReuseCheckResult(Outcome outcome, String authorizationIdToPurge, String principalName) {
 
         public enum Outcome { VALID, UNKNOWN, REUSE_DETECTED }
 
         static ReuseCheckResult valid() {
-            return new ReuseCheckResult(Outcome.VALID, null);
+            return new ReuseCheckResult(Outcome.VALID, null, null);
         }
 
         static ReuseCheckResult unknown() {
-            return new ReuseCheckResult(Outcome.UNKNOWN, null);
+            return new ReuseCheckResult(Outcome.UNKNOWN, null, null);
         }
 
-        static ReuseCheckResult reuseDetected(String authorizationId) {
-            return new ReuseCheckResult(Outcome.REUSE_DETECTED, authorizationId);
+        static ReuseCheckResult reuseDetected(String authorizationId, String principalName) {
+            return new ReuseCheckResult(Outcome.REUSE_DETECTED, authorizationId, principalName);
         }
     }
 }

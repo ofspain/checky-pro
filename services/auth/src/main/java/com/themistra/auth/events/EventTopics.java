@@ -10,9 +10,10 @@ import java.util.Map;
 public final class EventTopics {
 
     private static final Map<String, String> TOPIC_BY_AGGREGATE_TYPE = Map.of(
-            "account", "auth.user.lifecycle"
-            // "verification-token" -> "auth.email.requested" and the audit mirror topic join
-            // this table when their owning stages (account email-verification, Audit) land.
+            "account", "auth.user.lifecycle",
+            "audit", "auth.security.audit"
+            // "verification-token" -> "auth.email.requested" joins this table when the
+            // account email-verification stage lands.
     );
 
     private EventTopics() {

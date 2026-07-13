@@ -4,6 +4,9 @@ import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.LoginView;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.event.UserLifecycleEventPayload;
+import com.themistra.auth.audit.AuditOutcome;
+import com.themistra.auth.audit.AuditService;
+import com.themistra.auth.audit.RecordAuditEventRequest;
 import com.themistra.auth.events.OutboxPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -31,13 +34,15 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final PasswordEncoder passwordEncoder;
     private final OutboxPublisher outboxPublisher;
+    private final AuditService auditService;
     private final Clock clock;
 
     public AccountService(AccountRepository accountRepository, PasswordEncoder passwordEncoder,
-                          OutboxPublisher outboxPublisher, Clock clock) {
+                          OutboxPublisher outboxPublisher, AuditService auditService, Clock clock) {
         this.accountRepository = accountRepository;
         this.passwordEncoder = passwordEncoder;
         this.outboxPublisher = outboxPublisher;
+        this.auditService = auditService;
         this.clock = clock;
     }
 
@@ -76,11 +81,18 @@ public class AccountService {
         return AccountResponse.from(account);
     }
 
+    /**
+     * Suspend/reinstate/delete are audited (target-design §15) as well as published — they are
+     * typically admin/compliance-initiated and security-relevant, unlike the routine self-service
+     * email-verification step. {@code actorUuid} is null until the admin API stage plumbs the
+     * authenticated caller through; recorded honestly as "unknown actor," never fabricated.
+     */
     @Transactional
     public AccountResponse suspend(UUID accountUuid) {
         Account account = getAccount(accountUuid);
         account.suspend();
         publishLifecycleEvent(account, "user.suspended");
+        recordAudit("account.suspended", accountUuid);
         return AccountResponse.from(account);
     }
 
@@ -89,6 +101,7 @@ public class AccountService {
         Account account = getAccount(accountUuid);
         account.reinstate();
         publishLifecycleEvent(account, "user.reinstated");
+        recordAudit("account.reinstated", accountUuid);
         return AccountResponse.from(account);
     }
 
@@ -97,6 +110,7 @@ public class AccountService {
         Account account = getAccount(accountUuid);
         account.markDeleted();
         publishLifecycleEvent(account, "user.deleted");
+        recordAudit("account.deleted", accountUuid);
         return AccountResponse.from(account);
     }
 
@@ -115,6 +129,11 @@ public class AccountService {
                 .filter(account -> account.getStatus() != AccountStatus.DELETED)
                 .map(account -> new LoginView(
                         account.getAccountUuid(), account.getPasswordHash(), account.getStatus()));
+    }
+
+    private void recordAudit(String eventType, UUID accountUuid) {
+        auditService.record(new RecordAuditEventRequest(
+                eventType, AuditOutcome.SUCCESS, accountUuid, null, null, null, null, null));
     }
 
     private void publishLifecycleEvent(Account account, String eventType) {

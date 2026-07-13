@@ -1,5 +1,6 @@
 package com.themistra.auth.token;
 
+import com.themistra.auth.audit.AuditService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -15,9 +16,10 @@ public class AuthorizationServiceConfig {
     public OAuth2AuthorizationService authorizationService(
             JdbcTemplate jdbcTemplate,
             RegisteredClientRepository registeredClientRepository,
-            RefreshTokenTracker tracker) {
+            RefreshTokenTracker tracker,
+            AuditService auditService) {
         JdbcOAuth2AuthorizationService delegate =
                 new JdbcOAuth2AuthorizationService(jdbcTemplate, registeredClientRepository);
-        return new ReuseDetectingAuthorizationService(delegate, tracker);
+        return new ReuseDetectingAuthorizationService(delegate, tracker, auditService);
     }
 }

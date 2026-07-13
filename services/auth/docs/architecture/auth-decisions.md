@@ -167,3 +167,26 @@ mapping: `gap-analysis.md`.
 - **Selected:** `KafkaProducerConfig` declares an explicit `ProducerFactory<String, String>` (built directly from `ProducerConfig` constants and the configured bootstrap-servers) and a `KafkaTemplate<String, String>` bean over it — using only long-stable, directly-documented `kafka-clients`/`spring-kafka` public API, avoiding any dependency on Boot autoconfiguration's inferred generics.
 - **Impact:** One small, explicit config class; no ambiguity for future readers about which producer settings are in effect (`acks=all`, idempotence enabled).
 - **Reference influence:** None.
+
+## D-020 · auth_audit rekeyed on account_uuid; ip column simplified to text
+
+- **Context:** V1's `auth_audit.account_id` had the same cross-module coupling problem D-017 fixed for RBAC (references the account module's internal bigint id). Separately, `ip INET` has no verified-safe Hibernate/JDBC mapping in this stack without an extra dependency.
+- **Selected:** V4 migration drops `account_id` (auto-dropping its index) and adds `account_uuid UUID REFERENCES accounts(account_uuid)`; drops `ip INET` and re-adds `ip VARCHAR(45)`.
+- **Trade-offs:** Loses Postgres's native inet operators/indexing (subnet queries, etc.) — not something this audit log needs; a text column is sufficient for "what IP made this request," which is all the current design asks of it.
+- **Impact:** `audit` module has zero dependency on `account` module entities, matching D-017's precedent.
+- **Reference influence:** None (reference has no audit trail at all — `updateLastLogin` only, gap-analysis §2).
+
+## D-021 · TokenHashing moved to common.Hashing
+
+- **Context:** The audit module needs the same SHA-256 hex-digest primitive the token module already had (`TokenHashing`, D-003) to hash user-agent strings before storage.
+- **Selected:** Moved and renamed to `com.themistra.auth.common.Hashing` — a generic, domain-free utility belongs in `common` (its stated purpose), not inside the `token` module that happened to need it first.
+- **Impact:** `token` and `audit` both depend on `common` (already true for both); neither depends on the other for this. All call sites and tests updated.
+- **Reference influence:** None.
+
+## D-022 · Audit scope: suspend/reinstate/delete are audited; routine registration is not
+
+- **Context:** target-design §15 calls for auditing "every auth-relevant action," but its own example catalogue (login_failed, account_locked, token.reuse_detected, mfa_disabled, api_key_created) skews toward security incidents and admin actions, not every routine business transition.
+- **Selected:** `AccountService.suspend/reinstate/delete` call `AuditService.record(...)` (these are typically admin/compliance-initiated and security-relevant); `activateEmail` (routine, self-service email verification) does not — it remains a business event only (`auth.user.lifecycle`), not also a security-audit event.
+- **Trade-offs:** A future need to audit registrations for a different reason (e.g., fraud signals at signup) would require deliberately adding that call, not get it for free — an explicit line was judged better than blanket-auditing every state change into a trail meant for security review.
+- **Impact:** `actorUuid` is currently always null on these calls — no authenticated-caller context exists yet at this layer. It is recorded honestly as "unknown actor" rather than fabricated; the admin API stage plumbs the real actor through when these become ADMIN-scoped endpoints.
+- **Reference influence:** None (reference has no audit concept to compare against).

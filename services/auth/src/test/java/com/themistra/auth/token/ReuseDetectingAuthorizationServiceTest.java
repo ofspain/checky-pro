@@ -1,13 +1,20 @@
 package com.themistra.auth.token;
 
+import com.themistra.auth.audit.AuditOutcome;
+import com.themistra.auth.audit.AuditService;
+import com.themistra.auth.audit.RecordAuditEventRequest;
+import com.themistra.auth.common.Hashing;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
+
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -22,7 +29,7 @@ class ReuseDetectingAuthorizationServiceTest {
 
     private static final String AUTHORIZATION_ID = "auth-1";
     private static final String PRESENTED_TOKEN = "opaque-refresh-token-value";
-    private static final String PRESENTED_HASH = TokenHashing.sha256(PRESENTED_TOKEN);
+    private static final String PRESENTED_HASH = Hashing.sha256(PRESENTED_TOKEN);
 
     @Mock
     private OAuth2AuthorizationService delegate;
@@ -30,11 +37,14 @@ class ReuseDetectingAuthorizationServiceTest {
     @Mock
     private RefreshTokenTracker tracker;
 
+    @Mock
+    private AuditService auditService;
+
     private ReuseDetectingAuthorizationService service;
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        service = new ReuseDetectingAuthorizationService(delegate, tracker);
+        service = new ReuseDetectingAuthorizationService(delegate, tracker, auditService);
     }
 
     private OAuth2Authorization authorizationWithRefreshToken(String tokenValue) {
@@ -62,7 +72,7 @@ class ReuseDetectingAuthorizationServiceTest {
         verify(delegate).save(authorization);
         verify(tracker).trackIssuance(
                 eq(AUTHORIZATION_ID), eq("principal-uuid"), any(),
-                eq(TokenHashing.sha256("raw-token-value")));
+                eq(Hashing.sha256("raw-token-value")));
         verify(tracker, never()).trackRotation(any(), any());
     }
 
@@ -73,7 +83,7 @@ class ReuseDetectingAuthorizationServiceTest {
 
         service.save(authorization);
 
-        verify(tracker).trackRotation(AUTHORIZATION_ID, TokenHashing.sha256("rotated-token-value"));
+        verify(tracker).trackRotation(AUTHORIZATION_ID, Hashing.sha256("rotated-token-value"));
         verify(tracker, never()).trackIssuance(any(), any(), any(), any());
     }
 
@@ -93,7 +103,7 @@ class ReuseDetectingAuthorizationServiceTest {
     void findByTokenReturnsDelegateResultOnValidPresentation() {
         when(tracker.checkAndRegisterPresentation(PRESENTED_HASH))
                 .thenReturn(new RefreshTokenTracker.ReuseCheckResult(
-                        RefreshTokenTracker.ReuseCheckResult.Outcome.VALID, null));
+                        RefreshTokenTracker.ReuseCheckResult.Outcome.VALID, null, null));
         OAuth2Authorization expected = mock(OAuth2Authorization.class);
         when(delegate.findByToken(PRESENTED_TOKEN, OAuth2TokenType.REFRESH_TOKEN)).thenReturn(expected);
 
@@ -101,13 +111,16 @@ class ReuseDetectingAuthorizationServiceTest {
                 service.findByToken(PRESENTED_TOKEN, OAuth2TokenType.REFRESH_TOKEN);
 
         assertThat(result).isSameAs(expected);
+        verify(auditService, never()).record(any());
     }
 
     @Test
     void findByTokenPurgesAndReturnsNullOnReuse() {
+        UUID accountUuid = UUID.randomUUID();
         when(tracker.checkAndRegisterPresentation(PRESENTED_HASH))
                 .thenReturn(new RefreshTokenTracker.ReuseCheckResult(
-                        RefreshTokenTracker.ReuseCheckResult.Outcome.REUSE_DETECTED, AUTHORIZATION_ID));
+                        RefreshTokenTracker.ReuseCheckResult.Outcome.REUSE_DETECTED,
+                        AUTHORIZATION_ID, accountUuid.toString()));
         OAuth2Authorization compromised = mock(OAuth2Authorization.class);
         when(delegate.findById(AUTHORIZATION_ID)).thenReturn(compromised);
 
@@ -117,6 +130,27 @@ class ReuseDetectingAuthorizationServiceTest {
         assertThat(result).isNull();
         verify(delegate).remove(compromised);
         verify(delegate, never()).findByToken(any(), any());
+
+        ArgumentCaptor<RecordAuditEventRequest> captor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("token.reuse_detected");
+        assertThat(captor.getValue().outcome()).isEqualTo(AuditOutcome.FAILURE);
+        assertThat(captor.getValue().accountUuid()).isEqualTo(accountUuid);
+    }
+
+    @Test
+    void reuseAuditRecordsNullAccountWhenPrincipalIsNotAUuid() {
+        when(tracker.checkAndRegisterPresentation(PRESENTED_HASH))
+                .thenReturn(new RefreshTokenTracker.ReuseCheckResult(
+                        RefreshTokenTracker.ReuseCheckResult.Outcome.REUSE_DETECTED,
+                        AUTHORIZATION_ID, "some-client-id"));
+        when(delegate.findById(AUTHORIZATION_ID)).thenReturn(mock(OAuth2Authorization.class));
+
+        service.findByToken(PRESENTED_TOKEN, OAuth2TokenType.REFRESH_TOKEN);
+
+        ArgumentCaptor<RecordAuditEventRequest> captor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(captor.capture());
+        assertThat(captor.getValue().accountUuid()).isNull();
     }
 
     @Test
@@ -130,6 +164,7 @@ class ReuseDetectingAuthorizationServiceTest {
 
         assertThat(result).isSameAs(expected);
         verify(tracker, never()).checkAndRegisterPresentation(any());
+        verify(auditService, never()).record(any());
     }
 
     @Test

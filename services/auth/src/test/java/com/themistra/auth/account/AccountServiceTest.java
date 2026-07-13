@@ -3,6 +3,8 @@ package com.themistra.auth.account;
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.event.UserLifecycleEventPayload;
+import com.themistra.auth.audit.AuditService;
+import com.themistra.auth.audit.RecordAuditEventRequest;
 import com.themistra.auth.events.OutboxPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,12 +47,16 @@ class AccountServiceTest {
     @Mock
     private OutboxPublisher outboxPublisher;
 
+    @Mock
+    private AuditService auditService;
+
     private AccountService service;
 
     @BeforeEach
     void setUp() {
         Clock fixed = Clock.fixed(NOW, ZoneOffset.UTC);
-        service = new AccountService(accountRepository, passwordEncoder, outboxPublisher, fixed);
+        service = new AccountService(
+                accountRepository, passwordEncoder, outboxPublisher, auditService, fixed);
     }
 
     @Test
@@ -129,6 +135,9 @@ class AccountServiceTest {
         assertThat(event.accountUuid()).isEqualTo(account.getAccountUuid());
         assertThat(event.status()).isEqualTo(AccountStatus.ACTIVE);
         assertThat(event.occurredAt()).isEqualTo(NOW);
+
+        // routine self-service email verification is not itself a security audit event
+        verify(auditService, never()).record(any());
     }
 
     @Test
@@ -154,10 +163,19 @@ class AccountServiceTest {
 
         verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.suspended"), eq(1), any());
         verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.reinstated"), eq(1), any());
+
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
+                ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService, org.mockito.Mockito.times(2)).record(auditCaptor.capture());
+        assertThat(auditCaptor.getAllValues())
+                .extracting(RecordAuditEventRequest::eventType)
+                .containsExactly("account.suspended", "account.reinstated");
+        assertThat(auditCaptor.getAllValues())
+                .allSatisfy(req -> assertThat(req.accountUuid()).isEqualTo(account.getAccountUuid()));
     }
 
     @Test
-    void deletePublishesDeletedEvent() {
+    void deletePublishesDeletedEventAndAuditsIt() {
         Account account = Account.register("user@example.com", ENCODED);
         account.activateEmail();
         when(accountRepository.findByAccountUuid(account.getAccountUuid()))
@@ -167,6 +185,12 @@ class AccountServiceTest {
 
         assertThat(response.status()).isEqualTo(AccountStatus.DELETED);
         verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.deleted"), eq(1), any());
+
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
+                ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().eventType()).isEqualTo("account.deleted");
+        assertThat(auditCaptor.getValue().accountUuid()).isEqualTo(account.getAccountUuid());
     }
 
     @Test
@@ -203,5 +227,6 @@ class AccountServiceTest {
                 .isInstanceOf(InvalidAccountStateException.class);
 
         verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
     }
 }

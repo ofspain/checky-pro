@@ -1,14 +1,17 @@
-package com.themistra.auth.token;
+package com.themistra.auth.common;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
-/** SHA-256 hex digest — the sole comparison mechanism for opaque tokens at rest (D-003). */
-public final class TokenHashing {
+/**
+ * SHA-256 hex digest — generic cross-cutting plumbing (moved here from the token module, D-021,
+ * once the audit module needed the same primitive for hashing user-agent strings).
+ */
+public final class Hashing {
 
-    private TokenHashing() {
+    private Hashing() {
     }
 
     public static String sha256(String value) {
