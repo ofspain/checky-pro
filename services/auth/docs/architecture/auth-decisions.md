@@ -126,9 +126,19 @@ mapping: `gap-analysis.md`.
 - **Trade-offs:** Requires SAS authentication-flow customization (named spike in the roadmap — highest technical risk in the service, prototyped first).
 - **Impact:** Mandatory for `MERCHANT`/`ADMIN` roles; enrollment enforced at next login after role grant.
 
-## D-015 · OAuth2 stage interims: dev JWKS + in-memory authorization store
+## D-015 · OAuth2 stage interims: dev JWKS + in-memory authorization store — RESOLVED (JWT stage)
 
 - **Context:** Stage ordering (user template 2026-07-13) puts OAuth2 wiring before the JWT stage.
 - **Selected:** This stage ships with Boot's autoconfigured in-memory JWKS (fresh dev key per boot) and SAS's default in-memory OAuth2AuthorizationService. Registered clients DO persist (JDBC, deterministic ids) so stored authorizations stay resolvable later.
-- **Impact:** Not deployable multi-replica yet — sessions/authorizations are per-instance and tokens don't survive restarts. **Both interims are replaced in the JWT stage** (Secrets-Manager JWKS with kid rotation per D-011; customized JDBC authorization persistence with hashed values + families per D-003). This entry is deleted when that lands.
+- **Resolution:** JWKS interim replaced by `JwksConfig` + `SigningKeyMaterial` (Secrets-Manager-sourced current/previous PEM keys, dual-`kid` JWKS, `require-configured` boot guard — D-011). Authorization-store interim replaced by `AuthorizationServiceConfig` wiring `JdbcOAuth2AuthorizationService` (real, persistent) decorated by `ReuseDetectingAuthorizationService`. Both now deployable multi-replica.
 - **Reference influence:** None; sequencing convenience only.
+
+## D-016 · Refresh-token family/reuse tracking lives outside SAS's own storage columns
+
+- **Context:** D-003 calls for refresh tokens "hashed at rest." `JdbcOAuth2AuthorizationService`'s row/parameter mapper classes are the only sanctioned customization point for altering how it serializes a stored `OAuth2Authorization`, but their exact method signatures have changed across Spring Security minor versions and are not part of the stable public contract in the way `OAuth2AuthorizationService` (the interface) is.
+- **Alternatives:** (a) hash the token values inside `oauth2_authorization` itself by overriding the delegate's row/parameter mappers; (b) fully reimplement `OAuth2AuthorizationService` from scratch against JPA, bypassing the delegate entirely; (c) leave the delegate's own storage untouched and add a decorator (`ReuseDetectingAuthorizationService`) plus dedicated tracking tables (`refresh_token_family`, `refresh_token_archive`) that hash and compare independently.
+- **Selected:** (c).
+- **Trade-offs:** The `oauth2_authorization.refresh_token_value` column itself still holds the value in whatever form the delegate's default mapper writes it (not independently re-hashed by us) — meaning D-003's "hashed at rest" guarantee is delivered by *this service's* tracking tables (which are hash-only) and not yet by the delegate's own table. The security property that matters most — **a replayed, already-rotated refresh token revokes the entire family** — is fully implemented and independent of the delegate's storage format, since detection happens via our own hash tables. (a)/(b) were rejected as unacceptable API-version risk to guess at without the ability to verify against the exact Spring Security release; a wrong guess there risks silently breaking token issuance/refresh entirely, a worse outcome than a scoped interim.
+- **Impact:** V2 migration adds `refresh_token_family` / `refresh_token_archive` and drops the now-unused `family_id`/`device_label` columns from `oauth2_authorization` (V1). Column-level hashing of the delegate's own table is deferred.
+- **Revisit trigger:** Testing-stage integration tests (Testcontainers, real SAS refresh-grant flow against the pinned Spring Boot 3.5.4 / Spring Security version) should (1) confirm end-to-end rotation/reuse behavior against the real token endpoint, and (2) evaluate whether hashing the delegate's own columns is worth the version-specific mapper work once verified against a running SAS instance rather than guessed at.
+- **Reference influence:** None (reference stored refresh tokens in plaintext with no family concept at all — gap-analysis §1 #5).

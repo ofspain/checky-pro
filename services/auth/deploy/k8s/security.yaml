@@ -23,8 +23,14 @@ spec:
       remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: kafka_bootstrap_servers }
     - secretKey: AUTH_ISSUER_URI
       remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: issuer_uri }
-    - secretKey: JWT_SIGNING_KEYS            # current+previous JWKS material (D-011)
-      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: jwt_signing_keys }
+    - secretKey: JWT_CURRENT_KID              # current+previous JWKS material (D-011)
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: jwt_current_kid }
+    - secretKey: JWT_CURRENT_PRIVATE_KEY_PEM
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: jwt_current_private_key_pem }
+    - secretKey: JWT_PREVIOUS_KID
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: jwt_previous_kid }
+    - secretKey: JWT_PREVIOUS_PRIVATE_KEY_PEM
+      remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: jwt_previous_private_key_pem }
     - secretKey: MFA_SEED_KEK_ARN            # KMS key for TOTP-seed envelope encryption
       remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: mfa_seed_kek_arn }
 ---
