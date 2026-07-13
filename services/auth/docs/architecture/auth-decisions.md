@@ -1,0 +1,127 @@
+# Auth Service — Decision Log
+
+Maintained continuously per the provisioning prompt. Format: Decision · Context · Alternatives ·
+Selected Approach · Trade-offs · Impact · Reference-Project Influence · Accept/Modify/Reject Reason.
+
+Reference project: `netra-identity-service` ("authrex"). Analysis: `reference-analysis.md`; full
+mapping: `gap-analysis.md`.
+
+---
+
+## D-001 · Use Spring Authorization Server, not hand-rolled JWT issuance
+
+- **Context:** Three sibling resource-server services and a React SPA must validate our tokens; ARCHITECTURE §3.2 specifies an OIDC/OAuth2 issuer.
+- **Alternatives:** (a) inherit authrex's jjwt-based custom issuance; (b) external IdP (Cognito/Keycloak/Auth0); (c) Spring Authorization Server.
+- **Selected:** (c) SAS.
+- **Trade-offs:** More framework surface to learn than (a); more code to own than (b). But (a) reimplements audited standards badly (no JWKS/kid/discovery/revocation), and (b) surrenders the merchant/API-key/MFA customization depth we need and adds vendor coupling at the identity core of a trust product.
+- **Impact:** Standard endpoints (`/oauth2/token`, `/oauth2/jwks`, `/.well-known/openid-configuration`, `/oauth2/revoke`); sibling services use stock `spring-security-oauth2-resource-server`.
+- **Reference influence:** Demonstrated the cost of custom issuance (raw-PEM key endpoint, per-client special-casing).
+- **Verdict on reference:** **Rejected.**
+
+## D-002 · Authorization Code + PKCE for the SPA; no password grant
+
+- **Context:** Reference exposes a password grant; OAuth 2.1 removes it. Our client is a public SPA.
+- **Alternatives:** (a) password grant; (b) auth code + PKCE.
+- **Selected:** (b).
+- **Trade-offs:** Slightly more complex frontend flow (redirect-based); modern, phishing-resistant, standard.
+- **Impact:** Frontend uses standard OIDC client; no credentials pass through app JS beyond the IdP-hosted or first-party login page.
+- **Reference influence / verdict:** **Rejected** (deprecated flow).
+
+## D-003 · Refresh tokens: hashed at rest, token families with reuse detection, multi-session
+
+- **Context:** Reference stores plaintext UUIDs, forces single session, no replay defense.
+- **Alternatives:** (a) plaintext + revoke-all (reference); (b) hash-at-rest + rotation; (c) (b) + family-based reuse detection.
+- **Selected:** (c) — OAuth 2.1 recommended practice.
+- **Trade-offs:** More state (family id, chain), one extra index; replay of a rotated token kills the whole family — strictly better security with negligible cost.
+- **Impact:** Schema: `token_hash`, `family_id`, `device_label`; per-device session listing/revocation becomes possible (user-facing feature later).
+- **Reference influence:** Rotation-on-refresh and scheduled cleanup ideas **kept**; storage and session policy **rejected**.
+
+## D-004 · Own domain model; no shared entity artifact
+
+- **Context:** Reference imports `Identity` etc. from `commons-netra`, shared across services.
+- **Alternatives:** (a) shared model library; (b) service-owned entities, sharing only via `contracts/`.
+- **Selected:** (b) — repo dependency rule.
+- **Trade-offs:** Some model duplication across services; that duplication is the decoupling.
+- **Impact:** Auth defines its own JPA entities; events/APIs generated from `contracts/`.
+- **Reference influence / verdict:** **Rejected** (distributed-monolith pattern).
+
+## D-005 · JPA + Flyway DDL; no stored-procedure business logic
+
+- **Context:** Reference keeps upserts/searches/password history in Postgres sprocs.
+- **Alternatives:** (a) sprocs; (b) JPA repositories + Flyway DDL-only migrations.
+- **Selected:** (b) — repo standard, matches payment service.
+- **Trade-offs:** Sprocs can be faster for hot paths; auth's data volume doesn't justify splitting logic across languages and losing testability/reviewability.
+- **Impact:** Migrations contain schema only; logic is unit-testable Java.
+- **Reference influence / verdict:** **Rejected.**
+
+## D-006 · Password policy per NIST 800-63B; drop history + forced rotation
+
+- **Context:** Reference has history checks (sproc) plus two bugs: inverted rotation logic and a config misread.
+- **Alternatives:** (a) fix and keep history/rotation; (b) NIST 800-63B: length ≥ 12, breached-password screening, no periodic forced rotation.
+- **Selected:** (b).
+- **Trade-offs:** "Password history" disappears as a feature — intentionally; NIST guidance says forced rotation degrades password quality. Breached-password check (k-anonymity) gives strictly better protection.
+- **Impact:** Simpler schema (no history table), HIBP-style range API integration, both reference bugs cease to exist structurally.
+- **Reference influence / verdict:** **Rejected** (and its bugs become our unit-test cases).
+
+## D-007 · Remove multi-tenancy claims (`domain_code`/`domain_type`) from Phase 1
+
+- **Context:** Reference threads tenancy through every token and the auth filter, including a client-controlled `X-` header check. Phase 1 has one user population; institutions arrive in Phase 5.
+- **Alternatives:** (a) inherit tenancy now; (b) single-tenant claims with an extensible namespace.
+- **Selected:** (b).
+- **Trade-offs:** If tenancy arrives, it's an additive claim + issuance change behind the same JWKS — cheap later; carrying it now taxes every consumer immediately.
+- **Impact:** Leaner token spec; documented extension point.
+- **Reference influence / verdict:** **Rejected for now**; concept noted for Phase 5.
+
+## D-008 · Remove token exchange; record RFC 8693 as the future path
+
+- **Context:** Reference flow is unreachable (required claims never issued) and would trust inbound role claims.
+- **Selected:** Remove entirely; if Phase 3+ delegation needs arise, enable SAS's RFC 8693 support via a new ADR.
+- **Reference influence / verdict:** **Rejected** (broken dead code).
+
+## D-009 · Events via transactional outbox; auth emits, Notification delivers
+
+- **Context:** Reference has no messaging. Architecture requires `user.registered`, `user.suspended`, audit mirroring, and email flows (verification/reset) delivered by the Notification service.
+- **Selected:** `libs/java/outbox` + schemas in `contracts/events/`. Auth never sends email directly.
+- **Trade-offs:** Event round-trip for emails adds latency (acceptable); preserves service boundaries and gives the Phase 2+ intelligence engine an auth-event stream.
+- **Reference influence:** None (absent).
+
+## D-010 · Secrets via External Secrets/IRSA; secret-scanning CI gate
+
+- **Context:** Reference committed real credentials (properties + a pasted RDS password in a comment) and had a disabled hand-rolled Secrets Manager client that printed secrets.
+- **Selected:** No AWS SDK code in the service; ESO injects from Secrets Manager; gitleaks gate added to CI repo-wide.
+- **Reference influence / verdict:** **Rejected**; its failure becomes a platform control.
+
+## D-011 · JWT signing keys: Secrets-Manager-stored keypair with dual-key JWKS rotation (resolves OD-1)
+
+- **Context:** §6.4 custody ethos says keys shouldn't be exfiltratable; but token signing is high-frequency (every issuance), unlike receipt attestation.
+- **Alternatives:** (a) keys baked into artifact (reference); (b) Secrets Manager-stored keypair injected via External Secrets, dual-key JWKS rotation; (c) KMS-backed `JWKSource` — key never leaves KMS.
+- **Selected:** (b) for Phase 1.
+- **Trade-offs:** (c) is stronger custody but adds per-token KMS latency + cost and a custom Nimbus/SAS signing integration — meaningful engineering for a token whose blast radius is already capped by 10-min TTL + quarterly rotation + instant JWKS un-publication. (a) is unacceptable. Receipt attestation keys remain KMS-only (different risk profile: long-lived, legally load-bearing).
+- **Impact:** JWKS publishes current+previous `kid`s; rotation automated; runbook for emergency rotation.
+- **Reference influence / verdict:** **Rejected** (classpath keys); its raw-PEM endpoint replaced by standard JWKS.
+- **Revisit trigger:** partner/institutional token verification (Phase 5) or any signing-key incident → KMS ADR.
+
+## D-012 · SPA: pure PKCE public client, tokens in memory, SAS session cookie for silent renewal (resolves OD-2)
+
+- **Context:** Mobile-first PWA, no BFF (lean edge decision), sibling services validate JWTs directly.
+- **Alternatives:** (a) BFF with cookie-bound tokens (requires building the gateway we deliberately deferred); (b) PKCE public client — access token in memory, rotating refresh token via the OIDC client, SAS httpOnly session cookie enables silent re-auth.
+- **Selected:** (b).
+- **Trade-offs:** (a) is the gold standard against XSS token theft but resurrects the gateway service. (b) with 10-min access TTL + refresh rotation + family reuse detection caps theft impact; strict CSP (already platform policy) is the XSS backstop.
+- **Impact:** Frontend uses a standard OIDC library; no custom auth code in the SPA.
+- **Revisit trigger:** if a BFF materializes for other reasons (gap-analysis graduation triggers), move token custody into it.
+
+## D-013 · Rate limiting: in-process per replica + durable lockout as backstop (resolves OD-3)
+
+- **Context:** Edge (ingress-nginx) does IP-level limits; auth needs per-account limits on login/token/reset/MFA.
+- **Alternatives:** (a) shared Redis-backed buckets; (b) in-process Bucket4j per replica + DB-backed lockout state as the durable control.
+- **Selected:** (b). With 2–3 replicas, per-replica limits are within ~3× of intended and the lockout table is exact where it matters (failed logins).
+- **Trade-offs:** Limits are approximate across replicas; acceptable. Avoids reintroducing Redis (removed in gap analysis) for a marginal gain.
+- **Revisit trigger:** replica count > 5 or observed distributed brute-force patterns.
+
+## D-014 · MFA enforced inside the SAS interactive authentication flow (resolves OD-4)
+
+- **Context:** MFA must gate token issuance, not be advisory.
+- **Alternatives:** (a) post-auth step-up claim checked by resource servers; (b) TOTP step inside SAS's authentication chain — no authorization code until MFA passes.
+- **Selected:** (b). Resource servers stay dumb (zero trust means they shouldn't re-implement MFA policy); tokens carry `amr`/`acr` as facts, not gates.
+- **Trade-offs:** Requires SAS authentication-flow customization (named spike in the roadmap — highest technical risk in the service, prototyped first).
+- **Impact:** Mandatory for `MERCHANT`/`ADMIN` roles; enrollment enforced at next login after role grant.
