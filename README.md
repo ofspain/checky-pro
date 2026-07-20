@@ -13,6 +13,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the system design and
 | `services/` | Backend microservices (Java 21 / Spring Boot); `crypto/sidecars/` holds TS chain adapters |
 | `libs/` | Shared libraries — `java/` (outbox, kafka-core, security-core), `ts/` (generated API client) |
 | `contracts/` | **Source of truth**: Kafka event schemas (`events/`) and OpenAPI specs (`api/`); all models are generated from here |
+| `spec/` | Per-service feature-spec packages (`package.md` / `requirements.md` / `design.md` / `tasks.md`) plus each service's durable `agents.md` standing rules |
+| `.ai/` | Spec-driven engineering framework: a generated 14-phase prompt workflow per task. See [`.ai/README.md`](.ai/README.md); regenerate with `python3 .ai/generate.py` |
 | `frontend/` | React + TypeScript, mobile-first PWA |
 | `infra/` | AWS CDK app (TypeScript) — stacks split by blast radius |
 | `docs/` | Architecture docs (HTML draft → PDF artifact) and ADRs in `docs/adr/` |
