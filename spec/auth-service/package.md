@@ -9,7 +9,7 @@
 | Status | `DRAFT` |
 | Target repo / service | `services/auth` |
 | Skills to load | `spec-authoring`, `code-review` |
-| Standing rules | No repo-wide `agents.md` exists. Stack and conventions are inferred from `ARCHITECTURE.md`, `docs/service-languages.pdf`, `docs/adr/0002-maven-for-java-builds.md`, and the service `pom.xml`. This spec does not override them. |
+| Standing rules | [`agents.md`](agents.md) in this directory is authoritative for `services/auth` (distilled from `ARCHITECTURE.md`, `docs/service-languages.pdf`, the ADRs, and `auth-decisions.md` D-001…D-014). This spec references it and does not restate or override it except where §4a says so explicitly. |
 
 ## 0. TL;DR
 
@@ -150,4 +150,4 @@ The existing tests (`ArchitectureTest`, account/authz/audit/token integration te
 - Q3. **API key limits and scopes.** Should there be a maximum number of active API keys per merchant? Is the only scope at launch `merchant.api`, or are additional scopes needed?
 - Q4. **Email link base URL.** Verification and password-reset links need a base URL + path. Should this come from `SPA_REDIRECT_URI` / `AUTH_ISSUER_URI`, or does the Notification Service need a new `AUTH_EMAIL_LINK_BASE_URL` secret?
 - Q5. **Lockout event publication.** Is lock/unlock published only as an `auth.security.audit` mirror, or also as a lifecycle event on `auth.user.lifecycle`? The schema currently only has status enum values.
-- Q6. **Agents / standing rules file.** No repo `agents.md` exists. Should one be seeded from the conventions in `ARCHITECTURE.md` / `service-languages.pdf` so future specs can reference it instead of restating stack assumptions?
+- Q6. **Agents / standing rules file.** ~~No repo `agents.md` exists.~~ **Resolved (2026-07-20):** a per-service `spec/auth-service/agents.md` now holds the durable rules, distilled from `ARCHITECTURE.md` / `service-languages.pdf` / `auth-decisions.md`; this spec references it instead of restating stack assumptions. Open follow-up: whether to also seed a single repo-root `agents.md` for the platform-common section shared by all four service files (dedupe), or keep them self-contained per service.
