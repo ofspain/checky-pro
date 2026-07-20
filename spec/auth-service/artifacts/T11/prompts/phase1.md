@@ -34,4 +34,4 @@ Do not implement.
 
 Wait.
 
-Generate a file that has all the extraction you made into a file 'spec\auth-service\artifacts\T11\TIB-T11.md'
+Generate a file that has all the extraction you made into a file 'spec/auth-service/artifacts/T11/TIB-T11.md'
