@@ -131,9 +131,12 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
       </plugin>
+      <!-- Local-dev only: runs solely via explicit `mvn flyway:migrate`. No <executions> binding,
+           so it never fires during `package`/`verify`/CI or the production Docker build. -->
       <plugin>
         <groupId>org.flywaydb</groupId>
         <artifactId>flyway-maven-plugin</artifactId>
+        <version>11.7.2</version>
         <configuration>
           <url>jdbc:postgresql://localhost:5432/checky</url>
           <user>checky</user>
