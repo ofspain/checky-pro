@@ -43,7 +43,7 @@ these rules; `target-design.md` is the design of record.
   own management APIs). The public-endpoint set is exhaustive and CI-enforced (`PublicEndpoints`).
 - Errors are RFC 9457 `application/problem+json` — no stack traces, no internal detail, no enumeration hints.
 - Secrets (JWT signing keys, DB creds, TOTP-seed KEK reference): injected by External Secrets Operator;
-  none committed; gitleaks gate in CI; no AWS SDK code in application code, **except** a single scoped
+  none committed; gitleaks gate in CI; no AWS SDK code in the service, **except** a single scoped
   KMS `GenerateDataKey`/`Decrypt` call inside `mfa.MfaSeedEncryption` for TOTP-seed envelope encryption
   (D-010 exception, see `docs/adr/0003-narrow-kms-exception-for-totp-seed-encryption.md`, L14, D-025).
 
