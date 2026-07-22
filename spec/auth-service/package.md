@@ -145,7 +145,7 @@ The existing tests (`ArchitectureTest`, account/authz/audit/token integration te
 
 ## 11. Open questions for the author
 
-- Q1. **TOTP seed encryption KMS approach.** `target-design.md` says AES-GCM with KMS-enveloped data key, but D-010 forbids AWS SDK in application code. Is the preference to (a) inject a symmetric data key via External Secrets and encrypt locally, (b) relax D-010 for a narrow KMS envelope-encryption call, or (c) route encryption through the Crypto Service? This is a blocker for MFA implementation.
+- Q1. ~~**TOTP seed encryption KMS approach.**~~ **Resolved (2026-07-22):** option (b) — a narrow KMS envelope-encryption call, confined to `MfaSeedEncryption`, as a named exception to D-010. See `design.md` L14, `auth-decisions.md` D-025, `docs/adr/0003-narrow-kms-exception-for-totp-seed-encryption.md`.
 - Q2. **Per-account rate-limit thresholds.** What are the permitted requests-per-minute limits for login attempts, `/oauth2/token`, password-reset confirmation, and MFA verify? Please confirm or replace the placeholders in `design.md` §4b-O2.
 - Q3. **API key limits and scopes.** Should there be a maximum number of active API keys per merchant? Is the only scope at launch `merchant.api`, or are additional scopes needed?
 - Q4. **Email link base URL.** Verification and password-reset links need a base URL + path. Should this come from `SPA_REDIRECT_URI` / `AUTH_ISSUER_URI`, or does the Notification Service need a new `AUTH_EMAIL_LINK_BASE_URL` secret?
