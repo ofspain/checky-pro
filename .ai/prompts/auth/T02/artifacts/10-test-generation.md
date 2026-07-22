@@ -23,6 +23,21 @@ for T01's Phase 10.
 fixes — every reference still resolves to the same identifiers, no stale numbering (the corrected
 `D-025`, not the originally planned `D-015`) survives anywhere.
 
+## Scope-discipline verification (added Phase 11, per Kimi's Findings 4/5)
+
+The frozen brief's Files NOT to Modify section wasn't originally given its own explicit check. Two
+rows close that gap:
+
+| Constraint | Verification method | Result |
+|---|---|---|
+| `V1__auth_baseline_schema.sql` not modified (Files NOT to Modify) | `git diff ab71e50 HEAD -- services/auth/src/main/resources/db/migration/V1__auth_baseline_schema.sql` | Empty diff — confirmed untouched, re-run Phase 12 prep |
+| `design.md` O2–O5 / `package.md` Q2–Q6 untouched (Scope: Out) | `git diff ab71e50 HEAD -- spec/auth-service/design.md spec/auth-service/package.md`, inspected line-by-line | Only L14 (new), O1, and the §4c comment changed in `design.md`; only Q1 changed in `package.md` — O2–O5/Q2–Q6 byte-identical to pre-T02 |
+
+Kimi's third suggestion (a scripted CI check guarding against `agents.md`'s AWS SDK exception silently
+broadening, or Q1 regressing to unstruck) is noted but not built — it was explicitly flagged
+Low-confidence/optional/"arguably overkill for a single task" by Phase 11 itself, and building CI
+tooling is beyond this task's scope (spec/decision-record updates only).
+
 ## Why no automated test is added
 
 - No application behavior exists to test — this task produces specification and decision-record text
