@@ -11,6 +11,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * Have I Been Pwned k-anonymity range check (R9/L2): only a 5-character uppercase SHA-1 hash
@@ -35,14 +36,20 @@ public class BreachCheckClient {
      * @return {@code true} if the password's SHA-1 hash suffix appears in the range response
      * with a count greater than zero.
      * @throws BreachCheckUnavailableException if the range API could not be reached or returned
-     * an error.
+     * an error — this is the only checked failure mode; a {@code null} argument is a caller bug
+     * (see the guard below), not a fail-open condition.
      */
     public boolean isBreached(String rawPassword) {
+        Objects.requireNonNull(rawPassword, "rawPassword must not be null");
         String sha1 = sha1UppercaseHex(rawPassword);
         String prefix = sha1.substring(0, PREFIX_LENGTH);
         String suffix = sha1.substring(PREFIX_LENGTH);
 
         try {
+            // RestClient#retrieve() throws RestClientResponseException (a RestClientException)
+            // on any non-2xx status by default, so an HTTP-level failure lands in the catch
+            // below along with timeouts/connection errors — it never reaches this line with a
+            // response body from an error page.
             String responseBody = restClient.get()
                     .uri("{prefix}", prefix)
                     .retrieve()
@@ -59,8 +66,11 @@ public class BreachCheckClient {
         requestFactory.setConnectTimeout(timeoutMs);
         requestFactory.setReadTimeout(timeoutMs);
 
+        String urlPrefix = properties.breachCheck().urlPrefix();
+        String baseUrl = urlPrefix.endsWith("/") ? urlPrefix : urlPrefix + "/";
+
         return builder
-                .baseUrl(properties.breachCheck().urlPrefix())
+                .baseUrl(baseUrl)
                 .defaultHeader("User-Agent", USER_AGENT)
                 .requestFactory(requestFactory)
                 .build();
