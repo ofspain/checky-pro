@@ -29,12 +29,15 @@ interface VerificationTokenRepository extends JpaRepository<VerificationToken, L
     int markConsumed(@Param("tokenHash") String tokenHash, @Param("now") Instant now);
 
     /**
-     * Invalidates any prior unused token for the same account and purpose, so a newly issued
-     * token supersedes stale ones rather than leaving them redeemable alongside it.
+     * Invalidates any prior unused, unexpired token for the same account and purpose, so a newly
+     * issued token supersedes stale ones rather than leaving them redeemable alongside it.
+     * Excludes already-expired tokens — updating them would be a no-op functionally (they're
+     * already unredeemable) but would still acquire row locks needlessly.
      */
     @Modifying
     @Query("UPDATE VerificationToken t SET t.usedAt = :now "
-            + "WHERE t.accountId = :accountId AND t.purpose = :purpose AND t.usedAt IS NULL")
+            + "WHERE t.accountId = :accountId AND t.purpose = :purpose AND t.usedAt IS NULL "
+            + "AND t.expiresAt > :now")
     int invalidateActive(@Param("accountId") Long accountId,
                           @Param("purpose") VerificationToken.Purpose purpose,
                           @Param("now") Instant now);

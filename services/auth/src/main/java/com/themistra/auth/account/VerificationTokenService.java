@@ -29,7 +29,6 @@ import java.util.UUID;
 public class VerificationTokenService {
 
     private static final int RAW_TOKEN_BYTES = 32;
-    private static final int MAX_ISSUE_ATTEMPTS = 3;
 
     private final VerificationTokenRepository tokenRepository;
     private final AccountRepository accountRepository;
@@ -50,6 +49,13 @@ public class VerificationTokenService {
      * Invalidates any prior unused token for {@code (accountUuid, purpose)}, then issues a new
      * one. The raw token is returned exactly once; only its hash is persisted.
      *
+     * <p>A single insert attempt is made, not a retry loop: a {@code token_hash} collision at 32
+     * random bytes (256 bits of entropy) is astronomically unlikely, and retrying within the same
+     * PostgreSQL transaction cannot work correctly — Postgres aborts the whole transaction on the
+     * first constraint violation, so a second attempt in the same transaction would itself fail
+     * immediately rather than cleanly retry (Phase 7/8/9 finding). A collision therefore fails
+     * loudly via {@link IllegalStateException} rather than silently misbehaving.</p>
+     *
      * @throws AccountNotFoundException if {@code accountUuid} does not resolve to an account —
      * this is an internal-caller error signal, not the uniform R5 path (unlike {@code verify}/
      * {@code consume}, {@code issue} is never called with attacker-controlled input).
@@ -66,20 +72,16 @@ public class VerificationTokenService {
         tokenRepository.invalidateActive(account.getId(), purpose, now);
 
         Instant expiresAt = now.plus(properties.ttlMinutes(), ChronoUnit.MINUTES);
-        for (int attempt = 1; attempt <= MAX_ISSUE_ATTEMPTS; attempt++) {
-            String rawToken = generateRawToken();
-            String tokenHash = Hashing.sha256(rawToken);
-            VerificationToken token =
-                    VerificationToken.create(account.getId(), purpose, tokenHash, now, expiresAt);
-            try {
-                VerificationToken saved = tokenRepository.saveAndFlush(token);
-                return new VerificationTokenResult(rawToken, saved, accountUuid, purpose);
-            } catch (DataIntegrityViolationException e) {
-                // token_hash collision (astronomically unlikely at 32 random bytes) - retry
-            }
+        String rawToken = generateRawToken();
+        String tokenHash = Hashing.sha256(rawToken);
+        VerificationToken token =
+                VerificationToken.create(account.getId(), purpose, tokenHash, now, expiresAt);
+        try {
+            VerificationToken saved = tokenRepository.saveAndFlush(token);
+            return new VerificationTokenResult(rawToken, saved, accountUuid, purpose);
+        } catch (DataIntegrityViolationException e) {
+            throw new IllegalStateException("Verification token hash collision on issue", e);
         }
-        throw new IllegalStateException(
-                "Failed to generate a unique verification token after " + MAX_ISSUE_ATTEMPTS + " attempts");
     }
 
     /** Read-only check; does not mutate state. */
@@ -123,7 +125,11 @@ public class VerificationTokenService {
         if (updated == 0) {
             return Optional.empty();
         }
-        return accountUuid;
+
+        // Re-check account usability after the atomic mark-used write: the two checks are not
+        // themselves atomic with each other, so a concurrent suspend/delete landing in between
+        // must still result in a uniform rejection, even though the token is now spent.
+        return resolveUsableAccount(token.getAccountId());
     }
 
     private Optional<UUID> resolveUsableAccount(Long accountId) {
@@ -149,5 +155,11 @@ public class VerificationTokenService {
      */
     public record VerificationTokenResult(
             String rawToken, VerificationToken token, UUID accountUuid, VerificationToken.Purpose purpose) {
+
+        /** Overridden so the raw token can never leak via a default record {@code toString()}. */
+        @Override
+        public String toString() {
+            return "VerificationTokenResult[accountUuid=" + accountUuid + ", purpose=" + purpose + "]";
+        }
     }
 }
