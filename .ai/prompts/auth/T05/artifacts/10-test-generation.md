@@ -78,3 +78,33 @@ module's resolved test-scope classpath (`-sourcepath` covering both `src/main/ja
 the project's resolved `junit-platform-engine` version).
 
 **Result: 18/18 tests successful, 0 failed, 0 skipped, ~700ms.**
+
+---
+
+## Addendum: Phase 11 gap fixes (test-only, no production code changed)
+
+Kimi's Phase 11 review (`11-test-review.md`) found 6 coverage gaps, all addressed as test-only
+additions/fixes:
+
+- **Gap 1 (MEDIUM).** New test `shouldMakePriorTokenUnverifiableAfterReissue` behaviorally proves
+  reissue invalidation, not just that `invalidateActive` was called: a stateful Mockito `doAnswer`
+  simulates the real bulk `UPDATE`'s effect (marking the prior token's `usedAt`), then asserts the
+  first token no longer verifies while the second does.
+- **Gap 2 (MEDIUM).** `shouldNotRevealAccountExistenceForInvalidVerificationToken` now also
+  exercises `consume()` (not just `verify()`) for expired, already-used, and deleted-account
+  tokens — proving R5's uniform shape on the redeem path's different code route
+  (`markConsumed` returning 0 vs. the pre-check rejecting before any mutation).
+- **Gap 3 (LOW/MEDIUM).** The valid-token test now also asserts `createdAt`, `accountId`, and
+  `purpose` on the persisted entity, not just the result's top-level fields.
+- **Gap 4 (LOW).** The raw-token test now asserts an explicit `^[A-Za-z0-9_-]{43}$` regex and the
+  absence of `+`, `/`, `=`, closing the gap where a URL-decodable-but-not-actually-URL-safe string
+  could have passed the old assertion.
+- **Gap 5 (LOW).** `shouldThrowAccountNotFoundExceptionWhenIssuingForUnknownAccount` now asserts
+  `verifyNoInteractions(tokenRepository)` — no token repository call happens before the account
+  lookup fails.
+- **Gap 6 (LOW).** `VerificationTokenPropertiesTest`'s invalid-TTL tests now assert the violation
+  is exactly one, on the `ttlMinutes` property path, raised by the expected `@Min`/`@Max`
+  annotation — not just "some violation exists."
+
+**Final count: 19 tests, all passing** (14 `VerificationTokenServiceTest` + 5
+`VerificationTokenPropertiesTest`), verified the same way as above.

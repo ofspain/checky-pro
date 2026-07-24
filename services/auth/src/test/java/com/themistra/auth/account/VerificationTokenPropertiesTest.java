@@ -4,6 +4,8 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import jakarta.validation.ValidatorFactory;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -47,7 +49,7 @@ class VerificationTokenPropertiesTest {
         Set<ConstraintViolation<VerificationTokenProperties>> violations =
                 validator.validate(new VerificationTokenProperties(0));
 
-        assertThat(violations).isNotEmpty();
+        assertThatSingleViolationIsOnTtlMinutesWithAnnotation(violations, Min.class);
     }
 
     @Test
@@ -55,7 +57,7 @@ class VerificationTokenPropertiesTest {
         Set<ConstraintViolation<VerificationTokenProperties>> violations =
                 validator.validate(new VerificationTokenProperties(-5));
 
-        assertThat(violations).isNotEmpty();
+        assertThatSingleViolationIsOnTtlMinutesWithAnnotation(violations, Min.class);
     }
 
     @Test
@@ -63,7 +65,7 @@ class VerificationTokenPropertiesTest {
         Set<ConstraintViolation<VerificationTokenProperties>> violations =
                 validator.validate(new VerificationTokenProperties(525_601));
 
-        assertThat(violations).isNotEmpty();
+        assertThatSingleViolationIsOnTtlMinutesWithAnnotation(violations, Max.class);
     }
 
     @Test
@@ -72,5 +74,21 @@ class VerificationTokenPropertiesTest {
                 validator.validate(new VerificationTokenProperties(525_600));
 
         assertThat(violations).isEmpty();
+    }
+
+    /**
+     * Asserts exactly one violation, on the {@code ttlMinutes} property path, raised by the given
+     * constraint annotation — resilient to a future property being added to the record (Kimi
+     * Phase 11 Gap 6): a regression that made the wrong field invalid, or violated the wrong
+     * constraint, would fail this instead of silently satisfying a bare "not empty" check.
+     */
+    private static void assertThatSingleViolationIsOnTtlMinutesWithAnnotation(
+            Set<ConstraintViolation<VerificationTokenProperties>> violations,
+            Class<? extends java.lang.annotation.Annotation> expectedAnnotation) {
+        assertThat(violations).hasSize(1);
+        ConstraintViolation<VerificationTokenProperties> violation = violations.iterator().next();
+        assertThat(violation.getPropertyPath().toString()).isEqualTo("ttlMinutes");
+        assertThat(violation.getConstraintDescriptor().getAnnotation().annotationType())
+                .isEqualTo(expectedAnnotation);
     }
 }

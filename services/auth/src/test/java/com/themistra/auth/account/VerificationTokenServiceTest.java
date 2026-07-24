@@ -22,10 +22,12 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -74,6 +76,9 @@ class VerificationTokenServiceTest {
         assertThat(issued.purpose()).isEqualTo(VerificationToken.Purpose.EMAIL_VERIFY);
         assertThat(issued.token().getTokenHash()).isEqualTo(Hashing.sha256(issued.rawToken()));
         assertThat(issued.token().getExpiresAt()).isEqualTo(NOW.plusSeconds(30 * 60));
+        assertThat(issued.token().getCreatedAt()).isEqualTo(NOW);
+        assertThat(issued.token().getAccountId()).isEqualTo(ACCOUNT_ID);
+        assertThat(issued.token().getPurpose()).isEqualTo(VerificationToken.Purpose.EMAIL_VERIFY);
 
         // Now redeem the same raw token via consume() and confirm it resolves to the account.
         String hash = issued.token().getTokenHash();
@@ -91,31 +96,57 @@ class VerificationTokenServiceTest {
         assertThat(service.verify("nonexistent-token")).isEmpty();
         assertThat(service.consume("nonexistent-token")).isEmpty();
 
-        // Expired.
+        // Expired - verify() path (in-service expiry check).
         String expiredRaw = "expired-token";
         stubToken(expiredRaw, NOW.minusSeconds(1), null);
         assertThat(service.verify(expiredRaw)).isEmpty();
 
-        // Already used.
+        // Expired - consume() path (markConsumed's own WHERE expiresAt > :now excludes it; the
+        // account must still be usable so the pre-check doesn't short-circuit before markConsumed
+        // is even attempted, keeping this case distinct from the account-unusable ones below).
+        String expiredConsumeRaw = "expired-token-consume";
+        String expiredConsumeHash = stubToken(expiredConsumeRaw, NOW.minusSeconds(1), null);
+        Account activeForExpired = usableAccount(AccountStatus.ACTIVE);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(activeForExpired));
+        when(tokenRepository.markConsumed(eq(expiredConsumeHash), any())).thenReturn(0);
+        assertThat(service.consume(expiredConsumeRaw)).isEmpty();
+
+        // Already used - verify() path.
         String usedRaw = "used-token";
         stubToken(usedRaw, NOW.plusSeconds(3600), NOW.minusSeconds(1));
         assertThat(service.verify(usedRaw)).isEmpty();
 
-        // Account deleted.
+        // Already used - consume() path (markConsumed's own WHERE usedAt IS NULL excludes it).
+        String usedConsumeRaw = "used-token-consume";
+        String usedConsumeHash = stubToken(usedConsumeRaw, NOW.plusSeconds(3600), NOW.minusSeconds(1));
+        Account activeForUsed = usableAccount(AccountStatus.ACTIVE);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(activeForUsed));
+        when(tokenRepository.markConsumed(eq(usedConsumeHash), any())).thenReturn(0);
+        assertThat(service.consume(usedConsumeRaw)).isEmpty();
+
+        // Account deleted - verify() path.
         String deletedRaw = "deleted-account-token";
         stubToken(deletedRaw, NOW.plusSeconds(3600), null);
         Account deletedAccount = usableAccount(AccountStatus.DELETED);
         when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(deletedAccount));
         assertThat(service.verify(deletedRaw)).isEmpty();
 
-        // Account suspended - also proves consume() never marks a token used for an unusable
-        // account (the atomic markConsumed call must never even be attempted).
+        // Account deleted - consume() path: the pre-check must reject before markConsumed is ever
+        // attempted, so a deleted account's token is never marked used by a rejected attempt.
+        String deletedConsumeRaw = "deleted-account-token-consume";
+        String deletedConsumeHash = stubToken(deletedConsumeRaw, NOW.plusSeconds(3600), null);
+        Account deletedAccount2 = usableAccount(AccountStatus.DELETED);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(deletedAccount2));
+        assertThat(service.consume(deletedConsumeRaw)).isEmpty();
+        verify(tokenRepository, never()).markConsumed(eq(deletedConsumeHash), any());
+
+        // Account suspended - consume() path, same pre-check-rejects-before-mutation guarantee.
         String suspendedRaw = "suspended-account-token";
-        stubToken(suspendedRaw, NOW.plusSeconds(3600), null);
+        String suspendedHash = stubToken(suspendedRaw, NOW.plusSeconds(3600), null);
         Account suspendedAccount = usableAccount(AccountStatus.SUSPENDED);
         when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(suspendedAccount));
         assertThat(service.consume(suspendedRaw)).isEmpty();
-        verify(tokenRepository, never()).markConsumed(eq(Hashing.sha256(suspendedRaw)), any());
+        verify(tokenRepository, never()).markConsumed(eq(suspendedHash), any());
     }
 
     @Test
@@ -183,6 +214,35 @@ class VerificationTokenServiceTest {
     }
 
     @Test
+    void shouldMakePriorTokenUnverifiableAfterReissue() {
+        // Behavioral proof, not just a call-verification: the prior token genuinely stops
+        // resolving after a second issue() for the same (account, purpose) - Kimi Phase 11 Gap 1.
+        // invalidateActive is a mocked bulk UPDATE, so its real filtering effect is simulated here
+        // via a stateful answer that marks the first token's usedAt, exactly as the real query
+        // would do in the database.
+        Account account = usableAccount(AccountStatus.PENDING_VERIFICATION);
+        when(accountRepository.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.of(account));
+        when(tokenRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        VerificationTokenResult first = service.issue(ACCOUNT_UUID, VerificationToken.Purpose.EMAIL_VERIFY);
+
+        doAnswer(invocation -> {
+            setUsedAt(first.token(), NOW);
+            return 1;
+        }).when(tokenRepository).invalidateActive(
+                eq(ACCOUNT_ID), eq(VerificationToken.Purpose.EMAIL_VERIFY), any());
+
+        VerificationTokenResult second = service.issue(ACCOUNT_UUID, VerificationToken.Purpose.EMAIL_VERIFY);
+
+        when(tokenRepository.findByTokenHash(first.token().getTokenHash())).thenReturn(Optional.of(first.token()));
+        when(tokenRepository.findByTokenHash(second.token().getTokenHash())).thenReturn(Optional.of(second.token()));
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+
+        assertThat(service.verify(first.rawToken())).isEmpty();
+        assertThat(service.verify(second.rawToken())).contains(ACCOUNT_UUID);
+    }
+
+    @Test
     void shouldThrowIllegalStateExceptionOnTokenHashCollision() {
         Account account = usableAccount(AccountStatus.PENDING_VERIFICATION);
         when(accountRepository.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.of(account));
@@ -200,6 +260,7 @@ class VerificationTokenServiceTest {
 
         assertThatThrownBy(() -> service.issue(ACCOUNT_UUID, VerificationToken.Purpose.EMAIL_VERIFY))
                 .isInstanceOf(AccountNotFoundException.class);
+        verifyNoInteractions(tokenRepository);
     }
 
     @Test
@@ -249,6 +310,8 @@ class VerificationTokenServiceTest {
         VerificationTokenResult issued = service.issue(ACCOUNT_UUID, VerificationToken.Purpose.EMAIL_VERIFY);
 
         assertThat(issued.rawToken()).hasSize(43);
+        assertThat(issued.rawToken()).matches("^[A-Za-z0-9_-]{43}$");
+        assertThat(issued.rawToken()).doesNotContain("+", "/", "=");
         assertThatCode(() -> Base64.getUrlDecoder().decode(issued.rawToken())).doesNotThrowAnyException();
     }
 
