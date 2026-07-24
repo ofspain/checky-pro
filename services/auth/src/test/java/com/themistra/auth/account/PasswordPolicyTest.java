@@ -60,6 +60,8 @@ class PasswordPolicyTest {
 
         assertThatCode(() -> policy.validate("a".repeat(12))).doesNotThrowAnyException();
         assertThatCode(() -> policy.validate("a".repeat(128))).doesNotThrowAnyException();
+
+        verifyNoInteractions(auditService);
     }
 
     @Test

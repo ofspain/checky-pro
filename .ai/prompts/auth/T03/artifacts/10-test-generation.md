@@ -93,3 +93,39 @@ these two classes should be re-run through the standard Maven/Surefire path as a
 confirmation, though the mechanism used here (real JUnit Platform execution against the actual
 compiled classes) is not a lesser form of verification — it's the same test engine Surefire itself
 delegates to.
+
+---
+
+## Addendum: Phase 11 gap fixes (test-only, no production code changed)
+
+Kimi's Phase 11 review (`11-test-review.md`) found 8 real coverage gaps, all addressed here as
+test-only additions/fixes:
+
+- **Gap 1 (HIGH)** — `BreachCheckClientTest`'s server now binds its context to the exact expected
+  path (`/range/<prefix>`) instead of a catch-all `"/"` handler, so every test (not just one)
+  fails if the client constructs the wrong URI — the server itself returns 404 for anything else.
+- **Gap 2 (HIGH)** — new file `PasswordPolicyPropertiesTest.java` (7 tests) validates the Phase 9
+  Bean Validation additions directly via `jakarta.validation.Validation`: L2's 12/128 bounds, the
+  cross-field `minLength <= maxLength` check, the `timeoutMs` `int`-overflow guard, and the
+  `urlPrefix` blank check.
+- **Gap 3 (MEDIUM)** — `shouldResolveCorrectPathWhenUrlPrefixIsMissingTrailingSlash` proves the
+  Phase 9 trailing-slash normalization fix actually works end-to-end.
+- **Gap 4 (MEDIUM)** — the connection-failure test now binds an ephemeral server, stops it
+  immediately, and connects to that now-guaranteed-closed port, instead of a hardcoded port `1`.
+- **Gap 5 (MEDIUM)** — `shouldThrowBreachCheckUnavailableExceptionWhenServerExceedsConfiguredTimeout`
+  uses a short `timeout-ms=100` against a handler that sleeps 1000ms, asserting both the exception
+  and that it fires well before the full sleep duration — proving the bounded timeout itself, not
+  just a connection-refused stand-in.
+- **Gap 6 (MEDIUM)** — two new tests: a matching suffix with count `0` alongside a *different*
+  non-matching suffix with a positive count (still not-breached), and a response body with
+  colon-less garbage lines and whitespace around the colon (still correctly parses the real line).
+- **Gap 7 (LOW/MEDIUM)** — `shouldAcceptPasswordAtExactly12And128CharacterBoundaries` now also
+  asserts `verifyNoInteractions(auditService)`.
+- **Gap 8 (LOW)** — re-checked against the actual file: `verifyNoInteractions(breachCheckClient)`
+  in `shouldRejectPasswordShorterThan12OrLongerThan128` was already positioned after both the
+  11-character and 129-character assertions, not between them as Kimi's finding described. No
+  change needed; noted as a factual correction for Phase 12, not silently accepted.
+
+**Final count: 27 tests, all passing** (7 `PasswordPolicyTest` + 7 `PasswordPolicyPropertiesTest`
++ 13 `BreachCheckClientTest`), verified the same way as above (direct `javac` + JUnit Platform
+`Launcher`, ~4.8s total, entirely on `127.0.0.1`/in-process, zero external network calls).
