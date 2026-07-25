@@ -2,6 +2,7 @@ package com.themistra.auth.account;
 
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
+import com.themistra.auth.account.event.EmailRequestedEventPayload;
 import com.themistra.auth.account.event.UserLifecycleEventPayload;
 import com.themistra.auth.audit.AuditService;
 import com.themistra.auth.audit.RecordAuditEventRequest;
@@ -27,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -51,13 +53,28 @@ class AccountServiceTest {
     @Mock
     private AuditService auditService;
 
+    @Mock
+    private VerificationTokenService verificationTokenService;
+
     private AccountService service;
 
     @BeforeEach
     void setUp() {
         Clock fixed = Clock.fixed(NOW, ZoneOffset.UTC);
         service = new AccountService(
-                accountRepository, passwordEncoder, outboxPublisher, auditService, fixed);
+                accountRepository, passwordEncoder, outboxPublisher, auditService,
+                verificationTokenService, fixed);
+        // Shared, lenient: every test that reaches register()'s success path needs a non-null
+        // issue(...) result (register now always issues+emits a verification token, R3); tests
+        // that never reach that path (duplicate-email, constraint-race) simply don't use this stub.
+        lenient().when(verificationTokenService.issue(any(UUID.class), eq(VerificationToken.Purpose.EMAIL_VERIFY)))
+                .thenAnswer(invocation -> {
+                    UUID accountUuid = invocation.getArgument(0);
+                    VerificationToken token = VerificationToken.create(
+                            1L, VerificationToken.Purpose.EMAIL_VERIFY, "token-hash", NOW, NOW.plusSeconds(1800));
+                    return new VerificationTokenService.VerificationTokenResult(
+                            "raw-verification-token", token, accountUuid, VerificationToken.Purpose.EMAIL_VERIFY);
+                });
     }
 
     @Test
@@ -81,16 +98,35 @@ class AccountServiceTest {
     }
 
     @Test
-    void registerNeverPublishesAnEvent() {
-        // auth.user.registered fires at email confirmation, not at initial signup (target-design §9)
+    void shouldEmitVerifyEmailEventOnRegistration() {
+        // auth.user.registered still only fires at email confirmation (activateFromVerificationToken/
+        // activateEmail), not at initial signup - but registration now emits auth.email.requested
+        // with purpose verify_email, in the same transaction, per R3 (T06).
         when(accountRepository.existsByEmail(anyString())).thenReturn(false);
         when(passwordEncoder.encode(anyString())).thenReturn(ENCODED);
         when(accountRepository.saveAndFlush(any(Account.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
-        service.register(new RegisterAccountRequest("merchant@example.com", RAW_PASSWORD));
+        AccountResponse response =
+                service.register(new RegisterAccountRequest("merchant@example.com", RAW_PASSWORD));
 
-        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(verificationTokenService)
+                .issue(eq(response.accountUuid()), eq(VerificationToken.Purpose.EMAIL_VERIFY));
+
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(outboxPublisher).publish(
+                eq("verification-token"), eq(response.accountUuid().toString()),
+                eq("email.requested"), eq(1), payload.capture());
+        var event = (EmailRequestedEventPayload) payload.getValue();
+        assertThat(event.accountUuid()).isEqualTo(response.accountUuid());
+        assertThat(event.purpose()).isEqualTo("verify_email");
+        assertThat(event.token()).isEqualTo("raw-verification-token");
+        assertThat(event.occurredAt()).isEqualTo(NOW);
+        // Finding 1's mitigation: the raw token must never leak via a default toString().
+        assertThat(event.toString()).doesNotContain("raw-verification-token");
+
+        // auth.user.registered (a *different* event) is still not published at signup time.
+        verify(outboxPublisher, never()).publish(eq("account"), any(), eq("user.registered"), anyInt(), any());
     }
 
     @Test
@@ -143,6 +179,85 @@ class AccountServiceTest {
         verify(auditService).record(auditCaptor.capture());
         assertThat(auditCaptor.getValue().eventType()).isEqualTo("account.activated");
         assertThat(auditCaptor.getValue().actorUuid()).isEqualTo(ACTOR_UUID);
+    }
+
+    @Test
+    void shouldActivateAccountWithValidVerificationToken() {
+        Account account = Account.register("user@example.com", ENCODED);
+        when(verificationTokenService.consume("a-valid-token")).thenReturn(Optional.of(account.getAccountUuid()));
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+                .thenReturn(Optional.of(account));
+
+        AccountResponse response = service.activateFromVerificationToken("a-valid-token");
+
+        assertThat(response.status()).isEqualTo(AccountStatus.ACTIVE);
+        assertThat(response.emailVerified()).isTrue();
+
+        verify(outboxPublisher).publish(
+                eq("account"), eq(account.getAccountUuid().toString()), eq("user.registered"), eq(1), any());
+
+        // Self-service activation audits with the account's own UUID as actor (Finding 5) -
+        // distinct from the admin path's real-admin actorUuid, tested above.
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
+                ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().eventType()).isEqualTo("account.activated");
+        assertThat(auditCaptor.getValue().actorUuid()).isEqualTo(account.getAccountUuid());
+        assertThat(auditCaptor.getValue().accountUuid()).isEqualTo(account.getAccountUuid());
+    }
+
+    @Test
+    void shouldRejectVerificationWhenTokenConsumeReturnsEmpty() {
+        when(verificationTokenService.consume("bad-token")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.activateFromVerificationToken("bad-token"))
+                .isInstanceOf(AccountService.VerificationTokenRejectedException.class);
+
+        verify(accountRepository, never()).findByAccountUuid(any());
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void shouldRejectVerificationWhenAccountIsNotPendingVerification() {
+        // T06 frozen brief Finding 2: the status check must happen before activateEmail() is
+        // called, so InvalidAccountStateException (a distinguishing exception) never leaks here.
+        Account account = Account.register("already-active@example.com", ENCODED);
+        account.activateEmail();
+        when(verificationTokenService.consume("stale-token")).thenReturn(Optional.of(account.getAccountUuid()));
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+                .thenReturn(Optional.of(account));
+
+        assertThatThrownBy(() -> service.activateFromVerificationToken("stale-token"))
+                .isInstanceOf(AccountService.VerificationTokenRejectedException.class)
+                .isNotInstanceOf(InvalidAccountStateException.class);
+
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @org.junit.jupiter.api.DisplayName("shouldResendVerificationOnlyForPending accounts")
+    @Test
+    void shouldResendVerificationOnlyForPendingAccounts() {
+        Account pending = Account.register("pending@example.com", ENCODED);
+        Account active = Account.register("active@example.com", ENCODED);
+        active.activateEmail();
+        when(accountRepository.findByEmail("pending@example.com")).thenReturn(Optional.of(pending));
+        when(accountRepository.findByEmail("active@example.com")).thenReturn(Optional.of(active));
+        when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+
+        service.resendVerificationIfPending("pending@example.com");
+        service.resendVerificationIfPending("active@example.com");
+        service.resendVerificationIfPending("unknown@example.com");
+
+        verify(verificationTokenService)
+                .issue(eq(pending.getAccountUuid()), eq(VerificationToken.Purpose.EMAIL_VERIFY));
+        verify(verificationTokenService, never())
+                .issue(eq(active.getAccountUuid()), any());
+        verify(verificationTokenService, org.mockito.Mockito.times(1)).issue(any(), any());
+        verify(outboxPublisher, org.mockito.Mockito.times(1))
+                .publish(eq("verification-token"), any(), any(), anyInt(), any());
     }
 
     @Test

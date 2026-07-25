@@ -3,6 +3,8 @@ package com.themistra.auth.account;
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.dto.RegistrationAcknowledgement;
+import com.themistra.auth.account.dto.ResendVerificationRequest;
+import com.themistra.auth.account.dto.VerifyEmailRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -15,8 +17,10 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -67,5 +71,48 @@ class AccountControllerTest {
         AccountResponse response = controller.me(authentication);
 
         assertThat(response).isEqualTo(expected);
+    }
+
+    @Test
+    void verifyEmailReturnsNoContentOnSuccess() {
+        controller = new AccountController(accountService);
+        when(accountService.activateFromVerificationToken("a-valid-token")).thenReturn(
+                new AccountResponse(UUID.randomUUID(), "verified@example.com", true,
+                        AccountStatus.ACTIVE, Instant.now()));
+
+        ResponseEntity<Void> response = controller.verifyEmail(new VerifyEmailRequest("a-valid-token"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(response.getBody()).isNull();
+    }
+
+    @Test
+    void verifyEmailPropagatesRejectionForTheExceptionHandlerToTranslate() {
+        // No local catch here (unlike register): the actual 400/INVALID_TOKEN response is
+        // AccountExceptionHandler's job (AccountExceptionHandlerTest), not observable through
+        // this plain-Mockito controller test.
+        controller = new AccountController(accountService);
+        when(accountService.activateFromVerificationToken(any()))
+                .thenThrow(new AccountService.VerificationTokenRejectedException());
+
+        assertThatThrownBy(() -> controller.verifyEmail(new VerifyEmailRequest("bad-token")))
+                .isInstanceOf(AccountService.VerificationTokenRejectedException.class);
+    }
+
+    @Test
+    void resendVerificationAlwaysReturnsTheSameAcknowledgementRegardlessOfMatch() {
+        // resendVerificationIfPending is void - nothing for the controller to branch on, whether
+        // it actually issued a token or silently no-opped (R6, as modified: uniform response).
+        controller = new AccountController(accountService);
+
+        RegistrationAcknowledgement matchResponse =
+                controller.resendVerification(new ResendVerificationRequest("pending@example.com"));
+        RegistrationAcknowledgement noMatchResponse =
+                controller.resendVerification(new ResendVerificationRequest("unknown@example.com"));
+
+        assertThat(matchResponse).isEqualTo(RegistrationAcknowledgement.standard());
+        assertThat(noMatchResponse).isEqualTo(RegistrationAcknowledgement.standard());
+        verify(accountService).resendVerificationIfPending("pending@example.com");
+        verify(accountService).resendVerificationIfPending("unknown@example.com");
     }
 }

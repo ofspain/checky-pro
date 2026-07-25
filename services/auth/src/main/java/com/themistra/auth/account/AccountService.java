@@ -55,10 +55,11 @@ public class AccountService {
      * real duplicate guard — the existsByEmail pre-check only provides the friendlier path;
      * a concurrent insert between check and save still surfaces as {@link DuplicateEmailException}.
      *
-     * No event is published here: per target-design §9, {@code auth.user.registered} fires at
-     * email-confirmation time ({@link #activateEmail}), not at initial signup. The
-     * {@code auth.email.requested} event that would trigger the verification email belongs to
-     * the not-yet-built verification-token flow (account module, email-verification stage).
+     * <p>On success, issues a verification token and emits {@code auth.email.requested} (purpose
+     * {@code verify_email}) in this same transaction (R3) via {@link #issueAndEmitVerificationEmail}.
+     * {@code auth.user.registered} still only fires at email-confirmation time — either
+     * self-service ({@link #activateFromVerificationToken}) or the admin stand-in
+     * ({@link #activateEmail}) — never at initial signup.</p>
      */
     @Transactional
     public AccountResponse register(@Valid RegisterAccountRequest request) {
@@ -120,13 +121,12 @@ public class AccountService {
     }
 
     /**
-     * Marks the email verified and activates the account.
-     *
-     * <p>Interim (D-024): the intended self-service flow is a single-use, hashed, TTL'd
-     * verification token emailed to the user — that flow is not yet built. Until it is, this is
-     * reachable only via an authenticated ADMIN endpoint, which makes it an admin action worth
-     * auditing (unlike the self-service activation this will become, {@code actorUuid} is
-     * always a real admin here, never null).</p>
+     * Marks the email verified and activates the account — the admin-initiated path, reachable
+     * only via the authenticated admin endpoint, always audited with a real admin
+     * {@code actorUuid} (never null). {@link #activateFromVerificationToken} is the self-service
+     * counterpart added by T06 (actor = the account's own UUID); this method is not a stand-in
+     * for it and is kept intentionally distinct, not merged, so admin-initiated activation
+     * remains separately auditable.
      */
     @Transactional
     public AccountResponse activateEmail(UUID accountUuid, UUID actorUuid) {

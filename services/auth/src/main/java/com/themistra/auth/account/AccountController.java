@@ -18,8 +18,11 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.UUID;
 
 /**
- * Self-service account endpoints. {@code POST /accounts} is the only public route this service
- * exposes on this path (PublicEndpoints.METHOD_SCOPED) — everything else here requires a token.
+ * Self-service account endpoints. Three public routes on this path
+ * (PublicEndpoints.METHOD_SCOPED): {@code POST /accounts} (registration), {@code POST
+ * /accounts/verify-email} (token possession is the credential), and {@code POST
+ * /accounts/resend-verification} (email-identified, enumeration-safe). Every other
+ * {@code /accounts/**} endpoint here requires an authenticated token.
  */
 @RestController
 @RequestMapping("/accounts")
