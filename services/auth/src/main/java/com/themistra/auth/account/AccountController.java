@@ -3,6 +3,8 @@ package com.themistra.auth.account;
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.dto.RegistrationAcknowledgement;
+import com.themistra.auth.account.dto.ResendVerificationRequest;
+import com.themistra.auth.account.dto.VerifyEmailRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -54,5 +56,30 @@ public class AccountController {
     public AccountResponse me(Authentication authentication) {
         UUID accountUuid = UUID.fromString(authentication.getName());
         return accountService.getByUuid(accountUuid);
+    }
+
+    /**
+     * Public — token possession is the credential (R4). Success and failure are allowed to
+     * differ (204 vs. 400); only failure reasons must be uniform among themselves (R5), which
+     * {@link AccountExceptionHandler}'s single mapping for
+     * {@link AccountService.VerificationTokenRejectedException} guarantees. No local catch here,
+     * unlike {@link #register} — this endpoint's two outcomes are meant to be distinguishable.
+     */
+    @PostMapping("/verify-email")
+    public ResponseEntity<Void> verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
+        accountService.activateFromVerificationToken(request.token());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Public, email-identified (R6, as modified at the Phase 0 human-approval gate). Always
+     * returns the same acknowledgement — {@link AccountService#resendVerificationIfPending}
+     * never throws for a non-match, so there is nothing here to distinguish outcomes on.
+     */
+    @PostMapping("/resend-verification")
+    public RegistrationAcknowledgement resendVerification(
+            @Valid @RequestBody ResendVerificationRequest request) {
+        accountService.resendVerificationIfPending(request.email());
+        return RegistrationAcknowledgement.standard();
     }
 }

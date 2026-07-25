@@ -26,7 +26,9 @@ public final class PublicEndpoints {
      * expose (e.g. self-registration is POST-only; nothing else on {@code /accounts} is public).
      */
     public static final List<MethodScoped> METHOD_SCOPED = List.of(
-            new MethodScoped(HttpMethod.POST, "/accounts")   // self-registration (enumeration-safe response)
+            new MethodScoped(HttpMethod.POST, "/accounts"),                     // self-registration (enumeration-safe response)
+            new MethodScoped(HttpMethod.POST, "/accounts/verify-email"),        // token possession is the credential
+            new MethodScoped(HttpMethod.POST, "/accounts/resend-verification")  // email-identified, enumeration-safe response
     );
 
     private PublicEndpoints() {

@@ -30,4 +30,17 @@ public class AccountExceptionHandler {
         problem.setDetail(e.getMessage());
         return problem;
     }
+
+    /**
+     * The single mapping for every verification-token rejection reason (R5) — fixed status,
+     * fixed title, no detail that could vary by cause. Never distinguishes "not found" from
+     * "expired" from "already used" from "wrong account state".
+     */
+    @ExceptionHandler(AccountService.VerificationTokenRejectedException.class)
+    ProblemDetail onVerificationTokenRejected(AccountService.VerificationTokenRejectedException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setType(ProblemTypes.INVALID_TOKEN);
+        problem.setTitle("Verification token is invalid or expired");
+        return problem;
+    }
 }

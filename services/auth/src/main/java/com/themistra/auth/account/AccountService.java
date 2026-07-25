@@ -3,6 +3,7 @@ package com.themistra.auth.account;
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.LoginView;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
+import com.themistra.auth.account.event.EmailRequestedEventPayload;
 import com.themistra.auth.account.event.UserLifecycleEventPayload;
 import com.themistra.auth.audit.AuditOutcome;
 import com.themistra.auth.audit.AuditService;
@@ -35,14 +36,17 @@ public class AccountService {
     private final PasswordEncoder passwordEncoder;
     private final OutboxPublisher outboxPublisher;
     private final AuditService auditService;
+    private final VerificationTokenService verificationTokenService;
     private final Clock clock;
 
     public AccountService(AccountRepository accountRepository, PasswordEncoder passwordEncoder,
-                          OutboxPublisher outboxPublisher, AuditService auditService, Clock clock) {
+                          OutboxPublisher outboxPublisher, AuditService auditService,
+                          VerificationTokenService verificationTokenService, Clock clock) {
         this.accountRepository = accountRepository;
         this.passwordEncoder = passwordEncoder;
         this.outboxPublisher = outboxPublisher;
         this.auditService = auditService;
+        this.verificationTokenService = verificationTokenService;
         this.clock = clock;
     }
 
@@ -65,11 +69,54 @@ public class AccountService {
         }
 
         Account account = Account.register(email, passwordEncoder.encode(request.password()));
+        Account saved;
         try {
-            return AccountResponse.from(accountRepository.saveAndFlush(account));
+            saved = accountRepository.saveAndFlush(account);
         } catch (DataIntegrityViolationException e) {
             throw new DuplicateEmailException();
         }
+        issueAndEmitVerificationEmail(saved);
+        return AccountResponse.from(saved);
+    }
+
+    /**
+     * Redeems a verification token and activates the account it belongs to (R4). The status is
+     * checked before {@link Account#activateEmail()} is called specifically so that an account in
+     * any state other than {@code PENDING_VERIFICATION} (already active, locked, etc.) never
+     * reaches that method's own guard — which throws {@link InvalidAccountStateException}, a
+     * distinguishing exception mapped to a different HTTP response than R5's uniform rejection
+     * would require. Every rejection reason - token not found/expired/used (T05's {@code consume}
+     * already guarantees this uniformly) or wrong account status (this method's own check) -
+     * surfaces identically as {@link VerificationTokenRejectedException}.
+     */
+    @Transactional
+    public AccountResponse activateFromVerificationToken(String rawToken) {
+        UUID accountUuid = verificationTokenService.consume(rawToken)
+                .orElseThrow(VerificationTokenRejectedException::new);
+
+        Account account = getAccount(accountUuid);
+        if (account.getStatus() != AccountStatus.PENDING_VERIFICATION) {
+            throw new VerificationTokenRejectedException();
+        }
+
+        account.activateEmail();
+        publishLifecycleEvent(account, "user.registered");
+        recordAudit("account.activated", account.getAccountUuid(), account.getAccountUuid());
+        return AccountResponse.from(account);
+    }
+
+    /**
+     * Issues a new verification token and emits {@code auth.email.requested} only when
+     * {@code email} resolves to a {@code PENDING_VERIFICATION} account (R6, as modified at the
+     * Phase 0 human-approval gate: public and email-identified, not authenticated). Silently a
+     * no-op otherwise - no state change, no distinguishing signal for the caller to observe
+     * (accepted timing/observability trade-off, T06 frozen brief Finding 4).
+     */
+    @Transactional
+    public void resendVerificationIfPending(String email) {
+        accountRepository.findByEmail(normalize(email))
+                .filter(account -> account.getStatus() == AccountStatus.PENDING_VERIFICATION)
+                .ifPresent(this::issueAndEmitVerificationEmail);
     }
 
     /**
@@ -141,6 +188,18 @@ public class AccountService {
                         account.getAccountUuid(), account.getPasswordHash(), account.getStatus()));
     }
 
+    private void issueAndEmitVerificationEmail(Account account) {
+        VerificationTokenService.VerificationTokenResult result =
+                verificationTokenService.issue(account.getAccountUuid(), VerificationToken.Purpose.EMAIL_VERIFY);
+        outboxPublisher.publish(
+                "verification-token",
+                account.getAccountUuid().toString(),
+                "email.requested",
+                SCHEMA_VERSION,
+                new EmailRequestedEventPayload(
+                        account.getAccountUuid(), "verify_email", result.rawToken(), clock.instant()));
+    }
+
     private void recordAudit(String eventType, UUID accountUuid, UUID actorUuid) {
         auditService.record(new RecordAuditEventRequest(
                 eventType, AuditOutcome.SUCCESS, accountUuid, actorUuid, null, null, null, null));
@@ -162,5 +221,18 @@ public class AccountService {
 
     private static String normalize(String email) {
         return email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * The single, uniform rejection for every reason a verification token redemption can fail
+     * (not found, expired, already used, or - this class's own addition - the account is not
+     * {@code PENDING_VERIFICATION}). R5's enumeration-safety guarantee depends on there being
+     * exactly one exception type here, mapped to exactly one HTTP response.
+     */
+    public static class VerificationTokenRejectedException extends RuntimeException {
+
+        public VerificationTokenRejectedException() {
+            super("Verification token is invalid, expired, or already used");
+        }
     }
 }
