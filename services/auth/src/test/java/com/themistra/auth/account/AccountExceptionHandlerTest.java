@@ -59,6 +59,19 @@ class AccountExceptionHandlerTest {
     }
 
     @Test
+    void onCurrentPasswordMismatchResponseIsIdenticalRegardlessOfConstructionSite() {
+        ProblemDetail first = handler.onCurrentPasswordMismatch(
+                new AccountService.CurrentPasswordMismatchException());
+        ProblemDetail second = handler.onCurrentPasswordMismatch(
+                new AccountService.CurrentPasswordMismatchException());
+
+        assertThat(first.getStatus()).isEqualTo(second.getStatus());
+        assertThat(first.getType()).isEqualTo(second.getType());
+        assertThat(first.getTitle()).isEqualTo(second.getTitle());
+        assertThat(first.getDetail()).isEqualTo(second.getDetail());
+    }
+
+    @Test
     void onPasswordPolicyViolationReturns400WithValidationErrorTypeAndDetail() {
         ProblemDetail problem = handler.onPasswordPolicyViolation(
                 new PasswordPolicy.PasswordPolicyViolationException("Password must be between 12 and 128 characters"));

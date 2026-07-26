@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -29,6 +30,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -604,7 +606,18 @@ class AccountServiceTest {
         service.changePassword(accountUuid, "current-password", "new-correct-horse");
 
         assertThat(account.getPasswordHash()).isEqualTo("{bcrypt}new-encoded");
+        // Kimi Phase 11 Gap 1: prove encode() received the raw new password, not just that the
+        // account ended up holding whatever the (separately stubbed) encoder returned.
+        verify(passwordEncoder).encode("new-correct-horse");
         verify(passwordPolicy).validate("new-correct-horse", accountUuid, accountUuid);
+
+        // Kimi Phase 11 Gap 2: prove the frozen brief's fixed gate order actually held - a
+        // regression that reordered the policy check and the encode call would pass every other
+        // assertion here but fail this one.
+        InOrder inOrder = inOrder(passwordEncoder, passwordPolicy);
+        inOrder.verify(passwordEncoder).matches("current-password", ENCODED);
+        inOrder.verify(passwordPolicy).validate("new-correct-horse", accountUuid, accountUuid);
+        inOrder.verify(passwordEncoder).encode("new-correct-horse");
 
         ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
                 ArgumentCaptor.forClass(RecordAuditEventRequest.class);
@@ -644,6 +657,12 @@ class AccountServiceTest {
         assertThatThrownBy(() -> service.changePassword(accountUuid, "current-password", "short"))
                 .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
 
+        // Kimi Phase 11 Gap 2 (rejection-path ordering): matches() must genuinely run before
+        // validate() throws - not that validate() short-circuits it - and encode() is never
+        // reached once validate() rejects.
+        InOrder inOrder = inOrder(passwordEncoder, passwordPolicy);
+        inOrder.verify(passwordEncoder).matches("current-password", ENCODED);
+        inOrder.verify(passwordPolicy).validate("short", accountUuid, accountUuid);
         verify(passwordEncoder, never()).encode(anyString());
         assertThat(account.getPasswordHash()).isEqualTo(ENCODED);
         verify(auditService, never()).record(any());
@@ -705,6 +724,15 @@ class AccountServiceTest {
 
         assertThat(account.getPasswordHash()).isEqualTo("{bcrypt}re-encoded");
         verify(passwordPolicy).validate("same-password", accountUuid, accountUuid);
+
+        // Kimi Phase 11 Gap 4: AC9 (allowed) doesn't excuse AC6 (audited) - this scenario still
+        // must go through the same success-path audit as any other valid change.
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
+                ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().eventType()).isEqualTo("password.changed");
+        assertThat(auditCaptor.getValue().actorUuid()).isEqualTo(accountUuid);
+        assertThat(auditCaptor.getValue().accountUuid()).isEqualTo(accountUuid);
     }
 
     /** Shared fixture for a PASSWORD_RESET-purposed issue(...) result - mirrors setUp()'s EMAIL_VERIFY stub. */
