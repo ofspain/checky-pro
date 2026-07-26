@@ -139,6 +139,8 @@ class AccountServiceTest {
 
         verify(passwordEncoder, never()).encode(anyString());
         verify(accountRepository, never()).saveAndFlush(any());
+        verify(verificationTokenService, never()).issue(any(), any());
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
     }
 
     @Test
@@ -222,17 +224,37 @@ class AccountServiceTest {
     void shouldRejectVerificationWhenAccountIsNotPendingVerification() {
         // T06 frozen brief Finding 2: the status check must happen before activateEmail() is
         // called, so InvalidAccountStateException (a distinguishing exception) never leaks here.
-        Account account = Account.register("already-active@example.com", ENCODED);
+        // A spy (not a plain instance) lets this test prove activateEmail() is genuinely never
+        // invoked during the rejected attempt, not just that no event/audit followed from it
+        // (Phase 11 Gap 6) - the setup call below is the only recorded invocation.
+        Account account = org.mockito.Mockito.spy(Account.register("already-active@example.com", ENCODED));
         account.activateEmail();
-        when(verificationTokenService.consume("stale-token")).thenReturn(Optional.of(account.getAccountUuid()));
-        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
-                .thenReturn(Optional.of(account));
+        UUID accountUuid = account.getAccountUuid();
+        when(verificationTokenService.consume("stale-token")).thenReturn(Optional.of(accountUuid));
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
 
         assertThatThrownBy(() -> service.activateFromVerificationToken("stale-token"))
                 .isInstanceOf(AccountService.VerificationTokenRejectedException.class)
                 .isNotInstanceOf(InvalidAccountStateException.class);
 
         assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        verify(account, org.mockito.Mockito.times(1)).activateEmail(); // only the setup call above
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void shouldRejectVerificationWhenAccountDisappearsAfterConsume() {
+        // Phase 8/11 finding: activateFromVerificationToken must never let AccountNotFoundException
+        // (a distinguishing 404) escape, even in this defensive, normally-unreachable case.
+        UUID accountUuid = UUID.randomUUID();
+        when(verificationTokenService.consume("orphaned-token")).thenReturn(Optional.of(accountUuid));
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.activateFromVerificationToken("orphaned-token"))
+                .isInstanceOf(AccountService.VerificationTokenRejectedException.class)
+                .isNotInstanceOf(AccountNotFoundException.class);
+
         verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
         verify(auditService, never()).record(any());
     }
@@ -258,6 +280,18 @@ class AccountServiceTest {
         verify(verificationTokenService, org.mockito.Mockito.times(1)).issue(any(), any());
         verify(outboxPublisher, org.mockito.Mockito.times(1))
                 .publish(eq("verification-token"), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void resendVerificationNormalizesEmailBeforeLookup() {
+        Account pending = Account.register("normalized@example.com", ENCODED);
+        when(accountRepository.findByEmail("normalized@example.com")).thenReturn(Optional.of(pending));
+
+        service.resendVerificationIfPending("  Normalized@Example.COM ");
+
+        verify(accountRepository).findByEmail("normalized@example.com");
+        verify(verificationTokenService)
+                .issue(eq(pending.getAccountUuid()), eq(VerificationToken.Purpose.EMAIL_VERIFY));
     }
 
     @Test

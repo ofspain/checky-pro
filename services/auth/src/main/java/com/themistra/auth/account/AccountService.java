@@ -87,15 +87,22 @@ public class AccountService {
      * reaches that method's own guard — which throws {@link InvalidAccountStateException}, a
      * distinguishing exception mapped to a different HTTP response than R5's uniform rejection
      * would require. Every rejection reason - token not found/expired/used (T05's {@code consume}
-     * already guarantees this uniformly) or wrong account status (this method's own check) -
-     * surfaces identically as {@link VerificationTokenRejectedException}.
+     * already guarantees this uniformly), the resolved account no longer existing (defensive; not
+     * reachable today given {@code verification_tokens}'s cascading FK), or wrong account status
+     * (this method's own check) - surfaces identically as {@link VerificationTokenRejectedException}.
      */
     @Transactional
     public AccountResponse activateFromVerificationToken(String rawToken) {
         UUID accountUuid = verificationTokenService.consume(rawToken)
                 .orElseThrow(VerificationTokenRejectedException::new);
 
-        Account account = getAccount(accountUuid);
+        // findByAccountUuid (not the shared getAccount helper) deliberately: a missing account
+        // here must fall into the same uniform rejection as every other reason, not
+        // AccountNotFoundException's distinguishing 404 (Phase 8/11 finding). Unreachable today
+        // given verification_tokens.account_id's ON DELETE CASCADE, but this method's R5 contract
+        // shouldn't depend on that constraint never changing.
+        Account account = accountRepository.findByAccountUuid(accountUuid)
+                .orElseThrow(VerificationTokenRejectedException::new);
         if (account.getStatus() != AccountStatus.PENDING_VERIFICATION) {
             throw new VerificationTokenRejectedException();
         }

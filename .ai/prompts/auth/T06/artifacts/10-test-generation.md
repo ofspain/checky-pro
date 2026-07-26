@@ -89,3 +89,43 @@ against the module's resolved test-scope classpath, then executed via the JUnit 
 these tests (unlike T05's episode) — likely because Phase 9's fix to `AccountServiceTest` already
 established the correct mocking pattern (shared `lenient()` stub for
 `verificationTokenService.issue(...)`) that every subsequent test in this phase reused.
+
+---
+
+## Addendum: Phase 11 gap fixes
+
+Kimi's Phase 11 review (`11-test-review.md`) found 6 gaps. One was factually incorrect (checked
+against the actual code, not accepted at face value); one production defect was fixed live (a
+reversal of an earlier explicit deferral, by human decision); the rest were straightforward test
+additions.
+
+- **Gap 1 (HIGH, production fix + test).** The Phase 9-deferred `AccountNotFoundException` leak in
+  `activateFromVerificationToken` was fixed for real this time: `getAccount(...)` (which throws the
+  distinguishing exception) replaced with `accountRepository.findByAccountUuid(...)
+  .orElseThrow(VerificationTokenRejectedException::new)`. New test
+  `shouldRejectVerificationWhenAccountDisappearsAfterConsume` proves it.
+- **Gap 2 (MEDIUM) — REJECTED, factually inaccurate.** Kimi claimed
+  `shouldResendVerificationOnlyForPendingAccounts` stubs `findByEmail` three times with "the same
+  email argument." Checked directly against the file: it already uses three distinct emails
+  (`pending@example.com`, `active@example.com`, `unknown@example.com`) — exactly what Kimi's own
+  suggested fix recommends. No change made.
+- **Gap 3 (MEDIUM) — deferred, not built.** A real `MockMvc`-based end-to-end test of the
+  `400`/`INVALID_TOKEN` response would close the gap between `AccountControllerTest` (propagation
+  only) and `AccountExceptionHandlerTest` (direct handler call), but this module has no `MockMvc`
+  precedent anywhere yet. Deferred to a future integration-test pass rather than introducing a new
+  testing style for this one case.
+- **Gap 4 (LOW).** New test `resendVerificationNormalizesEmailBeforeLookup` — whitespace/case
+  variants resolve to the same normalized lookup.
+- **Gap 5 (LOW).** `registerRejectsKnownDuplicateWithoutTouchingEncoder` now also asserts
+  `verificationTokenService`/`outboxPublisher` are never touched on a duplicate.
+- **Gap 6 (LOW).** `shouldRejectVerificationWhenAccountIsNotPendingVerification` now uses a
+  `Mockito.spy` on the `Account` and asserts `activateEmail()` was invoked exactly once (the setup
+  call), proving the rejected attempt never reached it — not just that no event/audit followed.
+
+**A second instance of the nested-stubbing gotcha** (first found in T05): the spy-based Gap 6 test
+initially called `account.getAccountUuid()` *inside* an open `when(...).thenReturn(...)` call —
+any Mockito-managed object (mock or spy) triggers the same "unfinished stubbing" failure when
+touched mid-stub, not just plain mocks. Fixed the same way: extract to a local variable first.
+
+**Final count: 28 tests, all passing** (17 `AccountServiceTest` + 6 `AccountControllerTest` + 2
+`AccountExceptionHandlerTest` + 3 `EventTopicsTest`), verified the same way as above.
