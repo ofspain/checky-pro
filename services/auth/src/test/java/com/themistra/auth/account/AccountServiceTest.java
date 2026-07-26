@@ -438,6 +438,9 @@ class AccountServiceTest {
                 .issue(any(), eq(VerificationToken.Purpose.PASSWORD_RESET));
         verify(outboxPublisher, org.mockito.Mockito.times(2))
                 .publish(eq("verification-token"), any(), eq("email.requested"), anyInt(), any());
+        // Kimi Phase 11 Gap 7: the reset-request path must never accidentally emit an "account"
+        // aggregate lifecycle event - only the verification-token/email.requested pair.
+        verify(outboxPublisher, never()).publish(eq("account"), any(), any(), anyInt(), any());
     }
 
     @Test
@@ -487,6 +490,9 @@ class AccountServiceTest {
 
         assertThat(account.getPasswordHash()).isEqualTo("{bcrypt}new-encoded");
         assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        // Kimi Phase 11 Gap 6: prove the encoder actually received the raw new password, not just
+        // that the account ended up holding whatever the (separately stubbed) encoder returned.
+        verify(passwordEncoder).encode("new-correct-horse");
         verify(refreshTokenTracker).revokeAllForPrincipal(accountUuid.toString(), "PASSWORD_RESET");
 
         ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
@@ -562,6 +568,7 @@ class AccountServiceTest {
         suspended.suspend();
 
         for (Account ineligible : java.util.List.of(pending, deleted, suspended)) {
+            String originalPasswordHash = ineligible.getPasswordHash();
             String rawToken = "reset-token-" + ineligible.getAccountUuid();
             when(verificationTokenService.consumeForPurpose(rawToken, VerificationToken.Purpose.PASSWORD_RESET))
                     .thenReturn(Optional.of(ineligible.getAccountUuid()));
@@ -571,8 +578,13 @@ class AccountServiceTest {
             assertThatThrownBy(() -> service.resetPassword(rawToken, "new-password"))
                     .isInstanceOf(AccountService.VerificationTokenRejectedException.class)
                     .isNotInstanceOf(InvalidAccountStateException.class);
+
+            // Kimi Phase 11 Gap 2: a rejected attempt must be a genuine no-op, not just silent on
+            // the audit/revoke side - the password must never even reach the encoder.
+            assertThat(ineligible.getPasswordHash()).isEqualTo(originalPasswordHash);
         }
 
+        verify(passwordEncoder, never()).encode(anyString());
         verify(refreshTokenTracker, never()).revokeAllForPrincipal(any(), any());
         verify(auditService, never()).record(any());
     }

@@ -273,6 +273,10 @@ class VerificationTokenServiceTest {
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> service.consume(null))
                 .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> service.consumeForPurpose(null, VerificationToken.Purpose.PASSWORD_RESET))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> service.consumeForPurpose("token", null))
+                .isInstanceOf(NullPointerException.class);
     }
 
     @Test
@@ -354,6 +358,53 @@ class VerificationTokenServiceTest {
 
         assertThat(service.consumeForPurpose(rawToken, VerificationToken.Purpose.EMAIL_VERIFY)).isEmpty();
         verify(tokenRepository, never()).markConsumed(eq(hash), any());
+    }
+
+    @Test
+    void shouldRejectConsumeForPurposeWhenAccountBecomesUnusableBetweenTheTwoChecks() {
+        // Kimi Phase 11 Gap 4: consumeForPurpose mirrors consume()'s pre-check/post-check race
+        // guarantee (shouldRejectConsumeWhenAccountBecomesUnusableBetweenTheTwoChecks above) -
+        // markConsumed succeeds, but the account is no longer usable by the post-consume re-check.
+        String rawToken = "race-reset-token";
+        String hash = stubToken(rawToken, VerificationToken.Purpose.PASSWORD_RESET, NOW.plusSeconds(3600), null);
+        when(tokenRepository.markConsumed(eq(hash), any())).thenReturn(1);
+        Account activeAccount = usableAccount(AccountStatus.ACTIVE);
+        Account suspendedAccount = usableAccount(AccountStatus.SUSPENDED);
+        when(accountRepository.findById(ACCOUNT_ID))
+                .thenReturn(Optional.of(activeAccount))
+                .thenReturn(Optional.of(suspendedAccount));
+
+        assertThat(service.consumeForPurpose(rawToken, VerificationToken.Purpose.PASSWORD_RESET)).isEmpty();
+    }
+
+    @Test
+    void shouldRejectExpiredPasswordResetTokenViaConsumeForPurpose() {
+        // consumeForPurpose has no explicit expiry check of its own - like consume(), it relies on
+        // markConsumed's own atomic WHERE expiresAt > :now to filter an expired token out at the DB
+        // level (0 rows affected). The account must still be usable so the pre-check doesn't
+        // short-circuit before markConsumed is even attempted.
+        String rawToken = "expired-reset-token";
+        String hash = stubToken(rawToken, VerificationToken.Purpose.PASSWORD_RESET, NOW.minusSeconds(1), null);
+        Account account = usableAccount(AccountStatus.ACTIVE);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        when(tokenRepository.markConsumed(eq(hash), any())).thenReturn(0);
+
+        assertThat(service.consumeForPurpose(rawToken, VerificationToken.Purpose.PASSWORD_RESET)).isEmpty();
+    }
+
+    @Test
+    void shouldRejectAlreadyUsedPasswordResetTokenViaConsumeForPurpose() {
+        // Same DB-level filter, this time on markConsumed's WHERE usedAt IS NULL - the mutation is
+        // genuinely attempted and lost (unlike the purpose-mismatch/unusable-account cases, which
+        // reject before markConsumed is ever called).
+        String rawToken = "used-reset-token";
+        String hash = stubToken(
+                rawToken, VerificationToken.Purpose.PASSWORD_RESET, NOW.plusSeconds(3600), NOW.minusSeconds(1));
+        Account account = usableAccount(AccountStatus.ACTIVE);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        when(tokenRepository.markConsumed(eq(hash), any())).thenReturn(0);
+
+        assertThat(service.consumeForPurpose(rawToken, VerificationToken.Purpose.PASSWORD_RESET)).isEmpty();
     }
 
     @Test

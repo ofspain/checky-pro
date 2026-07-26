@@ -121,16 +121,21 @@ class AccountControllerTest {
 
     @Test
     void passwordResetRequestReturnsForPasswordResetAcknowledgementRegardlessOfMatch() {
-        controller = new AccountController(accountService);
-
-        RegistrationAcknowledgement response =
-                controller.passwordResetRequest(new PasswordResetRequest("reset-me@example.com"));
-
         // Distinct wording from resendVerification's standard() acknowledgement (Finding 5/R12) —
         // and, like resendVerification, nothing here to branch on since requestPasswordReset never
-        // throws for a non-match.
-        assertThat(response).isEqualTo(RegistrationAcknowledgement.forPasswordReset());
+        // throws for a non-match. Kimi Phase 11 Gap 1: prove both a match and a non-match return
+        // the identical acknowledgement, mirroring resendVerificationAlwaysReturnsTheSameAcknowledgementRegardlessOfMatch.
+        controller = new AccountController(accountService);
+
+        RegistrationAcknowledgement matchResponse =
+                controller.passwordResetRequest(new PasswordResetRequest("reset-me@example.com"));
+        RegistrationAcknowledgement noMatchResponse =
+                controller.passwordResetRequest(new PasswordResetRequest("unknown@example.com"));
+
+        assertThat(matchResponse).isEqualTo(RegistrationAcknowledgement.forPasswordReset());
+        assertThat(noMatchResponse).isEqualTo(RegistrationAcknowledgement.forPasswordReset());
         verify(accountService).requestPasswordReset("reset-me@example.com");
+        verify(accountService).requestPasswordReset("unknown@example.com");
     }
 
     @Test
