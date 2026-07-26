@@ -60,6 +60,9 @@ class AccountServiceTest {
     @Mock
     private RefreshTokenTracker refreshTokenTracker;
 
+    @Mock
+    private PasswordPolicy passwordPolicy;
+
     private AccountService service;
 
     @BeforeEach
@@ -67,7 +70,7 @@ class AccountServiceTest {
         Clock fixed = Clock.fixed(NOW, ZoneOffset.UTC);
         service = new AccountService(
                 accountRepository, passwordEncoder, outboxPublisher, auditService,
-                verificationTokenService, refreshTokenTracker, fixed);
+                verificationTokenService, refreshTokenTracker, passwordPolicy, fixed);
         // Shared, lenient: every test that reaches register()'s success path needs a non-null
         // issue(...) result (register now always issues+emits a verification token, R3); tests
         // that never reach that path (duplicate-email, constraint-race) simply don't use this stub.
@@ -587,6 +590,121 @@ class AccountServiceTest {
         verify(passwordEncoder, never()).encode(anyString());
         verify(refreshTokenTracker, never()).revokeAllForPrincipal(any(), any());
         verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void shouldChangePasswordWithCorrectCurrentPasswordAndPolicyCompliantNewPassword() {
+        Account account = Account.register("user@example.com", ENCODED);
+        account.activateEmail();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+        when(passwordEncoder.matches("current-password", ENCODED)).thenReturn(true);
+        when(passwordEncoder.encode("new-correct-horse")).thenReturn("{bcrypt}new-encoded");
+
+        service.changePassword(accountUuid, "current-password", "new-correct-horse");
+
+        assertThat(account.getPasswordHash()).isEqualTo("{bcrypt}new-encoded");
+        verify(passwordPolicy).validate("new-correct-horse", accountUuid, accountUuid);
+
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
+                ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().eventType()).isEqualTo("password.changed");
+        assertThat(auditCaptor.getValue().actorUuid()).isEqualTo(accountUuid);
+        assertThat(auditCaptor.getValue().accountUuid()).isEqualTo(accountUuid);
+    }
+
+    @Test
+    void shouldRejectChangePasswordWhenCurrentPasswordDoesNotMatch() {
+        Account account = Account.register("user@example.com", ENCODED);
+        account.activateEmail();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+        when(passwordEncoder.matches("wrong-password", ENCODED)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.changePassword(accountUuid, "wrong-password", "new-password"))
+                .isInstanceOf(AccountService.CurrentPasswordMismatchException.class);
+
+        verify(passwordPolicy, never()).validate(any(), any(), any());
+        verify(passwordEncoder, never()).encode(anyString());
+        assertThat(account.getPasswordHash()).isEqualTo(ENCODED);
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void shouldRejectChangePasswordWhenNewPasswordViolatesPolicy() {
+        Account account = Account.register("user@example.com", ENCODED);
+        account.activateEmail();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+        when(passwordEncoder.matches("current-password", ENCODED)).thenReturn(true);
+        org.mockito.Mockito.doThrow(new PasswordPolicy.PasswordPolicyViolationException("too short"))
+                .when(passwordPolicy).validate("short", accountUuid, accountUuid);
+
+        assertThatThrownBy(() -> service.changePassword(accountUuid, "current-password", "short"))
+                .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
+
+        verify(passwordEncoder, never()).encode(anyString());
+        assertThat(account.getPasswordHash()).isEqualTo(ENCODED);
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void shouldRejectChangePasswordForEveryNonActiveAccountStatus() {
+        Account pending = Account.register("pending@example.com", ENCODED);
+        Account locked = Account.register("locked@example.com", ENCODED);
+        locked.activateEmail();
+        locked.lock();
+        Account suspended = Account.register("suspended@example.com", ENCODED);
+        suspended.activateEmail();
+        suspended.suspend();
+        Account deleted = Account.register("deleted@example.com", ENCODED);
+        deleted.activateEmail();
+        deleted.markDeleted();
+
+        for (Account ineligible : java.util.List.of(pending, locked, suspended, deleted)) {
+            UUID accountUuid = ineligible.getAccountUuid();
+            when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(ineligible));
+
+            assertThatThrownBy(() -> service.changePassword(accountUuid, "current-password", "new-password"))
+                    .isInstanceOf(InvalidAccountStateException.class);
+        }
+
+        // The status gate runs before the current-password check (Finding 4) - proves the NPE
+        // risk on a DELETED account's null passwordHash is genuinely avoided, not just masked.
+        verify(passwordEncoder, never()).matches(any(), any());
+        verify(passwordEncoder, never()).encode(anyString());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void shouldNotRevokeRefreshTokenFamiliesOnSuccessfulPasswordChange() {
+        Account account = Account.register("user@example.com", ENCODED);
+        account.activateEmail();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+        when(passwordEncoder.matches(anyString(), eq(ENCODED))).thenReturn(true);
+        when(passwordEncoder.encode(anyString())).thenReturn("{bcrypt}new-encoded");
+
+        service.changePassword(accountUuid, "current-password", "new-password");
+
+        // Deliberate, tested trade-off (frozen brief decision 3) - not a silent omission.
+        verify(refreshTokenTracker, never()).revokeAllForPrincipal(any(), any());
+    }
+
+    @Test
+    void shouldAllowNewPasswordIdenticalToCurrentPassword() {
+        Account account = Account.register("user@example.com", ENCODED);
+        account.activateEmail();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+        when(passwordEncoder.matches("same-password", ENCODED)).thenReturn(true);
+        when(passwordEncoder.encode("same-password")).thenReturn("{bcrypt}re-encoded");
+
+        service.changePassword(accountUuid, "same-password", "same-password");
+
+        assertThat(account.getPasswordHash()).isEqualTo("{bcrypt}re-encoded");
+        verify(passwordPolicy).validate("same-password", accountUuid, accountUuid);
     }
 
     /** Shared fixture for a PASSWORD_RESET-purposed issue(...) result - mirrors setUp()'s EMAIL_VERIFY stub. */

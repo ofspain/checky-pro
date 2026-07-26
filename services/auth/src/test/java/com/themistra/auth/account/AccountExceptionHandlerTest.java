@@ -46,4 +46,26 @@ class AccountExceptionHandlerTest {
         assertThat(first.getTitle()).isEqualTo(second.getTitle());
         assertThat(first.getDetail()).isEqualTo(second.getDetail());
     }
+
+    @Test
+    void onCurrentPasswordMismatchReturns400WithCurrentPasswordMismatchType() {
+        ProblemDetail problem = handler.onCurrentPasswordMismatch(
+                new AccountService.CurrentPasswordMismatchException());
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(problem.getType()).isEqualTo(ProblemTypes.CURRENT_PASSWORD_MISMATCH);
+        assertThat(problem.getTitle()).isEqualTo("Current password is incorrect");
+        assertThat(problem.getDetail()).isNull();
+    }
+
+    @Test
+    void onPasswordPolicyViolationReturns400WithValidationErrorTypeAndDetail() {
+        ProblemDetail problem = handler.onPasswordPolicyViolation(
+                new PasswordPolicy.PasswordPolicyViolationException("Password must be between 12 and 128 characters"));
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(problem.getType()).isEqualTo(ProblemTypes.VALIDATION_ERROR);
+        assertThat(problem.getTitle()).isEqualTo("Password does not meet policy requirements");
+        assertThat(problem.getDetail()).isEqualTo("Password must be between 12 and 128 characters");
+    }
 }

@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -42,6 +43,8 @@ public class PasswordPolicy {
      * length bounds, or has appeared in a known breach.
      */
     public void validate(String rawPassword, UUID accountUuid, UUID actorUuid) {
+        Objects.requireNonNull(accountUuid, "accountUuid must not be null");
+        Objects.requireNonNull(actorUuid, "actorUuid must not be null");
         if (rawPassword == null || rawPassword.isBlank()) {
             throw new PasswordPolicyViolationException("Password must not be blank");
         }

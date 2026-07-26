@@ -12,6 +12,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.UUID;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -30,6 +32,8 @@ import static org.mockito.Mockito.when;
 class PasswordPolicyTest {
 
     private static final String URL_PREFIX = "https://api.pwnedpasswords.com/range/";
+    private static final UUID ACCOUNT_UUID = UUID.randomUUID();
+    private static final UUID ACTOR_UUID = UUID.randomUUID();
 
     @Mock
     private BreachCheckClient breachCheckClient;
@@ -46,9 +50,9 @@ class PasswordPolicyTest {
 
     @Test
     void shouldRejectPasswordShorterThan12OrLongerThan128() {
-        assertThatThrownBy(() -> policy.validate("a".repeat(11)))
+        assertThatThrownBy(() -> policy.validate("a".repeat(11), ACCOUNT_UUID, ACTOR_UUID))
                 .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
-        assertThatThrownBy(() -> policy.validate("a".repeat(129)))
+        assertThatThrownBy(() -> policy.validate("a".repeat(129), ACCOUNT_UUID, ACTOR_UUID))
                 .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
 
         verifyNoInteractions(breachCheckClient);
@@ -58,19 +62,19 @@ class PasswordPolicyTest {
     void shouldAcceptPasswordAtExactly12And128CharacterBoundaries() {
         when(breachCheckClient.isBreached(anyString())).thenReturn(false);
 
-        assertThatCode(() -> policy.validate("a".repeat(12))).doesNotThrowAnyException();
-        assertThatCode(() -> policy.validate("a".repeat(128))).doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("a".repeat(12), ACCOUNT_UUID, ACTOR_UUID)).doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("a".repeat(128), ACCOUNT_UUID, ACTOR_UUID)).doesNotThrowAnyException();
 
         verifyNoInteractions(auditService);
     }
 
     @Test
     void shouldRejectNullOrBlankPassword() {
-        assertThatThrownBy(() -> policy.validate(null))
+        assertThatThrownBy(() -> policy.validate(null, ACCOUNT_UUID, ACTOR_UUID))
                 .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
-        assertThatThrownBy(() -> policy.validate(""))
+        assertThatThrownBy(() -> policy.validate("", ACCOUNT_UUID, ACTOR_UUID))
                 .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
-        assertThatThrownBy(() -> policy.validate("            "))
+        assertThatThrownBy(() -> policy.validate("            ", ACCOUNT_UUID, ACTOR_UUID))
                 .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
 
         verifyNoInteractions(breachCheckClient);
@@ -80,7 +84,7 @@ class PasswordPolicyTest {
     void shouldRejectBreachedPasswordUsingHibpRange() {
         when(breachCheckClient.isBreached("correct-horse-battery")).thenReturn(true);
 
-        assertThatThrownBy(() -> policy.validate("correct-horse-battery"))
+        assertThatThrownBy(() -> policy.validate("correct-horse-battery", ACCOUNT_UUID, ACTOR_UUID))
                 .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
 
         verifyNoInteractions(auditService);
@@ -91,15 +95,18 @@ class PasswordPolicyTest {
         when(breachCheckClient.isBreached("correct-horse-battery"))
                 .thenThrow(new BreachCheckClient.BreachCheckUnavailableException("down", new RuntimeException()));
 
-        assertThatCode(() -> policy.validate("correct-horse-battery")).doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("correct-horse-battery", ACCOUNT_UUID, ACTOR_UUID))
+                .doesNotThrowAnyException();
 
         ArgumentCaptor<RecordAuditEventRequest> captor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
         verify(auditService).record(captor.capture());
         RecordAuditEventRequest recorded = captor.getValue();
         assertThat(recorded.eventType()).isEqualTo("password.breach_check_failed");
         assertThat(recorded.outcome()).isEqualTo(AuditOutcome.FAILURE);
-        assertThat(recorded.accountUuid()).isNull();
-        assertThat(recorded.actorUuid()).isNull();
+        // T08 (AC10): the caller-supplied accountUuid/actorUuid must reach the audit event -
+        // this used to assert null before validate() had any actor/target context to pass through.
+        assertThat(recorded.accountUuid()).isEqualTo(ACCOUNT_UUID);
+        assertThat(recorded.actorUuid()).isEqualTo(ACTOR_UUID);
     }
 
     @Test
@@ -108,7 +115,8 @@ class PasswordPolicyTest {
                 .thenThrow(new BreachCheckClient.BreachCheckUnavailableException("down", new RuntimeException()));
         doThrow(new RuntimeException("db unavailable")).when(auditService).record(any());
 
-        assertThatCode(() -> policy.validate("correct-horse-battery")).doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("correct-horse-battery", ACCOUNT_UUID, ACTOR_UUID))
+                .doesNotThrowAnyException();
     }
 
     @Test
@@ -116,9 +124,18 @@ class PasswordPolicyTest {
         PasswordPolicy disabledPolicy =
                 new PasswordPolicy(propertiesWithBreachCheckEnabled(false), breachCheckClient, auditService);
 
-        assertThatCode(() -> disabledPolicy.validate("correct-horse-battery")).doesNotThrowAnyException();
+        assertThatCode(() -> disabledPolicy.validate("correct-horse-battery", ACCOUNT_UUID, ACTOR_UUID))
+                .doesNotThrowAnyException();
 
         verifyNoInteractions(breachCheckClient);
+    }
+
+    @Test
+    void shouldRejectNullAccountOrActorUuid() {
+        assertThatThrownBy(() -> policy.validate("correct-horse-battery", null, ACTOR_UUID))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> policy.validate("correct-horse-battery", ACCOUNT_UUID, null))
+                .isInstanceOf(NullPointerException.class);
     }
 
     private static PasswordPolicyProperties propertiesWithBreachCheckEnabled(boolean enabled) {

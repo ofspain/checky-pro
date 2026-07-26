@@ -1,6 +1,7 @@
 package com.themistra.auth.account;
 
 import com.themistra.auth.account.dto.AccountResponse;
+import com.themistra.auth.account.dto.ChangePasswordRequest;
 import com.themistra.auth.account.dto.PasswordResetConfirmRequest;
 import com.themistra.auth.account.dto.PasswordResetRequest;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
@@ -161,5 +162,46 @@ class AccountControllerTest {
         assertThatThrownBy(() ->
                 controller.passwordReset(new PasswordResetConfirmRequest("bad-token", "new-password")))
                 .isInstanceOf(AccountService.VerificationTokenRejectedException.class);
+    }
+
+    @Test
+    void changePasswordReturnsNoContentOnSuccess() {
+        controller = new AccountController(accountService);
+        UUID accountUuid = UUID.randomUUID();
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn(accountUuid.toString());
+
+        ResponseEntity<Void> response = controller.changePassword(
+                authentication, new ChangePasswordRequest("current-password", "new-password"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(response.getBody()).isNull();
+        verify(accountService).changePassword(accountUuid, "current-password", "new-password");
+    }
+
+    @Test
+    void changePasswordPropagatesCurrentPasswordMismatchForTheExceptionHandlerToTranslate() {
+        controller = new AccountController(accountService);
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn(UUID.randomUUID().toString());
+        org.mockito.Mockito.doThrow(new AccountService.CurrentPasswordMismatchException())
+                .when(accountService).changePassword(any(), any(), any());
+
+        assertThatThrownBy(() -> controller.changePassword(
+                authentication, new ChangePasswordRequest("wrong-password", "new-password")))
+                .isInstanceOf(AccountService.CurrentPasswordMismatchException.class);
+    }
+
+    @Test
+    void changePasswordPropagatesPolicyViolationForTheExceptionHandlerToTranslate() {
+        controller = new AccountController(accountService);
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn(UUID.randomUUID().toString());
+        org.mockito.Mockito.doThrow(new PasswordPolicy.PasswordPolicyViolationException("too short"))
+                .when(accountService).changePassword(any(), any(), any());
+
+        assertThatThrownBy(() -> controller.changePassword(
+                authentication, new ChangePasswordRequest("current-password", "short")))
+                .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
     }
 }
