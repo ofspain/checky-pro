@@ -19,6 +19,9 @@ public final class ProblemTypes {
     /** Uniform rejection for a verification token that is invalid, expired, or already used —
      * deliberately a single type covering every rejection reason (R5, enumeration safety). */
     public static final URI INVALID_TOKEN = URI.create(BASE + "invalid-token");
+    /** Wrong current password on {@code POST /accounts/me/password} (R11) — not
+     * enumeration-sensitive (the caller is already authenticated as this exact account). */
+    public static final URI CURRENT_PASSWORD_MISMATCH = URI.create(BASE + "current-password-mismatch");
 
     private ProblemTypes() {
     }

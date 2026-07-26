@@ -39,18 +39,21 @@ public class AccountService {
     private final AuditService auditService;
     private final VerificationTokenService verificationTokenService;
     private final RefreshTokenTracker refreshTokenTracker;
+    private final PasswordPolicy passwordPolicy;
     private final Clock clock;
 
     public AccountService(AccountRepository accountRepository, PasswordEncoder passwordEncoder,
                           OutboxPublisher outboxPublisher, AuditService auditService,
                           VerificationTokenService verificationTokenService,
-                          RefreshTokenTracker refreshTokenTracker, Clock clock) {
+                          RefreshTokenTracker refreshTokenTracker, PasswordPolicy passwordPolicy,
+                          Clock clock) {
         this.accountRepository = accountRepository;
         this.passwordEncoder = passwordEncoder;
         this.outboxPublisher = outboxPublisher;
         this.auditService = auditService;
         this.verificationTokenService = verificationTokenService;
         this.refreshTokenTracker = refreshTokenTracker;
+        this.passwordPolicy = passwordPolicy;
         this.clock = clock;
     }
 
@@ -188,6 +191,36 @@ public class AccountService {
     }
 
     /**
+     * Changes the caller's own password (T08, R11). Order is deliberate and fixed: account-status
+     * check, then current-password verification, then new-password policy validation, then the
+     * mutation itself - each step only runs if every prior one passed.
+     *
+     * <p>The status check runs before {@code passwordEncoder.matches} specifically to avoid
+     * calling it against a non-{@code ACTIVE} account's password hash (a {@code DELETED}
+     * account's hash is {@code null}). The policy check runs after the current-password check so a
+     * caller who doesn't even know their current password never triggers a breach-check network
+     * call for a request that was always going to be rejected.</p>
+     *
+     * <p>No refresh-token family revocation and no outbox event - R11 names neither, unlike R14's
+     * password-reset (Phase 3/4, human-confirmed: change-password isn't a compromise-recovery
+     * flow, the caller is already using a valid, currently-authenticated session).</p>
+     */
+    @Transactional
+    public void changePassword(UUID accountUuid, String currentPassword, String newPassword) {
+        Account account = getAccount(accountUuid);
+        if (account.getStatus() != AccountStatus.ACTIVE) {
+            throw new InvalidAccountStateException(accountUuid, account.getStatus(), "change password");
+        }
+        if (!passwordEncoder.matches(currentPassword, account.getPasswordHash())) {
+            throw new CurrentPasswordMismatchException();
+        }
+        passwordPolicy.validate(newPassword, accountUuid, accountUuid);
+
+        account.changePasswordHash(passwordEncoder.encode(newPassword));
+        recordAudit("password.changed", accountUuid, accountUuid);
+    }
+
+    /**
      * Marks the email verified and activates the account — the admin-initiated path, reachable
      * only via the authenticated admin endpoint, always audited with a real admin
      * {@code actorUuid} (never null). {@link #activateFromVerificationToken} is the self-service
@@ -307,6 +340,14 @@ public class AccountService {
 
         public VerificationTokenRejectedException() {
             super("Verification token is invalid, expired, or already used");
+        }
+    }
+
+    /** Thrown by {@link #changePassword} when the supplied current password does not match. */
+    public static class CurrentPasswordMismatchException extends RuntimeException {
+
+        public CurrentPasswordMismatchException() {
+            super("Current password does not match");
         }
     }
 }

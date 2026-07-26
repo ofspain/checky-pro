@@ -106,8 +106,15 @@ public class Account {
         this.passwordHash = null;
     }
 
+    /**
+     * Only an {@code ACTIVE} account may change its password (T08, R11) — narrower than the
+     * previous {@code DELETED}-only guard. Provably backward-compatible with T07's
+     * {@code resetPassword}: that caller always reaches this method with {@code status == ACTIVE}
+     * already (it calls {@link #unlock()} first when {@code LOCKED}, and its own eligibility
+     * pre-check already excludes every other non-{@code ACTIVE} status before ever getting here).
+     */
     public void changePasswordHash(String newPasswordHash) {
-        if (status == AccountStatus.DELETED) {
+        if (status != AccountStatus.ACTIVE) {
             throw new InvalidAccountStateException(accountUuid, status, "change password");
         }
         this.passwordHash = newPasswordHash;

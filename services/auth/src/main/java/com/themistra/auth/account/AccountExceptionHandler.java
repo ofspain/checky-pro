@@ -43,4 +43,22 @@ public class AccountExceptionHandler {
         problem.setTitle("Verification token is invalid or expired");
         return problem;
     }
+
+    /** Not enumeration-sensitive (R11) - the caller is already authenticated as this account. */
+    @ExceptionHandler(AccountService.CurrentPasswordMismatchException.class)
+    ProblemDetail onCurrentPasswordMismatch(AccountService.CurrentPasswordMismatchException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setType(ProblemTypes.CURRENT_PASSWORD_MISMATCH);
+        problem.setTitle("Current password is incorrect");
+        return problem;
+    }
+
+    @ExceptionHandler(PasswordPolicy.PasswordPolicyViolationException.class)
+    ProblemDetail onPasswordPolicyViolation(PasswordPolicy.PasswordPolicyViolationException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setType(ProblemTypes.VALIDATION_ERROR);
+        problem.setTitle("Password does not meet policy requirements");
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
 }

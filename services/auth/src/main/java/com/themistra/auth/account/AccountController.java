@@ -1,6 +1,7 @@
 package com.themistra.auth.account;
 
 import com.themistra.auth.account.dto.AccountResponse;
+import com.themistra.auth.account.dto.ChangePasswordRequest;
 import com.themistra.auth.account.dto.PasswordResetConfirmRequest;
 import com.themistra.auth.account.dto.PasswordResetRequest;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
@@ -110,6 +111,20 @@ public class AccountController {
     @PostMapping("/password-reset")
     public ResponseEntity<Void> passwordReset(@Valid @RequestBody PasswordResetConfirmRequest request) {
         accountService.resetPassword(request.token(), request.newPassword());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Authenticated (R11) - not in {@link com.themistra.auth.common.PublicEndpoints}. Derives the
+     * caller from {@code Authentication} like {@link #me}, never a path/body-supplied identifier.
+     * {@code 204} on success; a wrong current password or a policy-violating new password both
+     * propagate uncaught for {@link AccountExceptionHandler} to translate.
+     */
+    @PostMapping("/me/password")
+    public ResponseEntity<Void> changePassword(
+            Authentication authentication, @Valid @RequestBody ChangePasswordRequest request) {
+        UUID accountUuid = UUID.fromString(authentication.getName());
+        accountService.changePassword(accountUuid, request.currentPassword(), request.newPassword());
         return ResponseEntity.noContent().build();
     }
 }
