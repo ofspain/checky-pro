@@ -9,6 +9,7 @@ import com.themistra.auth.audit.AuditOutcome;
 import com.themistra.auth.audit.AuditService;
 import com.themistra.auth.audit.RecordAuditEventRequest;
 import com.themistra.auth.events.OutboxPublisher;
+import com.themistra.auth.token.RefreshTokenTracker;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -37,16 +38,19 @@ public class AccountService {
     private final OutboxPublisher outboxPublisher;
     private final AuditService auditService;
     private final VerificationTokenService verificationTokenService;
+    private final RefreshTokenTracker refreshTokenTracker;
     private final Clock clock;
 
     public AccountService(AccountRepository accountRepository, PasswordEncoder passwordEncoder,
                           OutboxPublisher outboxPublisher, AuditService auditService,
-                          VerificationTokenService verificationTokenService, Clock clock) {
+                          VerificationTokenService verificationTokenService,
+                          RefreshTokenTracker refreshTokenTracker, Clock clock) {
         this.accountRepository = accountRepository;
         this.passwordEncoder = passwordEncoder;
         this.outboxPublisher = outboxPublisher;
         this.auditService = auditService;
         this.verificationTokenService = verificationTokenService;
+        this.refreshTokenTracker = refreshTokenTracker;
         this.clock = clock;
     }
 
@@ -76,7 +80,7 @@ public class AccountService {
         } catch (DataIntegrityViolationException e) {
             throw new DuplicateEmailException();
         }
-        issueAndEmitVerificationEmail(saved);
+        issueAndEmitVerificationEmail(saved, VerificationToken.Purpose.EMAIL_VERIFY, "verify_email");
         return AccountResponse.from(saved);
     }
 
@@ -86,14 +90,17 @@ public class AccountService {
      * any state other than {@code PENDING_VERIFICATION} (already active, locked, etc.) never
      * reaches that method's own guard — which throws {@link InvalidAccountStateException}, a
      * distinguishing exception mapped to a different HTTP response than R5's uniform rejection
-     * would require. Every rejection reason - token not found/expired/used (T05's {@code consume}
-     * already guarantees this uniformly), the resolved account no longer existing (defensive; not
+     * would require. Uses {@code consumeForPurpose(rawToken, EMAIL_VERIFY)} (T07), not the
+     * purpose-blind {@code consume} — a {@code PASSWORD_RESET} token must never activate an
+     * account. Every rejection reason - token not found/expired/used/wrong-purpose (T05/T07's
+     * {@code consumeForPurpose} already guarantees this uniformly), the resolved account no longer existing (defensive; not
      * reachable today given {@code verification_tokens}'s cascading FK), or wrong account status
      * (this method's own check) - surfaces identically as {@link VerificationTokenRejectedException}.
      */
     @Transactional
     public AccountResponse activateFromVerificationToken(String rawToken) {
-        UUID accountUuid = verificationTokenService.consume(rawToken)
+        UUID accountUuid = verificationTokenService
+                .consumeForPurpose(rawToken, VerificationToken.Purpose.EMAIL_VERIFY)
                 .orElseThrow(VerificationTokenRejectedException::new);
 
         // findByAccountUuid (not the shared getAccount helper) deliberately: a missing account
@@ -124,7 +131,60 @@ public class AccountService {
     public void resendVerificationIfPending(String email) {
         accountRepository.findByEmail(normalize(email))
                 .filter(account -> account.getStatus() == AccountStatus.PENDING_VERIFICATION)
-                .ifPresent(this::issueAndEmitVerificationEmail);
+                .ifPresent(account -> issueAndEmitVerificationEmail(
+                        account, VerificationToken.Purpose.EMAIL_VERIFY, "verify_email"));
+    }
+
+    /**
+     * Issues a password-reset token and emits {@code auth.email.requested} only when
+     * {@code email} resolves to an {@code ACTIVE} or {@code LOCKED} account (R13) — deliberately
+     * the opposite filter from {@link #resendVerificationIfPending}'s {@code PENDING_VERIFICATION}
+     * -only check. {@code LOCKED} is included on purpose (R13, human-confirmed at Phase 3/4): email
+     * possession is at least as strong an identity proof as a successful login, which already
+     * clears lockout (R18), so a locked-out user needs this as a working self-service recovery
+     * path. Silently a no-op otherwise - no state change, no distinguishing signal (same accepted
+     * trade-off as T06 Finding 4).
+     */
+    @Transactional
+    public void requestPasswordReset(String email) {
+        accountRepository.findByEmail(normalize(email))
+                .filter(this::isPasswordResetEligible)
+                .ifPresent(account -> issueAndEmitVerificationEmail(
+                        account, VerificationToken.Purpose.PASSWORD_RESET, "password_reset"));
+    }
+
+    /**
+     * Redeems a password-reset token and updates the account's password (R14). Mirrors
+     * {@link #activateFromVerificationToken}'s shape: purpose-checked consume, a fresh account
+     * read, then a status pre-check *before* any mutation so no distinguishing exception can
+     * leak (R15) - {@code Account.changePasswordHash}'s own {@code DELETED}-only guard is never
+     * reached, since this method's own check already excludes anything but {@code ACTIVE}/
+     * {@code LOCKED}. A {@code LOCKED} account is unlocked as part of a successful reset
+     * (Finding 8, human-confirmed) - the reset itself is proof-of-ownership strong enough to also
+     * clear the lockout, not just the credential.
+     */
+    @Transactional
+    public void resetPassword(String rawToken, String newPassword) {
+        UUID accountUuid = verificationTokenService
+                .consumeForPurpose(rawToken, VerificationToken.Purpose.PASSWORD_RESET)
+                .orElseThrow(VerificationTokenRejectedException::new);
+
+        Account account = accountRepository.findByAccountUuid(accountUuid)
+                .orElseThrow(VerificationTokenRejectedException::new);
+        if (!isPasswordResetEligible(account)) {
+            throw new VerificationTokenRejectedException();
+        }
+
+        if (account.getStatus() == AccountStatus.LOCKED) {
+            account.unlock();
+        }
+        account.changePasswordHash(passwordEncoder.encode(newPassword));
+        refreshTokenTracker.revokeAllForPrincipal(account.getAccountUuid().toString(), "PASSWORD_RESET");
+        recordAudit("password.reset", account.getAccountUuid(), account.getAccountUuid());
+    }
+
+    private boolean isPasswordResetEligible(Account account) {
+        return account.getStatus() == AccountStatus.ACTIVE || account.getStatus() == AccountStatus.LOCKED;
     }
 
     /**
@@ -195,16 +255,23 @@ public class AccountService {
                         account.getAccountUuid(), account.getPasswordHash(), account.getStatus()));
     }
 
-    private void issueAndEmitVerificationEmail(Account account) {
+    /**
+     * Issues a token for the given purpose and emits {@code auth.email.requested} accordingly.
+     * Generalized (T07) from an {@code EMAIL_VERIFY}-only helper — {@code purposeLabel} is the
+     * plain-string discriminator {@link EmailRequestedEventPayload} carries (R3/R13), decoupled
+     * from the internal {@link VerificationToken.Purpose} enum.
+     */
+    private void issueAndEmitVerificationEmail(
+            Account account, VerificationToken.Purpose purpose, String purposeLabel) {
         VerificationTokenService.VerificationTokenResult result =
-                verificationTokenService.issue(account.getAccountUuid(), VerificationToken.Purpose.EMAIL_VERIFY);
+                verificationTokenService.issue(account.getAccountUuid(), purpose);
         outboxPublisher.publish(
                 "verification-token",
                 account.getAccountUuid().toString(),
                 "email.requested",
                 SCHEMA_VERSION,
                 new EmailRequestedEventPayload(
-                        account.getAccountUuid(), "verify_email", result.rawToken(), clock.instant()));
+                        account.getAccountUuid(), purposeLabel, result.rawToken(), clock.instant()));
     }
 
     private void recordAudit(String eventType, UUID accountUuid, UUID actorUuid) {

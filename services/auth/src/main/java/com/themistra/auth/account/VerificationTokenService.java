@@ -102,6 +102,42 @@ public class VerificationTokenService {
         return resolveUsableAccount(token.getAccountId());
     }
 
+    /**
+     * Atomic verify-and-mark, scoped to a single expected purpose (T07): a token issued for one
+     * purpose (e.g. {@code EMAIL_VERIFY}) must never be redeemable for another (e.g.
+     * {@code PASSWORD_RESET}). The purpose check happens before any mutation — a mismatch returns
+     * empty without consuming the token, so a mis-purposed token remains available for its
+     * actual, intended use. Self-contained: does not call or share logic with {@link #consume},
+     * which stays purpose-blind for its own (unchanged) callers.
+     */
+    @Transactional
+    public Optional<UUID> consumeForPurpose(String rawToken, VerificationToken.Purpose purpose) {
+        Objects.requireNonNull(rawToken, "rawToken must not be null");
+        Objects.requireNonNull(purpose, "purpose must not be null");
+
+        String tokenHash = Hashing.sha256(rawToken);
+        Optional<VerificationToken> tokenOpt = tokenRepository.findByTokenHash(tokenHash);
+        if (tokenOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        VerificationToken token = tokenOpt.get();
+        if (token.getPurpose() != purpose) {
+            return Optional.empty();
+        }
+
+        Optional<UUID> accountUuid = resolveUsableAccount(token.getAccountId());
+        if (accountUuid.isEmpty()) {
+            return Optional.empty();
+        }
+
+        int updated = tokenRepository.markConsumed(tokenHash, clock.instant());
+        if (updated == 0) {
+            return Optional.empty();
+        }
+
+        return resolveUsableAccount(token.getAccountId());
+    }
+
     /** Atomic verify-and-mark; the sole state-mutating redemption path. */
     @Transactional
     public Optional<UUID> consume(String rawToken) {

@@ -1,6 +1,8 @@
 package com.themistra.auth.account;
 
 import com.themistra.auth.account.dto.AccountResponse;
+import com.themistra.auth.account.dto.PasswordResetConfirmRequest;
+import com.themistra.auth.account.dto.PasswordResetRequest;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.dto.RegistrationAcknowledgement;
 import com.themistra.auth.account.dto.ResendVerificationRequest;
@@ -18,11 +20,12 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.UUID;
 
 /**
- * Self-service account endpoints. Three public routes on this path
+ * Self-service account endpoints. Five public routes on this path
  * (PublicEndpoints.METHOD_SCOPED): {@code POST /accounts} (registration), {@code POST
- * /accounts/verify-email} (token possession is the credential), and {@code POST
- * /accounts/resend-verification} (email-identified, enumeration-safe). Every other
- * {@code /accounts/**} endpoint here requires an authenticated token.
+ * /accounts/verify-email} and {@code POST /accounts/password-reset} (token possession is the
+ * credential), {@code POST /accounts/resend-verification} and
+ * {@code POST /accounts/password-reset-request} (email-identified, enumeration-safe). Every
+ * other {@code /accounts/**} endpoint here requires an authenticated token.
  */
 @RestController
 @RequestMapping("/accounts")
@@ -84,5 +87,29 @@ public class AccountController {
             @Valid @RequestBody ResendVerificationRequest request) {
         accountService.resendVerificationIfPending(request.email());
         return RegistrationAcknowledgement.standard();
+    }
+
+    /**
+     * Public, email-identified (R12/R13) — mirrors {@link #resendVerification}'s exact shape,
+     * including its default {@code 200} status (Phase 3/4 Finding 5, human-confirmed: matches
+     * this architecturally closer sibling, not registration's {@code 202}).
+     * {@link AccountService#requestPasswordReset} never throws for a non-match.
+     */
+    @PostMapping("/password-reset-request")
+    public RegistrationAcknowledgement passwordResetRequest(
+            @Valid @RequestBody PasswordResetRequest request) {
+        accountService.requestPasswordReset(request.email());
+        return RegistrationAcknowledgement.forPasswordReset();
+    }
+
+    /**
+     * Public — token possession is the credential (R14). Mirrors {@link #verifyEmail}'s exact
+     * shape: {@code 204} on success, no local catch, the uniform rejection propagates for
+     * {@link AccountExceptionHandler} to translate (R15).
+     */
+    @PostMapping("/password-reset")
+    public ResponseEntity<Void> passwordReset(@Valid @RequestBody PasswordResetConfirmRequest request) {
+        accountService.resetPassword(request.token(), request.newPassword());
+        return ResponseEntity.noContent().build();
     }
 }

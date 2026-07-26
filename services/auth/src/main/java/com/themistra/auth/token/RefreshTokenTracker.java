@@ -67,6 +67,20 @@ public class RefreshTokenTracker {
     }
 
     /**
+     * Revokes every currently-unrevoked family for a principal (T07, password reset) — the first
+     * caller of {@link RefreshTokenFamilyRepository#findByPrincipalNameAndRevokedAtIsNull} outside
+     * this class. Families are JPA-managed within this transaction, so {@code revoke(...)}'s
+     * mutation is flushed by dirty-checking at commit, the same way {@link #trackRotation} already
+     * relies on for {@code rotateTo(...)} — no explicit save call needed.
+     */
+    @Transactional
+    public void revokeAllForPrincipal(String principalName, String reason) {
+        Instant now = clock.instant();
+        familyRepository.findByPrincipalNameAndRevokedAtIsNull(principalName)
+                .forEach(family -> family.revoke(reason, now));
+    }
+
+    /**
      * The reuse check. Call before trusting a presented refresh token's hash:
      * - hash matches a family's CURRENT hash → legitimate, valid presentation.
      * - hash matches an ARCHIVED (superseded) hash → replay: family is revoked and the
