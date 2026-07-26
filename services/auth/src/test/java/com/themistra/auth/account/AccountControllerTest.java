@@ -1,6 +1,8 @@
 package com.themistra.auth.account;
 
 import com.themistra.auth.account.dto.AccountResponse;
+import com.themistra.auth.account.dto.PasswordResetConfirmRequest;
+import com.themistra.auth.account.dto.PasswordResetRequest;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.dto.RegistrationAcknowledgement;
 import com.themistra.auth.account.dto.ResendVerificationRequest;
@@ -19,6 +21,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -114,5 +117,44 @@ class AccountControllerTest {
         assertThat(noMatchResponse).isEqualTo(RegistrationAcknowledgement.standard());
         verify(accountService).resendVerificationIfPending("pending@example.com");
         verify(accountService).resendVerificationIfPending("unknown@example.com");
+    }
+
+    @Test
+    void passwordResetRequestReturnsForPasswordResetAcknowledgementRegardlessOfMatch() {
+        controller = new AccountController(accountService);
+
+        RegistrationAcknowledgement response =
+                controller.passwordResetRequest(new PasswordResetRequest("reset-me@example.com"));
+
+        // Distinct wording from resendVerification's standard() acknowledgement (Finding 5/R12) —
+        // and, like resendVerification, nothing here to branch on since requestPasswordReset never
+        // throws for a non-match.
+        assertThat(response).isEqualTo(RegistrationAcknowledgement.forPasswordReset());
+        verify(accountService).requestPasswordReset("reset-me@example.com");
+    }
+
+    @Test
+    void passwordResetReturnsNoContentOnSuccess() {
+        controller = new AccountController(accountService);
+
+        ResponseEntity<Void> response =
+                controller.passwordReset(new PasswordResetConfirmRequest("valid-reset-token", "new-password"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(response.getBody()).isNull();
+        verify(accountService).resetPassword("valid-reset-token", "new-password");
+    }
+
+    @Test
+    void passwordResetPropagatesRejectionForTheExceptionHandlerToTranslate() {
+        // No local catch here (mirrors verifyEmail): the actual 400/INVALID_TOKEN response is
+        // AccountExceptionHandler's job, not observable through this plain-Mockito controller test.
+        controller = new AccountController(accountService);
+        doThrow(new AccountService.VerificationTokenRejectedException())
+                .when(accountService).resetPassword(any(), any());
+
+        assertThatThrownBy(() ->
+                controller.passwordReset(new PasswordResetConfirmRequest("bad-token", "new-password")))
+                .isInstanceOf(AccountService.VerificationTokenRejectedException.class);
     }
 }

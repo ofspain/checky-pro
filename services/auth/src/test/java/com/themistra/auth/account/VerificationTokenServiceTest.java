@@ -315,11 +315,69 @@ class VerificationTokenServiceTest {
         assertThatCode(() -> Base64.getUrlDecoder().decode(issued.rawToken())).doesNotThrowAnyException();
     }
 
+    @Test
+    void shouldConsumeTokenWhenPurposeMatches() {
+        String rawToken = "purpose-match-token";
+        String hash = stubToken(rawToken, VerificationToken.Purpose.PASSWORD_RESET, NOW.plusSeconds(3600), null);
+        Account account = usableAccount(AccountStatus.ACTIVE);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        when(tokenRepository.markConsumed(eq(hash), any())).thenReturn(1);
+
+        assertThat(service.consumeForPurpose(rawToken, VerificationToken.Purpose.PASSWORD_RESET))
+                .contains(ACCOUNT_UUID);
+    }
+
+    @Test
+    void shouldRejectTokenWhenPurposeDoesNotMatchAndLeaveItUnconsumed() {
+        // Finding 1: an EMAIL_VERIFY token must never be redeemable via a PASSWORD_RESET
+        // consumeForPurpose call, and the rejected attempt must not mark it used - it must still
+        // work for its actual, intended purpose afterward.
+        String rawToken = "wrong-purpose-token";
+        String hash = stubToken(rawToken, VerificationToken.Purpose.EMAIL_VERIFY, NOW.plusSeconds(3600), null);
+
+        assertThat(service.consumeForPurpose(rawToken, VerificationToken.Purpose.PASSWORD_RESET)).isEmpty();
+        verify(tokenRepository, never()).markConsumed(eq(hash), any());
+
+        Account account = usableAccount(AccountStatus.ACTIVE);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        when(tokenRepository.markConsumed(eq(hash), any())).thenReturn(1);
+        assertThat(service.consumeForPurpose(rawToken, VerificationToken.Purpose.EMAIL_VERIFY))
+                .contains(ACCOUNT_UUID);
+    }
+
+    @Test
+    void shouldRejectPasswordResetTokenWhenConsumedForEmailVerify() {
+        // Mirror-image case of the finding above - the T06 regression closed by T07: a
+        // PASSWORD_RESET token must never activate an account.
+        String rawToken = "reset-token-misused";
+        String hash = stubToken(rawToken, VerificationToken.Purpose.PASSWORD_RESET, NOW.plusSeconds(3600), null);
+
+        assertThat(service.consumeForPurpose(rawToken, VerificationToken.Purpose.EMAIL_VERIFY)).isEmpty();
+        verify(tokenRepository, never()).markConsumed(eq(hash), any());
+    }
+
+    @Test
+    void shouldRejectConsumeForPurposeWhenAccountIsUnusable() {
+        // The purpose check passes, but the pre-mutation account-usability check must still
+        // reject before markConsumed is ever attempted - same guarantee consume() already has.
+        String rawToken = "unusable-account-reset-token";
+        String hash = stubToken(rawToken, VerificationToken.Purpose.PASSWORD_RESET, NOW.plusSeconds(3600), null);
+        Account suspended = usableAccount(AccountStatus.SUSPENDED);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(suspended));
+
+        assertThat(service.consumeForPurpose(rawToken, VerificationToken.Purpose.PASSWORD_RESET)).isEmpty();
+        verify(tokenRepository, never()).markConsumed(eq(hash), any());
+    }
+
     /** Stubs {@code findByTokenHash} for the given raw token's real hash and returns that hash. */
     private String stubToken(String rawToken, Instant expiresAt, Instant usedAt) {
+        return stubToken(rawToken, VerificationToken.Purpose.EMAIL_VERIFY, expiresAt, usedAt);
+    }
+
+    /** Purpose-parameterized overload (T07) - see {@link #stubToken(String, Instant, Instant)}. */
+    private String stubToken(String rawToken, VerificationToken.Purpose purpose, Instant expiresAt, Instant usedAt) {
         String hash = Hashing.sha256(rawToken);
-        VerificationToken token = VerificationToken.create(
-                ACCOUNT_ID, VerificationToken.Purpose.EMAIL_VERIFY, hash, NOW, expiresAt);
+        VerificationToken token = VerificationToken.create(ACCOUNT_ID, purpose, hash, NOW, expiresAt);
         if (usedAt != null) {
             setUsedAt(token, usedAt);
         }

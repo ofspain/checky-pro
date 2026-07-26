@@ -7,6 +7,7 @@ import com.themistra.auth.account.event.UserLifecycleEventPayload;
 import com.themistra.auth.audit.AuditService;
 import com.themistra.auth.audit.RecordAuditEventRequest;
 import com.themistra.auth.events.OutboxPublisher;
+import com.themistra.auth.token.RefreshTokenTracker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -56,6 +57,9 @@ class AccountServiceTest {
     @Mock
     private VerificationTokenService verificationTokenService;
 
+    @Mock
+    private RefreshTokenTracker refreshTokenTracker;
+
     private AccountService service;
 
     @BeforeEach
@@ -63,7 +67,7 @@ class AccountServiceTest {
         Clock fixed = Clock.fixed(NOW, ZoneOffset.UTC);
         service = new AccountService(
                 accountRepository, passwordEncoder, outboxPublisher, auditService,
-                verificationTokenService, fixed);
+                verificationTokenService, refreshTokenTracker, fixed);
         // Shared, lenient: every test that reaches register()'s success path needs a non-null
         // issue(...) result (register now always issues+emits a verification token, R3); tests
         // that never reach that path (duplicate-email, constraint-race) simply don't use this stub.
@@ -186,7 +190,8 @@ class AccountServiceTest {
     @Test
     void shouldActivateAccountWithValidVerificationToken() {
         Account account = Account.register("user@example.com", ENCODED);
-        when(verificationTokenService.consume("a-valid-token")).thenReturn(Optional.of(account.getAccountUuid()));
+        when(verificationTokenService.consumeForPurpose("a-valid-token", VerificationToken.Purpose.EMAIL_VERIFY))
+                .thenReturn(Optional.of(account.getAccountUuid()));
         when(accountRepository.findByAccountUuid(account.getAccountUuid()))
                 .thenReturn(Optional.of(account));
 
@@ -210,7 +215,8 @@ class AccountServiceTest {
 
     @Test
     void shouldRejectVerificationWhenTokenConsumeReturnsEmpty() {
-        when(verificationTokenService.consume("bad-token")).thenReturn(Optional.empty());
+        when(verificationTokenService.consumeForPurpose("bad-token", VerificationToken.Purpose.EMAIL_VERIFY))
+                .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.activateFromVerificationToken("bad-token"))
                 .isInstanceOf(AccountService.VerificationTokenRejectedException.class);
@@ -230,7 +236,8 @@ class AccountServiceTest {
         Account account = org.mockito.Mockito.spy(Account.register("already-active@example.com", ENCODED));
         account.activateEmail();
         UUID accountUuid = account.getAccountUuid();
-        when(verificationTokenService.consume("stale-token")).thenReturn(Optional.of(accountUuid));
+        when(verificationTokenService.consumeForPurpose("stale-token", VerificationToken.Purpose.EMAIL_VERIFY))
+                .thenReturn(Optional.of(accountUuid));
         when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
 
         assertThatThrownBy(() -> service.activateFromVerificationToken("stale-token"))
@@ -248,7 +255,8 @@ class AccountServiceTest {
         // Phase 8/11 finding: activateFromVerificationToken must never let AccountNotFoundException
         // (a distinguishing 404) escape, even in this defensive, normally-unreachable case.
         UUID accountUuid = UUID.randomUUID();
-        when(verificationTokenService.consume("orphaned-token")).thenReturn(Optional.of(accountUuid));
+        when(verificationTokenService.consumeForPurpose("orphaned-token", VerificationToken.Purpose.EMAIL_VERIFY))
+                .thenReturn(Optional.of(accountUuid));
         when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.activateFromVerificationToken("orphaned-token"))
@@ -386,5 +394,194 @@ class AccountServiceTest {
 
         verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
         verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void shouldEmitPasswordResetEventOnlyWhenEmailExists() {
+        // R13: deliberately the opposite filter from resendVerification's PENDING_VERIFICATION-only
+        // check - ACTIVE and LOCKED are both eligible; PENDING_VERIFICATION/DELETED/SUSPENDED and an
+        // unknown email are all a silent no-op, same enumeration-safety trade-off as T06 Finding 4.
+        Account active = Account.register("active@example.com", ENCODED);
+        active.activateEmail();
+        Account locked = Account.register("locked@example.com", ENCODED);
+        locked.activateEmail();
+        locked.lock();
+        Account pending = Account.register("pending@example.com", ENCODED);
+        Account suspended = Account.register("suspended@example.com", ENCODED);
+        suspended.activateEmail();
+        suspended.suspend();
+        Account deleted = Account.register("deleted@example.com", ENCODED);
+        deleted.activateEmail();
+        deleted.markDeleted();
+
+        when(accountRepository.findByEmail("active@example.com")).thenReturn(Optional.of(active));
+        when(accountRepository.findByEmail("locked@example.com")).thenReturn(Optional.of(locked));
+        when(accountRepository.findByEmail("pending@example.com")).thenReturn(Optional.of(pending));
+        when(accountRepository.findByEmail("suspended@example.com")).thenReturn(Optional.of(suspended));
+        when(accountRepository.findByEmail("deleted@example.com")).thenReturn(Optional.of(deleted));
+        when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+        lenient().when(verificationTokenService.issue(any(UUID.class), eq(VerificationToken.Purpose.PASSWORD_RESET)))
+                .thenAnswer(invocation -> passwordResetTokenResult(invocation.getArgument(0)));
+
+        service.requestPasswordReset("active@example.com");
+        service.requestPasswordReset("locked@example.com");
+        service.requestPasswordReset("pending@example.com");
+        service.requestPasswordReset("suspended@example.com");
+        service.requestPasswordReset("deleted@example.com");
+        service.requestPasswordReset("unknown@example.com");
+
+        verify(verificationTokenService)
+                .issue(eq(active.getAccountUuid()), eq(VerificationToken.Purpose.PASSWORD_RESET));
+        verify(verificationTokenService)
+                .issue(eq(locked.getAccountUuid()), eq(VerificationToken.Purpose.PASSWORD_RESET));
+        verify(verificationTokenService, org.mockito.Mockito.times(2))
+                .issue(any(), eq(VerificationToken.Purpose.PASSWORD_RESET));
+        verify(outboxPublisher, org.mockito.Mockito.times(2))
+                .publish(eq("verification-token"), any(), eq("email.requested"), anyInt(), any());
+    }
+
+    @Test
+    void shouldEmitPasswordResetEventWithCorrectPurposeLabelAndToken() {
+        Account account = Account.register("reset-target@example.com", ENCODED);
+        account.activateEmail();
+        when(accountRepository.findByEmail("reset-target@example.com")).thenReturn(Optional.of(account));
+        when(verificationTokenService.issue(eq(account.getAccountUuid()), eq(VerificationToken.Purpose.PASSWORD_RESET)))
+                .thenReturn(passwordResetTokenResult(account.getAccountUuid()));
+
+        service.requestPasswordReset("reset-target@example.com");
+
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(outboxPublisher).publish(
+                eq("verification-token"), eq(account.getAccountUuid().toString()),
+                eq("email.requested"), eq(1), payload.capture());
+        var event = (EmailRequestedEventPayload) payload.getValue();
+        assertThat(event.accountUuid()).isEqualTo(account.getAccountUuid());
+        assertThat(event.purpose()).isEqualTo("password_reset");
+        assertThat(event.token()).isEqualTo("raw-reset-token");
+    }
+
+    @Test
+    void requestPasswordResetNormalizesEmailBeforeLookup() {
+        Account account = Account.register("normalized-reset@example.com", ENCODED);
+        account.activateEmail();
+        when(accountRepository.findByEmail("normalized-reset@example.com")).thenReturn(Optional.of(account));
+        when(verificationTokenService.issue(eq(account.getAccountUuid()), eq(VerificationToken.Purpose.PASSWORD_RESET)))
+                .thenReturn(passwordResetTokenResult(account.getAccountUuid()));
+
+        service.requestPasswordReset("  Normalized-Reset@Example.COM ");
+
+        verify(accountRepository).findByEmail("normalized-reset@example.com");
+    }
+
+    @Test
+    void shouldResetPasswordAndRevokeAllFamiliesWithValidToken() {
+        Account account = Account.register("reset-me@example.com", ENCODED);
+        account.activateEmail();
+        UUID accountUuid = account.getAccountUuid();
+        when(verificationTokenService.consumeForPurpose("valid-reset-token", VerificationToken.Purpose.PASSWORD_RESET))
+                .thenReturn(Optional.of(accountUuid));
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+        when(passwordEncoder.encode("new-correct-horse")).thenReturn("{bcrypt}new-encoded");
+
+        service.resetPassword("valid-reset-token", "new-correct-horse");
+
+        assertThat(account.getPasswordHash()).isEqualTo("{bcrypt}new-encoded");
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        verify(refreshTokenTracker).revokeAllForPrincipal(accountUuid.toString(), "PASSWORD_RESET");
+
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
+                ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().eventType()).isEqualTo("password.reset");
+        assertThat(auditCaptor.getValue().actorUuid()).isEqualTo(accountUuid);
+        assertThat(auditCaptor.getValue().accountUuid()).isEqualTo(accountUuid);
+    }
+
+    @Test
+    void shouldUnlockAccountOnSuccessfulPasswordReset() {
+        // Finding 8, human-confirmed: a successful reset is proof-of-ownership strong enough to
+        // also clear a LOCKED lockout, not just replace the credential.
+        Account account = Account.register("locked-reset@example.com", ENCODED);
+        account.activateEmail();
+        account.lock();
+        UUID accountUuid = account.getAccountUuid();
+        when(verificationTokenService.consumeForPurpose("locked-reset-token", VerificationToken.Purpose.PASSWORD_RESET))
+                .thenReturn(Optional.of(accountUuid));
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+        when(passwordEncoder.encode(anyString())).thenReturn(ENCODED);
+
+        service.resetPassword("locked-reset-token", "new-password");
+
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        verify(refreshTokenTracker).revokeAllForPrincipal(accountUuid.toString(), "PASSWORD_RESET");
+    }
+
+    @Test
+    void shouldRejectPasswordResetWhenTokenConsumeReturnsEmpty() {
+        when(verificationTokenService.consumeForPurpose("bad-reset-token", VerificationToken.Purpose.PASSWORD_RESET))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.resetPassword("bad-reset-token", "new-password"))
+                .isInstanceOf(AccountService.VerificationTokenRejectedException.class);
+
+        verify(accountRepository, never()).findByAccountUuid(any());
+        verify(refreshTokenTracker, never()).revokeAllForPrincipal(any(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void shouldRejectPasswordResetWhenAccountDisappearsAfterConsume() {
+        // Same defensive guarantee as activateFromVerificationToken's mirror test: a missing
+        // account here must fall into the uniform rejection, never AccountNotFoundException's
+        // distinguishing 404.
+        UUID accountUuid = UUID.randomUUID();
+        when(verificationTokenService.consumeForPurpose("orphaned-reset-token", VerificationToken.Purpose.PASSWORD_RESET))
+                .thenReturn(Optional.of(accountUuid));
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.resetPassword("orphaned-reset-token", "new-password"))
+                .isInstanceOf(AccountService.VerificationTokenRejectedException.class)
+                .isNotInstanceOf(AccountNotFoundException.class);
+
+        verify(refreshTokenTracker, never()).revokeAllForPrincipal(any(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void shouldRejectPasswordResetForIneligibleAccountStatuses() {
+        // R15: PENDING_VERIFICATION, DELETED, and SUSPENDED accounts must all uniformly reject a
+        // password-reset confirm, per resetPassword's own isPasswordResetEligible gate - and never
+        // let Account.changePasswordHash's own DELETED-only guard (InvalidAccountStateException)
+        // leak, since that gate is structurally unreachable from this call path.
+        Account pending = Account.register("pending-reset@example.com", ENCODED);
+        Account deleted = Account.register("deleted-reset@example.com", ENCODED);
+        deleted.activateEmail();
+        deleted.markDeleted();
+        Account suspended = Account.register("suspended-reset@example.com", ENCODED);
+        suspended.activateEmail();
+        suspended.suspend();
+
+        for (Account ineligible : java.util.List.of(pending, deleted, suspended)) {
+            String rawToken = "reset-token-" + ineligible.getAccountUuid();
+            when(verificationTokenService.consumeForPurpose(rawToken, VerificationToken.Purpose.PASSWORD_RESET))
+                    .thenReturn(Optional.of(ineligible.getAccountUuid()));
+            when(accountRepository.findByAccountUuid(ineligible.getAccountUuid()))
+                    .thenReturn(Optional.of(ineligible));
+
+            assertThatThrownBy(() -> service.resetPassword(rawToken, "new-password"))
+                    .isInstanceOf(AccountService.VerificationTokenRejectedException.class)
+                    .isNotInstanceOf(InvalidAccountStateException.class);
+        }
+
+        verify(refreshTokenTracker, never()).revokeAllForPrincipal(any(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    /** Shared fixture for a PASSWORD_RESET-purposed issue(...) result - mirrors setUp()'s EMAIL_VERIFY stub. */
+    private VerificationTokenService.VerificationTokenResult passwordResetTokenResult(UUID accountUuid) {
+        VerificationToken token = VerificationToken.create(
+                1L, VerificationToken.Purpose.PASSWORD_RESET, "reset-token-hash", NOW, NOW.plusSeconds(1800));
+        return new VerificationTokenService.VerificationTokenResult(
+                "raw-reset-token", token, accountUuid, VerificationToken.Purpose.PASSWORD_RESET);
     }
 }

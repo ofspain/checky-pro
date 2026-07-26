@@ -10,10 +10,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -161,5 +163,61 @@ class RefreshTokenTrackerTest {
         tracker.checkAndRegisterPresentation(HASH_A);
 
         assertThat(family.getRevokedAt()).isEqualTo(firstRevokedAt); // revoke() didn't overwrite it
+    }
+
+    @Test
+    void revokeAllForPrincipalRevokesEveryUnrevokedFamilyForThatPrincipal() {
+        RefreshTokenFamily familyOne = RefreshTokenFamily.start(
+                "auth-1", PRINCIPAL, null, HASH_A, NOW.minusSeconds(120));
+        RefreshTokenFamily familyTwo = RefreshTokenFamily.start(
+                "auth-2", PRINCIPAL, "second-device", HASH_B, NOW.minusSeconds(60));
+        when(familyRepository.findByPrincipalNameAndRevokedAtIsNull(PRINCIPAL))
+                .thenReturn(List.of(familyOne, familyTwo));
+
+        tracker.revokeAllForPrincipal(PRINCIPAL, "PASSWORD_RESET");
+
+        assertThat(familyOne.isRevoked()).isTrue();
+        assertThat(familyOne.getRevokedReason()).isEqualTo("PASSWORD_RESET");
+        assertThat(familyOne.getRevokedAt()).isEqualTo(NOW);
+        assertThat(familyTwo.isRevoked()).isTrue();
+        assertThat(familyTwo.getRevokedReason()).isEqualTo("PASSWORD_RESET");
+        assertThat(familyTwo.getRevokedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void revokeAllForPrincipalDoesNotTouchAnotherPrincipalsFamilies() {
+        String otherPrincipal = UUID.randomUUID().toString();
+        RefreshTokenFamily otherPrincipalsFamily = RefreshTokenFamily.start(
+                "auth-other", otherPrincipal, null, HASH_A, NOW.minusSeconds(60));
+        when(familyRepository.findByPrincipalNameAndRevokedAtIsNull(PRINCIPAL)).thenReturn(List.of());
+
+        tracker.revokeAllForPrincipal(PRINCIPAL, "PASSWORD_RESET");
+
+        assertThat(otherPrincipalsFamily.isRevoked()).isFalse();
+        verify(familyRepository, never()).findByPrincipalNameAndRevokedAtIsNull(otherPrincipal);
+    }
+
+    @Test
+    void revokeAllForPrincipalIsANoOpWhenNoFamiliesExist() {
+        when(familyRepository.findByPrincipalNameAndRevokedAtIsNull(PRINCIPAL)).thenReturn(List.of());
+
+        assertThatCode(() -> tracker.revokeAllForPrincipal(PRINCIPAL, "PASSWORD_RESET"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void revokeAllForPrincipalIsIdempotentOnASecondCall() {
+        RefreshTokenFamily family = RefreshTokenFamily.start(
+                "auth-1", PRINCIPAL, null, HASH_A, NOW.minusSeconds(60));
+        when(familyRepository.findByPrincipalNameAndRevokedAtIsNull(PRINCIPAL))
+                .thenReturn(List.of(family))
+                // The real query filters RevokedAtIsNull; a second call finds nothing left to revoke.
+                .thenReturn(List.of());
+
+        tracker.revokeAllForPrincipal(PRINCIPAL, "PASSWORD_RESET");
+        Instant firstRevokedAt = family.getRevokedAt();
+        tracker.revokeAllForPrincipal(PRINCIPAL, "PASSWORD_RESET");
+
+        assertThat(family.getRevokedAt()).isEqualTo(firstRevokedAt);
     }
 }
