@@ -55,7 +55,7 @@ test in this module; no `MockMvc`/`@WebMvcTest` introduced.
 | AC7 | `shouldAllowPasswordWhenBreachApiIsDownAndAuditFailure` |
 | AC8 | `resetPasswordCallsPasswordPolicyValidateBeforeAnyMutation` (`InOrder` proof) |
 | AC9 | `registerPropagatesPolicyViolationForTheExceptionHandlerToTranslate`, `passwordResetPropagatesPolicyViolationForTheExceptionHandlerToTranslate`, `registerRejectsPolicyViolatingPasswordWithoutTouchingRepositoryOrOutbox`, `resetPasswordRejectsPolicyViolatingPasswordWithoutMutatingAccountOrRevokingSessions` |
-| AC10 | All pre-existing `changePassword*` tests, unmodified, still passing |
+| AC10 | `shouldChangePasswordWithCorrectCurrentPasswordAndPolicyCompliantNewPassword` (T08, `InOrder` proof: `matches` → `validate` → `encode`) and `shouldRejectChangePasswordWhenNewPasswordViolatesPolicy` (T08, `InOrder` proof: `validate` throws before `encode`) — pre-existing, unmodified by T09, still passing. `changePassword`'s `PasswordPolicy` wiring was already fully covered when it was implemented at T08; T09 only extended the same policy to `register`/`resetPassword`, per the frozen brief's scope (Phase 11 Gap 1, clarified: not a coverage gap, just imprecise wording here) |
 
 ## Test execution
 
