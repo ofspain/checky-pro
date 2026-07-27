@@ -67,16 +67,29 @@ public class AccountService {
      * {@code auth.user.registered} still only fires at email-confirmation time — either
      * self-service ({@link #activateFromVerificationToken}) or the admin stand-in
      * ({@link #activateEmail}) — never at initial signup.</p>
+     *
+     * <p>{@code passwordPolicy.validate} (T09, R8-R10) runs before the {@code existsByEmail}
+     * check, not after — required for enumeration safety (L5). If the duplicate check ran first,
+     * a policy-violating password would return the uniform {@code 202} for an already-registered
+     * email but a distinguishing {@code 400} for a new one, letting a caller infer whether an
+     * email is registered from nothing but the content of the password they submit. Running the
+     * policy check first means it fails identically regardless of email existence. The account
+     * (and its UUID) is constructed before this check specifically so validation has a real,
+     * persistable UUID to record against — one BCrypt encode is spent even on a
+     * later-duplicate-rejected registration as a result; a deliberate, human-approved trade-off
+     * (Phase 4) over widening {@link Account#register}'s signature for this alone.</p>
      */
     @Transactional
     public AccountResponse register(@Valid RegisterAccountRequest request) {
         String email = normalize(request.email());
 
+        Account account = Account.register(email, passwordEncoder.encode(request.password()));
+        passwordPolicy.validate(request.password(), account.getAccountUuid(), account.getAccountUuid());
+
         if (accountRepository.existsByEmail(email)) {
             throw new DuplicateEmailException();
         }
 
-        Account account = Account.register(email, passwordEncoder.encode(request.password()));
         Account saved;
         try {
             saved = accountRepository.saveAndFlush(account);
@@ -165,6 +178,16 @@ public class AccountService {
      * {@code LOCKED}. A {@code LOCKED} account is unlocked as part of a successful reset
      * (Finding 8, human-confirmed) - the reset itself is proof-of-ownership strong enough to also
      * clear the lockout, not just the credential.
+     *
+     * <p>{@code passwordPolicy.validate} (T09, R8-R10) runs after the eligibility check but
+     * before any mutation ({@code unlock}, hash update, family revocation, audit) - consistent
+     * with this method's own established pattern of never mutating state until every gate has
+     * passed. A policy-violating password submitted with an otherwise-valid, unused token still
+     * consumes that token (mirrors the existing ineligible-account case, which already does the
+     * same) and is distinguishable from an invalid-token rejection. This residual token-validity
+     * signal was reviewed and accepted (Phase 3/4): a caller who already holds a valid raw reset
+     * token gains nothing by probing with a bad password first, since they could submit a
+     * compliant one and complete the reset outright.</p>
      */
     @Transactional
     public void resetPassword(String rawToken, String newPassword) {
@@ -177,6 +200,7 @@ public class AccountService {
         if (!isPasswordResetEligible(account)) {
             throw new VerificationTokenRejectedException();
         }
+        passwordPolicy.validate(newPassword, accountUuid, accountUuid);
 
         if (account.getStatus() == AccountStatus.LOCKED) {
             account.unlock();
