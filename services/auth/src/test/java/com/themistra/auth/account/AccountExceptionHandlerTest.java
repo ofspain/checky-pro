@@ -64,8 +64,13 @@ class AccountExceptionHandlerTest {
         assertThat(verifyEmailRejection.getStatus()).isEqualTo(passwordResetRejection.getStatus());
         assertThat(verifyEmailRejection.getType()).isEqualTo(passwordResetRejection.getType());
         assertThat(verifyEmailRejection.getTitle()).isEqualTo(passwordResetRejection.getTitle());
-        assertThat(verifyEmailRejection.getDetail()).isNull();
-        assertThat(passwordResetRejection.getDetail()).isNull();
+        assertThat(verifyEmailRejection.getDetail()).isEqualTo(passwordResetRejection.getDetail());
+        // Kimi Phase 8 Finding 6: guard against a future handler change leaking an account/token
+        // identifier via instance or extension properties instead of detail.
+        assertThat(verifyEmailRejection.getInstance()).isNull();
+        assertThat(verifyEmailRejection.getProperties()).isNull();
+        assertThat(passwordResetRejection.getInstance()).isNull();
+        assertThat(passwordResetRejection.getProperties()).isNull();
     }
 
     @Test

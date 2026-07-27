@@ -16,6 +16,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.ProblemDetail;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Clock;
@@ -26,6 +27,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -314,6 +316,76 @@ class AccountServiceTest {
         verify(account, org.mockito.Mockito.times(1)).activateEmail(); // only the setup call above
         verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
         verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void shouldRejectVerificationForEveryNonPendingAccountStatus() {
+        // T10, Kimi Phase 8 Finding 2 (corrected placement): consumeForPurpose's own
+        // isAccountUsable() only excludes DELETED/SUSPENDED - a LOCKED account's token is
+        // successfully consumed there. Rejection for LOCKED (and, redundantly with the test above,
+        // ACTIVE) happens only via this method's own PENDING_VERIFICATION-only check. The existing
+        // shouldRejectVerificationWhenAccountIsNotPendingVerification test above only covers
+        // ACTIVE; this widens coverage to every non-pending status, mirroring the loop-style
+        // pattern already used by shouldRejectChangePasswordForEveryNonActiveAccountStatus and
+        // shouldRejectPasswordResetForIneligibleAccountStatuses.
+        Account active = Account.register("verify-active@example.com", ENCODED);
+        active.activateEmail();
+        Account locked = Account.register("verify-locked@example.com", ENCODED);
+        locked.activateEmail();
+        locked.lock();
+        Account suspended = Account.register("verify-suspended@example.com", ENCODED);
+        suspended.activateEmail();
+        suspended.suspend();
+        Account deleted = Account.register("verify-deleted@example.com", ENCODED);
+        deleted.activateEmail();
+        deleted.markDeleted();
+
+        for (Account ineligible : java.util.List.of(active, locked, suspended, deleted)) {
+            UUID accountUuid = ineligible.getAccountUuid();
+            String rawToken = "non-pending-token-" + accountUuid;
+            when(verificationTokenService.consumeForPurpose(rawToken, VerificationToken.Purpose.EMAIL_VERIFY))
+                    .thenReturn(Optional.of(accountUuid));
+            when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(ineligible));
+
+            assertThatThrownBy(() -> service.activateFromVerificationToken(rawToken))
+                    .isInstanceOf(AccountService.VerificationTokenRejectedException.class)
+                    .isNotInstanceOf(InvalidAccountStateException.class);
+        }
+
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void verifyEmailAndPasswordResetRejectionsProduceIdenticalResponsesThroughTheRealServiceMethods() {
+        // T10, Kimi Phase 8 Finding 1: AccountExceptionHandlerTest's cross-surface test only
+        // proves the handler is deterministic for two independently-constructed exceptions - it
+        // never calls either real production method, so it can't detect a regression where one
+        // call site starts throwing something else before reaching the handler. This test closes
+        // that gap: both real service methods are invoked with a rejection-triggering setup, the
+        // two REAL thrown exceptions are captured, and routed through a bare
+        // AccountExceptionHandler (same zero-dependency construction AccountExceptionHandlerTest
+        // already uses) to prove the two surfaces genuinely produce identical responses end to end.
+        when(verificationTokenService.consumeForPurpose("bad-verify-token", VerificationToken.Purpose.EMAIL_VERIFY))
+                .thenReturn(Optional.empty());
+        when(verificationTokenService.consumeForPurpose("bad-reset-token", VerificationToken.Purpose.PASSWORD_RESET))
+                .thenReturn(Optional.empty());
+
+        AccountService.VerificationTokenRejectedException verifyEmailException = catchThrowableOfType(
+                AccountService.VerificationTokenRejectedException.class,
+                () -> service.activateFromVerificationToken("bad-verify-token"));
+        AccountService.VerificationTokenRejectedException passwordResetException = catchThrowableOfType(
+                AccountService.VerificationTokenRejectedException.class,
+                () -> service.resetPassword("bad-reset-token", "irrelevant-password"));
+
+        AccountExceptionHandler handler = new AccountExceptionHandler();
+        ProblemDetail verifyEmailProblem = handler.onVerificationTokenRejected(verifyEmailException);
+        ProblemDetail passwordResetProblem = handler.onVerificationTokenRejected(passwordResetException);
+
+        assertThat(verifyEmailProblem.getStatus()).isEqualTo(passwordResetProblem.getStatus());
+        assertThat(verifyEmailProblem.getType()).isEqualTo(passwordResetProblem.getType());
+        assertThat(verifyEmailProblem.getTitle()).isEqualTo(passwordResetProblem.getTitle());
+        assertThat(verifyEmailProblem.getDetail()).isEqualTo(passwordResetProblem.getDetail());
     }
 
     @Test
