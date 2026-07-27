@@ -420,6 +420,54 @@ class VerificationTokenServiceTest {
         verify(tokenRepository, never()).markConsumed(eq(hash), any());
     }
 
+    @Test
+    void shouldNotRevealAccountExistenceForInvalidVerificationTokenViaConsumeForPurpose() {
+        // T10, R5/L5: the EMAIL_VERIFY-side analog of the PASSWORD_RESET-side five tests above
+        // (lines 364-421), but targeting consumeForPurpose - the method AccountService.
+        // activateFromVerificationToken (T07) actually calls, unlike shouldNotRevealAccountExistenceForInvalidVerificationToken
+        // above (line 93), which only covers the now-productionally-unused purpose-blind verify()/
+        // consume(). Wrong-purpose is deliberately not repeated here - already proven by
+        // shouldRejectPasswordResetTokenWhenConsumedForEmailVerify above.
+        VerificationToken.Purpose emailVerify = VerificationToken.Purpose.EMAIL_VERIFY;
+
+        // Not found.
+        assertThat(service.consumeForPurpose("nonexistent-verify-token", emailVerify)).isEmpty();
+
+        // Expired - markConsumed's own WHERE expiresAt > :now excludes it; account usable so the
+        // pre-check doesn't short-circuit before markConsumed is even attempted.
+        String expiredRaw = "expired-verify-token";
+        String expiredHash = stubToken(expiredRaw, emailVerify, NOW.minusSeconds(1), null);
+        Account activeForExpired = usableAccount(AccountStatus.ACTIVE);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(activeForExpired));
+        when(tokenRepository.markConsumed(eq(expiredHash), any())).thenReturn(0);
+        assertThat(service.consumeForPurpose(expiredRaw, emailVerify)).isEmpty();
+
+        // Already used - markConsumed's own WHERE usedAt IS NULL excludes it.
+        String usedRaw = "used-verify-token";
+        String usedHash = stubToken(usedRaw, emailVerify, NOW.plusSeconds(3600), NOW.minusSeconds(1));
+        Account activeForUsed = usableAccount(AccountStatus.ACTIVE);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(activeForUsed));
+        when(tokenRepository.markConsumed(eq(usedHash), any())).thenReturn(0);
+        assertThat(service.consumeForPurpose(usedRaw, emailVerify)).isEmpty();
+
+        // Account deleted - the pre-check must reject before markConsumed is ever attempted, so a
+        // deleted account's token is never marked used by a rejected attempt.
+        String deletedRaw = "deleted-account-verify-token";
+        String deletedHash = stubToken(deletedRaw, emailVerify, NOW.plusSeconds(3600), null);
+        Account deletedAccount = usableAccount(AccountStatus.DELETED);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(deletedAccount));
+        assertThat(service.consumeForPurpose(deletedRaw, emailVerify)).isEmpty();
+        verify(tokenRepository, never()).markConsumed(eq(deletedHash), any());
+
+        // Account suspended - same pre-check-rejects-before-mutation guarantee.
+        String suspendedRaw = "suspended-account-verify-token";
+        String suspendedHash = stubToken(suspendedRaw, emailVerify, NOW.plusSeconds(3600), null);
+        Account suspendedAccount = usableAccount(AccountStatus.SUSPENDED);
+        when(accountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(suspendedAccount));
+        assertThat(service.consumeForPurpose(suspendedRaw, emailVerify)).isEmpty();
+        verify(tokenRepository, never()).markConsumed(eq(suspendedHash), any());
+    }
+
     /** Stubs {@code findByTokenHash} for the given raw token's real hash and returns that hash. */
     private String stubToken(String rawToken, Instant expiresAt, Instant usedAt) {
         return stubToken(rawToken, VerificationToken.Purpose.EMAIL_VERIFY, expiresAt, usedAt);

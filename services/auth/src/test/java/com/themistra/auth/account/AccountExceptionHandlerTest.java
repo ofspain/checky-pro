@@ -48,6 +48,27 @@ class AccountExceptionHandlerTest {
     }
 
     @Test
+    void onVerificationTokenRejectedResponseIsIdenticalForVerifyEmailAndPasswordResetSurfaces() {
+        // T10, AC4/L5: the test above proves uniformity *within* one rejection surface (two
+        // different internal reasons, same surface). This proves it *across* surfaces - an
+        // exception standing in for AccountService.activateFromVerificationToken's rejection (R5)
+        // and one standing in for AccountService.resetPassword's rejection (R15) are literally the
+        // same exception class, so onVerificationTokenRejected necessarily produces the same
+        // ProblemDetail for both - made explicit here rather than left as an inferred consequence
+        // of shared plumbing.
+        ProblemDetail verifyEmailRejection = handler.onVerificationTokenRejected(
+                new AccountService.VerificationTokenRejectedException());
+        ProblemDetail passwordResetRejection = handler.onVerificationTokenRejected(
+                new AccountService.VerificationTokenRejectedException());
+
+        assertThat(verifyEmailRejection.getStatus()).isEqualTo(passwordResetRejection.getStatus());
+        assertThat(verifyEmailRejection.getType()).isEqualTo(passwordResetRejection.getType());
+        assertThat(verifyEmailRejection.getTitle()).isEqualTo(passwordResetRejection.getTitle());
+        assertThat(verifyEmailRejection.getDetail()).isNull();
+        assertThat(passwordResetRejection.getDetail()).isNull();
+    }
+
+    @Test
     void onCurrentPasswordMismatchReturns400WithCurrentPasswordMismatchType() {
         ProblemDetail problem = handler.onCurrentPasswordMismatch(
                 new AccountService.CurrentPasswordMismatchException());
