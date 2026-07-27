@@ -16,8 +16,20 @@ test in this module; no `MockMvc`/`@WebMvcTest` introduced (Phase 9 Finding 4, r
 - `services/auth/src/test/java/com/themistra/auth/account/AccountExceptionHandlerTest.java` — 1
   test added (Phase 6), same test strengthened (Phase 9 Findings 5/6).
 - `services/auth/src/test/java/com/themistra/auth/account/AccountServiceTest.java` — 2 tests added
-  (Phase 9 Findings 1/2), plus one new import each for `ProblemDetail` and
-  `catchThrowableOfType`.
+  (Phase 9 Findings 1/2, plus imports for `ProblemDetail`/`catchThrowableOfType`); the Phase 9
+  Finding 1 test strengthened post-manifest (Phase 11 Gap 3) with absolute-value (`status`/`type`/
+  `title`/`detail`) and leak-prevention (`instance`/`properties`) assertions on both `ProblemDetail`s,
+  not just relative equality — imports added for `ProblemTypes`/`HttpStatus`.
+
+**Phase 11 (Kimi test review) disposition, applied before this manifest's final state:** Gap 3
+accepted and applied (above). Gaps 1, 2, 5, and 6's code suggestion rejected — Gap 1 re-litigates
+the frozen Phase 4 "no rename" decision on R2 naming for the third time; Gaps 2/5 would add
+combinatorial coverage that cannot detect anything not already proven, since every rejection
+reason on both surfaces throws the identical no-arg `VerificationTokenRejectedException` with no
+distinguishing state; Gap 6 (MockMvc/end-to-end) has zero precedent in this module and contradicts
+the frozen brief's explicit no-Spring-context constraint. Gap 6's residual-risk framing and Gap 4's
+already-documented named-test mapping are both carried into Phase 12's traceability matrix
+explicitly, per Kimi's own fallback recommendations.
 
 ## Test manifest
 

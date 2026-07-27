@@ -6,6 +6,7 @@ import com.themistra.auth.account.event.EmailRequestedEventPayload;
 import com.themistra.auth.account.event.UserLifecycleEventPayload;
 import com.themistra.auth.audit.AuditService;
 import com.themistra.auth.audit.RecordAuditEventRequest;
+import com.themistra.auth.common.ProblemTypes;
 import com.themistra.auth.events.OutboxPublisher;
 import com.themistra.auth.token.RefreshTokenTracker;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +17,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -386,6 +388,19 @@ class AccountServiceTest {
         assertThat(verifyEmailProblem.getType()).isEqualTo(passwordResetProblem.getType());
         assertThat(verifyEmailProblem.getTitle()).isEqualTo(passwordResetProblem.getTitle());
         assertThat(verifyEmailProblem.getDetail()).isEqualTo(passwordResetProblem.getDetail());
+
+        // Kimi Phase 11 Gap 3: relative equality alone would still pass if both surfaces
+        // regressed to the same non-conformant response (e.g. a common 500) - pin both to the
+        // actual expected contract too, and guard against leaking identifiers via instance/
+        // properties, matching AccountExceptionHandlerTest's own established assertions.
+        for (ProblemDetail problem : java.util.List.of(verifyEmailProblem, passwordResetProblem)) {
+            assertThat(problem.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+            assertThat(problem.getType()).isEqualTo(ProblemTypes.INVALID_TOKEN);
+            assertThat(problem.getTitle()).isEqualTo("Verification token is invalid or expired");
+            assertThat(problem.getDetail()).isNull();
+            assertThat(problem.getInstance()).isNull();
+            assertThat(problem.getProperties()).isNull();
+        }
     }
 
     @Test
