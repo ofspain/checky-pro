@@ -63,6 +63,19 @@ class AccountControllerTest {
     }
 
     @Test
+    void registerPropagatesPolicyViolationForTheExceptionHandlerToTranslate() {
+        // No local catch for this exception type - only DuplicateEmailException is swallowed
+        // here (enumeration safety). A policy violation must reach AccountExceptionHandler.
+        controller = new AccountController(accountService);
+        when(accountService.register(any()))
+                .thenThrow(new PasswordPolicy.PasswordPolicyViolationException("too short"));
+
+        assertThatThrownBy(() ->
+                controller.register(new RegisterAccountRequest("new@example.com", "short")))
+                .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
+    }
+
+    @Test
     void meDerivesAccountFromAuthenticationPrincipalNotAPathVariable() {
         controller = new AccountController(accountService);
         UUID accountUuid = UUID.randomUUID();
@@ -162,6 +175,17 @@ class AccountControllerTest {
         assertThatThrownBy(() ->
                 controller.passwordReset(new PasswordResetConfirmRequest("bad-token", "new-password")))
                 .isInstanceOf(AccountService.VerificationTokenRejectedException.class);
+    }
+
+    @Test
+    void passwordResetPropagatesPolicyViolationForTheExceptionHandlerToTranslate() {
+        controller = new AccountController(accountService);
+        org.mockito.Mockito.doThrow(new PasswordPolicy.PasswordPolicyViolationException("too short"))
+                .when(accountService).resetPassword(any(), any());
+
+        assertThatThrownBy(() ->
+                controller.passwordReset(new PasswordResetConfirmRequest("valid-reset-token", "short")))
+                .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
     }
 
     @Test

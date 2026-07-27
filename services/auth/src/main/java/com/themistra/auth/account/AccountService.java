@@ -183,11 +183,14 @@ public class AccountService {
      * before any mutation ({@code unlock}, hash update, family revocation, audit) - consistent
      * with this method's own established pattern of never mutating state until every gate has
      * passed. A policy-violating password submitted with an otherwise-valid, unused token still
-     * consumes that token (mirrors the existing ineligible-account case, which already does the
-     * same) and is distinguishable from an invalid-token rejection. This residual token-validity
-     * signal was reviewed and accepted (Phase 3/4): a caller who already holds a valid raw reset
-     * token gains nothing by probing with a bad password first, since they could submit a
-     * compliant one and complete the reset outright.</p>
+     * yields a response distinguishable from an invalid-token rejection ({@code
+     * PasswordPolicyViolationException} vs. {@link VerificationTokenRejectedException}) - the
+     * token itself is not durably consumed, since {@code consumeForPurpose}'s mutation and this
+     * method's own later throw both occur inside the same {@code @Transactional} boundary, so a
+     * thrown exception rolls the whole transaction back and the token remains usable for a retry.
+     * This residual response-type signal was reviewed and accepted (Phase 3/4): a caller who
+     * already holds a valid raw reset token gains nothing by probing with a bad password first,
+     * since they could submit a compliant one and complete the reset outright.</p>
      */
     @Transactional
     public void resetPassword(String rawToken, String newPassword) {

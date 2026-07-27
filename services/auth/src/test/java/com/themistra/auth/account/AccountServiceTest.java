@@ -139,17 +139,78 @@ class AccountServiceTest {
     }
 
     @Test
-    void registerRejectsKnownDuplicateWithoutTouchingEncoder() {
+    void registerRejectsKnownDuplicateAfterEncodingAndConstructingTheAccount() {
+        // T09, Finding 1's human-approved trade-off (Phase 4): the account is now constructed -
+        // and the encoder touched - before the duplicate-email check runs, so the policy check
+        // has a real, persistable UUID to validate against. Only save/token/outbox are still
+        // skipped for a duplicate. (Renamed from registerRejectsKnownDuplicateWithoutTouchingEncoder
+        // - that name is no longer true.)
         when(accountRepository.existsByEmail("taken@example.com")).thenReturn(true);
+        when(passwordEncoder.encode(RAW_PASSWORD)).thenReturn(ENCODED);
 
         assertThatThrownBy(() ->
                 service.register(new RegisterAccountRequest("taken@example.com", RAW_PASSWORD)))
                 .isInstanceOf(DuplicateEmailException.class);
 
-        verify(passwordEncoder, never()).encode(anyString());
+        verify(passwordEncoder).encode(RAW_PASSWORD);
+        verify(passwordPolicy).validate(eq(RAW_PASSWORD), any(UUID.class), any(UUID.class));
         verify(accountRepository, never()).saveAndFlush(any());
         verify(verificationTokenService, never()).issue(any(), any());
         verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void registerCallsPasswordPolicyValidateWithTheConstructedAccountUuidAndSubmittedPassword() {
+        when(accountRepository.existsByEmail("merchant@example.com")).thenReturn(false);
+        when(passwordEncoder.encode(RAW_PASSWORD)).thenReturn(ENCODED);
+        when(accountRepository.saveAndFlush(any(Account.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AccountResponse response =
+                service.register(new RegisterAccountRequest("merchant@example.com", RAW_PASSWORD));
+
+        ArgumentCaptor<UUID> accountUuidCaptor = ArgumentCaptor.forClass(UUID.class);
+        ArgumentCaptor<UUID> actorUuidCaptor = ArgumentCaptor.forClass(UUID.class);
+        verify(passwordPolicy).validate(eq(RAW_PASSWORD), accountUuidCaptor.capture(), actorUuidCaptor.capture());
+        // Self-service registration: the account being created is both the audit target and the
+        // actor, and it must be the real, eventually-persisted UUID - not a throwaway one.
+        assertThat(accountUuidCaptor.getValue()).isEqualTo(response.accountUuid());
+        assertThat(actorUuidCaptor.getValue()).isEqualTo(response.accountUuid());
+    }
+
+    @Test
+    void registerRejectsPolicyViolatingPasswordWithoutTouchingRepositoryOrOutbox() {
+        org.mockito.Mockito.doThrow(new PasswordPolicy.PasswordPolicyViolationException("too short"))
+                .when(passwordPolicy).validate(eq("bad"), any(UUID.class), any(UUID.class));
+
+        assertThatThrownBy(() ->
+                service.register(new RegisterAccountRequest("new@example.com", "bad")))
+                .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
+
+        verify(accountRepository, never()).existsByEmail(any());
+        verify(accountRepository, never()).saveAndFlush(any());
+        verify(verificationTokenService, never()).issue(any(), any());
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void registerRejectsPolicyViolatingPasswordEvenWhenEmailIsAlreadyRegistered() {
+        // AC4/L5: the policy check must fail identically whether the email is new or already
+        // registered. existsByEmail is stubbed true here (a genuinely duplicate email) but must
+        // never even be called - if a future regression reordered the checks, this test would
+        // fail differently (DuplicateEmailException, swallowed by the controller into a uniform
+        // 202) instead of the distinguishing PasswordPolicyViolationException asserted below.
+        lenient().when(accountRepository.existsByEmail("taken@example.com")).thenReturn(true);
+        org.mockito.Mockito.doThrow(new PasswordPolicy.PasswordPolicyViolationException("too short"))
+                .when(passwordPolicy).validate(eq("bad"), any(UUID.class), any(UUID.class));
+
+        assertThatThrownBy(() ->
+                service.register(new RegisterAccountRequest("taken@example.com", "bad")))
+                .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class)
+                .isNotInstanceOf(DuplicateEmailException.class);
+
+        verify(accountRepository, never()).existsByEmail(any());
+        verify(accountRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -589,6 +650,57 @@ class AccountServiceTest {
             assertThat(ineligible.getPasswordHash()).isEqualTo(originalPasswordHash);
         }
 
+        verify(passwordEncoder, never()).encode(anyString());
+        verify(refreshTokenTracker, never()).revokeAllForPrincipal(any(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void resetPasswordCallsPasswordPolicyValidateBeforeAnyMutation() {
+        // T09, Finding 4's ordering fix: validate must run before unlock/encode/revoke/audit. A
+        // spied, LOCKED account lets this test prove validate() genuinely precedes unlock() too,
+        // not just the mocked collaborators (mirrors the spy pattern already used at line ~241 for
+        // shouldRejectVerificationWhenAccountIsNotPendingVerification).
+        Account account = org.mockito.Mockito.spy(Account.register("locked-policy-order@example.com", ENCODED));
+        account.activateEmail();
+        account.lock();
+        UUID accountUuid = account.getAccountUuid();
+        when(verificationTokenService.consumeForPurpose("locked-valid-token", VerificationToken.Purpose.PASSWORD_RESET))
+                .thenReturn(Optional.of(accountUuid));
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+        when(passwordEncoder.encode("new-compliant-password")).thenReturn("{bcrypt}new-encoded");
+
+        service.resetPassword("locked-valid-token", "new-compliant-password");
+
+        verify(passwordPolicy).validate("new-compliant-password", accountUuid, accountUuid);
+        InOrder inOrder = inOrder(passwordPolicy, account, passwordEncoder, refreshTokenTracker, auditService);
+        inOrder.verify(passwordPolicy).validate("new-compliant-password", accountUuid, accountUuid);
+        inOrder.verify(account).unlock();
+        inOrder.verify(passwordEncoder).encode("new-compliant-password");
+        inOrder.verify(refreshTokenTracker).revokeAllForPrincipal(accountUuid.toString(), "PASSWORD_RESET");
+        inOrder.verify(auditService).record(any());
+    }
+
+    @Test
+    void resetPasswordRejectsPolicyViolatingPasswordWithoutMutatingAccountOrRevokingSessions() {
+        Account account = org.mockito.Mockito.spy(Account.register("reset-policy-violation@example.com", ENCODED));
+        account.activateEmail();
+        account.lock();
+        UUID accountUuid = account.getAccountUuid();
+        when(verificationTokenService.consumeForPurpose("valid-token-bad-password", VerificationToken.Purpose.PASSWORD_RESET))
+                .thenReturn(Optional.of(accountUuid));
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+        org.mockito.Mockito.doThrow(new PasswordPolicy.PasswordPolicyViolationException("too short"))
+                .when(passwordPolicy).validate("bad", accountUuid, accountUuid);
+
+        assertThatThrownBy(() -> service.resetPassword("valid-token-bad-password", "bad"))
+                .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
+
+        // Nothing downstream of validate() ran - not unlock, not the hash update, not revocation,
+        // not the audit record. The account is left exactly as it was (still LOCKED).
+        verify(account, never()).unlock();
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.LOCKED);
+        assertThat(account.getPasswordHash()).isEqualTo(ENCODED);
         verify(passwordEncoder, never()).encode(anyString());
         verify(refreshTokenTracker, never()).revokeAllForPrincipal(any(), any());
         verify(auditService, never()).record(any());
