@@ -26,6 +26,11 @@ import java.util.Objects;
  * (still within {@code decayWindow} of the failure that caused the lock) re-locks immediately with
  * the duration doubled again. This is intentional escalating behavior (human-approved), not a
  * defect.
+ *
+ * <p>Whenever a call clears a previously non-null {@code lockedUntil} back to {@code null} — a
+ * successful attempt, or a failed attempt that does not re-lock — {@link
+ * LockoutDecision#statusChange()} reports {@code UNLOCK} so the caller keeps {@code Account.status}
+ * in sync with {@code lockout_state.locked_until} (human-approved, Phase 9).
  */
 public final class LockoutStateMachine {
 
@@ -34,9 +39,20 @@ public final class LockoutStateMachine {
     private final Duration baseLockDuration;
 
     public LockoutStateMachine(int maxAttempts, Duration decayWindow, Duration baseLockDuration) {
+        if (maxAttempts <= 0) {
+            throw new IllegalArgumentException("maxAttempts must be positive");
+        }
+        Objects.requireNonNull(decayWindow, "decayWindow must not be null");
+        Objects.requireNonNull(baseLockDuration, "baseLockDuration must not be null");
+        if (!decayWindow.isPositive()) {
+            throw new IllegalArgumentException("decayWindow must be positive");
+        }
+        if (!baseLockDuration.isPositive()) {
+            throw new IllegalArgumentException("baseLockDuration must be positive");
+        }
         this.maxAttempts = maxAttempts;
-        this.decayWindow = Objects.requireNonNull(decayWindow, "decayWindow must not be null");
-        this.baseLockDuration = Objects.requireNonNull(baseLockDuration, "baseLockDuration must not be null");
+        this.decayWindow = decayWindow;
+        this.baseLockDuration = baseLockDuration;
     }
 
     /**
@@ -77,9 +93,11 @@ public final class LockoutStateMachine {
         int failedAttempts = decayed(snapshot, now) ? 1 : snapshot.failedAttempts() + 1;
 
         if (failedAttempts < maxAttempts) {
+            AccountStatusChange statusChange =
+                    snapshot.lockedUntil() != null ? AccountStatusChange.UNLOCK : AccountStatusChange.NONE;
             return new LockoutDecision(
-                    failedAttempts, now, snapshot.lockedUntil(), snapshot.lockCount(),
-                    false, AccountStatusChange.NONE);
+                    failedAttempts, now, null, snapshot.lockCount(),
+                    false, statusChange);
         }
 
         int lockCountBeforeThisLock = snapshot.lockCount();
@@ -101,6 +119,8 @@ public final class LockoutStateMachine {
     }
 
     private Duration effectiveLockDuration(int lockCountBeforeThisLock) {
+        // No cap on lockCount per L4; extreme values are a documented, accepted theoretical
+        // limit (Phase 4/9 disposition), not something this method guards against.
         return baseLockDuration.multipliedBy(1L << lockCountBeforeThisLock);
     }
 
