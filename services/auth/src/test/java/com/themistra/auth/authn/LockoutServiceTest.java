@@ -60,9 +60,25 @@ class LockoutServiceTest {
         assertThat(decision.failedAttempts()).isEqualTo(5);
         assertThat(decision.statusChange()).isEqualTo(AccountStatusChange.LOCK);
         assertThat(fourFailures.getFailedAttempts()).isEqualTo(5);
+        assertThat(fourFailures.getLastFailedAt()).isEqualTo(T0.plusSeconds(60));
+        assertThat(fourFailures.getLockedUntil()).isEqualTo(T0.plusSeconds(60).plus(Duration.ofMinutes(15)));
         verify(repository).save(fourFailures);
         verify(accountService).lock(ACCOUNT_UUID);
         verify(accountService, never()).unlock(any());
+    }
+
+    @Test
+    void nonLockingFailureStillPersistsUpdatedCounters() {
+        LockoutState threeFailures = existingRow(3, T0, null, 0);
+        when(repository.findByAccountUuidForUpdate(ACCOUNT_UUID)).thenReturn(Optional.of(threeFailures));
+
+        LockoutDecision decision = service.recordFailedAttempt(ACCOUNT_UUID, T0.plusSeconds(60));
+
+        assertThat(decision.statusChange()).isEqualTo(AccountStatusChange.NONE);
+        assertThat(decision.failedAttempts()).isEqualTo(4);
+        assertThat(threeFailures.getFailedAttempts()).isEqualTo(4);
+        verify(repository).save(threeFailures);
+        verifyNoInteractions(accountService);
     }
 
     @Test
@@ -150,7 +166,27 @@ class LockoutServiceTest {
         assertThat(decision.blocked()).isFalse();
         assertThat(decision.failedAttempts()).isEqualTo(6);
         assertThat(decision.statusChange()).isEqualTo(AccountStatusChange.LOCK);
+        assertThat(locked.getLockedUntil()).isEqualTo(lockedUntil.plus(Duration.ofMinutes(30)));
         verify(accountService).lock(ACCOUNT_UUID);
+    }
+
+    @Test
+    void postUnlockDecaySignalsUnlockAndClearsLockedUntil() {
+        // T11 Phase 9 fix: a failure evaluated well after lockedUntil (past the decay window
+        // since lastFailedAt) decays instead of re-locking, and signals UNLOCK - a FAILURE
+        // outcome routing to accountService.unlock(...), not just SUCCESS.
+        Instant lockedUntil = T0.plus(Duration.ofMinutes(15));
+        LockoutState locked = existingRow(5, T0, lockedUntil, 1);
+        when(repository.findByAccountUuidForUpdate(ACCOUNT_UUID)).thenReturn(Optional.of(locked));
+        Instant wellAfterExpiry = T0.plus(Duration.ofMinutes(46));
+
+        LockoutDecision decision = service.recordFailedAttempt(ACCOUNT_UUID, wellAfterExpiry);
+
+        assertThat(decision.statusChange()).isEqualTo(AccountStatusChange.UNLOCK);
+        assertThat(decision.lockedUntil()).isNull();
+        assertThat(locked.getLockedUntil()).isNull();
+        verify(accountService).unlock(ACCOUNT_UUID);
+        verify(accountService, never()).lock(any());
     }
 
     @Test

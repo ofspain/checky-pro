@@ -9,12 +9,22 @@ test — matching `agents.md`'s convention and this module's own established pre
 
 ## Files
 
-- `services/auth/src/test/java/com/themistra/auth/authn/LockoutServiceTest.java` (new, 17 tests)
-- `services/auth/src/test/java/com/themistra/auth/authn/LockoutPropertiesTest.java` (new, 4 tests)
+- `services/auth/src/test/java/com/themistra/auth/authn/LockoutServiceTest.java` (19 tests —
+  17 original + 2 added at Phase 11: `nonLockingFailureStillPersistsUpdatedCounters`,
+  `postUnlockDecaySignalsUnlockAndClearsLockedUntil`)
+- `services/auth/src/test/java/com/themistra/auth/authn/LockoutPropertiesTest.java` (4 tests,
+  widened at Phase 11 to cover both the zero and negative boundary per field)
 - `services/auth/src/test/java/com/themistra/auth/authn/LockoutPersistenceIntegrationTest.java`
-  (new, 4 tests)
+  (8 tests — 4 original + 4 added at Phase 11: a real concurrency proof, second-lock-cycle,
+  blocked-attempt, and `resetLockout` end-to-end)
 - `services/auth/src/test/java/com/themistra/auth/account/AccountServiceTest.java` (modified — 4
   new tests for `lock`/`unlock`)
+
+**Phase 11 (Kimi test review) update:** all 6 gaps Kimi raised checked out as genuine (none were
+false positives) and were applied directly to these files — see each test's placement above.
+Gap 1 in particular was already a requirement of this task's own frozen brief ("a
+pessimistic-lock-respecting test, not just single-threaded logic") that Phase 10 hadn't yet
+delivered; Phase 11 closed that gap, not just Kimi's suggestion.
 
 ## Test → requirement / acceptance-criterion mapping
 
@@ -80,20 +90,21 @@ javac -d <out> -cp "$(cat /tmp/auth-cp.txt)" -sourcepath services/auth/src/main/
   services/auth/src/test/java/com/themistra/auth/authn/LockoutPersistenceIntegrationTest.java
 ```
 
-Clean compile, all four files. `AccountServiceTest`, `LockoutServiceTest`, and
-`LockoutPropertiesTest` (58 tests total — the full, updated `AccountServiceTest` suite plus the
-two new pure-unit files) were then **executed** via the JUnit Platform Launcher:
+Clean compile, all four files, both before and after the Phase 11 additions. `AccountServiceTest`,
+`LockoutServiceTest`, and `LockoutPropertiesTest` (60 tests total, final count after Phase 11) were
+then **executed** via the JUnit Platform Launcher:
 
 ```
-58 tests found, 58 tests successful, 0 failed
+60 tests found, 60 tests successful, 0 failed
 ```
 
-`LockoutPersistenceIntegrationTest`'s 4 tests compile clean but **could not be executed in this
+`LockoutPersistenceIntegrationTest`'s 8 tests (4 original + 4 added at Phase 11, including the
+concurrency proof Gap 1 asked for) compile clean but **could not be executed in this
 environment** — `docker info` fails here (no Docker daemon available), and Testcontainers requires
-one. This is a real, honestly-reported gap: the native-query and end-to-end behavior these tests
-target has been verified by careful manual reasoning (Phase 6/7/8/9) and by the mocked
-`LockoutServiceTest` suite, but not by an actual run against real Postgres. Flagged as a residual
-verification risk for whoever next has Docker access, not silently claimed as passing.
+one. This is a real, honestly-reported gap: the native-query, end-to-end, and concurrent-update
+behavior these tests target has been verified by careful manual reasoning (Phase 6/7/8/9) and by
+the mocked `LockoutServiceTest` suite, but not by an actual run against real Postgres. Flagged as a
+residual verification risk for whoever next has Docker access, not silently claimed as passing.
 
 ## Specification references
 

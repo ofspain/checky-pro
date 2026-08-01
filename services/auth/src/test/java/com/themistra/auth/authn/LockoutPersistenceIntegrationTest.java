@@ -15,6 +15,11 @@ import org.springframework.context.annotation.Import;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -98,6 +103,97 @@ class LockoutPersistenceIntegrationTest {
         assertThat(persisted).isPresent();
         assertThat(persisted.get().getFailedAttempts()).isZero();
         assertThat(persisted.get().getLockedUntil()).isNull();
+    }
+
+    @Test
+    void concurrentFailedAttemptsDoNotLoseUpdates() throws Exception {
+        // Frozen brief Required Tests / Phase 11 Gap 1: proves FOR UPDATE OF ls actually
+        // serializes two concurrent transactions on the same row, rather than both reading the
+        // same stale snapshot and one increment silently overwriting the other.
+        UUID accountUuid = registerAndActivate("concurrent@example.com");
+        Instant base = Instant.now();
+        for (int i = 0; i < 3; i++) {
+            lockoutService.recordFailedAttempt(accountUuid, base.plusSeconds(i));
+        }
+
+        CountDownLatch bothReady = new CountDownLatch(2);
+        CountDownLatch go = new CountDownLatch(1);
+        Callable<Void> attempt = () -> {
+            bothReady.countDown();
+            go.await();
+            lockoutService.recordFailedAttempt(accountUuid, Instant.now());
+            return null;
+        };
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Void> first = executor.submit(attempt);
+            Future<Void> second = executor.submit(attempt);
+            bothReady.await();
+            go.countDown();
+            first.get();
+            second.get();
+        } finally {
+            executor.shutdown();
+        }
+
+        LockoutState persisted = lockoutStateRepository.findByAccountUuidForUpdate(accountUuid).orElseThrow();
+        assertThat(persisted.getFailedAttempts()).isEqualTo(5);
+    }
+
+    @Test
+    void secondLockCycleAfterExpiryDoublesLockCountOnARealAccount() {
+        UUID accountUuid = registerAndActivate("second-cycle@example.com");
+        Instant base = Instant.now();
+        for (int i = 0; i < 5; i++) {
+            lockoutService.recordFailedAttempt(accountUuid, base.plusSeconds(i));
+        }
+        Instant lockedUntil = lockoutStateRepository.findByAccountUuidForUpdate(accountUuid)
+                .orElseThrow().getLockedUntil();
+
+        // A failure right at expiry re-locks immediately (T11 AC7) - second cycle, doubled.
+        LockoutDecision decision = lockoutService.recordFailedAttempt(accountUuid, lockedUntil);
+
+        assertThat(decision.statusChange()).isEqualTo(AccountStatusChange.LOCK);
+        assertThat(accountService.getByUuid(accountUuid).status()).isEqualTo(AccountStatus.LOCKED);
+        LockoutState persisted = lockoutStateRepository.findByAccountUuidForUpdate(accountUuid).orElseThrow();
+        assertThat(persisted.getLockCount()).isEqualTo(2);
+    }
+
+    @Test
+    void blockedAttemptLeavesARealAccountAndRowUnchanged() {
+        UUID accountUuid = registerAndActivate("blocked@example.com");
+        Instant base = Instant.now();
+        for (int i = 0; i < 5; i++) {
+            lockoutService.recordFailedAttempt(accountUuid, base.plusSeconds(i));
+        }
+        LockoutState beforeBlocked = lockoutStateRepository.findByAccountUuidForUpdate(accountUuid).orElseThrow();
+        int failedAttemptsBefore = beforeBlocked.getFailedAttempts();
+        Instant oneInstantBeforeExpiry = beforeBlocked.getLockedUntil().minusMillis(1);
+
+        LockoutDecision decision = lockoutService.recordFailedAttempt(accountUuid, oneInstantBeforeExpiry);
+
+        assertThat(decision.blocked()).isTrue();
+        assertThat(accountService.getByUuid(accountUuid).status()).isEqualTo(AccountStatus.LOCKED);
+        LockoutState afterBlocked = lockoutStateRepository.findByAccountUuidForUpdate(accountUuid).orElseThrow();
+        assertThat(afterBlocked.getFailedAttempts()).isEqualTo(failedAttemptsBefore);
+    }
+
+    @Test
+    void resetLockoutOnARealLockedAccountClearsTheRowAndTransitionsToActive() {
+        UUID accountUuid = registerAndActivate("real-reset@example.com");
+        Instant base = Instant.now();
+        for (int i = 0; i < 5; i++) {
+            lockoutService.recordFailedAttempt(accountUuid, base.plusSeconds(i));
+        }
+        assertThat(accountService.getByUuid(accountUuid).status()).isEqualTo(AccountStatus.LOCKED);
+
+        lockoutService.resetLockout(accountUuid);
+
+        assertThat(accountService.getByUuid(accountUuid).status()).isEqualTo(AccountStatus.ACTIVE);
+        LockoutState persisted = lockoutStateRepository.findByAccountUuidForUpdate(accountUuid).orElseThrow();
+        assertThat(persisted.getFailedAttempts()).isZero();
+        assertThat(persisted.getLockedUntil()).isNull();
     }
 
     private UUID registerAndActivate(String email) {

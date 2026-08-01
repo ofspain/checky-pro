@@ -45,25 +45,20 @@ class LockoutPropertiesTest {
 
     @Test
     void shouldRejectNonPositiveMaxAttempts() {
-        Set<ConstraintViolation<LockoutProperties>> violations =
-                validator.validate(new LockoutProperties(0, 30, 15));
-
-        assertThat(violations).isNotEmpty();
+        // @Min(1)'s boundary is <= 0, not just == 0 - both must be exercised.
+        assertThat(validator.validate(new LockoutProperties(0, 30, 15))).isNotEmpty();
+        assertThat(validator.validate(new LockoutProperties(-1, 30, 15))).isNotEmpty();
     }
 
     @Test
     void shouldRejectNonPositiveWindowMinutes() {
-        Set<ConstraintViolation<LockoutProperties>> violations =
-                validator.validate(new LockoutProperties(5, 0, 15));
-
-        assertThat(violations).isNotEmpty();
+        assertThat(validator.validate(new LockoutProperties(5, 0, 15))).isNotEmpty();
+        assertThat(validator.validate(new LockoutProperties(5, -1, 15))).isNotEmpty();
     }
 
     @Test
     void shouldRejectNonPositiveBaseLockMinutes() {
-        Set<ConstraintViolation<LockoutProperties>> violations =
-                validator.validate(new LockoutProperties(5, 30, 0));
-
-        assertThat(violations).isNotEmpty();
+        assertThat(validator.validate(new LockoutProperties(5, 30, 0))).isNotEmpty();
+        assertThat(validator.validate(new LockoutProperties(5, 30, -1))).isNotEmpty();
     }
 }
