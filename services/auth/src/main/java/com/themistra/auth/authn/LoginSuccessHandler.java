@@ -3,6 +3,8 @@ package com.themistra.auth.authn;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.authentication.SavedRequestAwareAuthenticationSuccessHandler;
 import org.springframework.stereotype.Component;
@@ -23,6 +25,8 @@ import java.util.UUID;
 @Component
 public class LoginSuccessHandler extends SavedRequestAwareAuthenticationSuccessHandler {
 
+    private static final Logger log = LoggerFactory.getLogger(LoginSuccessHandler.class);
+
     private final LockoutService lockoutService;
     private final Clock clock;
 
@@ -34,8 +38,15 @@ public class LoginSuccessHandler extends SavedRequestAwareAuthenticationSuccessH
     @Override
     public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
                                         Authentication authentication) throws IOException, ServletException {
-        UUID accountUuid = UUID.fromString(authentication.getName());
-        lockoutService.recordSuccessfulAttempt(accountUuid, clock.instant());
+        // Lockout-reset bookkeeping is best-effort: a failure here (including an unexpectedly
+        // non-UUID principal name) must never prevent an already-authenticated user from
+        // completing login.
+        try {
+            UUID accountUuid = UUID.fromString(authentication.getName());
+            lockoutService.recordSuccessfulAttempt(accountUuid, clock.instant());
+        } catch (RuntimeException e) {
+            log.warn("Failed to record successful login for lockout tracking", e);
+        }
         super.onAuthenticationSuccess(request, response, authentication);
     }
 }

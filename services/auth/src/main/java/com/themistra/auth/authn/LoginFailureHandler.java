@@ -9,6 +9,8 @@ import com.themistra.auth.audit.RecordAuditEventRequest;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.authentication.SimpleUrlAuthenticationFailureHandler;
 import org.springframework.stereotype.Component;
@@ -36,6 +38,8 @@ import java.util.UUID;
 @Component
 public class LoginFailureHandler extends SimpleUrlAuthenticationFailureHandler {
 
+    private static final Logger log = LoggerFactory.getLogger(LoginFailureHandler.class);
+
     private final AccountService accountService;
     private final LockoutService lockoutService;
     private final AuditService auditService;
@@ -53,11 +57,20 @@ public class LoginFailureHandler extends SimpleUrlAuthenticationFailureHandler {
     @Override
     public void onAuthenticationFailure(HttpServletRequest request, HttpServletResponse response,
                                         AuthenticationException exception) throws IOException, ServletException {
-        recordFailure(request);
+        // Bookkeeping (lockout tracking, audit) is best-effort: a failure here must never turn a
+        // normal failed login into a 500, which would itself break the uniform-response guarantee
+        // (L5/AC9) this handler otherwise upholds by construction.
+        try {
+            recordFailure(request);
+        } catch (RuntimeException e) {
+            log.warn("Failed to record login-failure bookkeeping", e);
+        }
         super.onAuthenticationFailure(request, response, exception);
     }
 
     private void recordFailure(HttpServletRequest request) {
+        // Coupled to .formLogin(Customizer.withDefaults())'s default username parameter name;
+        // if that's ever customized in SecurityChainsConfig, this must change with it.
         String email = request.getParameter("username");
         Optional<LoginView> loginView = email == null
                 ? Optional.empty()
@@ -71,8 +84,14 @@ public class LoginFailureHandler extends SimpleUrlAuthenticationFailureHandler {
         LoginView view = loginView.get();
         UUID accountUuid = view.accountUuid();
         Instant now = clock.instant();
-        if (isLockoutEligible(view, now)) {
-            lockoutService.recordFailedAttempt(accountUuid, now);
+        try {
+            if (isLockoutEligible(view, now)) {
+                lockoutService.recordFailedAttempt(accountUuid, now);
+            }
+        } catch (RuntimeException e) {
+            // A lockout-tracking failure must not suppress the audit event below (R43) - each
+            // side effect stands on its own.
+            log.warn("Failed to record failed login attempt for lockout tracking", e);
         }
         auditFailure(request, accountUuid, accountUuid);
     }

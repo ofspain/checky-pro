@@ -7,8 +7,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
-import org.springframework.security.oauth2.core.OAuth2TokenType;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
 
 import java.util.Set;
@@ -49,7 +49,7 @@ class TokenClaimsCustomizerTest {
         customizer.customize(context);
 
         JwtClaimsSet built = claims.build();
-        assertThat(built.getClaim("amr")).isEqualTo(java.util.List.of("client_secret"));
+        assertThat(built.<java.util.List<String>>getClaim("amr")).isEqualTo(java.util.List.of("client_secret"));
         assertThat(built.getClaims()).doesNotContainKey("roles");
         assertThat(built.getClaims()).doesNotContainKey("email_verified");
         verify(roleService, never()).resolveEffectiveRoles(org.mockito.ArgumentMatchers.any());
@@ -70,8 +70,8 @@ class TokenClaimsCustomizerTest {
         JwtClaimsSet built = claims.build();
         assertThat(built.<java.util.List<String>>getClaim("roles"))
                 .containsExactlyInAnyOrder("MERCHANT", "USER");
-        assertThat(built.getClaim("amr")).isEqualTo(java.util.List.of("pwd"));
-        assertThat(built.getClaim("acr")).isEqualTo("urn:themistra:acr:pwd");
+        assertThat(built.<java.util.List<String>>getClaim("amr")).isEqualTo(java.util.List.of("pwd"));
+        assertThat(built.<String>getClaim("acr")).isEqualTo("urn:themistra:acr:pwd");
         assertThat(built.<Boolean>getClaim("email_verified")).isTrue();
         assertThat(built.getClaims()).doesNotContainKeys("email", "name", "given_name", "family_name");
     }

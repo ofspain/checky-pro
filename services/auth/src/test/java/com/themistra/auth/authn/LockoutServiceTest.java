@@ -230,6 +230,49 @@ class LockoutServiceTest {
         assertThatThrownBy(() -> service.resetLockout(null)).isInstanceOf(NullPointerException.class);
     }
 
+    @Test
+    void isCurrentlyLockedReturnsFalseForMissingRow() {
+        // T13, Phase 4 Finding 7: no active interval recorded means no lock.
+        when(repository.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.empty());
+
+        assertThat(service.isCurrentlyLocked(ACCOUNT_UUID, T0)).isFalse();
+        verify(repository, never()).findByAccountUuidForUpdate(any());
+    }
+
+    @Test
+    void isCurrentlyLockedReturnsFalseForNullLockedUntil() {
+        LockoutState neverLocked = existingRow(2, T0, null, 0);
+        when(repository.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.of(neverLocked));
+
+        assertThat(service.isCurrentlyLocked(ACCOUNT_UUID, T0)).isFalse();
+    }
+
+    @Test
+    void isCurrentlyLockedReturnsTrueStrictlyBeforeLockedUntil() {
+        Instant lockedUntil = T0.plus(Duration.ofMinutes(15));
+        LockoutState locked = existingRow(5, T0, lockedUntil, 1);
+        when(repository.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.of(locked));
+
+        assertThat(service.isCurrentlyLocked(ACCOUNT_UUID, lockedUntil.minusMillis(1))).isTrue();
+    }
+
+    @Test
+    void isCurrentlyLockedReturnsFalseAtOrAfterLockedUntil() {
+        // Same at/after-is-permitted boundary convention as recordFailedAttempt's blocked check.
+        Instant lockedUntil = T0.plus(Duration.ofMinutes(15));
+        LockoutState locked = existingRow(5, T0, lockedUntil, 1);
+        when(repository.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.of(locked));
+
+        assertThat(service.isCurrentlyLocked(ACCOUNT_UUID, lockedUntil)).isFalse();
+        assertThat(service.isCurrentlyLocked(ACCOUNT_UUID, lockedUntil.plusMillis(1))).isFalse();
+    }
+
+    @Test
+    void isCurrentlyLockedRejectsNullAccountUuidOrNow() {
+        assertThatThrownBy(() -> service.isCurrentlyLocked(null, T0)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> service.isCurrentlyLocked(ACCOUNT_UUID, null)).isInstanceOf(NullPointerException.class);
+    }
+
     private static LockoutState existingRow(int failedAttempts, Instant lastFailedAt, Instant lockedUntil, int lockCount) {
         return LockoutState.of(ACCOUNT_ID,
                 new LockoutDecision(failedAttempts, lastFailedAt, lockedUntil, lockCount, false, AccountStatusChange.NONE));
