@@ -1,5 +1,21 @@
 # auth · T13 — Phase 10: Test Generation
 
+**Phase 11 (Kimi test review) update:** all 10 gaps Kimi raised checked out as genuine (Finding 1
+verified directly against `AccountService.findLoginView`'s source) and were applied to these
+files. Highlights: removed `deletedAccountAuditsOnlyNeverCallsLockoutService` (tested a
+production-unreachable input — `findLoginView` already filters `DELETED` to empty, matching the
+unknown-email branch) with an explanatory comment in its place; strengthened the exception-subclass
+redirect test to assert URL equality via a captor, not just call count; added a
+`super.onAuthenticationSuccess` delegation test to `LoginSuccessHandlerTest` (Gap 3 — a handler
+that recorded the attempt and silently returned would have passed every other test in that file);
+added `isAccountNonLocked()` assertions to the pre-existing pending/suspended tests; added an
+explicit `InOrder` proof that audit fires before the redirect when lockout tracking fails; and,
+most significantly, fixed a real defect in the *test* that would have made the entire unexecuted
+integration suite unreliable — `TestRestTemplate` follows redirects by default, which would have
+silently turned every expected `302 FOUND` into whatever the redirect target returned, making every
+status-code assertion in that file meaningless. All 39 executable tests re-verified passing after
+the changes.
+
 Test manifest against the frozen brief (`04-frozen-task-brief.md`) and the Phase 9-resolved
 implementation. No production code touched beyond the mechanical fixes already scoped and
 approved at Phase 9 (two production import lines) — this phase's own two additional test-file

@@ -142,10 +142,12 @@ class LoginFailureHandlerTest {
         assertAuditOnlyForStatus(AccountStatus.SUSPENDED);
     }
 
-    @Test
-    void deletedAccountAuditsOnlyNeverCallsLockoutService() throws Exception {
-        assertAuditOnlyForStatus(AccountStatus.DELETED);
-    }
+    // No deletedAccountAuditsOnlyNeverCallsLockoutService test: Phase 11 Gap 1, verified against
+    // AccountService.findLoginView (AccountService.java:339), which already filters DELETED
+    // accounts to Optional.empty() - a DELETED email is indistinguishable from an unknown one by
+    // the time it reaches this handler, so that scenario is exercised by
+    // unknownEmailAuditsWithNullUuidsAndNeverCallsLockoutService, not a status-gated branch.
+    // Asserting a LoginView(status=DELETED) here would test a production-unreachable input.
 
     @Test
     void stillLockedAccountAuditsOnlyNeverCallsRecordFailedAttempt() throws Exception {
@@ -184,11 +186,13 @@ class LoginFailureHandlerTest {
                 new DisabledException("disabled")
         };
 
+        ArgumentCaptor<String> redirectUrls = ArgumentCaptor.forClass(String.class);
         for (AuthenticationException exception : exceptions) {
             handler.onAuthenticationFailure(request, response, exception);
         }
 
-        verify(response, times(exceptions.length)).sendRedirect("/login?error");
+        verify(response, times(exceptions.length)).sendRedirect(redirectUrls.capture());
+        assertThat(redirectUrls.getAllValues()).containsOnly("/login?error");
     }
 
     @Test
@@ -212,8 +216,12 @@ class LoginFailureHandlerTest {
 
         handler.onAuthenticationFailure(request, response, new BadCredentialsException("bad"));
 
-        verify(auditService).record(any());
-        verify(response).sendRedirect("/login?error");
+        // Phase 9 Finding 3, made explicit: audit fires (with the real accountUuid, not
+        // suppressed by the lockout failure) strictly before the redirect proceeds.
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(auditService, response);
+        inOrder.verify(auditService).record(any());
+        inOrder.verify(response).sendRedirect("/login?error");
+        assertThat(captureAuditRequest().accountUuid()).isEqualTo(ACCOUNT_UUID);
     }
 
     private void assertAuditOnlyForStatus(AccountStatus status) throws Exception {

@@ -71,6 +71,18 @@ class LoginSuccessHandlerTest {
     }
 
     @Test
+    void stillDelegatesToTheInheritedRedirectBehavior() throws Exception {
+        // Phase 11 Gap 3: proves super.onAuthenticationSuccess(...) actually runs, not just that
+        // recordSuccessfulAttempt was called - a handler that recorded the attempt and then
+        // returned without delegating would still pass every other test in this file.
+        when(authentication.getName()).thenReturn(ACCOUNT_UUID.toString());
+
+        handler.onAuthenticationSuccess(request, response, authentication);
+
+        verify(response).sendRedirect(anyString());
+    }
+
+    @Test
     void lockoutFailureDoesNotPreventLoginCompleting() throws Exception {
         when(authentication.getName()).thenReturn(ACCOUNT_UUID.toString());
         doThrow(new RuntimeException("db down")).when(lockoutService).recordSuccessfulAttempt(any(), any());

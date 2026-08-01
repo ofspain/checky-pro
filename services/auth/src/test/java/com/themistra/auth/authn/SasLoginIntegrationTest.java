@@ -5,6 +5,8 @@ import com.themistra.auth.account.AccountService;
 import com.themistra.auth.account.AccountStatus;
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
+import com.themistra.auth.audit.AuditService;
+import com.themistra.auth.audit.dto.AuditEventResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,18 +14,24 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
+import java.io.IOException;
+import java.net.HttpURLConnection;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -62,6 +70,12 @@ class SasLoginIntegrationTest {
     private LockoutService lockoutService;
 
     @Autowired
+    private LockoutStateRepository lockoutStateRepository;
+
+    @Autowired
+    private AuditService auditService;
+
+    @Autowired
     private TestRestTemplate restTemplate;
 
     private String baseUrl;
@@ -69,6 +83,18 @@ class SasLoginIntegrationTest {
     @BeforeEach
     void setUp() {
         baseUrl = "http://localhost:" + port;
+        // Phase 11 Gap 6: TestRestTemplate follows redirects by default (its underlying
+        // SimpleClientHttpRequestFactory sets HttpURLConnection.setInstanceFollowRedirects(true)),
+        // which would silently turn every 302 this test expects to observe into whatever the
+        // Location target returns instead - making every HttpStatus.FOUND assertion below
+        // meaningless without this override.
+        restTemplate.getRestTemplate().setRequestFactory(new SimpleClientHttpRequestFactory() {
+            @Override
+            protected void prepareConnection(HttpURLConnection connection, String httpMethod) throws IOException {
+                super.prepareConnection(connection, httpMethod);
+                connection.setInstanceFollowRedirects(false);
+            }
+        });
     }
 
     @Test
@@ -85,6 +111,12 @@ class SasLoginIntegrationTest {
         LoginAttempt attempt = attemptLogin("expired-lock@example.com", PASSWORD);
 
         assertThat(attempt.response.getStatusCode()).isEqualTo(HttpStatus.FOUND);
+        // Phase 11 Gap 9: FOUND alone doesn't prove the login succeeded - a redirect back to
+        // /login?error is also FOUND. The successful-login redirect target must differ from the
+        // failure target.
+        assertThat(attempt.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).doesNotContain("/login?error"));
         assertThat(accountService.getByUuid(accountUuid).status()).isEqualTo(AccountStatus.ACTIVE);
     }
 
@@ -98,6 +130,13 @@ class SasLoginIntegrationTest {
 
         LoginAttempt attempt = attemptLogin("still-locked@example.com", PASSWORD);
 
+        // Phase 11 Gap 4: the response itself must prove the attempt was denied - status alone
+        // (LOCKED) could also result from an implementation that let the password check proceed
+        // and then re-locked the account via the same recordFailedAttempt call.
+        assertThat(attempt.response.getStatusCode()).isEqualTo(HttpStatus.FOUND);
+        assertThat(attempt.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
         // Rejected at Spring's pre-authentication gate before password verification - no
         // lockout_state change from this attempt itself.
         assertThat(accountService.getByUuid(accountUuid).status()).isEqualTo(AccountStatus.LOCKED);
@@ -109,10 +148,17 @@ class SasLoginIntegrationTest {
 
         attemptLogin("bad-password@example.com", "wrong-password-entirely");
 
+        // Phase 11 Gap 5: a no-op failure handler would also leave isCurrentlyLocked() == false -
+        // that alone doesn't prove the counter moved or the audit fired. Read the real persisted
+        // state instead.
         assertThat(lockoutService.isCurrentlyLocked(accountUuid, Instant.now())).isFalse();
-        // A single failure never locks (L4 needs five) - the counter increment itself is proven
-        // at the unit layer (LoginFailureHandlerTest); this test's job is proving the real filter
-        // chain reaches LoginFailureHandler at all for a known account.
+        Optional<LockoutState> persisted = lockoutStateRepository.findByAccountUuid(accountUuid);
+        assertThat(persisted).isPresent();
+        assertThat(persisted.get().getFailedAttempts()).isEqualTo(1);
+
+        Page<AuditEventResponse> auditEvents = auditService.list(accountUuid, Pageable.unpaged());
+        assertThat(auditEvents.getContent())
+                .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("login.failed"));
     }
 
     @Test

@@ -66,14 +66,20 @@ class AccountUserDetailsServiceTest {
     void pendingVerificationMapsToDisabled() {
         accountWithStatus(AccountStatus.PENDING_VERIFICATION);
 
-        assertThat(service.loadUserByUsername(EMAIL).isEnabled()).isFalse();
+        UserDetails details = service.loadUserByUsername(EMAIL);
+        assertThat(details.isEnabled()).isFalse();
+        // Phase 11 Gap 7: the whole point of T13's fix is separating accountLocked from raw
+        // status - a non-LOCKED account must never be rejected via the locked gate.
+        assertThat(details.isAccountNonLocked()).isTrue();
     }
 
     @Test
     void suspendedMapsToDisabled() {
         accountWithStatus(AccountStatus.SUSPENDED);
 
-        assertThat(service.loadUserByUsername(EMAIL).isEnabled()).isFalse();
+        UserDetails details = service.loadUserByUsername(EMAIL);
+        assertThat(details.isEnabled()).isFalse();
+        assertThat(details.isAccountNonLocked()).isTrue();
     }
 
     @Test
