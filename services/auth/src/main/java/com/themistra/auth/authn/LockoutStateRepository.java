@@ -28,6 +28,15 @@ interface LockoutStateRepository extends JpaRepository<LockoutState, Long> {
             + "WHERE a.account_uuid = :accountUuid FOR UPDATE OF ls", nativeQuery = true)
     Optional<LockoutState> findByAccountUuidForUpdate(@Param("accountUuid") UUID accountUuid);
 
+    /**
+     * Plain, non-locking read — for a point-in-time check consumed before any mutation, not part
+     * of a read-evaluate-write cycle (T13's {@code LockoutService#isCurrentlyLocked}). Taking the
+     * {@code FOR UPDATE} lock here would be unnecessary contention for a query that never writes.
+     */
+    @Query(value = "SELECT ls.* FROM lockout_state ls JOIN accounts a ON a.id = ls.account_id "
+            + "WHERE a.account_uuid = :accountUuid", nativeQuery = true)
+    Optional<LockoutState> findByAccountUuid(@Param("accountUuid") UUID accountUuid);
+
     /** Resolves the internal id needed to insert a brand-new row on an account's first failure. */
     @Query(value = "SELECT a.id FROM accounts a WHERE a.account_uuid = :accountUuid", nativeQuery = true)
     Optional<Long> findAccountIdByUuid(@Param("accountUuid") UUID accountUuid);

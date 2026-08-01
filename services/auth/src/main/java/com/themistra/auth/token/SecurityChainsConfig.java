@@ -1,5 +1,7 @@
 package com.themistra.auth.token;
 
+import com.themistra.auth.authn.LoginFailureHandler;
+import com.themistra.auth.authn.LoginSuccessHandler;
 import com.themistra.auth.common.PublicEndpoints;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,8 +11,8 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.oauth2.jwt.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
@@ -50,7 +52,8 @@ public class SecurityChainsConfig {
     @Bean
     @Order(2)
     public SecurityFilterChain applicationChain(
-            HttpSecurity http, JwtAuthenticationConverter jwtAuthenticationConverter) throws Exception {
+            HttpSecurity http, JwtAuthenticationConverter jwtAuthenticationConverter,
+            LoginFailureHandler loginFailureHandler, LoginSuccessHandler loginSuccessHandler) throws Exception {
         http
                 .authorizeHttpRequests(auth -> {
                     auth.requestMatchers(PublicEndpoints.PATTERNS).permitAll();
@@ -62,7 +65,9 @@ public class SecurityChainsConfig {
                 // session-backed login/authorize pages
                 .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**"))
                 .oauth2ResourceServer(rs -> rs.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
-                .formLogin(Customizer.withDefaults());
+                .formLogin(form -> form
+                        .failureHandler(loginFailureHandler)
+                        .successHandler(loginSuccessHandler));
 
         return http.build();
     }

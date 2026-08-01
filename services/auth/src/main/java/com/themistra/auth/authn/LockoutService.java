@@ -115,6 +115,26 @@ public class LockoutService {
         return decision;
     }
 
+    /**
+     * Point-in-time check: is this account currently within an active lock? Read-only, no row
+     * lock — for T13's pre-authentication gate (deciding whether to let a login attempt reach
+     * password verification at all), not part of a read-evaluate-write cycle. Returns {@code
+     * false} for a missing row (no active interval recorded means no lock, consistent with R18);
+     * a {@code LOCKED} {@code Account.status} with a missing row is the same documented,
+     * operator-facing data-integrity scenario {@link #recordSuccessfulAttempt} already carries —
+     * this method does not repair it, it just isn't blocked by it either.
+     */
+    @Transactional(readOnly = true)
+    public boolean isCurrentlyLocked(UUID accountUuid, Instant now) {
+        Objects.requireNonNull(accountUuid, "accountUuid must not be null");
+        Objects.requireNonNull(now, "now must not be null");
+
+        return repository.findByAccountUuid(accountUuid)
+                .map(LockoutState::getLockedUntil)
+                .map(now::isBefore)
+                .orElse(false);
+    }
+
     private LockoutSnapshot toSnapshot(Optional<LockoutState> existing) {
         return existing
                 .map(state -> new LockoutSnapshot(
