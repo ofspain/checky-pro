@@ -304,6 +304,32 @@ public class AccountService {
     }
 
     /**
+     * Guarded, idempotent lock — a no-op unless the account is currently {@code ACTIVE}. Called
+     * by {@code LockoutService} (T12), the only sanctioned path from the {@code authn} module to
+     * this entity (L12). The guard exists specifically because {@code LockoutService} may decide
+     * to "lock" an account that is already {@code LOCKED} (T11's escalating re-lock behavior,
+     * AC7): {@code Account.lock()} itself would throw in that case, since it requires {@code
+     * ACTIVE}. {@code lockout_state} still updates on that path; only the redundant {@code
+     * Account}-side transition is skipped here.
+     */
+    @Transactional
+    public void lock(UUID accountUuid) {
+        Account account = getAccount(accountUuid);
+        if (account.getStatus() == AccountStatus.ACTIVE) {
+            account.lock();
+        }
+    }
+
+    /** Guarded, idempotent unlock — a no-op unless the account is currently {@code LOCKED}. */
+    @Transactional
+    public void unlock(UUID accountUuid) {
+        Account account = getAccount(accountUuid);
+        if (account.getStatus() == AccountStatus.LOCKED) {
+            account.unlock();
+        }
+    }
+
+    /**
      * Credential lookup for interactive login (authn module). Deleted accounts are
      * indistinguishable from unknown emails — both return empty.
      */
