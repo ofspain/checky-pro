@@ -71,6 +71,12 @@ public class LockoutService {
      * Records a successful login attempt (R18). A missing row is a no-op — there are no counters
      * to reset, so nothing is inserted. A blocked attempt behaves exactly as in
      * {@link #recordFailedAttempt}.
+     *
+     * <p>Invariant this relies on: a {@code LOCKED} account always has a {@code lockout_state}
+     * row (only this service ever locks one, and only after writing the row first). If that
+     * invariant is ever violated by external data corruption, a successful login would find no
+     * row, no-op, and leave the account {@code LOCKED} with no way to self-heal through this
+     * method — an operator-facing data-integrity scenario, not a state this service repairs.</p>
      */
     @Transactional
     public LockoutDecision recordSuccessfulAttempt(UUID accountUuid, Instant now) {
@@ -127,6 +133,16 @@ public class LockoutService {
         }
     }
 
+    /**
+     * A missing {@code accountId} resolution (the UUID doesn't correspond to any real account) is
+     * treated as a silent no-op, exactly like {@link #recordSuccessfulAttempt}'s missing-row case
+     * — this service trusts its caller's precondition (T13 only invokes it for accounts it has
+     * already resolved) rather than surfacing its own existence error. A structurally impossible
+     * case in practice: the only decision reachable when {@code existing} is empty is a low
+     * failed-attempt count with {@code statusChange = NONE} (a first-ever failure can never
+     * itself reach the lock threshold), so even skipping persistence here has no observable
+     * effect beyond the returned decision.
+     */
     private void persistNewOrUpdated(Optional<LockoutState> existing, UUID accountUuid, LockoutDecision decision) {
         if (existing.isPresent()) {
             LockoutState state = existing.get();
@@ -134,8 +150,7 @@ public class LockoutService {
             repository.save(state);
             return;
         }
-        Long accountId = repository.findAccountIdByUuid(accountUuid)
-                .orElseThrow(() -> new IllegalStateException("No account found for UUID " + accountUuid));
-        repository.save(LockoutState.of(accountId, decision));
+        repository.findAccountIdByUuid(accountUuid)
+                .ifPresent(accountId -> repository.save(LockoutState.of(accountId, decision)));
     }
 }

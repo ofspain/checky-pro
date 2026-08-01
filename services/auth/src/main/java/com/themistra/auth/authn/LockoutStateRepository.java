@@ -17,11 +17,15 @@ import java.util.UUID;
 interface LockoutStateRepository extends JpaRepository<LockoutState, Long> {
 
     /**
-     * Loads the row for the given account, locking it {@code FOR UPDATE} for the remainder of the
-     * caller's transaction — the security-critical counter must never lose a concurrent update.
+     * Loads the row for the given account, locking only the {@code lockout_state} row ({@code
+     * FOR UPDATE OF ls}) for the remainder of the caller's transaction — the security-critical
+     * counter must never lose a concurrent update. Deliberately scoped to exclude the joined
+     * {@code accounts} row: an unqualified {@code FOR UPDATE} locks every table contributing to
+     * the result set, which would otherwise serialize unrelated {@code AccountService} operations
+     * (password change, suspend, etc.) against every login attempt for no reason.
      */
     @Query(value = "SELECT ls.* FROM lockout_state ls JOIN accounts a ON a.id = ls.account_id "
-            + "WHERE a.account_uuid = :accountUuid FOR UPDATE", nativeQuery = true)
+            + "WHERE a.account_uuid = :accountUuid FOR UPDATE OF ls", nativeQuery = true)
     Optional<LockoutState> findByAccountUuidForUpdate(@Param("accountUuid") UUID accountUuid);
 
     /** Resolves the internal id needed to insert a brand-new row on an account's first failure. */

@@ -28,6 +28,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
@@ -932,6 +933,61 @@ class AccountServiceTest {
         assertThat(auditCaptor.getValue().eventType()).isEqualTo("password.changed");
         assertThat(auditCaptor.getValue().actorUuid()).isEqualTo(accountUuid);
         assertThat(auditCaptor.getValue().accountUuid()).isEqualTo(accountUuid);
+    }
+
+    @Test
+    void lockTransitionsActiveToLocked() {
+        // T12: the only sanctioned path from LockoutService (authn module, L12) to Account.
+        Account account = Account.register("lock-active@example.com", ENCODED);
+        account.activateEmail();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+        service.lock(accountUuid);
+
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.LOCKED);
+    }
+
+    @Test
+    void lockNoOpsWhenAccountIsNotActive() {
+        // T12 Phase 3/9 Finding 2: LockoutService may decide to "lock" an account that is already
+        // LOCKED (T11's escalating re-lock, AC7). Account.lock() itself would throw
+        // InvalidAccountStateException in that case - this guard makes the call a safe no-op
+        // instead, so lockout_state can still update without the Account-side call ever failing.
+        Account account = Account.register("lock-already-locked@example.com", ENCODED);
+        account.activateEmail();
+        account.lock();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+        assertThatCode(() -> service.lock(accountUuid)).doesNotThrowAnyException();
+
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.LOCKED);
+    }
+
+    @Test
+    void unlockTransitionsLockedToActive() {
+        Account account = Account.register("unlock-locked@example.com", ENCODED);
+        account.activateEmail();
+        account.lock();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+        service.unlock(accountUuid);
+
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+    }
+
+    @Test
+    void unlockNoOpsWhenAccountIsNotLocked() {
+        Account account = Account.register("unlock-already-active@example.com", ENCODED);
+        account.activateEmail();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+        assertThatCode(() -> service.unlock(accountUuid)).doesNotThrowAnyException();
+
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);
     }
 
     /** Shared fixture for a PASSWORD_RESET-purposed issue(...) result - mirrors setUp()'s EMAIL_VERIFY stub. */
