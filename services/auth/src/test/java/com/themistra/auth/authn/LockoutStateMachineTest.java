@@ -32,8 +32,10 @@ class LockoutStateMachineTest {
             Instant now = T0.plus(Duration.ofMinutes(i - 1));
             LockoutDecision decision = machine.evaluate(snapshot, now, LockoutAttemptOutcome.FAILURE);
             assertThat(decision.failedAttempts()).isEqualTo(i);
+            assertThat(decision.lastFailedAt()).isEqualTo(now);
             assertThat(decision.blocked()).isFalse();
             assertThat(decision.lockedUntil()).isNull();
+            assertThat(decision.lockCount()).isZero();
             assertThat(decision.statusChange()).isEqualTo(AccountStatusChange.NONE);
             snapshot = new LockoutSnapshot(decision.failedAttempts(), decision.lastFailedAt(),
                     decision.lockedUntil(), decision.lockCount());
@@ -43,12 +45,18 @@ class LockoutStateMachineTest {
         LockoutDecision fifth = machine.evaluate(snapshot, fifthFailureAt, LockoutAttemptOutcome.FAILURE);
 
         assertThat(fifth.failedAttempts()).isEqualTo(5);
+        assertThat(fifth.lastFailedAt()).isEqualTo(fifthFailureAt);
         assertThat(fifth.lockedUntil()).isEqualTo(fifthFailureAt.plus(Duration.ofMinutes(15)));
         assertThat(fifth.lockCount()).isEqualTo(1);
         assertThat(fifth.statusChange()).isEqualTo(AccountStatusChange.LOCK);
         assertThat(fifth.blocked()).isFalse();
     }
 
+    /**
+     * Covers R18's literal scenario (locked, interval elapsed, then succeeds) via the AC6
+     * "never locked" variant of the same rule; the locked variant is covered separately by
+     * {@link #successAtOrAfterLockedUntilIsPermittedAndResetsCountersWithUnlockSignal}.
+     */
     @Test
     void shouldResetLockoutCounterOnSuccessfulLogin() {
         LockoutSnapshot snapshot = new LockoutSnapshot(3, T0, null, 0);
@@ -102,6 +110,18 @@ class LockoutStateMachineTest {
     }
 
     @Test
+    void failureOneSecondAfterPriorFailureDoesNotPrematurelyDecay() {
+        Instant now = T0.plus(Duration.ofMinutes(10));
+        LockoutSnapshot snapshot = new LockoutSnapshot(4, now.minusSeconds(1), null, 0);
+
+        LockoutDecision decision = machine.evaluate(snapshot, now, LockoutAttemptOutcome.FAILURE);
+
+        assertThat(decision.failedAttempts()).isEqualTo(5);
+        assertThat(decision.lockedUntil()).isEqualTo(now.plus(Duration.ofMinutes(15)));
+        assertThat(decision.statusChange()).isEqualTo(AccountStatusChange.LOCK);
+    }
+
+    @Test
     void secondLockDoublesDurationToThirtyMinutesAndIncrementsLockCount() {
         LockoutSnapshot snapshot = new LockoutSnapshot(4, T0, null, 1);
         Instant now = T0.plus(Duration.ofMinutes(1));
@@ -151,6 +171,26 @@ class LockoutStateMachineTest {
 
         LockoutDecision successDecision = machine.evaluate(snapshot, now, LockoutAttemptOutcome.SUCCESS);
         assertBlockedNoOp(snapshot, successDecision);
+    }
+
+    @Test
+    void attemptStrictlyAfterLockedUntilIsPermittedForBothOutcomes() {
+        Instant lockedUntil = T0.plus(Duration.ofMinutes(15));
+        LockoutSnapshot snapshot = new LockoutSnapshot(5, T0, lockedUntil, 1);
+        Instant now = lockedUntil.plusMillis(1);
+
+        LockoutDecision successDecision = machine.evaluate(snapshot, now, LockoutAttemptOutcome.SUCCESS);
+        assertThat(successDecision.blocked()).isFalse();
+        assertThat(successDecision.failedAttempts()).isZero();
+        assertThat(successDecision.lockedUntil()).isNull();
+        assertThat(successDecision.statusChange()).isEqualTo(AccountStatusChange.UNLOCK);
+
+        LockoutDecision failureDecision = machine.evaluate(snapshot, now, LockoutAttemptOutcome.FAILURE);
+        assertThat(failureDecision.blocked()).isFalse();
+        assertThat(failureDecision.failedAttempts()).isEqualTo(6);
+        assertThat(failureDecision.lockedUntil()).isEqualTo(now.plus(Duration.ofMinutes(30)));
+        assertThat(failureDecision.lockCount()).isEqualTo(2);
+        assertThat(failureDecision.statusChange()).isEqualTo(AccountStatusChange.LOCK);
     }
 
     private static void assertBlockedNoOp(LockoutSnapshot snapshot, LockoutDecision decision) {
@@ -253,5 +293,17 @@ class LockoutStateMachineTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new LockoutStateMachine(5, Duration.ofMinutes(30), Duration.ofMinutes(-1)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void constructorRejectsNullDecayWindow() {
+        assertThatThrownBy(() -> new LockoutStateMachine(5, null, Duration.ofMinutes(15)))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void constructorRejectsNullBaseLockDuration() {
+        assertThatThrownBy(() -> new LockoutStateMachine(5, Duration.ofMinutes(30), null))
+                .isInstanceOf(NullPointerException.class);
     }
 }
