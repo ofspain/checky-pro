@@ -196,6 +196,39 @@ class LoginFailureHandlerTest {
     }
 
     @Test
+    void shouldReturnIndistinguishableResponseForLockedAndBadCredentials() throws Exception {
+        when(request.getParameter("username")).thenReturn(EMAIL);
+        ArgumentCaptor<String> redirectUrls = ArgumentCaptor.forClass(String.class);
+
+        // Still-locked LOCKED -> LockedException
+        when(accountService.findLoginView(EMAIL))
+                .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.LOCKED)));
+        when(lockoutService.isCurrentlyLocked(ACCOUNT_UUID, NOW)).thenReturn(true);
+        handler.onAuthenticationFailure(request, response, new LockedException("locked"));
+
+        // SUSPENDED -> DisabledException
+        when(accountService.findLoginView(EMAIL))
+                .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.SUSPENDED)));
+        handler.onAuthenticationFailure(request, response, new DisabledException("disabled"));
+
+        // DELETED -> filtered to Optional.empty() by AccountService.findLoginView, same as unknown
+        when(accountService.findLoginView(EMAIL)).thenReturn(Optional.empty());
+        handler.onAuthenticationFailure(request, response, new UsernameNotFoundException("Bad credentials"));
+
+        // Non-existent email -> Optional.empty()
+        handler.onAuthenticationFailure(request, response, new UsernameNotFoundException("Bad credentials"));
+
+        // Baseline: ACTIVE + wrong password -> BadCredentialsException (also stands in for an
+        // expired-lock LOCKED account, which produces this same exception type)
+        when(accountService.findLoginView(EMAIL))
+                .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.ACTIVE)));
+        handler.onAuthenticationFailure(request, response, new BadCredentialsException("bad"));
+
+        verify(response, times(5)).sendRedirect(redirectUrls.capture());
+        assertThat(redirectUrls.getAllValues()).containsOnly("/login?error");
+    }
+
+    @Test
     void bookkeepingFailureDoesNotPreventTheRedirect() throws Exception {
         when(request.getParameter("username")).thenReturn(EMAIL);
         when(accountService.findLoginView(EMAIL)).thenThrow(new RuntimeException("db down"));
