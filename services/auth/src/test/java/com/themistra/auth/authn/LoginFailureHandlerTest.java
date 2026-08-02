@@ -15,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.LockedException;
@@ -24,6 +25,8 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -197,36 +200,46 @@ class LoginFailureHandlerTest {
 
     @Test
     void shouldReturnIndistinguishableResponseForLockedAndBadCredentials() throws Exception {
+        // Real MockHttpServletResponse (not the shared Mockito mock) so the actual status code
+        // and Location header can be asserted directly, not just the sendRedirect argument -
+        // Phase 11 Gap 2: the frozen brief's original "redirect-target only" scope was justified
+        // by a mock limitation that a real MockHttpServletResponse doesn't have.
         when(request.getParameter("username")).thenReturn(EMAIL);
-        ArgumentCaptor<String> redirectUrls = ArgumentCaptor.forClass(String.class);
+        List<MockHttpServletResponse> responses = new ArrayList<>();
 
         // Still-locked LOCKED -> LockedException
         when(accountService.findLoginView(EMAIL))
                 .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.LOCKED)));
         when(lockoutService.isCurrentlyLocked(ACCOUNT_UUID, NOW)).thenReturn(true);
-        handler.onAuthenticationFailure(request, response, new LockedException("locked"));
+        responses.add(invokeFailure(new LockedException("locked")));
 
         // SUSPENDED -> DisabledException
         when(accountService.findLoginView(EMAIL))
                 .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.SUSPENDED)));
-        handler.onAuthenticationFailure(request, response, new DisabledException("disabled"));
+        responses.add(invokeFailure(new DisabledException("disabled")));
 
         // DELETED -> filtered to Optional.empty() by AccountService.findLoginView, same as unknown
         when(accountService.findLoginView(EMAIL)).thenReturn(Optional.empty());
-        handler.onAuthenticationFailure(request, response, new UsernameNotFoundException("Bad credentials"));
+        responses.add(invokeFailure(new UsernameNotFoundException("Bad credentials")));
 
         // Non-existent email -> Optional.empty()
-        handler.onAuthenticationFailure(request, response, new UsernameNotFoundException("Bad credentials"));
+        responses.add(invokeFailure(new UsernameNotFoundException("Bad credentials")));
 
         // Baseline: ACTIVE + wrong password -> BadCredentialsException. Not separately stubbed,
         // but an expired-lock LOCKED account (AccountUserDetailsService) also produces this exact
         // exception type, so this case covers that scenario too at the exception-type level.
         when(accountService.findLoginView(EMAIL))
                 .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.ACTIVE)));
-        handler.onAuthenticationFailure(request, response, new BadCredentialsException("bad"));
+        responses.add(invokeFailure(new BadCredentialsException("bad")));
 
-        verify(response, times(5)).sendRedirect(redirectUrls.capture());
-        assertThat(redirectUrls.getAllValues()).containsOnly("/login?error");
+        assertThat(responses).extracting(MockHttpServletResponse::getStatus).containsOnly(302);
+        assertThat(responses).extracting(MockHttpServletResponse::getRedirectedUrl).containsOnly("/login?error");
+    }
+
+    private MockHttpServletResponse invokeFailure(AuthenticationException exception) throws Exception {
+        MockHttpServletResponse mockResponse = new MockHttpServletResponse();
+        handler.onAuthenticationFailure(request, mockResponse, exception);
+        return mockResponse;
     }
 
     @Test
