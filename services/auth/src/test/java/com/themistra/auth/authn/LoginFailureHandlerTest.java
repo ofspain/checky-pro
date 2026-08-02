@@ -218,8 +218,9 @@ class LoginFailureHandlerTest {
         // Non-existent email -> Optional.empty()
         handler.onAuthenticationFailure(request, response, new UsernameNotFoundException("Bad credentials"));
 
-        // Baseline: ACTIVE + wrong password -> BadCredentialsException (also stands in for an
-        // expired-lock LOCKED account, which produces this same exception type)
+        // Baseline: ACTIVE + wrong password -> BadCredentialsException. Not separately stubbed,
+        // but an expired-lock LOCKED account (AccountUserDetailsService) also produces this exact
+        // exception type, so this case covers that scenario too at the exception-type level.
         when(accountService.findLoginView(EMAIL))
                 .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.ACTIVE)));
         handler.onAuthenticationFailure(request, response, new BadCredentialsException("bad"));
