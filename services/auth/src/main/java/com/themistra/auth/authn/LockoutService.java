@@ -95,10 +95,11 @@ public class LockoutService {
     }
 
     /**
-     * Unconditionally clears any lockout state for the account (R20 admin unlock, and any future
-     * password-reset-driven unlock) — for T14's future use; not called by anything in this task.
-     * A missing row has nothing to persist, but {@link AccountService#unlock(UUID)} is still
-     * called (safe: it is itself a guarded no-op unless the account is currently {@code LOCKED}).
+     * Unconditionally clears any lockout state for the account. Called by {@code
+     * AdminAccountController.unlock} (T14, R20 admin unlock); also intended for any future
+     * password-reset-driven unlock. A missing row has nothing to persist, but {@link
+     * AccountService#unlock(UUID)} is still called (safe: it is itself a guarded no-op unless the
+     * account is currently {@code LOCKED}).
      */
     @Transactional
     public LockoutDecision resetLockout(UUID accountUuid) {

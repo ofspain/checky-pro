@@ -333,18 +333,24 @@ public class AccountService {
      * Admin/compliance-initiated unlock (T14, R20) — the counterpart to {@link
      * #suspend}/{@link #reinstate}/{@link #delete}. Reuses {@link #unlock(UUID)}'s own guard
      * (status-transition idempotent: a no-op on {@code Account.status} if the account isn't
-     * currently {@code LOCKED}), but the lifecycle event and audit record are unconditional —
-     * every successful call appends a new audit row and lifecycle event regardless of whether the
-     * status actually changed, so this method is not idempotent in the side-effect sense, only in
-     * the state-transition sense. {@code actorUuid} is the authenticated admin/compliance caller,
-     * never defaulted to {@code accountUuid} (unlike every self-service call site in this class).
+     * currently {@code LOCKED}). The lifecycle event and audit record are conditioned on a real
+     * {@code LOCKED → ACTIVE} transition having actually occurred (Phase 9, human-approved) — not
+     * unconditional as first implemented, since {@code unlock(UUID)}'s guard is a no-op for
+     * *any* non-{@code LOCKED} status (e.g. {@code SUSPENDED}, {@code DELETED}), and firing a
+     * {@code "user.unlocked"} event whose own payload still carries {@code SUSPENDED}/{@code
+     * DELETED} would be a materially misleading signal to anything consuming it. {@code
+     * actorUuid} is the authenticated admin/compliance caller, never defaulted to {@code
+     * accountUuid} (unlike every self-service call site in this class).
      */
     @Transactional
     public AccountResponse adminUnlock(UUID accountUuid, UUID actorUuid) {
+        boolean wasLocked = getAccount(accountUuid).getStatus() == AccountStatus.LOCKED;
         unlock(accountUuid);
         Account account = getAccount(accountUuid);
-        publishLifecycleEvent(account, "user.unlocked");
-        recordAudit("account.unlocked", accountUuid, actorUuid);
+        if (wasLocked) {
+            publishLifecycleEvent(account, "user.unlocked");
+            recordAudit("account.unlocked", accountUuid, actorUuid);
+        }
         return AccountResponse.from(account);
     }
 

@@ -514,6 +514,82 @@ class AccountServiceTest {
     }
 
     @Test
+    void shouldUnlockAccountViaAdminEndpoint() {
+        Account account = Account.register("locked-admin@example.com", ENCODED);
+        account.activateEmail();
+        account.lock();
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+                .thenReturn(Optional.of(account));
+
+        AccountResponse response = service.adminUnlock(account.getAccountUuid(), ACTOR_UUID);
+
+        assertThat(response.status()).isEqualTo(AccountStatus.ACTIVE);
+        verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.unlocked"), eq(1), any());
+
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
+                ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().eventType()).isEqualTo("account.unlocked");
+        assertThat(auditCaptor.getValue().accountUuid()).isEqualTo(account.getAccountUuid());
+        // The caller, not the target - unlike every self-service call site in this class, which
+        // always uses the same UUID for both.
+        assertThat(auditCaptor.getValue().actorUuid()).isEqualTo(ACTOR_UUID);
+    }
+
+    @Test
+    void adminUnlockOnAlreadyActiveAccountIsANoOpAndDoesNotAuditOrPublish() {
+        Account account = Account.register("already-active-admin@example.com", ENCODED);
+        account.activateEmail();
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+                .thenReturn(Optional.of(account));
+
+        AccountResponse response = service.adminUnlock(account.getAccountUuid(), ACTOR_UUID);
+
+        assertThat(response.status()).isEqualTo(AccountStatus.ACTIVE);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void adminUnlockOnSuspendedAccountLeavesStatusUnchangedAndDoesNotAuditOrPublish() {
+        // Phase 9 Finding A: unlock(UUID)'s guard is a no-op for ANY non-LOCKED status, not just
+        // ACTIVE - firing "user.unlocked"/"account.unlocked" here would falsely claim a
+        // transition that never happened, with a lifecycle payload still showing SUSPENDED.
+        Account account = Account.register("suspended-admin@example.com", ENCODED);
+        account.activateEmail();
+        account.suspend();
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+                .thenReturn(Optional.of(account));
+
+        AccountResponse response = service.adminUnlock(account.getAccountUuid(), ACTOR_UUID);
+
+        assertThat(response.status()).isEqualTo(AccountStatus.SUSPENDED);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void adminUnlockCalledTwiceOnlyAuditsAndPublishesOnce() {
+        // AC7 as narrowed by Phase 9: status-transition idempotent AND side-effect idempotent
+        // now that the event only fires on a real LOCKED -> ACTIVE transition - the second call
+        // (already ACTIVE) produces zero additional audit rows or lifecycle events.
+        Account account = Account.register("double-unlock-admin@example.com", ENCODED);
+        account.activateEmail();
+        account.lock();
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+                .thenReturn(Optional.of(account));
+
+        AccountResponse first = service.adminUnlock(account.getAccountUuid(), ACTOR_UUID);
+        AccountResponse second = service.adminUnlock(account.getAccountUuid(), ACTOR_UUID);
+
+        assertThat(first.status()).isEqualTo(AccountStatus.ACTIVE);
+        assertThat(second.status()).isEqualTo(AccountStatus.ACTIVE);
+        verify(outboxPublisher, org.mockito.Mockito.times(1))
+                .publish(eq("account"), anyString(), eq("user.unlocked"), eq(1), any());
+        verify(auditService, org.mockito.Mockito.times(1)).record(any());
+    }
+
+    @Test
     void loginViewNormalizesEmailAndCarriesCredential() {
         Account account = Account.register("user@example.com", ENCODED);
         account.activateEmail();
