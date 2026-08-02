@@ -524,7 +524,15 @@ class AccountServiceTest {
         AccountResponse response = service.adminUnlock(account.getAccountUuid(), ACTOR_UUID);
 
         assertThat(response.status()).isEqualTo(AccountStatus.ACTIVE);
-        verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.unlocked"), eq(1), any());
+        ArgumentCaptor<UserLifecycleEventPayload> payloadCaptor =
+                ArgumentCaptor.forClass(UserLifecycleEventPayload.class);
+        verify(outboxPublisher).publish(
+                eq("account"), anyString(), eq("user.unlocked"), eq(1), payloadCaptor.capture());
+        // Phase 11 Gap 2: the payload itself must show the real post-transition state, not just
+        // the outbox call's own metadata - this is exactly what would have been wrong before
+        // Phase 9's fix (a "user.unlocked" event whose own payload still said SUSPENDED).
+        assertThat(payloadCaptor.getValue().accountUuid()).isEqualTo(account.getAccountUuid());
+        assertThat(payloadCaptor.getValue().status()).isEqualTo(AccountStatus.ACTIVE);
 
         ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
                 ArgumentCaptor.forClass(RecordAuditEventRequest.class);
@@ -569,6 +577,49 @@ class AccountServiceTest {
     }
 
     @Test
+    void adminUnlockOnDeletedAccountLeavesStatusUnchangedAndDoesNotAuditOrPublish() {
+        // Phase 11 Gap 1: the DELETED and PENDING_VERIFICATION cases weren't exercised alongside
+        // ACTIVE/SUSPENDED, even though unlock(UUID)'s guard treats all four identically.
+        Account account = Account.register("deleted-admin@example.com", ENCODED);
+        account.activateEmail();
+        account.markDeleted();
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+                .thenReturn(Optional.of(account));
+
+        AccountResponse response = service.adminUnlock(account.getAccountUuid(), ACTOR_UUID);
+
+        assertThat(response.status()).isEqualTo(AccountStatus.DELETED);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void adminUnlockOnPendingVerificationAccountLeavesStatusUnchangedAndDoesNotAuditOrPublish() {
+        Account account = Account.register("pending-admin@example.com", ENCODED);
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+                .thenReturn(Optional.of(account));
+
+        AccountResponse response = service.adminUnlock(account.getAccountUuid(), ACTOR_UUID);
+
+        assertThat(response.status()).isEqualTo(AccountStatus.PENDING_VERIFICATION);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void adminUnlockThrowsForUnknownAccountAndNeverPublishesOrAudits() {
+        // Phase 11 Gap 5.
+        UUID unknownAccountUuid = UUID.randomUUID();
+        when(accountRepository.findByAccountUuid(unknownAccountUuid)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.adminUnlock(unknownAccountUuid, ACTOR_UUID))
+                .isInstanceOf(AccountNotFoundException.class);
+
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
     void adminUnlockCalledTwiceOnlyAuditsAndPublishesOnce() {
         // AC7 as narrowed by Phase 9: status-transition idempotent AND side-effect idempotent
         // now that the event only fires on a real LOCKED -> ACTIVE transition - the second call
@@ -582,8 +633,11 @@ class AccountServiceTest {
         AccountResponse first = service.adminUnlock(account.getAccountUuid(), ACTOR_UUID);
         AccountResponse second = service.adminUnlock(account.getAccountUuid(), ACTOR_UUID);
 
+        // Phase 11 Gap 4: full equality, not just the status field, since the frozen brief's
+        // original AC7 promised an identical response - a regression in email/emailVerified/
+        // createdAt across the two calls should fail this test too.
+        assertThat(first).isEqualTo(second);
         assertThat(first.status()).isEqualTo(AccountStatus.ACTIVE);
-        assertThat(second.status()).isEqualTo(AccountStatus.ACTIVE);
         verify(outboxPublisher, org.mockito.Mockito.times(1))
                 .publish(eq("account"), anyString(), eq("user.unlocked"), eq(1), any());
         verify(auditService, org.mockito.Mockito.times(1)).record(any());

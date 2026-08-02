@@ -1,5 +1,21 @@
 # auth · T14 — Phase 10: Test Generation
 
+**Phase 11 (Kimi test review) update:** all 5 gaps Kimi raised checked out as genuine and were
+applied. Highlights: added `DELETED`/`PENDING_VERIFICATION` no-op coverage alongside the existing
+`ACTIVE`/`SUSPENDED` cases; strengthened `shouldUnlockAccountViaAdminEndpoint` to capture and
+assert the actual `UserLifecycleEventPayload` (accountUuid + status), not just the outbox call's
+metadata — the exact detail whose absence Kimi's own Phase 8 evidence (`UserLifecycleEventPayload`
+carrying `status`) had originally motivated the Phase 9 fix; added a reflection-based check of the
+exact `@PreAuthorize` SpEL expression (Gap 3) as a deliberately lighter-weight alternative to
+introducing this module's first `MockMvc`/`WebTestClient` test for one assertion; strengthened the
+duplicate-call test to full `AccountResponse` equality, not just status; and added an
+`AccountNotFoundException` boundary test. Applying Gap 3's new test surfaced that it — like the
+already-known pre-existing `getDelegatesDirectlyWithoutRequiringAnActor` failure — doesn't consume
+`setUp()`'s shared `authentication` stub, triggering the identical `UnnecessaryStubbingException`.
+Made that one stub `lenient()`, which was directly necessitated by this task's own new test (not a
+drive-by fix) and, as a documented side effect, also resolved the pre-existing failure. All 56
+tests re-verified passing after the changes.
+
 Test manifest against the frozen brief (`04-frozen-task-brief.md`) and the Phase 9-resolved
 implementation. No production code touched. Plain JUnit 5 + Mockito, no Spring context, matching
 `AccountServiceTest`/`AdminAccountControllerTest`'s established convention exactly (per the
