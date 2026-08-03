@@ -2,7 +2,10 @@ package com.themistra.auth.mfa;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.kms.KmsClient;
@@ -15,6 +18,7 @@ import software.amazon.awssdk.services.kms.model.GenerateDataKeyResponse;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
@@ -23,23 +27,13 @@ import java.util.Arrays;
 /**
  * AES-256-GCM envelope encryption of TOTP seeds with a KMS-enveloped data key (L14, ADR-0003) —
  * the one narrow, named exception to D-010 permitting AWS SDK use in this service (D-025). Byte
- * layout and the local-dev fallback rule are fixed in ADR-0003, not re-specified here beyond what
- * the code needs. The KMS client is built here, not as a separate {@code @Bean} — it is skipped
- * entirely in local-key mode so local dev needs no AWS credentials at all (default AWS credential
- * / region provider chains apply otherwise, e.g. IRSA in EKS).
- *
- * <p><b>Guard mechanism (deviates from the frozen brief's literal wording — see implementation
- * notes):</b> {@code seedKekRequired} gates the local-key fallback exactly like {@code
- * SigningKeysProperties#requireConfigured} gates the ephemeral JWT dev key in {@link
- * com.themistra.auth.token.SigningKeyMaterial} — off by default, explicitly turned on by ops only
- * in deployed environments. ADR-0003 frames this as "active Spring profile is local", but no
- * active profile is set anywhere in this codebase today (no docker-compose, no
- * {@code @ActiveProfiles} on any existing test); matching that literally would fail closed for
- * every current {@code @SpringBootTest}. This boolean-flag shape mirrors the one L13 guard this
- * service has already shipped and tested.</p>
+ * layout and the local-dev fallback rule are fixed in ADR-0003. The KMS client is built here, not
+ * as a separate {@code @Bean} — it is skipped entirely in local-key mode so local dev needs no AWS
+ * credentials at all (default AWS credential / region provider chains apply otherwise, e.g. IRSA
+ * in EKS).
  */
 @Component
-public class MfaSeedEncryption {
+public class MfaSeedEncryption implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(MfaSeedEncryption.class);
 
@@ -51,9 +45,9 @@ public class MfaSeedEncryption {
 
     /**
      * Fixed, local-only AES-256 key (ADR-0003). Used only when {@code seed-kek-arn} is blank and
-     * {@code seed-kek-required} is false; never committed as anything a deployed environment
+     * the active profile is {@code local}; never committed as anything a deployed environment
      * could inherit — the constructor guard below refuses to boot rather than let a version-0x00
-     * envelope be produced when {@code seed-kek-required=true}.
+     * envelope be produced outside local development.
      */
     private static final byte[] LOCAL_DEV_KEY = {
             0x1f, 0x4b, 0x2a, 0x7e, 0x3c, 0x5d, 0x0a, 0x6f,
@@ -67,28 +61,31 @@ public class MfaSeedEncryption {
     private final SecureRandom secureRandom = new SecureRandom();
 
     @Autowired
-    public MfaSeedEncryption(MfaProperties properties) {
-        this(properties, resolveKmsClient(properties));
+    public MfaSeedEncryption(MfaProperties properties, Environment environment) {
+        this(properties, environment, resolveKmsClient(properties, environment));
     }
 
     /** Test seam: lets unit tests inject a mocked {@link KmsClient} directly. */
-    MfaSeedEncryption(MfaProperties properties, KmsClient kmsClient) {
-        validateGuard(properties);
+    MfaSeedEncryption(MfaProperties properties, Environment environment, KmsClient kmsClient) {
+        validateGuard(properties, environment);
         this.properties = properties;
         this.kmsClient = kmsClient;
     }
 
-    private static void validateGuard(MfaProperties properties) {
-        if (properties.seedKekRequired() && isBlank(properties.seedKekArn())) {
+    private static void validateGuard(MfaProperties properties, Environment environment) {
+        boolean local = environment.acceptsProfiles(Profiles.of("local"));
+        if (!local && isBlank(properties.seedKekArn())) {
             throw new IllegalStateException(
-                    "themistra.auth.mfa.seed-kek-arn is blank but seed-kek-required=true. "
-                            + "Refusing to start with a local-only TOTP seed key outside local development.");
+                    "themistra.auth.mfa.seed-kek-arn is blank but the active profile is not "
+                            + "'local'. Refusing to start with a local-only TOTP seed key outside "
+                            + "local development.");
         }
     }
 
-    private static KmsClient resolveKmsClient(MfaProperties properties) {
-        validateGuard(properties);
-        if (isBlank(properties.seedKekArn())) {
+    private static KmsClient resolveKmsClient(MfaProperties properties, Environment environment) {
+        validateGuard(properties, environment);
+        boolean local = environment.acceptsProfiles(Profiles.of("local"));
+        if (local && isBlank(properties.seedKekArn())) {
             log.warn("No themistra.auth.mfa.seed-kek-arn configured — using the fixed LOCAL-DEV "
                     + "AES key for TOTP seed encryption. Never acceptable outside local development.");
             return null;
@@ -107,12 +104,24 @@ public class MfaSeedEncryption {
 
     /** Decrypts a previously-produced envelope, returning the original raw secret. */
     public byte[] decrypt(byte[] envelope) {
-        byte version = envelope[0];
+        byte version;
+        try {
+            version = envelope[0];
+        } catch (NullPointerException | ArrayIndexOutOfBoundsException e) {
+            throw new MfaEncryptionException("MFA seed envelope is missing or empty", e);
+        }
         return switch (version) {
             case VERSION_LOCAL -> decryptLocal(envelope);
             case VERSION_KMS -> decryptKms(envelope);
             default -> throw new MfaEncryptionException("Unsupported MFA seed envelope version: " + version);
         };
+    }
+
+    @Override
+    public void destroy() {
+        if (kmsClient != null) {
+            kmsClient.close();
+        }
     }
 
     private byte[] encryptLocal(byte[] rawSecret) {
@@ -123,14 +132,23 @@ public class MfaSeedEncryption {
 
     private byte[] decryptLocal(byte[] envelope) {
         Envelope parsed = parseEnvelope(envelope);
+        if (parsed.wrappedKey().length != 0) {
+            throw new MfaEncryptionException(
+                    "MFA seed envelope version 0x00 must carry a zero-length wrapped key (ADR-0003)");
+        }
         return gcmDecrypt(new SecretKeySpec(LOCAL_DEV_KEY, "AES"), parsed.nonce(), parsed.ciphertext());
     }
 
     private byte[] encryptKms(byte[] rawSecret) {
-        GenerateDataKeyResponse dataKey = kmsClient.generateDataKey(GenerateDataKeyRequest.builder()
-                .keyId(properties.seedKekArn())
-                .keySpec(DataKeySpec.AES_256)
-                .build());
+        GenerateDataKeyResponse dataKey;
+        try {
+            dataKey = kmsClient.generateDataKey(GenerateDataKeyRequest.builder()
+                    .keyId(properties.seedKekArn())
+                    .keySpec(DataKeySpec.AES_256)
+                    .build());
+        } catch (RuntimeException e) {
+            throw new MfaEncryptionException("Failed to generate MFA seed data key via KMS", e);
+        }
 
         byte[] plaintextKey = dataKey.plaintext().asByteArray();
         byte[] wrappedKey = dataKey.ciphertextBlob().asByteArray();
@@ -201,16 +219,20 @@ public class MfaSeedEncryption {
     }
 
     private static Envelope parseEnvelope(byte[] envelope) {
-        ByteBuffer buffer = ByteBuffer.wrap(envelope);
-        buffer.get(); // version byte already dispatched on by the caller
-        int wrappedKeyLength = Short.toUnsignedInt(buffer.getShort());
-        byte[] wrappedKey = new byte[wrappedKeyLength];
-        buffer.get(wrappedKey);
-        byte[] nonce = new byte[NONCE_LENGTH_BYTES];
-        buffer.get(nonce);
-        byte[] ciphertext = new byte[buffer.remaining()];
-        buffer.get(ciphertext);
-        return new Envelope(wrappedKey, nonce, ciphertext);
+        try {
+            ByteBuffer buffer = ByteBuffer.wrap(envelope);
+            buffer.get(); // version byte already dispatched on by the caller
+            int wrappedKeyLength = Short.toUnsignedInt(buffer.getShort());
+            byte[] wrappedKey = new byte[wrappedKeyLength];
+            buffer.get(wrappedKey);
+            byte[] nonce = new byte[NONCE_LENGTH_BYTES];
+            buffer.get(nonce);
+            byte[] ciphertext = new byte[buffer.remaining()];
+            buffer.get(ciphertext);
+            return new Envelope(wrappedKey, nonce, ciphertext);
+        } catch (BufferUnderflowException | NegativeArraySizeException e) {
+            throw new MfaEncryptionException("MFA seed envelope is truncated or corrupted", e);
+        }
     }
 
     private record Envelope(byte[] wrappedKey, byte[] nonce, byte[] ciphertext) {

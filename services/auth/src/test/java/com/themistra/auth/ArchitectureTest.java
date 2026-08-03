@@ -75,6 +75,14 @@ class ArchitectureTest {
                     + "reference-project lesson on 'temporary' unauthenticated whitelists");
 
     @ArchTest
+    static final ArchRule only_MfaSeedEncryption_may_use_the_aws_sdk = noClasses()
+            .that().doNotHaveFullyQualifiedName("com.themistra.auth.mfa.MfaSeedEncryption")
+            .should().dependOnClassesThat().resideInAPackage("software.amazon.awssdk..")
+            .because("D-010 forbids AWS SDK code in this service except the one narrow, named "
+                    + "exception ADR-0003/D-025 carve out for TOTP-seed KMS envelope encryption, "
+                    + "confined to mfa.MfaSeedEncryption and nowhere else");
+
+    @ArchTest
     static final ArchRule admin_controller_handlers_require_preauthorize = methods()
             .that().arePublic()
             .and().areDeclaredInClassesThat().haveSimpleNameStartingWith("Admin")
