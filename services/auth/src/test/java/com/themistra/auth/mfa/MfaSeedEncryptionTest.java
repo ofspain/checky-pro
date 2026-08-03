@@ -3,12 +3,14 @@ package com.themistra.auth.mfa;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.env.Environment;
 import org.springframework.mock.env.MockEnvironment;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.kms.KmsClient;
+import software.amazon.awssdk.services.kms.model.DataKeySpec;
 import software.amazon.awssdk.services.kms.model.DecryptRequest;
 import software.amazon.awssdk.services.kms.model.DecryptResponse;
 import software.amazon.awssdk.services.kms.model.GenerateDataKeyRequest;
@@ -99,6 +101,33 @@ class MfaSeedEncryptionTest {
                 .doesNotThrowAnyException();
     }
 
+    @Test // Phase 11 finding #5 — no active profile at all (SPRING_PROFILES_ACTIVE absent) is
+          // the deployed-misconfiguration case; it must fail closed exactly like a named
+          // non-local profile does, not be treated as accidentally "local enough"
+    void constructorRefusesToBootWithBlankArnWhenNoProfileIsActive() {
+        Environment noProfileEnvironment = new MockEnvironment(); // zero active profiles
+
+        assertThatThrownBy(() -> new MfaSeedEncryption(localProperties, noProfileEnvironment, null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("seed-kek-arn");
+    }
+
+    @Test // Phase 11 finding #6 — Environment.acceptsProfiles must match on ANY active profile
+          // containing "local", not just when it's the sole one; locks in this semantic against
+          // a future rewrite that compares a single profile string
+    void constructorAllowsLocalModeWhenLocalProfileIsPresentAmongOthers() {
+        MockEnvironment localAndTest = new MockEnvironment();
+        localAndTest.setActiveProfiles("local", "test");
+
+        MfaSeedEncryption encryption = new MfaSeedEncryption(localProperties, localAndTest);
+        byte[] secret = randomSecret();
+
+        byte[] envelope = encryption.encrypt(secret);
+
+        assertThat(envelope[0]).isEqualTo(VERSION_LOCAL);
+        assertThat(encryption.decrypt(envelope)).isEqualTo(secret);
+    }
+
     @Test // exercises the real Spring-facing constructor, not the test seam: proves local mode
           // never attempts to build a real AWS KmsClient (which would fail immediately without
           // credentials/region in this test JVM if it were attempted)
@@ -167,7 +196,17 @@ class MfaSeedEncryptionTest {
         buffer.get(nonce);
         assertThat(buffer.remaining()).isEqualTo(secret.length + 16); // ciphertext + GCM tag
 
+        ArgumentCaptor<GenerateDataKeyRequest> generateCaptor = ArgumentCaptor.forClass(GenerateDataKeyRequest.class);
+        verify(kmsClient).generateDataKey(generateCaptor.capture());
+        assertThat(generateCaptor.getValue().keyId()).isEqualTo(SEED_KEK_ARN);
+        assertThat(generateCaptor.getValue().keySpec()).isEqualTo(DataKeySpec.AES_256);
+
         assertThat(encryption.decrypt(envelope)).isEqualTo(secret);
+
+        ArgumentCaptor<DecryptRequest> decryptCaptor = ArgumentCaptor.forClass(DecryptRequest.class);
+        verify(kmsClient).decrypt(decryptCaptor.capture());
+        assertThat(decryptCaptor.getValue().keyId()).isEqualTo(SEED_KEK_ARN);
+        assertThat(decryptCaptor.getValue().ciphertextBlob().asByteArray()).isEqualTo(wrappedDataKey);
     }
 
     @Test // AC6
@@ -188,8 +227,9 @@ class MfaSeedEncryptionTest {
         assertThat(indexOf(envelope, secret)).isEqualTo(-1);
     }
 
-    @Test // AC6 — a wrong/rotated key must fail distinctly, never return a silently-wrong plaintext
-    void wrongKeyDecryptFailsDistinctlyInsteadOfSilently() {
+    @Test // AC6 — a KMS-level rejection (network/API error) of the wrapped key must fail
+          // distinctly, never return a silently-wrong plaintext
+    void wrongKeyDecryptFailsDistinctlyViaKmsRejection() {
         byte[] plaintextDataKey = new byte[32];
         secureRandom.nextBytes(plaintextDataKey);
         byte[] wrappedDataKey = "wrapped".getBytes(StandardCharsets.UTF_8);
@@ -208,6 +248,70 @@ class MfaSeedEncryptionTest {
         assertThatThrownBy(() -> encryption.decrypt(envelope))
                 .isInstanceOf(MfaEncryptionException.class)
                 .hasMessageContaining("unwrap");
+    }
+
+    @Test // AC6, Phase 11 finding #3 — the real cryptographic concern: KMS returns a *valid*
+          // response with a *different* (rotated/wrong) 32-byte data key. This must fail via GCM
+          // tag authentication, not silently return a bad plaintext. A KMS-rejection test alone
+          // (above) wouldn't catch a regression that skipped GCM authentication entirely.
+    void wrongButValidDataKeyFailsGcmAuthenticationInsteadOfSilently() {
+        byte[] encryptionDataKey = new byte[32];
+        secureRandom.nextBytes(encryptionDataKey);
+        byte[] wrappedDataKey = "wrapped".getBytes(StandardCharsets.UTF_8);
+        byte[] differentDataKey = new byte[32];
+        secureRandom.nextBytes(differentDataKey);
+        assertThat(differentDataKey).isNotEqualTo(encryptionDataKey);
+
+        when(kmsClient.generateDataKey(any(GenerateDataKeyRequest.class))).thenReturn(
+                GenerateDataKeyResponse.builder()
+                        .plaintext(SdkBytes.fromByteArray(encryptionDataKey))
+                        .ciphertextBlob(SdkBytes.fromByteArray(wrappedDataKey))
+                        .build());
+
+        MfaSeedEncryption encryption = new MfaSeedEncryption(kmsProperties, devEnvironment, kmsClient);
+        byte[] envelope = encryption.encrypt(randomSecret());
+
+        // KMS now (validly) returns a different plaintext key than the one used to encrypt —
+        // simulates a rotated or misconfigured CMK, not a network/API failure.
+        when(kmsClient.decrypt(any(DecryptRequest.class))).thenReturn(
+                DecryptResponse.builder().plaintext(SdkBytes.fromByteArray(differentDataKey)).build());
+
+        assertThatThrownBy(() -> encryption.decrypt(envelope))
+                .isInstanceOf(MfaEncryptionException.class)
+                .hasMessageContaining("decryption failed");
+    }
+
+    @Test // AC6, Phase 11 finding #4 — a corrupted ciphertext must fail GCM authentication, not
+          // decrypt to silently-wrong bytes
+    void localModeTamperedCiphertextFailsGcmAuthentication() {
+        MfaSeedEncryption encryption = new MfaSeedEncryption(localProperties, localEnvironment, null);
+        byte[] envelope = encryption.encrypt(randomSecret());
+        envelope[envelope.length - 1] ^= 0x01; // flip one bit in the ciphertext/tag region
+
+        assertThatThrownBy(() -> encryption.decrypt(envelope))
+                .isInstanceOf(MfaEncryptionException.class)
+                .hasMessageContaining("decryption failed");
+    }
+
+    @Test // AC6, Phase 11 finding #4
+    void kmsModeTamperedCiphertextFailsGcmAuthentication() {
+        byte[] plaintextDataKey = new byte[32];
+        secureRandom.nextBytes(plaintextDataKey);
+        when(kmsClient.generateDataKey(any(GenerateDataKeyRequest.class))).thenReturn(
+                GenerateDataKeyResponse.builder()
+                        .plaintext(SdkBytes.fromByteArray(plaintextDataKey))
+                        .ciphertextBlob(SdkBytes.fromByteArray("wrapped".getBytes(StandardCharsets.UTF_8)))
+                        .build());
+        when(kmsClient.decrypt(any(DecryptRequest.class))).thenReturn(
+                DecryptResponse.builder().plaintext(SdkBytes.fromByteArray(plaintextDataKey)).build());
+
+        MfaSeedEncryption encryption = new MfaSeedEncryption(kmsProperties, devEnvironment, kmsClient);
+        byte[] envelope = encryption.encrypt(randomSecret());
+        envelope[envelope.length - 1] ^= 0x01;
+
+        assertThatThrownBy(() -> encryption.decrypt(envelope))
+                .isInstanceOf(MfaEncryptionException.class)
+                .hasMessageContaining("decryption failed");
     }
 
     @Test // Phase 8/9 fix: generateDataKey failures must be wrapped like decrypt failures are
@@ -321,6 +425,19 @@ class MfaSeedEncryptionTest {
         MfaSeedEncryption encryption = new MfaSeedEncryption(localProperties, localEnvironment, null);
 
         assertThatCode(encryption::destroy).doesNotThrowAnyException();
+    }
+
+    @Test // Phase 11 finding #9 — AWS SDK clients document close() as idempotent; a repeated
+          // destroy() (e.g. an odd Spring shutdown sequence) must stay safe
+    void destroyIsSafeToCallTwice() {
+        MfaSeedEncryption encryption = new MfaSeedEncryption(kmsProperties, devEnvironment, kmsClient);
+
+        assertThatCode(() -> {
+            encryption.destroy();
+            encryption.destroy();
+        }).doesNotThrowAnyException();
+
+        verify(kmsClient, times(2)).close();
     }
 
     private static int indexOf(byte[] haystack, byte[] needle) {

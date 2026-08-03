@@ -98,11 +98,27 @@ class TotpGeneratorTest {
         assertThat(uri).doesNotContain("%40").doesNotContain("%2B");
     }
 
-    @Test // AC2 — the produced string must actually be a syntactically valid URI
+    @Test // AC2, Phase 11 finding #7 — parse the full URI structure (host/path/query), not just
+          // the scheme, so a malformed label or missing parameter would fail this test
     void buildProvisioningUriIsSyntacticallyValid() {
-        String uri = generator.buildProvisioningUri(generator.generateSecret(), "user@example.com");
+        byte[] secret = generator.generateSecret();
 
-        assertThat(URI.create(uri).getScheme()).isEqualTo("otpauth");
+        URI uri = URI.create(generator.buildProvisioningUri(secret, "user@example.com"));
+
+        assertThat(uri.getScheme()).isEqualTo("otpauth");
+        assertThat(uri.getHost()).isEqualTo("totp");
+        assertThat(uri.getPath()).isEqualTo("/Themistra:user@example.com");
+
+        java.util.Map<String, String> params = new java.util.LinkedHashMap<>();
+        for (String pair : uri.getQuery().split("&")) {
+            String[] kv = pair.split("=", 2);
+            params.put(kv[0], kv[1]);
+        }
+        assertThat(params).containsEntry("issuer", "Themistra");
+        assertThat(params).containsEntry("algorithm", "SHA1");
+        assertThat(params).containsEntry("digits", "6");
+        assertThat(params).containsEntry("period", "30");
+        assertThat(params.get("secret")).matches("[A-Z2-7]{32}");
     }
 
     private static String extractSecretParam(String uri) {
