@@ -36,4 +36,7 @@ interface RecoveryCodeRepository extends JpaRepository<RecoveryCode, Long> {
     @Modifying
     @Query("UPDATE RecoveryCode r SET r.usedAt = :usedAt WHERE r.id = :id AND r.usedAt IS NULL")
     int markUsed(@Param("id") Long id, @Param("usedAt") Instant usedAt);
+
+    /** For MFA disable (R28, task 18): invalidates every recovery code, used or not. */
+    void deleteByAccountId(Long accountId);
 }
