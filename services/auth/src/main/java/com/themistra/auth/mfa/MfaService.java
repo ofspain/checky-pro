@@ -20,6 +20,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -67,19 +68,27 @@ public class MfaService {
      * so the caller can retry (Phase 4, human-confirmed) — both deletion and the new insert happen
      * in this one transaction. {@code accountLabel} passed to the provisioning URI is the account
      * UUID, never the email (PII avoidance, Phase 4).
+     *
+     * <p>The unconfirmed-row delete uses {@link MfaEnrollmentRepository#deleteByIdIfUnconfirmed},
+     * not a plain delete (T18 Phase 9 finding): a concurrent transaction may confirm this exact
+     * row between this method's read and its delete. A {@code 0}-row result means that race
+     * occurred, and this call must reject rather than silently replace a now-confirmed
+     * enrollment.</p>
      */
     @Transactional
     public BeginEnrollResult beginEnroll(UUID accountUuid) {
         requireActiveAccount(accountUuid, "begin MFA enrollment");
         Long accountId = resolveAccountId(accountUuid);
 
-        mfaEnrollmentRepository.findByAccountIdAndType(accountId, MfaEnrollment.Type.TOTP)
-                .ifPresent(existing -> {
-                    if (existing.getConfirmedAt() != null) {
-                        throw new MfaAlreadyEnrolledException();
-                    }
-                    mfaEnrollmentRepository.deleteByAccountIdAndType(accountId, MfaEnrollment.Type.TOTP);
-                });
+        Optional<MfaEnrollment> existing =
+                mfaEnrollmentRepository.findByAccountIdAndType(accountId, MfaEnrollment.Type.TOTP);
+        if (existing.isPresent()) {
+            MfaEnrollment enrollment = existing.get();
+            if (enrollment.getConfirmedAt() != null
+                    || mfaEnrollmentRepository.deleteByIdIfUnconfirmed(enrollment.getId()) == 0) {
+                throw new MfaAlreadyEnrolledException();
+            }
+        }
 
         byte[] secret = totpGenerator.generateSecret();
         byte[] secretEncrypted = mfaSeedEncryption.encrypt(secret);
@@ -94,9 +103,14 @@ public class MfaService {
     /**
      * Confirms a pending TOTP enrollment (R23). A wrong code records {@code mfa.failed} (R29) and
      * mutates nothing. A correct code confirms the enrollment and generates 10 single-use recovery
-     * codes — their only appearance in plaintext, ever. Re-confirming an already-confirmed
-     * enrollment with a valid code still reaches {@link MfaEnrollment#confirm}'s own guard, which
-     * throws {@link IllegalStateException} — not re-implemented here.
+     * codes — their only appearance in plaintext, ever.
+     *
+     * <p>Confirmation uses {@link MfaEnrollmentRepository#confirmIfUnconfirmed}, an atomic
+     * conditional update, rather than the plain {@link MfaEnrollment#confirm} mutator (T18 Phase 9
+     * finding): two concurrent calls loading the same unconfirmed row would otherwise both pass
+     * verification and both generate/persist a full set of recovery codes. A {@code 0}-row result
+     * — whether from a genuine re-confirm attempt or a race lost to a concurrent call — throws
+     * {@link MfaAlreadyEnrolledException} before any recovery code is generated.</p>
      */
     @Transactional
     public ConfirmResult confirm(UUID accountUuid, String submittedCode) {
@@ -113,9 +127,11 @@ public class MfaService {
             throw new InvalidTotpCodeException();
         }
 
-        enrollment.confirm(clock.instant());
-
         Instant now = clock.instant();
+        if (mfaEnrollmentRepository.confirmIfUnconfirmed(enrollment.getId(), now) == 0) {
+            throw new MfaAlreadyEnrolledException();
+        }
+
         List<String> rawCodes = new ArrayList<>(RECOVERY_CODE_COUNT);
         for (int i = 0; i < RECOVERY_CODE_COUNT; i++) {
             String rawCode = generateRawRecoveryCode();
