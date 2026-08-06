@@ -78,11 +78,14 @@ class MfaEnrollmentTest {
     @Test // AC2
     void confirmTwiceThrowsIllegalStateException() {
         MfaEnrollment enrollment = newEnrollment();
-        enrollment.confirm(CREATED_AT.plusSeconds(60));
+        Instant firstConfirmedAt = CREATED_AT.plusSeconds(60);
+        enrollment.confirm(firstConfirmedAt);
 
         assertThatThrownBy(() -> enrollment.confirm(CREATED_AT.plusSeconds(120)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("already confirmed");
+        // Phase 11 gap #5: the rejected second call must not have mutated the field before throwing.
+        assertThat(enrollment.getConfirmedAt()).isEqualTo(firstConfirmedAt);
     }
 
     @Test // Phase 8/9 fix: confirm(null) must fail loudly, not silently no-op

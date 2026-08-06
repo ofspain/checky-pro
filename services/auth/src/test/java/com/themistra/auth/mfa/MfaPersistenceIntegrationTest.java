@@ -69,6 +69,41 @@ class MfaPersistenceIntegrationTest {
         assertThat(saved.getSecretEncrypted()).isEqualTo(secret);
     }
 
+    @Test // Phase 11 gap #4: prove every mapped column survives a genuine reload from the DB, not
+          // just that the in-memory `save()` return value looks right
+    void mfaEnrollmentReloadsAllColumnsFromDb() {
+        Long accountId = registerAndResolveAccountId("mfa-reload@example.com");
+        byte[] secret = {5, 6, 7, 8};
+        Long id = mfaEnrollmentRepository.saveAndFlush(
+                MfaEnrollment.create(accountId, MfaEnrollment.Type.TOTP, secret, NOW)).getId();
+        entityManager.clear();
+
+        MfaEnrollment reloaded = mfaEnrollmentRepository.findById(id).orElseThrow();
+
+        assertThat(reloaded.getAccountId()).isEqualTo(accountId);
+        assertThat(reloaded.getType()).isEqualTo(MfaEnrollment.Type.TOTP);
+        assertThat(reloaded.getSecretEncrypted()).isEqualTo(secret);
+        assertThat(reloaded.getCreatedAt()).isEqualTo(NOW);
+    }
+
+    @Test // Phase 11 gap #2: AC5's "queryable" contract - the finder must return the real row,
+          // not just correctly report non-existence (already proven by the unique-constraint test)
+    void findByAccountIdAndTypeReturnsSavedEnrollment() {
+        Long accountId = registerAndResolveAccountId("mfa-find-saved@example.com");
+        byte[] secret = {9, 9, 9};
+        MfaEnrollment saved = mfaEnrollmentRepository.saveAndFlush(
+                MfaEnrollment.create(accountId, MfaEnrollment.Type.TOTP, secret, NOW));
+
+        Optional<MfaEnrollment> found = mfaEnrollmentRepository.findByAccountIdAndType(
+                accountId, MfaEnrollment.Type.TOTP);
+
+        assertThat(found).isPresent();
+        assertThat(found.get().getId()).isEqualTo(saved.getId());
+        assertThat(found.get().getAccountId()).isEqualTo(accountId);
+        assertThat(found.get().getType()).isEqualTo(MfaEnrollment.Type.TOTP);
+        assertThat(found.get().getSecretEncrypted()).isEqualTo(secret);
+    }
+
     @Test // AC2
     void confirmPersistsInPlaceViaDirtyChecking() {
         Long accountId = registerAndResolveAccountId("mfa-confirm@example.com");
@@ -100,6 +135,16 @@ class MfaPersistenceIntegrationTest {
         Optional<Long> accountId = mfaEnrollmentRepository.findAccountIdByUuid(UUID.randomUUID());
 
         assertThat(accountId).isEmpty();
+    }
+
+    @Test // Phase 11 gap #1: the positive path was untested - only "unknown UUID" was covered
+    void findAccountIdByUuidResolvesExistingAccount() {
+        AccountResponse registered = accountService.register(
+                new RegisterAccountRequest("mfa-resolve-uuid@example.com", "correct-horse-battery"));
+
+        Optional<Long> accountId = mfaEnrollmentRepository.findAccountIdByUuid(registered.accountUuid());
+
+        assertThat(accountId).isPresent();
     }
 
     @Test // AC9: the enum persists as the literal string, not an ordinal
@@ -158,6 +203,31 @@ class MfaPersistenceIntegrationTest {
         assertThat(codes).allSatisfy(code -> assertThat(code.getUsedAt()).isNull());
     }
 
+    @Test // Phase 11 gap #4: prove every mapped column survives a genuine reload from the DB
+    void recoveryCodeReloadsAllColumnsFromDb() {
+        Long accountId = registerAndResolveAccountId("recovery-reload@example.com");
+        String codeHash = "c".repeat(64);
+        Long id = recoveryCodeRepository.saveAndFlush(RecoveryCode.create(accountId, codeHash, NOW)).getId();
+        entityManager.clear();
+
+        RecoveryCode reloaded = recoveryCodeRepository.findById(id).orElseThrow();
+
+        assertThat(reloaded.getAccountId()).isEqualTo(accountId);
+        assertThat(reloaded.getCodeHash()).isEqualTo(codeHash);
+        assertThat(reloaded.getCreatedAt()).isEqualTo(NOW);
+        assertThat(reloaded.getUsedAt()).isNull();
+    }
+
+    @Test // L6, Phase 11 gap #7: a corrupted mapping that relaxed the column to accept a longer
+          // value should fail loudly, not silently persist an invalid hash
+    void persistRejectsCodeHashLongerThan64Characters() {
+        Long accountId = registerAndResolveAccountId("recovery-toolong@example.com");
+
+        assertThatThrownBy(() -> recoveryCodeRepository.saveAndFlush(
+                RecoveryCode.create(accountId, "d".repeat(65), NOW)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
     @Test // AC7 - the crux of Finding #3's fix: proves the atomic conditional update is real
     void markUsedIsAtomicAndSucceedsOnlyOnce() {
         Long accountId = registerAndResolveAccountId("recovery-markused@example.com");
@@ -195,6 +265,58 @@ class MfaPersistenceIntegrationTest {
 
         assertThat(found).isPresent();
         assertThat(found.get().getCodeHash()).isEqualTo("b".repeat(64));
+    }
+
+    @Test // Phase 11 gap #3: prove the finder actually filters on both columns, not just one
+    void findByAccountIdAndCodeHashReturnsEmptyForWrongHashOrOtherAccount() {
+        Long accountOneId = registerAndResolveAccountId("recovery-isolation-1@example.com");
+        Long accountTwoId = registerAndResolveAccountId("recovery-isolation-2@example.com");
+        recoveryCodeRepository.save(RecoveryCode.create(accountOneId, "e".repeat(64), NOW));
+        recoveryCodeRepository.save(RecoveryCode.create(accountTwoId, "f".repeat(64), NOW));
+
+        assertThat(recoveryCodeRepository.findByAccountIdAndCodeHash(accountOneId, "f".repeat(64)))
+                .as("account one's hash lookup must not return account two's code")
+                .isEmpty();
+        assertThat(recoveryCodeRepository.findByAccountIdAndCodeHash(accountTwoId, "e".repeat(64)))
+                .as("account two's hash lookup must not return account one's code")
+                .isEmpty();
+        assertThat(recoveryCodeRepository.findByAccountIdAndCodeHash(accountOneId, "g".repeat(64)))
+                .as("a hash nobody has must not match anything")
+                .isEmpty();
+    }
+
+    @Test // AC7, Phase 11 gap #6: proves the atomic update is race-safe under real concurrency,
+          // not just correct when called sequentially
+    void markUsedIsAtomicUnderConcurrentRedemption() throws Exception {
+        Long accountId = registerAndResolveAccountId("recovery-concurrent@example.com");
+        RecoveryCode saved = recoveryCodeRepository.save(RecoveryCode.create(accountId, "h".repeat(64), NOW));
+        Long id = saved.getId();
+
+        java.util.concurrent.CountDownLatch bothReady = new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.Callable<Integer> attempt = () -> {
+            bothReady.countDown();
+            go.await();
+            return recoveryCodeRepository.markUsed(id, Instant.now());
+        };
+
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        int first;
+        int second;
+        try {
+            java.util.concurrent.Future<Integer> a = executor.submit(attempt);
+            java.util.concurrent.Future<Integer> b = executor.submit(attempt);
+            bothReady.await();
+            go.countDown();
+            first = a.get();
+            second = b.get();
+        } finally {
+            executor.shutdown();
+        }
+
+        assertThat(first + second).isEqualTo(1);
+        RecoveryCode reloaded = recoveryCodeRepository.findById(id).orElseThrow();
+        assertThat(reloaded.getUsedAt()).isNotNull();
     }
 
     private Long registerAndResolveAccountId(String email) {
