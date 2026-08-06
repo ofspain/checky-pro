@@ -108,6 +108,7 @@ class MfaServiceTest {
         assertThat(captor.getValue().getAccountId()).isEqualTo(ACCOUNT_ID);
         assertThat(captor.getValue().getSecretEncrypted()).isEqualTo(encrypted);
         assertThat(captor.getValue().getConfirmedAt()).isNull();
+        assertThat(captor.getValue().getCreatedAt()).isEqualTo(NOW); // Phase 11 gap 4: Clock, not Instant.now()
         verify(mfaEnrollmentRepository, never()).deleteByIdIfUnconfirmed(any());
     }
 
@@ -246,13 +247,21 @@ class MfaServiceTest {
 
         assertThat(result.recoveryCodes()).hasSize(10);
         assertThat(result.recoveryCodes()).doesNotHaveDuplicates();
+        // Phase 11 gap 3: format/entropy, not just count/uniqueness/hash-matching
+        result.recoveryCodes().forEach(code -> {
+            assertThat(code).hasSize(43).matches("^[A-Za-z0-9_-]{43}$");
+            assertThatCode(() -> java.util.Base64.getUrlDecoder().decode(code)).doesNotThrowAnyException();
+            assertThat(java.util.Base64.getUrlDecoder().decode(code)).hasSize(32);
+        });
         ArgumentCaptor<RecoveryCode> captor = ArgumentCaptor.forClass(RecoveryCode.class);
         verify(recoveryCodeRepository, times(10)).save(captor.capture());
         for (int i = 0; i < 10; i++) {
             assertThat(captor.getAllValues().get(i).getAccountId()).isEqualTo(ACCOUNT_ID);
             assertThat(captor.getAllValues().get(i).getCodeHash())
                     .isEqualTo(Hashing.sha256(result.recoveryCodes().get(i)));
+            assertThat(captor.getAllValues().get(i).getCreatedAt()).isEqualTo(NOW); // Phase 11 gap 4
         }
+        verify(mfaEnrollmentRepository).confirmIfUnconfirmed(3L, NOW); // Phase 11 gap 4
         verify(auditService, never()).record(any());
     }
 
@@ -427,6 +436,12 @@ class MfaServiceTest {
 
         assertThatThrownBy(() -> service.verifyRecoveryCode(ACCOUNT_UUID, rawCode))
                 .isInstanceOf(InvalidRecoveryCodeException.class);
+
+        // Phase 11 gap 5: R29 requires mfa.failed for an already-used code too, not just unknown
+        ArgumentCaptor<RecordAuditEventRequest> captor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("mfa.failed");
+        assertThat(captor.getValue().outcome()).isEqualTo(AuditOutcome.FAILURE);
     }
 
     @Test

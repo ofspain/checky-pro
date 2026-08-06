@@ -119,6 +119,49 @@ class MfaPersistenceIntegrationTest {
         assertThat(reloaded.getConfirmedAt()).isEqualTo(NOW.plusSeconds(60));
     }
 
+    @Test // T18 Phase 11 gap 8: confirmIfUnconfirmed's 0-vs-1 semantics, which MfaService.confirm
+          // relies on to close the concurrent-double-confirm race (T18 Phase 9 findings 2 & 3)
+    void confirmIfUnconfirmedSucceedsOnceThenReturnsZero() {
+        Long accountId = registerAndResolveAccountId("mfa-confirm-atomic@example.com");
+        MfaEnrollment saved = mfaEnrollmentRepository.save(
+                MfaEnrollment.create(accountId, MfaEnrollment.Type.TOTP, new byte[]{1}, NOW));
+
+        int first = mfaEnrollmentRepository.confirmIfUnconfirmed(saved.getId(), NOW.plusSeconds(60));
+        int second = mfaEnrollmentRepository.confirmIfUnconfirmed(saved.getId(), NOW.plusSeconds(90));
+
+        assertThat(first).isEqualTo(1);
+        assertThat(second).isEqualTo(0);
+        MfaEnrollment reloaded = mfaEnrollmentRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reloaded.getConfirmedAt()).isEqualTo(NOW.plusSeconds(60));
+    }
+
+    @Test // T18 Phase 11 gap 8: deleteByIdIfUnconfirmed's 0-vs-1 semantics, which
+          // MfaService.beginEnroll relies on to close the confirmed-row-deleted-by-a-race finding
+          // (T18 Phase 9 finding 5)
+    void deleteByIdIfUnconfirmedSucceedsOnceThenReturnsZero() {
+        Long accountId = registerAndResolveAccountId("mfa-delete-atomic@example.com");
+        MfaEnrollment saved = mfaEnrollmentRepository.save(
+                MfaEnrollment.create(accountId, MfaEnrollment.Type.TOTP, new byte[]{1}, NOW));
+
+        int first = mfaEnrollmentRepository.deleteByIdIfUnconfirmed(saved.getId());
+
+        assertThat(first).isEqualTo(1);
+        assertThat(mfaEnrollmentRepository.findById(saved.getId())).isEmpty();
+    }
+
+    @Test // T18 Phase 11 gap 8: a confirmed row must never be removed by the unconfirmed-only delete
+    void deleteByIdIfUnconfirmedReturnsZeroForAConfirmedRow() {
+        Long accountId = registerAndResolveAccountId("mfa-delete-confirmed@example.com");
+        MfaEnrollment saved = mfaEnrollmentRepository.saveAndFlush(
+                MfaEnrollment.create(accountId, MfaEnrollment.Type.TOTP, new byte[]{1}, NOW));
+        mfaEnrollmentRepository.confirmIfUnconfirmed(saved.getId(), NOW.plusSeconds(60));
+
+        int result = mfaEnrollmentRepository.deleteByIdIfUnconfirmed(saved.getId());
+
+        assertThat(result).isEqualTo(0);
+        assertThat(mfaEnrollmentRepository.findById(saved.getId())).isPresent();
+    }
+
     @Test // AC5, frozen brief Finding #1's resolution: the DB constraint is the real enforcement
     void secondEnrollmentForSameAccountAndTypeViolatesUniqueConstraint() {
         Long accountId = registerAndResolveAccountId("mfa-duplicate@example.com");

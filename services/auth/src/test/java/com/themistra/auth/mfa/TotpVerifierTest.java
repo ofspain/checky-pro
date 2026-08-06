@@ -96,17 +96,15 @@ class TotpVerifierTest {
         assertThat(verifier.verify(RFC_SECRET, referenceGenerateCode(otherSecret, stepFor(now)), now)).isFalse();
     }
 
-    @Test // codes are always exactly 6 digits, zero-padded — proves the comparison isn't broken by
-          // digit-dropping for a raw binary code small enough to need leading zeros
+    @Test // Phase 11 gap 7: codes are always exactly 6 digits, zero-padded — proves the comparison
+          // isn't broken by digit-dropping for a raw binary code small enough to need leading
+          // zeros. Uses a fixed, precomputed (secret, step) pair known to produce "026920" rather
+          // than a search loop, so the test is transparently deterministic rather than depending
+          // on an unstated assumption that some code in a scanned window happens to need padding.
     void verifyHandlesCodesRequiringLeadingZeroPadding() {
-        for (long step = 0; step < 5000; step++) {
-            String code = referenceGenerateCode(RFC_SECRET, step);
-            if (code.startsWith("0")) {
-                assertThat(verifier.verify(RFC_SECRET, code, Instant.ofEpochSecond(step * 30))).isTrue();
-                return;
-            }
-        }
-        throw new AssertionError("no zero-padded code found in search window — widen it");
+        Instant time = Instant.ofEpochSecond(30 * 30); // step 30
+
+        assertThat(verifier.verify(RFC_SECRET, "026920", time)).isTrue();
     }
 
     private static long stepFor(Instant instant) {

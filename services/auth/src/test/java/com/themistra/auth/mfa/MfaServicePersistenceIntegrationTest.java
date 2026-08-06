@@ -118,6 +118,62 @@ class MfaServicePersistenceIntegrationTest {
                 .isInstanceOf(InvalidTotpCodeException.class);
     }
 
+    @Test // T18 Phase 11 gap 1: proves the T18 Phase 9 AuditService.record REQUIRES_NEW fix
+          // actually works — a failure audit written moments before confirm's own exception must
+          // still be visible afterward, not rolled back along with the enclosing transaction
+    void confirmRecordsFailureAuditThatSurvivesTheRollback() {
+        UUID accountUuid = registerAndActivate("mfa-e2e-audit-survives@example.com");
+        mfaService.beginEnroll(accountUuid);
+
+        assertThatThrownBy(() -> mfaService.confirm(accountUuid, "000000"))
+                .isInstanceOf(InvalidTotpCodeException.class);
+
+        assertThat(auditService.list(accountUuid, PageRequest.of(0, 50)).getContent())
+                .as("the mfa.failed audit must persist even though confirm's own transaction rolled back")
+                .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("mfa.failed"));
+    }
+
+    @Test // T18 Phase 11 gap 2: proves the T18 Phase 9 confirmIfUnconfirmed atomic-update fix
+          // actually closes the concurrent-double-confirm race under real concurrent transactions,
+          // not just as an interpreted mock contract (mirrors MfaPersistenceIntegrationTest's own
+          // markUsedIsAtomicUnderConcurrentRedemption for RecoveryCodeRepository.markUsed)
+    void concurrentConfirmCallsResultInExactlyOneSuccessAndTenRecoveryCodes() throws Exception {
+        UUID accountUuid = registerAndActivate("mfa-e2e-concurrent-confirm@example.com");
+        MfaService.BeginEnrollResult begun = mfaService.beginEnroll(accountUuid);
+        String code = referenceGenerateCode(begun.secret(), Instant.now());
+
+        java.util.concurrent.CountDownLatch bothReady = new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.Callable<Boolean> attempt = () -> {
+            bothReady.countDown();
+            go.await();
+            try {
+                mfaService.confirm(accountUuid, code);
+                return true;
+            } catch (MfaAlreadyEnrolledException e) {
+                return false;
+            }
+        };
+
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        boolean first;
+        boolean second;
+        try {
+            java.util.concurrent.Future<Boolean> a = executor.submit(attempt);
+            java.util.concurrent.Future<Boolean> b = executor.submit(attempt);
+            bothReady.await();
+            go.countDown();
+            first = a.get();
+            second = b.get();
+        } finally {
+            executor.shutdown();
+        }
+
+        assertThat(first ^ second).as("exactly one of the two concurrent confirms must succeed").isTrue();
+        Long accountId = mfaEnrollmentRepository.findAccountIdByUuid(accountUuid).orElseThrow();
+        assertThat(recoveryCodeRepository.findByAccountId(accountId)).hasSize(10);
+    }
+
     private UUID registerAndActivate(String email) {
         AccountResponse registered = accountService.register(
                 new RegisterAccountRequest(email, "correct-horse-battery"));
