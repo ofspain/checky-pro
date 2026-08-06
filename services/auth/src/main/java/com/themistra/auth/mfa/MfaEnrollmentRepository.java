@@ -19,4 +19,10 @@ interface MfaEnrollmentRepository extends JpaRepository<MfaEnrollment, Long> {
     Optional<Long> findAccountIdByUuid(@Param("accountUuid") UUID accountUuid);
 
     Optional<MfaEnrollment> findByAccountIdAndType(Long accountId, MfaEnrollment.Type type);
+
+    /** For mandatory-MFA enforcement (R24, task 18): only a confirmed enrollment counts. */
+    Optional<MfaEnrollment> findByAccountIdAndTypeAndConfirmedAtIsNotNull(Long accountId, MfaEnrollment.Type type);
+
+    /** For MFA disable (R28, task 19). */
+    void deleteByAccountIdAndType(Long accountId, MfaEnrollment.Type type);
 }

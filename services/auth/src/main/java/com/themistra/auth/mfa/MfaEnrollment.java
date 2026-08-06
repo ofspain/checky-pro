@@ -10,6 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * A TOTP (or, later, WEBAUTHN) enrollment (R22/R23, L12). {@code accountId} is a plain column,
@@ -50,12 +51,19 @@ public class MfaEnrollment {
     }
 
     /** Timestamps are supplied by the caller, sourced from the injected {@code Clock} — never
-     * {@code Instant.now()} inline and never a {@code @PrePersist} lifecycle callback. */
+     * {@code Instant.now()} inline and never a {@code @PrePersist} lifecycle callback. Defensively
+     * copies {@code secretEncrypted} so a caller mutating its own array afterward can't corrupt
+     * the entity's value before it's persisted. */
     public static MfaEnrollment create(Long accountId, Type type, byte[] secretEncrypted, Instant createdAt) {
+        Objects.requireNonNull(accountId, "accountId must not be null");
+        Objects.requireNonNull(type, "type must not be null");
+        Objects.requireNonNull(secretEncrypted, "secretEncrypted must not be null");
+        Objects.requireNonNull(createdAt, "createdAt must not be null");
+
         MfaEnrollment enrollment = new MfaEnrollment();
         enrollment.accountId = accountId;
         enrollment.type = type;
-        enrollment.secretEncrypted = secretEncrypted;
+        enrollment.secretEncrypted = secretEncrypted.clone();
         enrollment.createdAt = createdAt;
         return enrollment;
     }
@@ -68,14 +76,16 @@ public class MfaEnrollment {
      * @throws IllegalStateException if this enrollment is already confirmed
      */
     public void confirm(Instant confirmedAt) {
+        Objects.requireNonNull(confirmedAt, "confirmedAt must not be null");
         if (this.confirmedAt != null) {
-            throw new IllegalStateException("MfaEnrollment " + id + " is already confirmed");
+            throw new IllegalStateException("MfaEnrollment for account " + accountId + " is already confirmed");
         }
         this.confirmedAt = confirmedAt;
     }
 
     /** Records that this enrollment's TOTP code was just used to authenticate. */
     public void recordUse(Instant lastUsedAt) {
+        Objects.requireNonNull(lastUsedAt, "lastUsedAt must not be null");
         this.lastUsedAt = lastUsedAt;
     }
 
@@ -95,8 +105,9 @@ public class MfaEnrollment {
         return type;
     }
 
+    /** Returns a defensive copy — the caller cannot mutate the entity's stored secret through it. */
     public byte[] getSecretEncrypted() {
-        return secretEncrypted;
+        return secretEncrypted.clone();
     }
 
     public Instant getConfirmedAt() {

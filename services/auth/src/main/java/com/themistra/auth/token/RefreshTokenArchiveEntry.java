@@ -6,6 +6,8 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -22,7 +24,10 @@ public class RefreshTokenArchiveEntry {
     @Column(name = "family_id", nullable = false)
     private UUID familyId;
 
-    @Column(name = "token_hash", nullable = false)
+    /** CHAR(64), not VARCHAR - JdbcTypeCode.CHAR matches how Postgres reports this column's type
+     * (bpchar) so Hibernate's schema validation accepts it. */
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "token_hash", nullable = false, length = 64, columnDefinition = "char(64)")
     private String tokenHash;
 
     @Column(name = "superseded_at", nullable = false)

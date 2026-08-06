@@ -6,8 +6,11 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * A single-use, hashed TOTP recovery code (R23, L6). Only {@link #codeHash} (a SHA-256 hex
@@ -31,7 +34,10 @@ public class RecoveryCode {
     @Column(name = "account_id", nullable = false, updatable = false)
     private Long accountId;
 
-    @Column(name = "code_hash", nullable = false, length = 64, updatable = false)
+    /** CHAR(64), not VARCHAR - JdbcTypeCode.CHAR matches how Postgres reports this column's type
+     * (bpchar) so Hibernate's schema validation accepts it. */
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "code_hash", nullable = false, length = 64, updatable = false, columnDefinition = "char(64)")
     private String codeHash;
 
     @Column(name = "used_at")
@@ -47,6 +53,10 @@ public class RecoveryCode {
     /** Timestamps are supplied by the caller, sourced from the injected {@code Clock} — never
      * {@code Instant.now()} inline and never a {@code @PrePersist} lifecycle callback. */
     public static RecoveryCode create(Long accountId, String codeHash, Instant createdAt) {
+        Objects.requireNonNull(accountId, "accountId must not be null");
+        Objects.requireNonNull(codeHash, "codeHash must not be null");
+        Objects.requireNonNull(createdAt, "createdAt must not be null");
+
         RecoveryCode code = new RecoveryCode();
         code.accountId = accountId;
         code.codeHash = codeHash;

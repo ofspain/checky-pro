@@ -15,6 +15,14 @@
   <name>auth-service</name>
   <description>Themistra Authentication Service — OIDC/OAuth2 issuer (Spring Authorization Server)</description>
 
+  <!-- Testcontainers 1.21.3 (Spring Boot 3.5.4's managed version) hardcoded a request for Docker
+       API 1.32, which newer Docker Desktop builds reject (minimum supported is 1.40) - confirmed
+       fixed by this patch bump alone (see docker-testcontainers-handshake-issue for the full
+       diagnosis); no bigger Testcontainers 2.x jump needed. -->
+  <properties>
+    <testcontainers.version>1.21.4</testcontainers.version>
+  </properties>
+
   <!-- ADR-0003/D-025: the one narrow, named exception to D-010's "no AWS SDK in this service"
        rule, confined to mfa.MfaSeedEncryption's KMS GenerateDataKey/Decrypt calls. -->
   <dependencyManagement>

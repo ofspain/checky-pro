@@ -8,6 +8,8 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 
@@ -36,7 +38,11 @@ public class VerificationToken {
     @Column(name = "purpose", nullable = false, length = 32, updatable = false)
     private Purpose purpose;
 
-    @Column(name = "token_hash", nullable = false, unique = true, updatable = false, length = 64)
+    /** CHAR(64), not VARCHAR - JdbcTypeCode.CHAR matches how Postgres reports this column's type
+     * (bpchar) so Hibernate's schema validation accepts it. */
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "token_hash", nullable = false, unique = true, updatable = false, length = 64,
+            columnDefinition = "char(64)")
     private String tokenHash;
 
     @Column(name = "expires_at", nullable = false, updatable = false)

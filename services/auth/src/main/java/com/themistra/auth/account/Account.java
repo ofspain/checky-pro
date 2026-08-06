@@ -10,6 +10,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -30,7 +32,10 @@ public class Account {
     @Column(name = "account_uuid", nullable = false, unique = true, updatable = false)
     private UUID accountUuid;
 
-    @Column(name = "email", nullable = false, unique = true)
+    /** {@code citext} (case-insensitive text, agents.md) - JdbcTypeCode.OTHER matches how
+     * Postgres reports this column's type so Hibernate's schema validation accepts it. */
+    @JdbcTypeCode(SqlTypes.OTHER)
+    @Column(name = "email", nullable = false, unique = true, columnDefinition = "citext")
     private String email;
 
     @Column(name = "email_verified", nullable = false)
