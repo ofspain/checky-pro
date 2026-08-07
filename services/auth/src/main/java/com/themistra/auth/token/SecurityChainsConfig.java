@@ -2,6 +2,8 @@ package com.themistra.auth.token;
 
 import com.themistra.auth.authn.LoginFailureHandler;
 import com.themistra.auth.authn.LoginSuccessHandler;
+import com.themistra.auth.authn.TotpAuthenticationDetailsSource;
+import com.themistra.auth.authn.TotpAuthenticationProvider;
 import com.themistra.auth.common.PublicEndpoints;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -53,7 +55,9 @@ public class SecurityChainsConfig {
     @Order(2)
     public SecurityFilterChain applicationChain(
             HttpSecurity http, JwtAuthenticationConverter jwtAuthenticationConverter,
-            LoginFailureHandler loginFailureHandler, LoginSuccessHandler loginSuccessHandler) throws Exception {
+            LoginFailureHandler loginFailureHandler, LoginSuccessHandler loginSuccessHandler,
+            TotpAuthenticationProvider totpAuthenticationProvider,
+            TotpAuthenticationDetailsSource totpAuthenticationDetailsSource) throws Exception {
         http
                 .authorizeHttpRequests(auth -> {
                     auth.requestMatchers(PublicEndpoints.PATTERNS).permitAll();
@@ -65,7 +69,18 @@ public class SecurityChainsConfig {
                 // session-backed login/authorize pages
                 .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**"))
                 .oauth2ResourceServer(rs -> rs.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
+                // Registering a provider directly on HttpSecurity (rather than relying on the
+                // global AuthenticationManager AuthenticationConfiguration would otherwise build
+                // from every UserDetailsService/AuthenticationProvider bean in the context) scopes
+                // this chain's AuthenticationManager to exactly this provider (task 20, D-014):
+                // password and the conditional TOTP/recovery-code step are verified together, in
+                // one request, by TotpAuthenticationProvider — it must be the *only* provider this
+                // filter's manager can reach, or a co-existing DaoAuthenticationProvider could
+                // authenticate password alone and skip MFA. The resource-server JWT filter above
+                // uses its own dedicated manager and is unaffected by this local registration.
+                .authenticationProvider(totpAuthenticationProvider)
                 .formLogin(form -> form
+                        .authenticationDetailsSource(totpAuthenticationDetailsSource)
                         .failureHandler(loginFailureHandler)
                         .successHandler(loginSuccessHandler));
 

@@ -52,4 +52,19 @@ interface MfaEnrollmentRepository extends JpaRepository<MfaEnrollment, Long> {
     @Modifying
     @Query("DELETE FROM MfaEnrollment e WHERE e.id = :id AND e.confirmedAt IS NULL")
     int deleteByIdIfUnconfirmed(@Param("id") Long id);
+
+    /**
+     * Atomically records that {@code id}'s TOTP code was just used, but only if the previously
+     * accepted step (if any) was strictly earlier than the one just accepted —
+     * {@code acceptedStepStart} is that step's start instant ({@link TotpVerifier#stepStart}).
+     * Returns rows affected (0 or 1); {@code 0} means the submitted code's step was already
+     * accepted before (a replay) and the caller must reject it. Mirrors
+     * {@link #confirmIfUnconfirmed}'s conditional-update shape — task 20, closing the TOTP replay
+     * gap T18 explicitly deferred to this task.
+     */
+    @Modifying
+    @Query("UPDATE MfaEnrollment e SET e.lastUsedAt = :now WHERE e.id = :id "
+            + "AND (e.lastUsedAt IS NULL OR e.lastUsedAt < :acceptedStepStart)")
+    int recordUseIfNewer(
+            @Param("id") Long id, @Param("now") Instant now, @Param("acceptedStepStart") Instant acceptedStepStart);
 }

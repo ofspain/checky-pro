@@ -7,6 +7,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.time.Instant;
+import java.util.OptionalLong;
 
 /**
  * Stateless RFC 6238 TOTP verification (L6: HMAC-SHA1, 6 digits, 30s step). No AWS SDK import —
@@ -27,14 +28,30 @@ public class TotpVerifier {
      * each direction (90s total tolerance, L6) — a standard clock-skew allowance.
      */
     public boolean verify(byte[] secret, String submittedCode, Instant now) {
+        return verifyAndReturnStep(secret, submittedCode, now).isPresent();
+    }
+
+    /**
+     * Same matching logic as {@link #verify}, but returns the matched 30s time step instead of a
+     * boolean — task 20's login-time replay defense needs the step to compare against an
+     * enrollment's last-accepted one. Evaluates every candidate step before returning, exactly
+     * like {@link #verify}, so which step (if any) matched is not observable via timing.
+     */
+    public OptionalLong verifyAndReturnStep(byte[] secret, String submittedCode, Instant now) {
         long currentStep = Math.floorDiv(now.getEpochSecond(), TIME_STEP_SECONDS);
-        boolean match = false;
+        long matchedStep = -1;
         for (long step = currentStep - ADJACENT_STEPS; step <= currentStep + ADJACENT_STEPS; step++) {
             if (constantTimeEquals(generateCode(secret, step), submittedCode)) {
-                match = true;
+                matchedStep = step;
             }
         }
-        return match;
+        return matchedStep == -1 ? OptionalLong.empty() : OptionalLong.of(matchedStep);
+    }
+
+    /** The instant at which {@code step} began — the inverse of the step derivation above, so
+     * callers can persist a step as a comparable {@link Instant} without knowing the step length. */
+    public Instant stepStart(long step) {
+        return Instant.ofEpochSecond(step * TIME_STEP_SECONDS);
     }
 
     private static String generateCode(byte[] secret, long timeCounter) {

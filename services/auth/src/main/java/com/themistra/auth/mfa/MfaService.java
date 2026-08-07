@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.UUID;
 
 /**
@@ -191,6 +192,52 @@ public class MfaService {
         if (code == null || recoveryCodeRepository.markUsed(code.getId(), clock.instant()) == 0) {
             recordAudit("mfa.failed", AuditOutcome.FAILURE, accountUuid);
             throw new InvalidRecoveryCodeException();
+        }
+    }
+
+    /**
+     * Read-only check of whether {@code accountUuid} has a confirmed TOTP enrollment (R24, task
+     * 20's login-time MFA gate). No side effects, no audit — a caller deciding whether MFA is even
+     * in play, not attempting to satisfy it.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasConfirmedTotpEnrollment(UUID accountUuid) {
+        Long accountId = resolveAccountId(accountUuid);
+        return mfaEnrollmentRepository
+                .findByAccountIdAndTypeAndConfirmedAtIsNotNull(accountId, MfaEnrollment.Type.TOTP)
+                .isPresent();
+    }
+
+    /**
+     * Verifies a submitted TOTP code at login time (R25, task 20), with replay resistance: a code
+     * whose time step was already accepted (or an earlier one) is rejected even though it would
+     * otherwise still match {@link TotpVerifier}'s tolerance window — closing the gap T18
+     * explicitly deferred to this task. No account-status precondition, unlike
+     * {@link #beginEnroll}/{@link #confirm}/{@link #disable}: the caller (the SAS login flow)
+     * already establishes account usability before this is ever reached, the same precedent
+     * {@link #verifyRecoveryCode} already sets.
+     *
+     * @throws MfaNotEnrolledException if no confirmed TOTP enrollment exists (defensive only — the
+     *         caller is expected to have already checked {@link #hasConfirmedTotpEnrollment})
+     * @throws InvalidTotpCodeException if the code doesn't match, or matches a step already accepted
+     */
+    @Transactional
+    public void verifyTotpCodeForLogin(UUID accountUuid, String submittedCode) {
+        Long accountId = resolveAccountId(accountUuid);
+        MfaEnrollment enrollment = mfaEnrollmentRepository
+                .findByAccountIdAndTypeAndConfirmedAtIsNotNull(accountId, MfaEnrollment.Type.TOTP)
+                .orElseThrow(MfaNotEnrolledException::new);
+
+        byte[] secret = mfaSeedEncryption.decrypt(enrollment.getSecretEncrypted());
+        Instant now = clock.instant();
+        OptionalLong matchedStep = totpVerifier.verifyAndReturnStep(secret, submittedCode, now);
+        boolean accepted = matchedStep.isPresent()
+                && mfaEnrollmentRepository.recordUseIfNewer(
+                        enrollment.getId(), now, totpVerifier.stepStart(matchedStep.getAsLong())) > 0;
+
+        if (!accepted) {
+            recordAudit("mfa.failed", AuditOutcome.FAILURE, accountUuid);
+            throw new InvalidTotpCodeException();
         }
     }
 
