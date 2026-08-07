@@ -466,6 +466,104 @@ class MfaServiceTest {
         verifyNoInteractions(recoveryCodeRepository);
     }
 
+    // ---- hasConfirmedTotpEnrollment (R24, T20) ----
+
+    @Test
+    void hasConfirmedTotpEnrollmentReturnsTrueWhenConfirmedEnrollmentExists() {
+        when(mfaEnrollmentRepository.findAccountIdByUuid(ACCOUNT_UUID)).thenReturn(Optional.of(ACCOUNT_ID));
+        when(mfaEnrollmentRepository.findByAccountIdAndTypeAndConfirmedAtIsNotNull(ACCOUNT_ID, MfaEnrollment.Type.TOTP))
+                .thenReturn(Optional.of(confirmedEnrollment()));
+
+        assertThat(service.hasConfirmedTotpEnrollment(ACCOUNT_UUID)).isTrue();
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void hasConfirmedTotpEnrollmentReturnsFalseWhenNoneOrUnconfirmed() {
+        when(mfaEnrollmentRepository.findAccountIdByUuid(ACCOUNT_UUID)).thenReturn(Optional.of(ACCOUNT_ID));
+        when(mfaEnrollmentRepository.findByAccountIdAndTypeAndConfirmedAtIsNotNull(ACCOUNT_ID, MfaEnrollment.Type.TOTP))
+                .thenReturn(Optional.empty());
+
+        assertThat(service.hasConfirmedTotpEnrollment(ACCOUNT_UUID)).isFalse();
+    }
+
+    // ---- verifyTotpCodeForLogin (R25/R29, T20) ----
+
+    @Test
+    void verifyTotpCodeForLoginThrowsWhenNoConfirmedEnrollment() {
+        when(mfaEnrollmentRepository.findAccountIdByUuid(ACCOUNT_UUID)).thenReturn(Optional.of(ACCOUNT_ID));
+        when(mfaEnrollmentRepository.findByAccountIdAndTypeAndConfirmedAtIsNotNull(ACCOUNT_ID, MfaEnrollment.Type.TOTP))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.verifyTotpCodeForLogin(ACCOUNT_UUID, "123456"))
+                .isInstanceOf(MfaNotEnrolledException.class);
+        verifyNoInteractions(mfaSeedEncryption, totpVerifier);
+    }
+
+    @Test
+    void verifyTotpCodeForLoginSucceedsWhenStepMatchesAndIsRecordedAsNewlyUsed() {
+        when(mfaEnrollmentRepository.findAccountIdByUuid(ACCOUNT_UUID)).thenReturn(Optional.of(ACCOUNT_ID));
+        MfaEnrollment enrollment = confirmedEnrollment();
+        when(mfaEnrollmentRepository.findByAccountIdAndTypeAndConfirmedAtIsNotNull(ACCOUNT_ID, MfaEnrollment.Type.TOTP))
+                .thenReturn(Optional.of(enrollment));
+        byte[] secret = {7, 7, 7};
+        when(mfaSeedEncryption.decrypt(enrollment.getSecretEncrypted())).thenReturn(secret);
+        when(totpVerifier.verifyAndReturnStep(secret, "123456", NOW)).thenReturn(java.util.OptionalLong.of(1000L));
+        Instant expectedStepStart = Instant.ofEpochSecond(1000L * 30);
+        when(totpVerifier.stepStart(1000L)).thenReturn(expectedStepStart);
+        when(mfaEnrollmentRepository.recordUseIfNewer(enrollment.getId(), expectedStepStart)).thenReturn(1);
+
+        assertThatCode(() -> service.verifyTotpCodeForLogin(ACCOUNT_UUID, "123456")).doesNotThrowAnyException();
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void verifyTotpCodeForLoginThrowsAndAuditsWhenNoStepMatches() {
+        when(mfaEnrollmentRepository.findAccountIdByUuid(ACCOUNT_UUID)).thenReturn(Optional.of(ACCOUNT_ID));
+        MfaEnrollment enrollment = confirmedEnrollment();
+        when(mfaEnrollmentRepository.findByAccountIdAndTypeAndConfirmedAtIsNotNull(ACCOUNT_ID, MfaEnrollment.Type.TOTP))
+                .thenReturn(Optional.of(enrollment));
+        byte[] secret = {7, 7, 7};
+        when(mfaSeedEncryption.decrypt(enrollment.getSecretEncrypted())).thenReturn(secret);
+        when(totpVerifier.verifyAndReturnStep(secret, "000000", NOW)).thenReturn(java.util.OptionalLong.empty());
+
+        assertThatThrownBy(() -> service.verifyTotpCodeForLogin(ACCOUNT_UUID, "000000"))
+                .isInstanceOf(InvalidTotpCodeException.class);
+
+        ArgumentCaptor<RecordAuditEventRequest> captor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("mfa.failed");
+        // A step that never matched has nothing to record use of.
+        verify(mfaEnrollmentRepository, never()).recordUseIfNewer(any(), any());
+    }
+
+    @Test // T20 Phase 8 finding #3's fix, at the value-computation level: MfaService must pass the
+          // matched step's *start* instant to recordUseIfNewer, not some other wall-clock value —
+          // that's exactly where the original bug lived (a raw "now" was stored instead, which a
+          // later step's own stepStart could already be past under ordinary network latency).
+    void verifyTotpCodeForLoginRejectsAndAuditsWhenStepAlreadyUsed() {
+        when(mfaEnrollmentRepository.findAccountIdByUuid(ACCOUNT_UUID)).thenReturn(Optional.of(ACCOUNT_ID));
+        MfaEnrollment enrollment = confirmedEnrollment();
+        when(mfaEnrollmentRepository.findByAccountIdAndTypeAndConfirmedAtIsNotNull(ACCOUNT_ID, MfaEnrollment.Type.TOTP))
+                .thenReturn(Optional.of(enrollment));
+        byte[] secret = {7, 7, 7};
+        when(mfaSeedEncryption.decrypt(enrollment.getSecretEncrypted())).thenReturn(secret);
+        when(totpVerifier.verifyAndReturnStep(secret, "123456", NOW)).thenReturn(java.util.OptionalLong.of(500L));
+        Instant expectedStepStart = Instant.ofEpochSecond(500L * 30);
+        when(totpVerifier.stepStart(500L)).thenReturn(expectedStepStart);
+        // 0 rows affected — the repository's own conditional update already rejected this as a replay.
+        when(mfaEnrollmentRepository.recordUseIfNewer(enrollment.getId(), expectedStepStart)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.verifyTotpCodeForLogin(ACCOUNT_UUID, "123456"))
+                .isInstanceOf(InvalidTotpCodeException.class);
+        ArgumentCaptor<RecordAuditEventRequest> captor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("mfa.failed");
+        // Proves MfaService hands the repository the step-start value, not a raw "now" — the exact
+        // distinction the original bug's fix depends on.
+        verify(mfaEnrollmentRepository).recordUseIfNewer(enrollment.getId(), expectedStepStart);
+    }
+
     private void stubActiveAccount() {
         stubAccountWithStatus(AccountStatus.ACTIVE);
         when(mfaEnrollmentRepository.findAccountIdByUuid(ACCOUNT_UUID)).thenReturn(Optional.of(ACCOUNT_ID));

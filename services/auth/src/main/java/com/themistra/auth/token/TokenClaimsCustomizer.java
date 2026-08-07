@@ -1,6 +1,6 @@
 package com.themistra.auth.token;
 
-import com.themistra.auth.authn.TotpStepUpAuthenticationToken;
+import com.themistra.auth.authn.TotpAuthenticationProvider;
 import com.themistra.auth.authz.RoleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,8 +50,10 @@ public class TokenClaimsCustomizer implements OAuth2TokenCustomizer<JwtEncodingC
         // fresh on every issuance (never cached: a template edit affects future tokens only).
         // On a refresh-token grant, SAS replays the same Authentication captured at the original
         // interactive login (TotpAuthenticationProvider, task 20), so amr/acr below are preserved
-        // across refresh without any grant-type branching (R26/R27).
-        boolean otpUsed = context.getPrincipal() instanceof TotpStepUpAuthenticationToken totp && totp.otpUsed();
+        // across refresh without any grant-type branching (R26/R27). The MFA outcome rides as a
+        // synthetic granted authority, not a custom Authentication subclass, so it survives
+        // JdbcOAuth2AuthorizationService's Jackson-based persistence (Phase 8/9 finding #1).
+        boolean otpUsed = context.getPrincipal().getAuthorities().contains(TotpAuthenticationProvider.OTP_VERIFIED_AUTHORITY);
         context.getClaims()
                 .claim("roles", List.copyOf(resolveRoles(context.getPrincipal().getName())))
                 .claim("amr", otpUsed ? List.of("pwd", "otp") : List.of("pwd"))

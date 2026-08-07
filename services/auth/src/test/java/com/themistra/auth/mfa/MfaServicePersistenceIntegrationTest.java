@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -172,6 +173,37 @@ class MfaServicePersistenceIntegrationTest {
         assertThat(first ^ second).as("exactly one of the two concurrent confirms must succeed").isTrue();
         Long accountId = mfaEnrollmentRepository.findAccountIdByUuid(accountUuid).orElseThrow();
         assertThat(recoveryCodeRepository.findByAccountId(accountId)).hasSize(10);
+    }
+
+    @Test // T20 — R25/R29, full-stack against a real DB: verifyTotpCodeForLogin accepts a correct
+          // code and rejects the same code replayed immediately after
+    void verifyTotpCodeForLoginAcceptsOnceThenRejectsAnImmediateReplay() {
+        UUID accountUuid = registerAndActivate("mfa-e2e-login-verify@example.com");
+        MfaService.BeginEnrollResult begun = mfaService.beginEnroll(accountUuid);
+        String code = referenceGenerateCode(begun.secret(), Instant.now());
+        mfaService.confirm(accountUuid, code);
+
+        String loginCode = referenceGenerateCode(begun.secret(), Instant.now());
+        assertThatCode(() -> mfaService.verifyTotpCodeForLogin(accountUuid, loginCode))
+                .doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> mfaService.verifyTotpCodeForLogin(accountUuid, loginCode))
+                .isInstanceOf(InvalidTotpCodeException.class);
+    }
+
+    @Test // T20 — R24: hasConfirmedTotpEnrollment against a real DB, both states
+    void hasConfirmedTotpEnrollmentReflectsRealPersistedState() {
+        UUID accountUuid = registerAndActivate("mfa-e2e-has-enrollment@example.com");
+
+        assertThat(mfaService.hasConfirmedTotpEnrollment(accountUuid)).isFalse();
+
+        MfaService.BeginEnrollResult begun = mfaService.beginEnroll(accountUuid);
+        assertThat(mfaService.hasConfirmedTotpEnrollment(accountUuid))
+                .as("an unconfirmed enrollment must not count")
+                .isFalse();
+
+        mfaService.confirm(accountUuid, referenceGenerateCode(begun.secret(), Instant.now()));
+        assertThat(mfaService.hasConfirmedTotpEnrollment(accountUuid)).isTrue();
     }
 
     private UUID registerAndActivate(String email) {

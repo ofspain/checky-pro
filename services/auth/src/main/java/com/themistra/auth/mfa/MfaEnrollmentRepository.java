@@ -56,15 +56,18 @@ interface MfaEnrollmentRepository extends JpaRepository<MfaEnrollment, Long> {
     /**
      * Atomically records that {@code id}'s TOTP code was just used, but only if the previously
      * accepted step (if any) was strictly earlier than the one just accepted —
-     * {@code acceptedStepStart} is that step's start instant ({@link TotpVerifier#stepStart}).
-     * Returns rows affected (0 or 1); {@code 0} means the submitted code's step was already
-     * accepted before (a replay) and the caller must reject it. Mirrors
-     * {@link #confirmIfUnconfirmed}'s conditional-update shape — task 20, closing the TOTP replay
-     * gap T18 explicitly deferred to this task.
+     * {@code acceptedStepStart} is that step's start instant ({@link TotpVerifier#stepStart}), and
+     * is also what gets stored, not the wall-clock instant of this call. Comparing a step-start
+     * value against a later step-start value is what makes "strictly newer" correct: an earlier
+     * version of this method stored wall-clock time, which can already be past the *next* step's
+     * boundary under ordinary network latency, and could reject a legitimate next-step code as if
+     * it were a replay (Phase 8 independent-review finding #3). Returns rows affected (0 or 1);
+     * {@code 0} means the submitted code's step was already accepted before (a genuine replay) and
+     * the caller must reject it. Mirrors {@link #confirmIfUnconfirmed}'s conditional-update shape —
+     * task 20, closing the TOTP replay gap T18 explicitly deferred to this task.
      */
     @Modifying
-    @Query("UPDATE MfaEnrollment e SET e.lastUsedAt = :now WHERE e.id = :id "
+    @Query("UPDATE MfaEnrollment e SET e.lastUsedAt = :acceptedStepStart WHERE e.id = :id "
             + "AND (e.lastUsedAt IS NULL OR e.lastUsedAt < :acceptedStepStart)")
-    int recordUseIfNewer(
-            @Param("id") Long id, @Param("now") Instant now, @Param("acceptedStepStart") Instant acceptedStepStart);
+    int recordUseIfNewer(@Param("id") Long id, @Param("acceptedStepStart") Instant acceptedStepStart);
 }

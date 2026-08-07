@@ -107,6 +107,45 @@ class TotpVerifierTest {
         assertThat(verifier.verify(RFC_SECRET, "026920", time)).isTrue();
     }
 
+    @Test // T20: verifyAndReturnStep must agree with verify() on known-answer vectors, exposing
+          // which step matched instead of just whether one did
+    void verifyAndReturnStepReturnsTheMatchedStepForKnownVectors() {
+        assertThat(verifier.verifyAndReturnStep(RFC_SECRET, "287082", Instant.ofEpochSecond(59)))
+                .hasValue(1L); // floorDiv(59, 30) = 1
+        assertThat(verifier.verifyAndReturnStep(RFC_SECRET, "005924", Instant.ofEpochSecond(1234567890)))
+                .hasValue(Math.floorDiv(1234567890L, 30));
+    }
+
+    @Test
+    void verifyAndReturnStepReturnsEmptyForNoMatch() {
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+        String correct = referenceGenerateCode(RFC_SECRET, stepFor(now));
+        String wrong = correct.equals("000000") ? "000001" : "000000";
+
+        assertThat(verifier.verifyAndReturnStep(RFC_SECRET, wrong, now)).isEmpty();
+    }
+
+    @Test // T20 Phase 8 finding #3's context: a code can match an ADJACENT (past) step even though
+          // "now" already falls in a later step's window — verifyAndReturnStep must report the
+          // step the code actually matched (S), not the step "now" falls in (S+1). This is the
+          // exact semantic MfaService's replay guard depends on getting right.
+    void verifyAndReturnStepReportsTheMatchedStepNotTheCurrentOne() {
+        Instant stepStart = Instant.parse("2026-01-01T00:00:00Z");
+        long step = stepFor(stepStart);
+        String codeForStep = referenceGenerateCode(RFC_SECRET, step);
+        // "now" is late in the *next* step's window (29s in) - still within the +1 tolerance step
+        // of the code's own step, but no longer the step "now" itself falls in.
+        Instant nowInNextStep = stepStart.plusSeconds(30 + 29);
+
+        assertThat(verifier.verifyAndReturnStep(RFC_SECRET, codeForStep, nowInNextStep)).hasValue(step);
+    }
+
+    @Test
+    void stepStartReturnsTheEpochAlignedInstantForAStep() {
+        assertThat(verifier.stepStart(0L)).isEqualTo(Instant.EPOCH);
+        assertThat(verifier.stepStart(1000L)).isEqualTo(Instant.ofEpochSecond(30_000L));
+    }
+
     private static long stepFor(Instant instant) {
         return Math.floorDiv(instant.getEpochSecond(), 30);
     }

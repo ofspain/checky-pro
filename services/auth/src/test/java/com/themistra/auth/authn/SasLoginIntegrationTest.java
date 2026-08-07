@@ -7,6 +7,10 @@ import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.audit.AuditService;
 import com.themistra.auth.audit.dto.AuditEventResponse;
+import com.themistra.auth.authz.DuplicateRoleException;
+import com.themistra.auth.authz.RoleService;
+import com.themistra.auth.authz.dto.CreateRoleRequest;
+import com.themistra.auth.mfa.MfaService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,8 +30,11 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
 import java.net.HttpURLConnection;
+import java.security.GeneralSecurityException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -42,9 +49,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * End-to-end against real Postgres + Kafka (Testcontainers) and a real HTTP server
  * ({@code webEnvironment = RANDOM_PORT}) — the only way to prove the actual SAS form-login filter
  * chain (CSRF, {@link LoginFailureHandler}, {@link LoginSuccessHandler},
- * {@link AccountUserDetailsService}'s {@code isCurrentlyLocked}-driven gate) behaves correctly
+ * {@link AccountUserDetailsService}'s {@code isCurrentlyLocked}-driven gate, and — since T20 —
+ * {@link TotpAuthenticationProvider}'s single-request password+MFA gate) behaves correctly
  * together, which no mocked unit test can. No {@code MockMvc} precedent exists in this module
  * (confirmed at Phase 0/1); {@link TestRestTemplate} is used instead, per the Phase 5 plan.
+ *
+ * <p>T20's tests reuse this class rather than a new one deliberately: they exercise the same
+ * {@code /login} form-login filter chain, the same CSRF/cookie-handling helpers, and the same
+ * {@code registerAndActivate}/{@code attemptLogin} fixtures this class already established and
+ * hardened (Phase 11 gaps below). This file wasn't identified as "existing code this task touches"
+ * until Phase 10 — a Phase 0 gap, noted honestly rather than silently working around it.</p>
  *
  * <p><b>Unverified in this environment</b> — no Docker daemon available here (same limitation as
  * every prior Testcontainers test in this pipeline). CSRF-token scraping and session-cookie
@@ -74,6 +88,12 @@ class SasLoginIntegrationTest {
 
     @Autowired
     private AuditService auditService;
+
+    @Autowired
+    private RoleService roleService;
+
+    @Autowired
+    private MfaService mfaService;
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -171,6 +191,102 @@ class SasLoginIntegrationTest {
                 .isEqualTo(known.response.getHeaders().getLocation());
     }
 
+    @Test // T20, R24, named test shouldRequireMfaEnrollmentForMerchantAdminBeforeAuthorization:
+          // MERCHANT with no confirmed TOTP enrollment is blocked outright, uniformly (governing
+          // design decision — same response shape as any other login failure).
+    void merchantWithoutMfaEnrollmentCannotLogIn() {
+        UUID accountUuid = registerAndActivate("merchant-no-mfa@example.com");
+        ensureRoleExists("MERCHANT");
+        roleService.assignRole(accountUuid, "MERCHANT", null);
+
+        LoginAttempt attempt = attemptLogin("merchant-no-mfa@example.com", PASSWORD);
+
+        assertThat(attempt.response.getStatusCode()).isEqualTo(HttpStatus.FOUND);
+        assertThat(attempt.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
+    }
+
+    @Test // T20, R25, named test shouldRequireValidTotpOrRecoveryCodeWhenMfaIsEnrolled: password
+          // alone and a wrong code both fail; a correct TOTP code succeeds.
+    void merchantWithConfirmedEnrollmentRequiresCorrectTotpOrRecoveryCode() {
+        UUID accountUuid = registerAndActivate("merchant-with-mfa@example.com");
+        ensureRoleExists("MERCHANT");
+        roleService.assignRole(accountUuid, "MERCHANT", null);
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
+
+        LoginAttempt passwordOnly = attemptLogin("merchant-with-mfa@example.com", PASSWORD);
+        assertThat(passwordOnly.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
+
+        LoginAttempt wrongCode = attemptLogin("merchant-with-mfa@example.com", PASSWORD, "000000");
+        assertThat(wrongCode.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
+
+        String validTotp = referenceGenerateCode(enrollment.secret(), Instant.now());
+        LoginAttempt withTotp = attemptLogin("merchant-with-mfa@example.com", PASSWORD, validTotp);
+        assertThat(withTotp.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).doesNotContain("/login?error"));
+    }
+
+    @Test // T20, R25 recovery-code branch, same named test as above
+    void merchantCanLoginWithAnUnusedRecoveryCode() {
+        UUID accountUuid = registerAndActivate("merchant-recovery@example.com");
+        ensureRoleExists("MERCHANT");
+        roleService.assignRole(accountUuid, "MERCHANT", null);
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
+        String recoveryCode = enrollment.recoveryCodes().getFirst();
+
+        LoginAttempt attempt = attemptLogin("merchant-recovery@example.com", PASSWORD, recoveryCode);
+
+        assertThat(attempt.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).doesNotContain("/login?error"));
+    }
+
+    @Test // T20 Phase 8 finding #2's fix, full-stack: a USER account (no mandatory-MFA role) that
+          // voluntarily enrolled must still be required to pass MFA — the original implementation
+          // gated the whole MFA step on role and silently skipped this exact case.
+    void voluntarilyEnrolledUserAccountStillRequiresMfaAtLogin() {
+        UUID accountUuid = registerAndActivate("user-voluntary-mfa@example.com");
+        // Deliberately no role assignment — default account, not MERCHANT/ADMIN.
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
+
+        LoginAttempt passwordOnly = attemptLogin("user-voluntary-mfa@example.com", PASSWORD);
+        assertThat(passwordOnly.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
+
+        String validTotp = referenceGenerateCode(enrollment.secret(), Instant.now());
+        LoginAttempt withTotp = attemptLogin("user-voluntary-mfa@example.com", PASSWORD, validTotp);
+        assertThat(withTotp.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).doesNotContain("/login?error"));
+    }
+
+    @Test // T20 Phase 8 finding #3's fix, full-stack: the same valid TOTP code cannot be reused for
+          // a second login attempt immediately after the first.
+    void sameValidTotpCodeCannotBeUsedTwice() {
+        UUID accountUuid = registerAndActivate("merchant-no-replay@example.com");
+        ensureRoleExists("MERCHANT");
+        roleService.assignRole(accountUuid, "MERCHANT", null);
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
+        String code = referenceGenerateCode(enrollment.secret(), Instant.now());
+
+        LoginAttempt first = attemptLogin("merchant-no-replay@example.com", PASSWORD, code);
+        assertThat(first.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).doesNotContain("/login?error"));
+
+        LoginAttempt replay = attemptLogin("merchant-no-replay@example.com", PASSWORD, code);
+        assertThat(replay.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
+    }
+
     private String registerAndActivateEmail(String email) {
         registerAndActivate(email);
         return email;
@@ -189,6 +305,12 @@ class SasLoginIntegrationTest {
     }
 
     private LoginAttempt attemptLogin(String email, String password) {
+        return attemptLogin(email, password, null);
+    }
+
+    /** {@code mfaCode} is the single optional field T20's login form adds (O4, single-request
+     * design) — {@code null} submits password-only, exactly like the original two-arg overload. */
+    private LoginAttempt attemptLogin(String email, String password, String mfaCode) {
         ResponseEntity<String> loginPage = restTemplate.getForEntity(baseUrl + "/login", String.class);
         List<String> setCookies = loginPage.getHeaders().get(HttpHeaders.SET_COOKIE);
         String csrfToken = extractCsrfToken(loginPage.getBody());
@@ -197,6 +319,9 @@ class SasLoginIntegrationTest {
         form.add("username", email);
         form.add("password", password);
         form.add("_csrf", csrfToken);
+        if (mfaCode != null) {
+            form.add("mfaCode", mfaCode);
+        }
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
@@ -207,6 +332,55 @@ class SasLoginIntegrationTest {
         ResponseEntity<String> response = restTemplate.exchange(
                 baseUrl + "/login", HttpMethod.POST, new HttpEntity<>(form, headers), String.class);
         return new LoginAttempt(response);
+    }
+
+    /** Roles are shared, class-scoped DB state (no per-test rollback in this test style) — created
+     * once and reused, rather than failing every test after the first that needs the same role. */
+    private void ensureRoleExists(String roleName) {
+        try {
+            roleService.createRole(new CreateRoleRequest(roleName, null));
+        } catch (DuplicateRoleException e) {
+            // Already created by an earlier test in this class - fine.
+        }
+    }
+
+    /** Enrolls and confirms TOTP MFA through the real {@link MfaService} (no self-service HTTP
+     * endpoint exists yet — task 19), so the login-time gate this task builds has a genuinely
+     * confirmed enrollment to exercise, the same way production would produce one. */
+    private SeededEnrollment seedConfirmedTotpEnrollment(UUID accountUuid) {
+        MfaService.BeginEnrollResult begun = mfaService.beginEnroll(accountUuid);
+        String code = referenceGenerateCode(begun.secret(), Instant.now());
+        MfaService.ConfirmResult confirmed = mfaService.confirm(accountUuid, code);
+        return new SeededEnrollment(begun.secret(), confirmed.recoveryCodes());
+    }
+
+    private record SeededEnrollment(byte[] secret, List<String> recoveryCodes) {
+    }
+
+    /** Independent RFC 4226/6238 HOTP/TOTP implementation, deliberately separate code from {@link
+     * com.themistra.auth.mfa.TotpVerifier} — same discipline {@code TotpVerifierTest} and {@code
+     * MfaServicePersistenceIntegrationTest} already apply at their own layers. */
+    private static String referenceGenerateCode(byte[] secret, Instant now) {
+        long timeCounter = Math.floorDiv(now.getEpochSecond(), 30);
+        byte[] counterBytes = new byte[8];
+        long counter = timeCounter;
+        for (int i = 7; i >= 0; i--) {
+            counterBytes[i] = (byte) (counter & 0xFF);
+            counter >>= 8;
+        }
+        try {
+            Mac mac = Mac.getInstance("HmacSHA1");
+            mac.init(new SecretKeySpec(secret, "HmacSHA1"));
+            byte[] hash = mac.doFinal(counterBytes);
+            int offset = hash[hash.length - 1] & 0x0F;
+            int binary = ((hash[offset] & 0x7F) << 24)
+                    | ((hash[offset + 1] & 0xFF) << 16)
+                    | ((hash[offset + 2] & 0xFF) << 8)
+                    | (hash[offset + 3] & 0xFF);
+            return String.format("%06d", binary % 1_000_000);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private String extractCsrfToken(String loginPageHtml) {

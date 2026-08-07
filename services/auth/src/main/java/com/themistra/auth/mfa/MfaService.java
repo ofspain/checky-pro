@@ -229,11 +229,10 @@ public class MfaService {
                 .orElseThrow(MfaNotEnrolledException::new);
 
         byte[] secret = mfaSeedEncryption.decrypt(enrollment.getSecretEncrypted());
-        Instant now = clock.instant();
-        OptionalLong matchedStep = totpVerifier.verifyAndReturnStep(secret, submittedCode, now);
+        OptionalLong matchedStep = totpVerifier.verifyAndReturnStep(secret, submittedCode, clock.instant());
         boolean accepted = matchedStep.isPresent()
                 && mfaEnrollmentRepository.recordUseIfNewer(
-                        enrollment.getId(), now, totpVerifier.stepStart(matchedStep.getAsLong())) > 0;
+                        enrollment.getId(), totpVerifier.stepStart(matchedStep.getAsLong())) > 0;
 
         if (!accepted) {
             recordAudit("mfa.failed", AuditOutcome.FAILURE, accountUuid);

@@ -221,6 +221,28 @@ class MfaPersistenceIntegrationTest {
                 accountId, MfaEnrollment.Type.TOTP)).isPresent();
     }
 
+    @Test // T20 Phase 8 finding #3's fix, against the real SQL: recordUseIfNewer must accept a
+          // later step after an earlier one was accepted, and reject a replay of the same step —
+          // using arbitrary, deterministic Instants (not Instant.now()) since recordUseIfNewer no
+          // longer takes a separate wall-clock parameter at all, this needs no real waiting.
+    void recordUseIfNewerAcceptsALaterStepButRejectsAReplayOfTheSameStep() {
+        Long accountId = registerAndResolveAccountId("mfa-replay-guard@example.com");
+        MfaEnrollment saved = mfaEnrollmentRepository.saveAndFlush(
+                MfaEnrollment.create(accountId, MfaEnrollment.Type.TOTP, new byte[]{1}, NOW));
+        Instant stepOneStart = NOW;
+        Instant stepTwoStart = NOW.plusSeconds(30);
+
+        int firstAccept = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart);
+        int replayOfSameStep = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart);
+        int laterStepAccept = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepTwoStart);
+
+        assertThat(firstAccept).isEqualTo(1);
+        assertThat(replayOfSameStep).isEqualTo(0);
+        assertThat(laterStepAccept).isEqualTo(1);
+        MfaEnrollment reloaded = mfaEnrollmentRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reloaded.getLastUsedAt()).isEqualTo(stepTwoStart);
+    }
+
     @Test // Phase 8/9 fix: MFA disable (R28) removes the enrollment
     void deleteByAccountIdAndTypeRemovesTheEnrollment() {
         Long accountId = registerAndResolveAccountId("mfa-delete@example.com");

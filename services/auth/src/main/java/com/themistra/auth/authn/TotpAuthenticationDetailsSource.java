@@ -18,7 +18,12 @@ public class TotpAuthenticationDetailsSource implements
 
     @Override
     public TotpAuthenticationDetails buildDetails(HttpServletRequest request) {
-        return new TotpAuthenticationDetails(new WebAuthenticationDetails(request), request.getParameter("mfaCode"));
+        String mfaCode = request.getParameter("mfaCode");
+        // Strips incidental copy-paste whitespace before it ever reaches the shape-based
+        // TOTP-vs-recovery-code dispatch in TotpAuthenticationProvider — untrimmed input there
+        // could misclassify an otherwise-valid code and fail it for the wrong reason (Phase 8
+        // independent-review finding #5).
+        return new TotpAuthenticationDetails(new WebAuthenticationDetails(request), mfaCode == null ? null : mfaCode.strip());
     }
 
     /**
@@ -28,5 +33,13 @@ public class TotpAuthenticationDetailsSource implements
      *                    (a password-only submission).
      */
     public record TotpAuthenticationDetails(WebAuthenticationDetails webDetails, String mfaCode) {
+
+        /** Overridden so the raw code can never leak via a default record {@code toString()} —
+         * {@link org.springframework.security.authentication.AbstractAuthenticationToken}'s own
+         * {@code toString()} includes {@code details} (Phase 8 independent-review finding #5). */
+        @Override
+        public String toString() {
+            return "TotpAuthenticationDetails[webDetails=" + webDetails + ", mfaCode=REDACTED]";
+        }
     }
 }
