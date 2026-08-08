@@ -125,6 +125,9 @@ class TokenClaimsCustomizerTest {
         JwtClaimsSet built = claims.build();
         assertThat(built.<List<String>>getClaim("amr")).isEqualTo(List.of("pwd", "otp"));
         assertThat(built.<String>getClaim("acr")).isEqualTo("urn:themistra:acr:otp");
+        // Phase 11 finding #6: roles come from RoleService, never from the login-time authorities
+        // collection — the synthetic OTP_VERIFIED marker must never leak into this claim.
+        assertThat(built.<List<String>>getClaim("roles")).doesNotContain("OTP_VERIFIED");
     }
 
     @Test // R26/R27, Phase 3/4 finding #10's resolution: SAS replays the same Authentication on a

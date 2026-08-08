@@ -235,10 +235,14 @@ class MfaPersistenceIntegrationTest {
         int firstAccept = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart);
         int replayOfSameStep = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart);
         int laterStepAccept = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepTwoStart);
+        // Phase 11 finding #7: the inverse boundary — once a later step has been accepted, falling
+        // back to an earlier one must also be rejected, not just an exact-same-step replay.
+        int earlierStepAfterLater = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart);
 
         assertThat(firstAccept).isEqualTo(1);
         assertThat(replayOfSameStep).isEqualTo(0);
         assertThat(laterStepAccept).isEqualTo(1);
+        assertThat(earlierStepAfterLater).isEqualTo(0);
         MfaEnrollment reloaded = mfaEnrollmentRepository.findById(saved.getId()).orElseThrow();
         assertThat(reloaded.getLastUsedAt()).isEqualTo(stepTwoStart);
     }

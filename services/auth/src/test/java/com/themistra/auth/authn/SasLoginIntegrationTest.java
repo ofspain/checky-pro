@@ -224,27 +224,39 @@ class SasLoginIntegrationTest {
         assertThat(wrongCode.response.getHeaders().getLocation())
                 .isNotNull()
                 .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
+        // Phase 11 finding #1: prove the failure actually persisted an audit row, not just that the
+        // HTTP response looked like a failure — AuditService.record is REQUIRES_NEW, so a
+        // transaction-propagation or event-routing regression could drop this without any existing
+        // test noticing.
+        assertThat(auditService.list(accountUuid, Pageable.unpaged()).getContent())
+                .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("mfa.failed"));
 
-        String validTotp = referenceGenerateCode(enrollment.secret(), Instant.now());
-        LoginAttempt withTotp = attemptLogin("merchant-with-mfa@example.com", PASSWORD, validTotp);
+        LoginAttempt withTotp = attemptLoginWithFreshTotpCode(
+                "merchant-with-mfa@example.com", PASSWORD, enrollment.secret());
         assertThat(withTotp.response.getHeaders().getLocation())
                 .isNotNull()
                 .satisfies(location -> assertThat(location.toString()).doesNotContain("/login?error"));
     }
 
     @Test // T20, R25 recovery-code branch, same named test as above
-    void merchantCanLoginWithAnUnusedRecoveryCode() {
+    void merchantCanLoginWithAnUnusedRecoveryCodeButNotWithItASecondTime() {
         UUID accountUuid = registerAndActivate("merchant-recovery@example.com");
         ensureRoleExists("MERCHANT");
         roleService.assignRole(accountUuid, "MERCHANT", null);
         SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
         String recoveryCode = enrollment.recoveryCodes().getFirst();
 
-        LoginAttempt attempt = attemptLogin("merchant-recovery@example.com", PASSWORD, recoveryCode);
-
-        assertThat(attempt.response.getHeaders().getLocation())
+        LoginAttempt firstUse = attemptLogin("merchant-recovery@example.com", PASSWORD, recoveryCode);
+        assertThat(firstUse.response.getHeaders().getLocation())
                 .isNotNull()
                 .satisfies(location -> assertThat(location.toString()).doesNotContain("/login?error"));
+
+        // Phase 11 finding #3: the recovery code's single-use guarantee (L6) needs to be proven
+        // through the actual login path, not just at MfaServiceTest's mocked-repository level.
+        LoginAttempt secondUse = attemptLogin("merchant-recovery@example.com", PASSWORD, recoveryCode);
+        assertThat(secondUse.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
     }
 
     @Test // T20 Phase 8 finding #2's fix, full-stack: a USER account (no mandatory-MFA role) that
@@ -260,9 +272,23 @@ class SasLoginIntegrationTest {
                 .isNotNull()
                 .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
 
-        String validTotp = referenceGenerateCode(enrollment.secret(), Instant.now());
-        LoginAttempt withTotp = attemptLogin("user-voluntary-mfa@example.com", PASSWORD, validTotp);
+        LoginAttempt withTotp = attemptLoginWithFreshTotpCode(
+                "user-voluntary-mfa@example.com", PASSWORD, enrollment.secret());
         assertThat(withTotp.response.getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).doesNotContain("/login?error"));
+    }
+
+    @Test // Phase 11 finding #2: R27's negative case, explicitly — a plain account with no
+          // mandatory-MFA role and no enrollment at all logs in on password alone. Already implied
+          // by every other successful-login test in this class using unrelated no-role accounts,
+          // but not previously asserted under a name that states the intent directly.
+    void userWithoutEnrollmentLogsInWithPasswordOnly() {
+        registerAndActivate("user-no-mfa-at-all@example.com");
+
+        LoginAttempt attempt = attemptLogin("user-no-mfa-at-all@example.com", PASSWORD);
+
+        assertThat(attempt.response.getHeaders().getLocation())
                 .isNotNull()
                 .satisfies(location -> assertThat(location.toString()).doesNotContain("/login?error"));
     }
@@ -306,6 +332,17 @@ class SasLoginIntegrationTest {
 
     private LoginAttempt attemptLogin(String email, String password) {
         return attemptLogin(email, password, null);
+    }
+
+    /** Phase 11 finding #8: generates the TOTP code and submits it in one call, rather than a
+     * separate {@code referenceGenerateCode(secret, Instant.now())} followed later by
+     * {@code attemptLogin(...)} — structurally guarantees the code is always fresh at submission
+     * time (minimizing, not eliminating, the live-clock drift risk inherent to any real HTTP round
+     * trip against TOTP's 90s tolerance window), rather than relying on every call site doing this
+     * correctly by convention. Not used by the replay test, which deliberately reuses one captured
+     * code across two attempts. */
+    private LoginAttempt attemptLoginWithFreshTotpCode(String email, String password, byte[] secret) {
+        return attemptLogin(email, password, referenceGenerateCode(secret, Instant.now()));
     }
 
     /** {@code mfaCode} is the single optional field T20's login form adds (O4, single-request

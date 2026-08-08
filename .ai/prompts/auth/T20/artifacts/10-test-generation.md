@@ -88,3 +88,20 @@ No production code changed this phase. `mvn -pl services/auth -am test-compile` 
 
 ## Open Questions
 None. The one thing worth the human's attention isn't a question but a status: none of the Testcontainers-backed tests written this phase (`MfaPersistenceIntegrationTest`, `MfaServicePersistenceIntegrationTest`, `SasLoginIntegrationTest`) have been executed against real Postgres/Kafka in this environment. They should be run in a Docker-available environment before this task is considered verified — particularly `SasLoginIntegrationTest`'s new cases, since they're the only tests exercising the real Spring Security filter chain, CSRF handling, and `HttpSecurity.authenticationProvider(...)` wiring end-to-end, which is exactly the category of risk Phase 7 finding #1 raised about the SAS/Jackson persistence layer this task depends on.
+
+---
+
+## Addendum — Phase 11 (Kimi test review) response
+
+All 8 gaps Kimi found were accepted and implemented. `mvn -pl services/auth -am test-compile` clean; all non-Docker tests pass (411 run — `AdminAccountRoleControllerTest`/`ReuseDetectingAuthorizationServiceTest` excluded from this count, their 2 pre-existing failures already verified unrelated to T20 in Phase 10's main run).
+
+| Finding | Disposition |
+|---|---|
+| #1 — no assertion that a failed MFA login persists `mfa.failed` | Added to `merchantWithConfirmedEnrollmentRequiresCorrectTotpOrRecoveryCode` |
+| #2 — no explicit full-stack test for password-only login with no role/enrollment | New test `userWithoutEnrollmentLogsInWithPasswordOnly`; noted this behavior was already implied by existing tests using no-role accounts, so this closes a naming/intent gap more than a behavioral one |
+| #3 — recovery-code single-use not tested end-to-end | `merchantCanLoginWithAnUnusedRecoveryCode` renamed to `...ButNotWithItASecondTime` and extended with a reuse attempt |
+| #4 — `.strip()` fix unexercised | **Retargeted, not applied as literally suggested**: Kimi's suggested location (`TotpAuthenticationProviderTest`) doesn't actually exercise the fix — trimming happens in `TotpAuthenticationDetailsSource`, a different class the provider never re-processes. New file `TotpAuthenticationDetailsSourceTest.java` tests the actual responsible unit directly (also covers the `toString()` redaction, Phase 8 finding #5's other half, which had no direct test either) |
+| #5 — unexpected-failure log line unasserted | `unexpectedMfaServiceFailureStillFailsUniformly` → `...AndLogsAWarning`, using `CapturedOutput`/`OutputCaptureExtension` (already available via `spring-boot-starter-test`; Phase 10 had skipped this reasoning it required new infrastructure — it didn't) |
+| #6 — `roles` claim not asserted to exclude the marker authority | Added assertion to `shouldIssueTokenWithOtpAmrAndAcrAfterMfa` |
+| #7 — inverse replay direction (earlier step after a later one) untested | Extended `recordUseIfNewerAcceptsALaterStepButRejectsAReplayOfTheSameStep` with a fourth call |
+| #8 — multiple live `Instant.now()` calls risk step-boundary flakiness | Added `attemptLoginWithFreshTotpCode(email, password, secret)` helper that generates-and-submits atomically, replacing the three call sites that previously separated code generation from submission; the deliberate same-code-reused-twice replay test is untouched, since reuse is its entire point |

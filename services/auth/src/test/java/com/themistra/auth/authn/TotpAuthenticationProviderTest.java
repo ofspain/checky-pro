@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -37,7 +39,7 @@ import static org.mockito.Mockito.when;
  * on confirmed enrollment alone, independent of role), R29, and the uniform-failure/details
  * handling introduced resolving Phase 7/8/9 findings #1, #4, #5, #7.
  */
-@ExtendWith(MockitoExtension.class)
+@ExtendWith({MockitoExtension.class, OutputCaptureExtension.class})
 class TotpAuthenticationProviderTest {
 
     private static final UUID ACCOUNT_UUID = UUID.randomUUID();
@@ -207,8 +209,10 @@ class TotpAuthenticationProviderTest {
 
     @Test // T20 Phase 7/8 finding #4's fix: an unexpected failure (simulating a KMS/DB failure
           // inside MfaService) must still fail uniformly to the caller — only operator-visible
-          // logging changes, not the client-facing response.
-    void unexpectedMfaServiceFailureStillFailsUniformly() {
+          // logging changes, not the client-facing response. Phase 11 finding #5: the log line
+          // itself must actually be asserted, not just the uniform response — a regression that
+          // silently dropped the log.warn(...) call would otherwise pass unnoticed.
+    void unexpectedMfaServiceFailureStillFailsUniformlyAndLogsAWarning(CapturedOutput output) {
         givenActiveAccountWithCorrectPassword();
         when(mfaService.hasConfirmedTotpEnrollment(ACCOUNT_UUID)).thenReturn(true);
         org.mockito.Mockito.doThrow(new IllegalStateException("KMS unreachable"))
@@ -216,6 +220,10 @@ class TotpAuthenticationProviderTest {
 
         assertThatThrownBy(() -> provider.authenticate(request(EMAIL, RAW_PASSWORD, "123456")))
                 .isInstanceOf(BadCredentialsException.class);
+        assertThat(output.getOut() + output.getErr())
+                .contains("WARN")
+                .contains(ACCOUNT_UUID.toString())
+                .contains("KMS unreachable");
     }
 
     @Test // T20 Phase 7/8 finding #7's fix, narrowed during resolution: the request's
