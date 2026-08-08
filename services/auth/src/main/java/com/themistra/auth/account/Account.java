@@ -10,8 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
+import org.hibernate.annotations.JdbcType;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -32,9 +31,12 @@ public class Account {
     @Column(name = "account_uuid", nullable = false, unique = true, updatable = false)
     private UUID accountUuid;
 
-    /** {@code citext} (case-insensitive text, agents.md) - JdbcTypeCode.OTHER matches how
-     * Postgres reports this column's type so Hibernate's schema validation accepts it. */
-    @JdbcTypeCode(SqlTypes.OTHER)
+    /** {@code citext} (case-insensitive text, agents.md). {@link CitextJdbcType} — not the more
+     * obvious {@code @JdbcTypeCode(SqlTypes.OTHER)} — reports type code OTHER (so Hibernate's
+     * schema validation still accepts it against the real {@code citext} column) while binding
+     * parameters correctly as text; see that class's Javadoc for why {@code SqlTypes.OTHER} alone
+     * silently breaks both query correctness and citext's case-insensitivity. */
+    @JdbcType(CitextJdbcType.class)
     @Column(name = "email", nullable = false, unique = true, columnDefinition = "citext")
     private String email;
 

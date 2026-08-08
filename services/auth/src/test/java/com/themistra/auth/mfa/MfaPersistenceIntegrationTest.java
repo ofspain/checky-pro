@@ -12,11 +12,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,6 +38,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the whole transaction. That's a real, separate pre-existing defect (see
  * docker-testcontainers-handshake-issue memory) - disabling the live network call here avoids it
  * without masking it, since tests shouldn't depend on a third-party API for setup regardless.</p>
+ *
+ * <p><strong>{@code @Modifying}/derived-delete repository calls need {@link #inOwnTransaction}
+ * (2026-08-08 fix):</strong> unlike {@code save}/{@code saveAndFlush}/{@code findById} (inherited
+ * from {@code SimpleJpaRepository}, each already self-transactional), custom {@code @Modifying
+ * @Query} methods and derived {@code deleteBy...} methods require an active transaction supplied
+ * by the caller — in production that's always the enclosing {@code @Transactional} service method
+ * ({@code MfaService}), but this class deliberately calls the repository directly, bypassing that
+ * layer. A class- or method-level {@code @Transactional} on the test was tried and rejected: it
+ * keeps the whole test method in one uncommitted transaction, which breaks {@code
+ * AuditService.record}'s {@code REQUIRES_NEW} propagation (T18 Phase 9) — the audit write's
+ * separate physical transaction can no longer see the not-yet-committed account row, turning a
+ * different pre-existing bug into a new failure. Wrapping only the specific
+ * {@code @Modifying}/derived-delete calls in their own short-lived transaction, mirroring exactly
+ * what a real service method would provide, avoids that entirely — including for the concurrent
+ * test, where each worker thread's call needs (and gets) its own independent transaction.</p>
  */
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
@@ -50,10 +68,21 @@ class MfaPersistenceIntegrationTest {
     @Autowired
     private RecoveryCodeRepository recoveryCodeRepository;
 
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
     @PersistenceContext
     private EntityManager entityManager;
 
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
+
+    private <T> T inOwnTransaction(Supplier<T> action) {
+        return new TransactionTemplate(transactionManager).execute(status -> action.get());
+    }
+
+    private void inOwnTransaction(Runnable action) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> action.run());
+    }
 
     @Test // AC1
     void mfaEnrollmentMapsAllColumnsAndPersistsUnconfirmed() {
@@ -126,8 +155,8 @@ class MfaPersistenceIntegrationTest {
         MfaEnrollment saved = mfaEnrollmentRepository.save(
                 MfaEnrollment.create(accountId, MfaEnrollment.Type.TOTP, new byte[]{1}, NOW));
 
-        int first = mfaEnrollmentRepository.confirmIfUnconfirmed(saved.getId(), NOW.plusSeconds(60));
-        int second = mfaEnrollmentRepository.confirmIfUnconfirmed(saved.getId(), NOW.plusSeconds(90));
+        int first = inOwnTransaction(() -> mfaEnrollmentRepository.confirmIfUnconfirmed(saved.getId(), NOW.plusSeconds(60)));
+        int second = inOwnTransaction(() -> mfaEnrollmentRepository.confirmIfUnconfirmed(saved.getId(), NOW.plusSeconds(90)));
 
         assertThat(first).isEqualTo(1);
         assertThat(second).isEqualTo(0);
@@ -143,7 +172,7 @@ class MfaPersistenceIntegrationTest {
         MfaEnrollment saved = mfaEnrollmentRepository.save(
                 MfaEnrollment.create(accountId, MfaEnrollment.Type.TOTP, new byte[]{1}, NOW));
 
-        int first = mfaEnrollmentRepository.deleteByIdIfUnconfirmed(saved.getId());
+        int first = inOwnTransaction(() -> mfaEnrollmentRepository.deleteByIdIfUnconfirmed(saved.getId()));
 
         assertThat(first).isEqualTo(1);
         assertThat(mfaEnrollmentRepository.findById(saved.getId())).isEmpty();
@@ -154,9 +183,9 @@ class MfaPersistenceIntegrationTest {
         Long accountId = registerAndResolveAccountId("mfa-delete-confirmed@example.com");
         MfaEnrollment saved = mfaEnrollmentRepository.saveAndFlush(
                 MfaEnrollment.create(accountId, MfaEnrollment.Type.TOTP, new byte[]{1}, NOW));
-        mfaEnrollmentRepository.confirmIfUnconfirmed(saved.getId(), NOW.plusSeconds(60));
+        inOwnTransaction(() -> mfaEnrollmentRepository.confirmIfUnconfirmed(saved.getId(), NOW.plusSeconds(60)));
 
-        int result = mfaEnrollmentRepository.deleteByIdIfUnconfirmed(saved.getId());
+        int result = inOwnTransaction(() -> mfaEnrollmentRepository.deleteByIdIfUnconfirmed(saved.getId()));
 
         assertThat(result).isEqualTo(0);
         assertThat(mfaEnrollmentRepository.findById(saved.getId())).isPresent();
@@ -232,12 +261,12 @@ class MfaPersistenceIntegrationTest {
         Instant stepOneStart = NOW;
         Instant stepTwoStart = NOW.plusSeconds(30);
 
-        int firstAccept = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart);
-        int replayOfSameStep = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart);
-        int laterStepAccept = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepTwoStart);
+        int firstAccept = inOwnTransaction(() -> mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart));
+        int replayOfSameStep = inOwnTransaction(() -> mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart));
+        int laterStepAccept = inOwnTransaction(() -> mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepTwoStart));
         // Phase 11 finding #7: the inverse boundary — once a later step has been accepted, falling
         // back to an earlier one must also be rejected, not just an exact-same-step replay.
-        int earlierStepAfterLater = mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart);
+        int earlierStepAfterLater = inOwnTransaction(() -> mfaEnrollmentRepository.recordUseIfNewer(saved.getId(), stepOneStart));
 
         assertThat(firstAccept).isEqualTo(1);
         assertThat(replayOfSameStep).isEqualTo(0);
@@ -253,7 +282,7 @@ class MfaPersistenceIntegrationTest {
         mfaEnrollmentRepository.saveAndFlush(
                 MfaEnrollment.create(accountId, MfaEnrollment.Type.TOTP, new byte[]{1}, NOW));
 
-        mfaEnrollmentRepository.deleteByAccountIdAndType(accountId, MfaEnrollment.Type.TOTP);
+        inOwnTransaction(() -> mfaEnrollmentRepository.deleteByAccountIdAndType(accountId, MfaEnrollment.Type.TOTP));
 
         assertThat(mfaEnrollmentRepository.findByAccountIdAndType(accountId, MfaEnrollment.Type.TOTP))
                 .isEmpty();
@@ -302,8 +331,8 @@ class MfaPersistenceIntegrationTest {
         Long accountId = registerAndResolveAccountId("recovery-markused@example.com");
         RecoveryCode saved = recoveryCodeRepository.save(RecoveryCode.create(accountId, "a".repeat(64), NOW));
 
-        int first = recoveryCodeRepository.markUsed(saved.getId(), NOW.plusSeconds(10));
-        int second = recoveryCodeRepository.markUsed(saved.getId(), NOW.plusSeconds(20));
+        int first = inOwnTransaction(() -> recoveryCodeRepository.markUsed(saved.getId(), NOW.plusSeconds(10)));
+        int second = inOwnTransaction(() -> recoveryCodeRepository.markUsed(saved.getId(), NOW.plusSeconds(20)));
 
         assertThat(first).isEqualTo(1);
         assertThat(second).isEqualTo(0);
@@ -316,7 +345,7 @@ class MfaPersistenceIntegrationTest {
         Long accountId = registerAndResolveAccountId("recovery-unused@example.com");
         RecoveryCode used = recoveryCodeRepository.save(RecoveryCode.create(accountId, "a".repeat(64), NOW));
         recoveryCodeRepository.save(RecoveryCode.create(accountId, "b".repeat(64), NOW));
-        recoveryCodeRepository.markUsed(used.getId(), NOW.plusSeconds(10));
+        inOwnTransaction(() -> recoveryCodeRepository.markUsed(used.getId(), NOW.plusSeconds(10)));
 
         List<RecoveryCode> unused = recoveryCodeRepository.findByAccountIdAndUsedAtIsNull(accountId);
 
@@ -366,7 +395,7 @@ class MfaPersistenceIntegrationTest {
         java.util.concurrent.Callable<Integer> attempt = () -> {
             bothReady.countDown();
             go.await();
-            return recoveryCodeRepository.markUsed(id, Instant.now());
+            return inOwnTransaction(() -> recoveryCodeRepository.markUsed(id, Instant.now()));
         };
 
         java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);

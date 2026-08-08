@@ -71,8 +71,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SasLoginIntegrationTest {
 
     private static final String PASSWORD = "correct-horse-battery";
+    // 2026-08-08 fix: the real default-login-page markup is
+    // <input name="_csrf" type="hidden" value="..." /> — "type=\"hidden\"" sits between name and
+    // value, which the original "name=\"_csrf\"\s+value=\"...\"" pattern (assuming they're
+    // adjacent) never matched. Confirmed by capturing and inspecting the actual response body
+    // once Docker/Testcontainers made that possible for the first time — this test was written
+    // and believed correct but never actually run against a real server before.
     private static final Pattern CSRF_INPUT_PATTERN =
-            Pattern.compile("name=\"_csrf\"\\s+value=\"([^\"]+)\"");
+            Pattern.compile("name=\"_csrf\"[^>]*\\bvalue=\"([^\"]+)\"");
 
     @LocalServerPort
     private int port;
