@@ -10,11 +10,11 @@
 -- way V1 already did for every other column of the same two kinds.
 
 ALTER TABLE oauth2_authorization
-    ADD COLUMN user_code_value          TEXT,
-    ADD COLUMN user_code_issued_at      TIMESTAMPTZ,
-    ADD COLUMN user_code_expires_at     TIMESTAMPTZ,
-    ADD COLUMN user_code_metadata       TEXT,
-    ADD COLUMN device_code_value        TEXT,
-    ADD COLUMN device_code_issued_at    TIMESTAMPTZ,
-    ADD COLUMN device_code_expires_at   TIMESTAMPTZ,
-    ADD COLUMN device_code_metadata     TEXT;
+    ADD COLUMN IF NOT EXISTS user_code_value          TEXT,
+    ADD COLUMN IF NOT EXISTS user_code_issued_at      TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS user_code_expires_at     TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS user_code_metadata       TEXT,
+    ADD COLUMN IF NOT EXISTS device_code_value        TEXT,
+    ADD COLUMN IF NOT EXISTS device_code_issued_at    TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS device_code_expires_at   TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS device_code_metadata     TEXT;

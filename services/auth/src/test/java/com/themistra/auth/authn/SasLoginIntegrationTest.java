@@ -364,7 +364,11 @@ class SasLoginIntegrationTest {
 
     @Test // T22, R25, named test shouldRequireValidTotpOrRecoveryCodeWhenMfaIsEnrolled —
           // full-authorize-flow version: password alone doesn't complete the flow; a valid TOTP
-          // code does.
+          // code does. Phase 8 finding #7: this proves the TOTP branch only — the named test's
+          // "or recovery code" half is deliberately not re-proven at this layer (frozen brief
+          // disposition #7), since T20's merchantCanLoginWithAnUnusedRecoveryCodeButNotWithItASecondTime
+          // already proves it at /login, and three more HTTP hops per attempt would add runtime
+          // without adding coverage of anything R25/R26 don't already establish together.
     void confirmedMfaRequiresCodeToFinishAuthorizeFlow() {
         UUID accountUuid = registerAndActivate("merchant-mfa-authorize@example.com");
         ensureRoleExists("MERCHANT");
@@ -375,6 +379,11 @@ class SasLoginIntegrationTest {
                 "merchant-mfa-authorize@example.com", PASSWORD, null,
                 generatePkce(), UUID.randomUUID().toString());
         assertThat(passwordOnly.authorizationCode()).isEmpty();
+        // Phase 8 finding #3: match R24's test rigor — a missing code alone doesn't prove *why*;
+        // the redirect must actually be the uniform failure target, not some other silent drop.
+        assertThat(passwordOnly.loginResponse().getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
 
         FullFlowResult withTotp = attemptFullAuthorizeFlow(
                 "merchant-mfa-authorize@example.com", PASSWORD,
@@ -394,11 +403,15 @@ class SasLoginIntegrationTest {
         roleService.assignRole(accountUuid, "MERCHANT", null);
         SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
         PkcePair pkce = generatePkce();
+        String state = UUID.randomUUID().toString();
 
         FullFlowResult result = attemptFullAuthorizeFlow(
                 "merchant-mfa-token@example.com", PASSWORD,
-                referenceGenerateCode(enrollment.secret(), Instant.now()), pkce, UUID.randomUUID().toString());
+                referenceGenerateCode(enrollment.secret(), Instant.now()), pkce, state);
         assertThat(result.authorizationCode()).isPresent();
+        // Phase 8 finding #1: the state a real client sent must be the state it gets back —
+        // that round trip is exactly what protects the authorization response from CSRF.
+        assertThat(result.returnedState()).contains(state);
 
         String accessToken = exchangeCodeForToken(result.authorizationCode().orElseThrow(), pkce.verifier());
         JWTClaimsSet claims = parseClaims(accessToken);
@@ -412,10 +425,12 @@ class SasLoginIntegrationTest {
     void issuedTokenHasPwdOnlyAmrThroughFullFlowWhenMfaNotRequired() throws ParseException {
         registerAndActivate("user-no-mfa-token@example.com");
         PkcePair pkce = generatePkce();
+        String state = UUID.randomUUID().toString();
 
         FullFlowResult result = attemptFullAuthorizeFlow(
-                "user-no-mfa-token@example.com", PASSWORD, null, pkce, UUID.randomUUID().toString());
+                "user-no-mfa-token@example.com", PASSWORD, null, pkce, state);
         assertThat(result.authorizationCode()).isPresent();
+        assertThat(result.returnedState()).contains(state);
 
         String accessToken = exchangeCodeForToken(result.authorizationCode().orElseThrow(), pkce.verifier());
         JWTClaimsSet claims = parseClaims(accessToken);
@@ -482,7 +497,7 @@ class SasLoginIntegrationTest {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
         if (cookies != null) {
-            headers.put(HttpHeaders.COOKIE, cookies);
+            headers.put(HttpHeaders.COOKIE, toRequestCookiePairs(cookies));
         }
 
         return restTemplate.exchange(
@@ -494,7 +509,7 @@ class SasLoginIntegrationTest {
     private ResponseEntity<String> getWithCookies(String url, List<String> cookies) {
         HttpHeaders headers = new HttpHeaders();
         if (cookies != null && !cookies.isEmpty()) {
-            headers.put(HttpHeaders.COOKIE, cookies);
+            headers.put(HttpHeaders.COOKIE, toRequestCookiePairs(cookies));
         }
         return restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
     }
@@ -503,7 +518,9 @@ class SasLoginIntegrationTest {
      * name repeats — essential because Spring Security regenerates the session id on successful
      * authentication (session-fixation protection), so the post-login {@code Set-Cookie} for
      * {@code JSESSIONID} must win over the one captured at the unauthenticated
-     * {@code /oauth2/authorize} hop, not be sent alongside it. */
+     * {@code /oauth2/authorize} hop, not be sent alongside it. Stores the raw {@code Set-Cookie}
+     * values (attributes and all) purely for name-based de-duplication — {@link #toRequestCookiePairs}
+     * is what strips them down to {@code name=value} before anything is actually sent. */
     private static List<String> mergeCookies(List<String> existing, List<String> newSetCookies) {
         Map<String, String> byName = new LinkedHashMap<>();
         if (existing != null) {
@@ -522,6 +539,21 @@ class SasLoginIntegrationTest {
     private static String cookieName(String setCookieHeader) {
         int equalsIndex = setCookieHeader.indexOf('=');
         return equalsIndex < 0 ? setCookieHeader : setCookieHeader.substring(0, equalsIndex);
+    }
+
+    /** Phase 8 finding #4: a {@code Cookie} request header must contain only {@code name=value}
+     * pairs (RFC 6265 §4.2) — response-only attributes like {@code Path=/}/{@code HttpOnly} have no
+     * business there. Sending raw {@code Set-Cookie} values as-is (this class's original behavior,
+     * predating T22) happened to work because Tomcat's cookie parser is lenient, not because it was
+     * correct; this strips each value down to its {@code name=value} prefix — the part before the
+     * first {@code ;} — right before it's ever placed on an outgoing request. */
+    private static List<String> toRequestCookiePairs(List<String> setCookieHeaders) {
+        return setCookieHeaders.stream().map(SasLoginIntegrationTest::cookieNameValuePair).toList();
+    }
+
+    private static String cookieNameValuePair(String setCookieHeader) {
+        int semicolonIndex = setCookieHeader.indexOf(';');
+        return (semicolonIndex < 0 ? setCookieHeader : setCookieHeader.substring(0, semicolonIndex)).trim();
     }
 
     private String resolveLocation(URI location) {
@@ -596,17 +628,29 @@ class SasLoginIntegrationTest {
         ResponseEntity<String> loginResponse = postLoginForm(email, password, mfaCode, csrfToken, cookies);
         URI postLoginLocation = loginResponse.getHeaders().getLocation();
         if (postLoginLocation == null || postLoginLocation.toString().contains("/login?error")) {
-            return new FullFlowResult(loginResponse, Optional.empty());
+            return new FullFlowResult(loginResponse, Optional.empty(), Optional.empty());
         }
 
         cookies = mergeCookies(cookies, loginResponse.getHeaders().get(HttpHeaders.SET_COOKIE));
         ResponseEntity<String> completedAuthorize = getWithCookies(authorizeUrl(pkce.challenge(), state), cookies);
+        // Phase 8 finding #2: an unexpected non-redirect here (SAS returning an error page instead
+        // of completing the authorization) must fail loudly and specifically, not silently produce
+        // an empty authorizationCode that a calling test can only report as "code should be
+        // present" - the actual cause would be invisible.
+        if (completedAuthorize.getStatusCode() != HttpStatus.FOUND || completedAuthorize.getHeaders().getLocation() == null) {
+            throw new IllegalStateException(
+                    "Expected the re-issued, now-authenticated /oauth2/authorize to redirect to "
+                            + authClientsProperties.spa().redirectUris().getFirst() + " with an authorization "
+                            + "code, got status " + completedAuthorize.getStatusCode());
+        }
         URI finalLocation = completedAuthorize.getHeaders().getLocation();
-        String code = finalLocation == null ? null : extractQueryParam(finalLocation, "code");
-        return new FullFlowResult(loginResponse, Optional.ofNullable(code));
+        String code = extractQueryParam(finalLocation, "code");
+        String returnedState = extractQueryParam(finalLocation, "state");
+        return new FullFlowResult(loginResponse, Optional.ofNullable(code), Optional.ofNullable(returnedState));
     }
 
-    private record FullFlowResult(ResponseEntity<String> loginResponse, Optional<String> authorizationCode) {
+    private record FullFlowResult(
+            ResponseEntity<String> loginResponse, Optional<String> authorizationCode, Optional<String> returnedState) {
     }
 
     private static String extractQueryParam(URI uri, String name) {
@@ -630,6 +674,13 @@ class SasLoginIntegrationTest {
 
         ResponseEntity<String> response = restTemplate.exchange(
                 baseUrl + "/oauth2/token", HttpMethod.POST, new HttpEntity<>(form, headers), String.class);
+        // Phase 8 finding #8: check the status before trusting the body shape — a non-2xx error
+        // response (RFC 6749's {"error":"..."} shape) parses as valid JSON with no access_token
+        // and would already fail loudly below, but checking status first makes the actual failure
+        // mode explicit instead of inferred from an absent field.
+        if (response.getStatusCode() != HttpStatus.OK) {
+            throw new IllegalStateException("/oauth2/token returned " + response.getStatusCode() + ": " + response.getBody());
+        }
 
         JsonNode json;
         try {
