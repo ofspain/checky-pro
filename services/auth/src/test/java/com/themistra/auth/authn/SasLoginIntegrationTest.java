@@ -1,5 +1,10 @@
 package com.themistra.auth.authn;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.JWTParser;
 import com.themistra.auth.TestcontainersConfiguration;
 import com.themistra.auth.account.AccountService;
 import com.themistra.auth.account.AccountStatus;
@@ -11,6 +16,7 @@ import com.themistra.auth.authz.DuplicateRoleException;
 import com.themistra.auth.authz.RoleService;
 import com.themistra.auth.authz.dto.CreateRoleRequest;
 import com.themistra.auth.mfa.MfaService;
+import com.themistra.auth.token.AuthClientsProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,15 +35,25 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
 import java.net.HttpURLConnection;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.text.ParseException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -60,11 +76,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * hardened (Phase 11 gaps below). This file wasn't identified as "existing code this task touches"
  * until Phase 10 — a Phase 0 gap, noted honestly rather than silently working around it.</p>
  *
- * <p><b>Unverified in this environment</b> — no Docker daemon available here (same limitation as
- * every prior Testcontainers test in this pipeline). CSRF-token scraping and session-cookie
- * propagation across requests are hand-rolled below using the most standard pattern for this
- * exact scenario, but have not been run against a real server. Flagged explicitly, not silently
- * assumed correct.</p>
+ * <p>T22 extends this class again, with the one thing T20 deliberately declined to attempt: driving
+ * the full {@code /oauth2/authorize} → {@code /login} → (resumed) {@code /oauth2/authorize} →
+ * {@code /oauth2/token} round trip and inspecting an actually-issued token's claims, matching
+ * {@code auth-decisions.md} D-023's precedent against writing that category of test unverified.
+ * Confirmed run against a real server (Docker/Testcontainers reliably available as of 2026-08-08) —
+ * see that update for the citext/{@code existsByEmail} fix and the CSRF-regex fix this file needed
+ * before any of its tests, T20's or T22's, could pass at all.</p>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(TestcontainersConfiguration.class)
@@ -100,6 +118,12 @@ class SasLoginIntegrationTest {
 
     @Autowired
     private MfaService mfaService;
+
+    @Autowired
+    private AuthClientsProperties authClientsProperties;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -319,6 +343,87 @@ class SasLoginIntegrationTest {
                 .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
     }
 
+    @Test // T22, R24, named test shouldRequireMfaEnrollmentForMerchantAdminBeforeAuthorization —
+          // full-authorize-flow version: proves the /oauth2/authorize flow itself never yields an
+          // authorization code, not just that /login redirects to an error (T20's
+          // merchantWithoutMfaEnrollmentCannotLogIn already proved the latter, at the /login layer).
+    void merchantWithoutEnrollmentCannotFinishAuthorizeFlow() {
+        UUID accountUuid = registerAndActivate("merchant-no-mfa-authorize@example.com");
+        ensureRoleExists("MERCHANT");
+        roleService.assignRole(accountUuid, "MERCHANT", null);
+
+        FullFlowResult result = attemptFullAuthorizeFlow(
+                "merchant-no-mfa-authorize@example.com", PASSWORD, null,
+                generatePkce(), UUID.randomUUID().toString());
+
+        assertThat(result.authorizationCode()).isEmpty();
+        assertThat(result.loginResponse().getHeaders().getLocation())
+                .isNotNull()
+                .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
+    }
+
+    @Test // T22, R25, named test shouldRequireValidTotpOrRecoveryCodeWhenMfaIsEnrolled —
+          // full-authorize-flow version: password alone doesn't complete the flow; a valid TOTP
+          // code does.
+    void confirmedMfaRequiresCodeToFinishAuthorizeFlow() {
+        UUID accountUuid = registerAndActivate("merchant-mfa-authorize@example.com");
+        ensureRoleExists("MERCHANT");
+        roleService.assignRole(accountUuid, "MERCHANT", null);
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
+
+        FullFlowResult passwordOnly = attemptFullAuthorizeFlow(
+                "merchant-mfa-authorize@example.com", PASSWORD, null,
+                generatePkce(), UUID.randomUUID().toString());
+        assertThat(passwordOnly.authorizationCode()).isEmpty();
+
+        FullFlowResult withTotp = attemptFullAuthorizeFlow(
+                "merchant-mfa-authorize@example.com", PASSWORD,
+                referenceGenerateCode(enrollment.secret(), Instant.now()),
+                generatePkce(), UUID.randomUUID().toString());
+        assertThat(withTotp.authorizationCode()).isPresent();
+    }
+
+    @Test // T22, R26, named test shouldIssueTokenWithOtpAmrAndAcrAfterMfa — the genuinely new
+          // capability this task adds: inspecting an actually-issued token's claims, rather than
+          // TokenClaimsCustomizer directly (T20's unit test) or the /login response shape alone
+          // (T20's integration test) — closing the gap auth-decisions.md D-023 and T20 both
+          // deliberately left as unverified-without-running-it.
+    void issuedTokenHasOtpAmrAndAcrAfterMfa() throws ParseException {
+        UUID accountUuid = registerAndActivate("merchant-mfa-token@example.com");
+        ensureRoleExists("MERCHANT");
+        roleService.assignRole(accountUuid, "MERCHANT", null);
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
+        PkcePair pkce = generatePkce();
+
+        FullFlowResult result = attemptFullAuthorizeFlow(
+                "merchant-mfa-token@example.com", PASSWORD,
+                referenceGenerateCode(enrollment.secret(), Instant.now()), pkce, UUID.randomUUID().toString());
+        assertThat(result.authorizationCode()).isPresent();
+
+        String accessToken = exchangeCodeForToken(result.authorizationCode().orElseThrow(), pkce.verifier());
+        JWTClaimsSet claims = parseClaims(accessToken);
+
+        assertThat(claims.getStringListClaim("amr")).containsExactly("pwd", "otp");
+        assertThat(claims.getStringClaim("acr")).isEqualTo("urn:themistra:acr:otp");
+    }
+
+    @Test // T22 positive control (frozen brief disposition #6): a non-mandatory-role account with
+          // no enrollment completes the full flow on password alone.
+    void issuedTokenHasPwdOnlyAmrThroughFullFlowWhenMfaNotRequired() throws ParseException {
+        registerAndActivate("user-no-mfa-token@example.com");
+        PkcePair pkce = generatePkce();
+
+        FullFlowResult result = attemptFullAuthorizeFlow(
+                "user-no-mfa-token@example.com", PASSWORD, null, pkce, UUID.randomUUID().toString());
+        assertThat(result.authorizationCode()).isPresent();
+
+        String accessToken = exchangeCodeForToken(result.authorizationCode().orElseThrow(), pkce.verifier());
+        JWTClaimsSet claims = parseClaims(accessToken);
+
+        assertThat(claims.getStringListClaim("amr")).containsExactly("pwd");
+        assertThat(claims.getStringClaim("acr")).isEqualTo("urn:themistra:acr:pwd");
+    }
+
     private String registerAndActivateEmail(String email) {
         registerAndActivate(email);
         return email;
@@ -357,7 +462,15 @@ class SasLoginIntegrationTest {
         ResponseEntity<String> loginPage = restTemplate.getForEntity(baseUrl + "/login", String.class);
         List<String> setCookies = loginPage.getHeaders().get(HttpHeaders.SET_COOKIE);
         String csrfToken = extractCsrfToken(loginPage.getBody());
+        return new LoginAttempt(postLoginForm(email, password, mfaCode, csrfToken, setCookies));
+    }
 
+    /** T22: factored out of {@link #attemptLogin} so the full-authorize-flow helper below can post
+     * the same login form carrying cookies accumulated from an earlier, unauthenticated
+     * {@code /oauth2/authorize} hop instead of a freshly-fetched {@code /login} page's cookies —
+     * the submission mechanics are identical either way, only where the cookies came from differs. */
+    private ResponseEntity<String> postLoginForm(
+            String email, String password, String mfaCode, String csrfToken, List<String> cookies) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("username", email);
         form.add("password", password);
@@ -368,13 +481,178 @@ class SasLoginIntegrationTest {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-        if (setCookies != null) {
-            headers.put(HttpHeaders.COOKIE, setCookies);
+        if (cookies != null) {
+            headers.put(HttpHeaders.COOKIE, cookies);
         }
 
-        ResponseEntity<String> response = restTemplate.exchange(
+        return restTemplate.exchange(
                 baseUrl + "/login", HttpMethod.POST, new HttpEntity<>(form, headers), String.class);
-        return new LoginAttempt(response);
+    }
+
+    /** T22: a cookie-carrying GET, reused across every hop of the full authorize flow that isn't
+     * already covered by {@link #attemptLogin}'s own {@code /login} fetch. */
+    private ResponseEntity<String> getWithCookies(String url, List<String> cookies) {
+        HttpHeaders headers = new HttpHeaders();
+        if (cookies != null && !cookies.isEmpty()) {
+            headers.put(HttpHeaders.COOKIE, cookies);
+        }
+        return restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+    }
+
+    /** T22: combines cookies across a redirect chain, replacing (not duplicating) any cookie whose
+     * name repeats — essential because Spring Security regenerates the session id on successful
+     * authentication (session-fixation protection), so the post-login {@code Set-Cookie} for
+     * {@code JSESSIONID} must win over the one captured at the unauthenticated
+     * {@code /oauth2/authorize} hop, not be sent alongside it. */
+    private static List<String> mergeCookies(List<String> existing, List<String> newSetCookies) {
+        Map<String, String> byName = new LinkedHashMap<>();
+        if (existing != null) {
+            for (String cookie : existing) {
+                byName.put(cookieName(cookie), cookie);
+            }
+        }
+        if (newSetCookies != null) {
+            for (String cookie : newSetCookies) {
+                byName.put(cookieName(cookie), cookie);
+            }
+        }
+        return List.copyOf(byName.values());
+    }
+
+    private static String cookieName(String setCookieHeader) {
+        int equalsIndex = setCookieHeader.indexOf('=');
+        return equalsIndex < 0 ? setCookieHeader : setCookieHeader.substring(0, equalsIndex);
+    }
+
+    private String resolveLocation(URI location) {
+        return location.isAbsolute() ? location.toString() : baseUrl + location;
+    }
+
+    /** RFC 7636 S256: a random URL-safe verifier and its SHA-256/base64url challenge. */
+    private static PkcePair generatePkce() {
+        byte[] verifierBytes = new byte[32];
+        new SecureRandom().nextBytes(verifierBytes);
+        String verifier = Base64.getUrlEncoder().withoutPadding().encodeToString(verifierBytes);
+        try {
+            byte[] challengeBytes = MessageDigest.getInstance("SHA-256")
+                    .digest(verifier.getBytes(StandardCharsets.US_ASCII));
+            String challenge = Base64.getUrlEncoder().withoutPadding().encodeToString(challengeBytes);
+            return new PkcePair(verifier, challenge);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private record PkcePair(String verifier, String challenge) {
+    }
+
+    private String authorizeUrl(String codeChallenge, String state) {
+        return UriComponentsBuilder.fromUriString(baseUrl + "/oauth2/authorize")
+                .queryParam("response_type", "code")
+                .queryParam("client_id", authClientsProperties.spa().clientId())
+                .queryParam("redirect_uri", authClientsProperties.spa().redirectUris().getFirst())
+                .queryParam("scope", "openid")
+                .queryParam("state", state)
+                .queryParam("code_challenge", codeChallenge)
+                .queryParam("code_challenge_method", "S256")
+                .build()
+                .encode()
+                .toUriString();
+    }
+
+    /**
+     * T22 — the governing mechanism (frozen brief), as corrected by what running it actually
+     * showed: unauthenticated {@code /oauth2/authorize} first, which SAS redirects to
+     * {@code /login}, with no session/cookie created yet at that point (confirmed empirically —
+     * the first response carries no {@code Set-Cookie} at all). A failed login redirects to
+     * {@code /login?error} — no code exists anywhere, and that redirect alone is the proof for
+     * R24/R25's negative branch, with no further request made or needed.
+     *
+     * <p>A <em>successful</em> login does <strong>not</strong> resume the original
+     * {@code /oauth2/authorize} request the way a standard {@code RequestCache}-protected resource
+     * would — confirmed empirically, this is exactly the contingency the frozen brief documented:
+     * {@link LoginSuccessHandler}'s {@code SavedRequestAwareAuthenticationSuccessHandler} redirects
+     * to the default target ({@code /}) instead, because Spring Authorization Server's
+     * authorization endpoint doesn't integrate with that mechanism the way a normal protected
+     * resource does. The correct, working completion is to re-issue the <em>same</em>
+     * {@code /oauth2/authorize} request with the now-authenticated session — SAS then completes it
+     * directly and redirects to the SPA's {@code redirect_uri} with the authorization code.</p>
+     */
+    private FullFlowResult attemptFullAuthorizeFlow(
+            String email, String password, String mfaCode, PkcePair pkce, String state) {
+        ResponseEntity<String> authorizeRedirect = getWithCookies(authorizeUrl(pkce.challenge(), state), null);
+        List<String> cookies = authorizeRedirect.getHeaders().get(HttpHeaders.SET_COOKIE);
+        URI loginLocation = authorizeRedirect.getHeaders().getLocation();
+        if (loginLocation == null) {
+            throw new IllegalStateException(
+                    "Expected /oauth2/authorize to redirect an unauthenticated request to /login, got status "
+                            + authorizeRedirect.getStatusCode());
+        }
+
+        ResponseEntity<String> loginPage = getWithCookies(resolveLocation(loginLocation), cookies);
+        cookies = mergeCookies(cookies, loginPage.getHeaders().get(HttpHeaders.SET_COOKIE));
+        String csrfToken = extractCsrfToken(loginPage.getBody());
+
+        ResponseEntity<String> loginResponse = postLoginForm(email, password, mfaCode, csrfToken, cookies);
+        URI postLoginLocation = loginResponse.getHeaders().getLocation();
+        if (postLoginLocation == null || postLoginLocation.toString().contains("/login?error")) {
+            return new FullFlowResult(loginResponse, Optional.empty());
+        }
+
+        cookies = mergeCookies(cookies, loginResponse.getHeaders().get(HttpHeaders.SET_COOKIE));
+        ResponseEntity<String> completedAuthorize = getWithCookies(authorizeUrl(pkce.challenge(), state), cookies);
+        URI finalLocation = completedAuthorize.getHeaders().getLocation();
+        String code = finalLocation == null ? null : extractQueryParam(finalLocation, "code");
+        return new FullFlowResult(loginResponse, Optional.ofNullable(code));
+    }
+
+    private record FullFlowResult(ResponseEntity<String> loginResponse, Optional<String> authorizationCode) {
+    }
+
+    private static String extractQueryParam(URI uri, String name) {
+        return UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst(name);
+    }
+
+    /** No {@code Authorization} header — the SPA client has {@code ClientAuthenticationMethod.NONE}
+     * (public client, PKCE is its only proof of possession). Fails loudly on a missing
+     * {@code access_token} rather than returning null, so a broken exchange fails the calling test
+     * with a clear cause instead of a confusing downstream NPE. */
+    private String exchangeCodeForToken(String code, String codeVerifier) {
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("grant_type", "authorization_code");
+        form.add("code", code);
+        form.add("redirect_uri", authClientsProperties.spa().redirectUris().getFirst());
+        form.add("client_id", authClientsProperties.spa().clientId());
+        form.add("code_verifier", codeVerifier);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                baseUrl + "/oauth2/token", HttpMethod.POST, new HttpEntity<>(form, headers), String.class);
+
+        JsonNode json;
+        try {
+            json = objectMapper.readTree(response.getBody());
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Could not parse /oauth2/token response body: " + response.getBody(), e);
+        }
+        JsonNode accessToken = json.get("access_token");
+        if (accessToken == null) {
+            throw new IllegalStateException("/oauth2/token response had no access_token: " + response.getBody());
+        }
+        return accessToken.asText();
+    }
+
+    /** Claims only — no JWKS fetch, no signature verification (frozen brief: this test is about
+     * {@code TokenClaimsCustomizer}'s output, not signing/JWKS correctness, which is covered
+     * elsewhere). */
+    private static JWTClaimsSet parseClaims(String jwt) {
+        try {
+            return JWTParser.parse(jwt).getJWTClaimsSet();
+        } catch (ParseException e) {
+            throw new IllegalStateException("Could not parse issued JWT", e);
+        }
     }
 
     /** Roles are shared, class-scoped DB state (no per-test rollback in this test style) — created
