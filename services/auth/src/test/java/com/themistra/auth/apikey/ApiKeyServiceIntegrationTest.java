@@ -8,8 +8,10 @@ import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.audit.AuditService;
 import com.themistra.auth.audit.dto.AuditEventResponse;
 import com.themistra.auth.authz.DuplicateRoleException;
+import com.themistra.auth.authz.DuplicateRoleTemplateException;
 import com.themistra.auth.authz.RoleService;
 import com.themistra.auth.authz.dto.CreateRoleRequest;
+import com.themistra.auth.authz.dto.CreateRoleTemplateRequest;
 import com.themistra.auth.common.Hashing;
 import com.themistra.auth.mfa.MfaService;
 import jakarta.persistence.EntityManager;
@@ -27,6 +29,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -95,6 +98,7 @@ class ApiKeyServiceIntegrationTest {
         assertThat(stored.getPrefix()).hasSize(32);
         assertThat(stored.getKeyHash()).isEqualTo(Hashing.sha256(result.plaintextKey()));
         assertThat(stored.getKeyHash()).isNotEqualTo(result.plaintextKey());
+        assertThat(stored.getScopes()).containsExactly("merchant.api");
         assertThat(latestAuditEventType(accountUuid)).isEqualTo("api_key.created");
     }
 
@@ -144,6 +148,10 @@ class ApiKeyServiceIntegrationTest {
                 .isInstanceOf(ApiKeyExchangeRejectedException.class);
         assertThatThrownBy(() -> apiKeyService.exchange("ck_live_totallyunknown12345678.abcdefghijklmnopqrstuvwxyzabcdef"))
                 .isInstanceOf(ApiKeyExchangeRejectedException.class);
+        assertThatThrownBy(() -> apiKeyService.exchange(".abcdefghijklmnopqrstuvwxyzabcdef")) // empty prefix
+                .isInstanceOf(ApiKeyExchangeRejectedException.class);
+        assertThatThrownBy(() -> apiKeyService.exchange("ck_live_validprefixshape00000000.")) // empty secret
+                .isInstanceOf(ApiKeyExchangeRejectedException.class);
 
         ApiKeyService.CreateApiKeyResult created = apiKeyService.create(accountUuid, "wrong secret target");
         String[] parts = created.plaintextKey().split("\\.", 2);
@@ -168,9 +176,12 @@ class ApiKeyServiceIntegrationTest {
         ApiKeyService.CreateApiKeyResult created = apiKeyService.create(accountUuid, "touch key");
         assertThat(soleMetadata(accountUuid, created.keyUuid()).lastUsedAt()).isNull();
 
-        apiKeyService.exchange(created.plaintextKey());
+        ApiKeyService.ExchangeResult result = apiKeyService.exchange(created.plaintextKey());
 
         assertThat(soleMetadata(accountUuid, created.keyUuid()).lastUsedAt()).isNotNull();
+        assertThat(result.accountUuid()).isEqualTo(accountUuid);
+        assertThat(result.scopes()).containsExactly("merchant.api");
+        assertThat(latestAuditEventType(accountUuid)).isEqualTo("api_key.exchanged");
     }
 
     @Test // Phase 3/9 disposition #4: every findByPrefix candidate is checked, success finds the
@@ -259,6 +270,41 @@ class ApiKeyServiceIntegrationTest {
                 .isInstanceOf(ApiKeyNotFoundException.class);
     }
 
+    @Test // Phase 11 gap #5: the "doesn't exist at all" half of the no-enumeration contract,
+          // distinct from revokeOfNonOwnedKeyFails's "exists but isn't yours" half
+    void revokeOfUnknownKeyFails() {
+        UUID accountUuid = seedMerchantWithConfirmedMfa("revoke-unknown@example.com");
+
+        assertThatThrownBy(() -> apiKeyService.revoke(accountUuid, UUID.randomUUID()))
+                .isInstanceOf(ApiKeyNotFoundException.class);
+    }
+
+    @Test // Phase 11 gap #6: list's actual (undocumented-by-a-requirement-ID) contract - revoked
+          // keys still appear, with a non-null revokedAt, rather than being filtered out
+    void listIncludesRevokedKeys() {
+        UUID accountUuid = seedMerchantWithConfirmedMfa("list-revoked@example.com");
+        ApiKeyService.CreateApiKeyResult created = apiKeyService.create(accountUuid, "will be revoked");
+
+        apiKeyService.revoke(accountUuid, created.keyUuid());
+
+        assertThat(soleMetadata(accountUuid, created.keyUuid()).revokedAt()).isNotNull();
+    }
+
+    @Test // Phase 11 gap #8: RoleService.resolveEffectiveRoles expands templates, not just direct
+          // assignments - the MERCHANT gate must honor that, not just a direct-assignment check
+    void createAcceptsMerchantViaRoleTemplate() {
+        String email = "merchant-via-template@example.com";
+        UUID accountUuid = registerAndActivate(email);
+        ensureRoleExists("MERCHANT");
+        ensureRoleTemplateExists("MERCHANT_TEMPLATE", Set.of("MERCHANT"));
+        roleService.assignRoleTemplate(accountUuid, "MERCHANT_TEMPLATE", accountUuid);
+        seedConfirmedMfa(accountUuid);
+
+        ApiKeyService.CreateApiKeyResult result = apiKeyService.create(accountUuid, "via template");
+
+        assertThat(result.plaintextKey()).matches(PLAINTEXT_KEY_PATTERN);
+    }
+
     private UUID seedMerchantWithConfirmedMfa(String email) {
         UUID accountUuid = registerAndActivate(email);
         ensureRoleExists("MERCHANT");
@@ -277,6 +323,14 @@ class ApiKeyServiceIntegrationTest {
         try {
             roleService.createRole(new CreateRoleRequest(roleName, null));
         } catch (DuplicateRoleException e) {
+            // Already created by an earlier test in this class - fine.
+        }
+    }
+
+    private void ensureRoleTemplateExists(String templateName, Set<String> roleNames) {
+        try {
+            roleService.createRoleTemplate(new CreateRoleTemplateRequest(templateName, null, roleNames));
+        } catch (DuplicateRoleTemplateException e) {
             // Already created by an earlier test in this class - fine.
         }
     }
