@@ -7,9 +7,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -143,5 +145,71 @@ class ApiKeyPersistenceIntegrationTest {
 
         assertThatThrownBy(() -> scopes.add("should-not-be-allowed"))
                 .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test // Phase 11 gap #1 — the reason findByPrefix returns List and not Optional
+    void findByPrefixReturnsAllKeysSharingAPrefix() {
+        Long accountId = insertAccount("apikey-shared-prefix@example.com");
+        apiKeyRepository.saveAndFlush(
+                ApiKey.create(accountId, "ck_live_dupe0001", "e".repeat(64), "First key",
+                        List.of(), NOW));
+        apiKeyRepository.saveAndFlush(
+                ApiKey.create(accountId, "ck_live_dupe0001", "f".repeat(64), "Second key",
+                        List.of(), NOW));
+
+        List<ApiKey> found = apiKeyRepository.findByPrefix("ck_live_dupe0001");
+
+        assertThat(found).hasSize(2);
+        assertThat(found).extracting(ApiKey::getKeyHash)
+                .containsExactlyInAnyOrder("e".repeat(64), "f".repeat(64));
+    }
+
+    @Test // Phase 11 gap #2 — the factory's documented null-to-empty-list default
+    void createDefaultsNullScopesToEmptyList() {
+        ApiKey apiKey = ApiKey.create(1L, "ck_live_x", "h".repeat(64), "n", null, NOW);
+
+        assertThat(apiKey.getScopes()).isEmpty();
+    }
+
+    @Test // Phase 11 gap #3 — the factory's write-side defensive copy
+    void createDefensivelyCopiesMutableScopesList() {
+        Long accountId = insertAccount("apikey-defensive-write@example.com");
+        List<String> mutableScopes = new ArrayList<>(List.of("merchant.api"));
+
+        ApiKey apiKey = ApiKey.create(accountId, "ck_live_defwrit0", "i".repeat(64),
+                "Defensive write check", mutableScopes, NOW);
+        mutableScopes.add("caller-added-after-create");
+
+        assertThat(apiKey.getScopes()).containsExactly("merchant.api");
+
+        Long id = apiKeyRepository.saveAndFlush(apiKey).getId();
+        entityManager.clear();
+        assertThat(apiKeyRepository.findById(id).orElseThrow().getScopes())
+                .containsExactly("merchant.api");
+    }
+
+    @Test // Phase 11 gap #4 — DB-level UNIQUE(key_hash) is actually enforced, not just mapped
+    void duplicateKeyHashIsRejectedByTheDatabase() {
+        Long accountId = insertAccount("apikey-dupe-hash@example.com");
+        String sharedHash = "j".repeat(64);
+        apiKeyRepository.saveAndFlush(
+                ApiKey.create(accountId, "ck_live_hash0001", sharedHash, "Original key",
+                        List.of(), NOW));
+
+        assertThatThrownBy(() -> apiKeyRepository.saveAndFlush(
+                ApiKey.create(accountId, "ck_live_hash0002", sharedHash, "Colliding key",
+                        List.of(), NOW)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test // Phase 11 gap #5 — prefix is VARCHAR, not citext; lookup is case-sensitive
+    void findByPrefixIsCaseSensitive() {
+        Long accountId = insertAccount("apikey-case-sensitive@example.com");
+        apiKeyRepository.saveAndFlush(
+                ApiKey.create(accountId, "ck_live_ABCD5678", "k".repeat(64), "Mixed-case prefix",
+                        List.of(), NOW));
+
+        assertThat(apiKeyRepository.findByPrefix("ck_live_abcd5678")).isEmpty();
+        assertThat(apiKeyRepository.findByPrefix("ck_live_ABCD5678")).hasSize(1);
     }
 }
