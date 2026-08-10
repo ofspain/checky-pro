@@ -19,14 +19,15 @@ import java.util.UUID;
  * A merchant API key (R30, L7). {@code accountId} is a plain column, never a JPA relation to
  * {@code Account} — this module never imports that entity (L12). {@code keyHash} is the SHA-256
  * hex digest of the full {@code ck_live_<suffix>.<secret>} string; the plaintext key itself is
- * never persisted anywhere.
+ * never persisted anywhere. {@code prefix} is {@code VARCHAR(32)} (widened from the original
+ * {@code VARCHAR(16)} by T24's {@code V7} migration, to actually fit L7's 32-character public
+ * prefix format).
  *
  * <p>Deliberately has no mutators for {@code lastUsedAt}, {@code revokedAt}, or {@code name} —
- * T23 provides only the mapping and factory; whichever task next needs to update those fields
- * (T24's exchange for {@code lastUsedAt}, T26's revoke for {@code revokedAt}, T26's rename if any
- * for {@code name}) adds the mutator then, following whatever concurrency shape that behavior
- * actually needs (see {@code RecoveryCodeRepository#markUsed} for this codebase's precedent on
- * race-safe single-field updates via a conditional repository query rather than a plain setter).</p>
+ * updates to those fields go through {@code ApiKeyRepository}'s conditional
+ * {@code @Modifying} queries ({@code updateLastUsedAt}, {@code revokeIfActive}, added by T24),
+ * not entity mutators, the same race-safety precedent {@code RecoveryCodeRepository#markUsed}
+ * established. A mutator for {@code name} remains unaddressed — no task yet needs to rename a key.</p>
  */
 @Entity
 @Table(name = "api_keys")
@@ -42,7 +43,7 @@ public class ApiKey {
     @Column(name = "account_id", nullable = false, updatable = false)
     private Long accountId;
 
-    @Column(name = "prefix", nullable = false, length = 16, updatable = false)
+    @Column(name = "prefix", nullable = false, length = 32, updatable = false)
     private String prefix;
 
     /** CHAR(64), not VARCHAR - JdbcTypeCode.CHAR matches how Postgres reports this column's type

@@ -40,6 +40,10 @@ public class ApiKeyService {
     private static final int SUFFIX_LENGTH = 24;
     private static final int SECRET_LENGTH = 32;
     private static final int MAX_NAME_LENGTH = 100;
+    /** A syntactically valid but unattainable SHA-256 hex digest, compared against on the
+     * malformed-key/unknown-prefix rejection paths purely to normalize their timing against the
+     * real comparison path below — never matches anything, never persisted. */
+    private static final String DUMMY_HASH = "0".repeat(64);
 
     private final ApiKeyRepository apiKeyRepository;
     private final AccountService accountService;
@@ -103,9 +107,11 @@ public class ApiKeyService {
 
     /**
      * Revokes a key the caller owns (task statement; transitively, R35). Idempotent: revoking an
-     * already-revoked key succeeds silently, via {@link ApiKeyRepository#revokeIfActive}'s
-     * {@code 0}-row-is-success semantics. A key that doesn't exist or isn't owned by the caller is
-     * rejected identically ({@link ApiKeyNotFoundException}) — no enumeration oracle.
+     * already-revoked key succeeds silently and records no additional audit event, via
+     * {@link ApiKeyRepository#revokeIfActive}'s rows-affected return value — matching
+     * {@code RoleService.removeRole}'s "nothing changed, nothing to audit" precedent exactly. A
+     * key that doesn't exist or isn't owned by the caller is rejected identically
+     * ({@link ApiKeyNotFoundException}) — no enumeration oracle.
      */
     @Transactional
     public void revoke(UUID accountUuid, UUID keyUuid) {
@@ -114,8 +120,9 @@ public class ApiKeyService {
                 .filter(key -> key.getAccountId().equals(accountId))
                 .orElseThrow(ApiKeyNotFoundException::new);
 
-        apiKeyRepository.revokeIfActive(apiKey.getId(), clock.instant());
-        recordAudit("api_key.revoked", AuditOutcome.SUCCESS, accountUuid, accountUuid);
+        if (apiKeyRepository.revokeIfActive(apiKey.getId(), clock.instant()) > 0) {
+            recordAudit("api_key.revoked", AuditOutcome.SUCCESS, accountUuid, accountUuid);
+        }
     }
 
     /**
@@ -123,19 +130,31 @@ public class ApiKeyService {
      * {@code last_used_at} (R32). Every candidate {@code findByPrefix} returns is checked with a
      * constant-time comparison — the loop never short-circuits on the first match — before this
      * method decides success or failure, closing the timing side-channel a first-match-wins
-     * short-circuit would open (frozen brief disposition #4).
+     * short-circuit would open (frozen brief disposition #4). The malformed-key and
+     * unknown-prefix paths perform a dummy comparison against {@link #DUMMY_HASH} before
+     * rejecting, so they take comparable time to the real mismatch path rather than returning
+     * measurably faster (Phase 8 finding #6).
      *
      * <p>Revoked, expired, malformed, and hash-mismatched keys are all rejected identically via
-     * {@link ApiKeyExchangeRejectedException} (R33). Every rejection is audited: if a candidate
-     * row was found for the presented prefix (whatever its hash/lifecycle outcome), the audit
-     * targets that row's account; a malformed key or entirely unknown prefix — no candidate row
-     * at all — audits with a {@code null} account, which {@link AuditService} already supports
-     * for account-less events (frozen brief disposition #10).</p>
+     * {@link ApiKeyExchangeRejectedException} (R33). Every rejection is audited: when a specific
+     * row's hash actually matched but it's revoked/expired, the audit targets that row's own
+     * account, not merely the first candidate sharing its prefix (Phase 8 finding #4); a malformed
+     * key, unknown prefix, or hash mismatch against every candidate has no single identifiable
+     * "intended" row, so those audit with a {@code null} account, which {@link AuditService}
+     * already supports for account-less events (frozen brief disposition #10).</p>
+     *
+     * <p><strong>Known, deliberate scope limit (Phase 8 finding #9):</strong> this method does not
+     * verify the owning account is still {@code ACTIVE} — a suspended/deleted merchant's existing
+     * key remains valid until explicitly revoked or expired. R30/R32/R33 (this task's scoped
+     * requirements) do not call for an account-status check here, and adding one means an extra
+     * account lookup on every exchange call, a potentially hot path. Documented, not silently
+     * assumed — a future task should decide whether to close this gap.</p>
      */
     @Transactional
     public ExchangeResult exchange(String presentedKey) {
         int separator = presentedKey == null ? -1 : presentedKey.indexOf('.');
         if (separator <= 0 || separator == presentedKey.length() - 1) {
+            apiKeyHasher.matches(String.valueOf(presentedKey), DUMMY_HASH);
             recordAudit("api_key.exchange_failed", AuditOutcome.FAILURE, null, null);
             throw new ApiKeyExchangeRejectedException();
         }
@@ -143,6 +162,7 @@ public class ApiKeyService {
 
         List<ApiKey> candidates = apiKeyRepository.findByPrefix(prefix);
         if (candidates.isEmpty()) {
+            apiKeyHasher.matches(presentedKey, DUMMY_HASH);
             recordAudit("api_key.exchange_failed", AuditOutcome.FAILURE, null, null);
             throw new ApiKeyExchangeRejectedException();
         }
@@ -160,8 +180,15 @@ public class ApiKeyService {
                 && matched.getRevokedAt() == null
                 && (matched.getExpiresAt() == null || matched.getExpiresAt().isAfter(now));
 
-        UUID auditAccountUuid = resolveAccountUuidQuietly(candidates.getFirst().getAccountId());
         if (!eligible) {
+            // matched != null: this specific row's hash was correct but it's revoked/expired -
+            // audit its own account. matched == null: no candidate's hash matched at all, so no
+            // row can be identified as "the intended one" - fall back to the first candidate
+            // sharing this prefix (in practice the only one; per frozen brief disposition #10,
+            // "a row was matched" for audit purposes means a prefix-level candidate exists, not
+            // that its hash matched).
+            Long accountIdForAudit = matched != null ? matched.getAccountId() : candidates.getFirst().getAccountId();
+            UUID auditAccountUuid = resolveAccountUuidQuietly(accountIdForAudit);
             recordAudit("api_key.exchange_failed", AuditOutcome.FAILURE, auditAccountUuid, auditAccountUuid);
             throw new ApiKeyExchangeRejectedException();
         }
