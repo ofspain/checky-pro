@@ -99,6 +99,12 @@ class ApiKeyTokenIssuerTest {
         // R48/L9: no PII beyond email_verified.
         assertThat(claims.getClaim("email")).isNull();
         assertThat(claims.getClaim("name")).isNull();
+        // Kimi Phase 11 Gap 8: L9 says the claim set is EXACTLY this list - not a superset. An
+        // accidentally-added claim (e.g. azp, auth_time) would slip past the individual
+        // presence/absence assertions above but not this one.
+        assertThat(claims.getClaims().keySet()).containsExactlyInAnyOrder(
+                "iss", "sub", "aud", "exp", "iat", "nbf", "jti",
+                "scope", "roles", "client_id", "amr", "acr", "email_verified");
     }
 
     @Test // AC3 - RS256, signed by the key the encoder was given

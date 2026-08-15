@@ -1,5 +1,6 @@
 package com.themistra.auth.apikey;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.auth.apikey.dto.ApiKeyTokenResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -186,7 +187,18 @@ class ApiKeyControllerTest {
         controller = new ApiKeyController(apiKeyService, apiKeyTokenIssuer);
         when(apiKeyService.exchange(eq("ck_live_x.y"))).thenThrow(new ApiKeyExchangeRejectedException());
 
-        assertThatThrownBy(() -> controller.exchange("ApiKey  ck_live_x.y")) // two spaces
+        assertThatThrownBy(() -> controller.exchange("ApiKey  ck_live_x.y")) // two leading spaces
+                .isInstanceOf(ApiKeyExchangeRejectedException.class);
+        verify(apiKeyService).exchange(eq("ck_live_x.y"));
+    }
+
+    @Test // Kimi Phase 11 Gap 3: the leading-whitespace case above only proves half the trim fix -
+          // a trailing space after the credential must be trimmed too.
+    void trailingWhitespaceAfterCredentialIsTrimmed() {
+        controller = new ApiKeyController(apiKeyService, apiKeyTokenIssuer);
+        when(apiKeyService.exchange(eq("ck_live_x.y"))).thenThrow(new ApiKeyExchangeRejectedException());
+
+        assertThatThrownBy(() -> controller.exchange("ApiKey ck_live_x.y ")) // trailing space
                 .isInstanceOf(ApiKeyExchangeRejectedException.class);
         verify(apiKeyService).exchange(eq("ck_live_x.y"));
     }
@@ -200,5 +212,21 @@ class ApiKeyControllerTest {
         assertThatThrownBy(() -> controller.exchange("ApiKey ck_live_MixedCase.Secret"))
                 .isInstanceOf(ApiKeyExchangeRejectedException.class);
         verify(apiKeyService).exchange(eq("ck_live_MixedCase.Secret"));
+    }
+
+    @Test // Kimi Phase 11 Gap 5: proves the @JsonProperty annotations actually produce snake_case
+          // field names, independent of Docker - ApiKeyExchangeIntegrationTest also checks this,
+          // but that test cannot run without Testcontainers; this one always can.
+    void responseSerializesWithSnakeCaseFieldNames() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+
+        String json = objectMapper.writeValueAsString(ApiKeyTokenResponse.of("x", 600L));
+
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, Object> asMap = objectMapper.readValue(json, java.util.Map.class);
+        assertThat(asMap.keySet()).containsExactlyInAnyOrder("access_token", "token_type", "expires_in");
+        assertThat(asMap.get("access_token")).isEqualTo("x");
+        assertThat(asMap.get("token_type")).isEqualTo("Bearer");
+        assertThat(asMap.get("expires_in")).isEqualTo(600);
     }
 }

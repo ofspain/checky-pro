@@ -114,8 +114,15 @@ class ApiKeyExchangeIntegrationTest {
         SignedJWT signedJwt = (SignedJWT) JWTParser.parse(accessToken);
         assertThat(signedJwt.getHeader().getAlgorithm().getName()).isEqualTo("RS256");
         JWTClaimsSet claims = signedJwt.getJWTClaimsSet();
+        // L9's exact claim set (Kimi Phase 11 Gaps 4/7/8): iss, sub, aud, exp, iat, nbf, jti,
+        // scope, roles, client_id, amr, acr, email_verified - proven here against the real,
+        // actually-signed token, not just the unit test's mocked-encoder assembly.
+        assertThat(claims.getIssuer()).isNotBlank();
         assertThat(claims.getSubject()).isEqualTo(accountUuid.toString());
-        assertThat(claims.getStringListClaim("scope")).contains("merchant.api");
+        assertThat(claims.getAudience()).containsExactly("checky-api-key");
+        assertThat(claims.getNotBeforeTime()).isNotNull();
+        assertThat(claims.getJWTID()).isNotBlank();
+        assertThat(claims.getStringListClaim("scope")).containsExactly("merchant.api");
         assertThat(claims.getStringListClaim("amr")).containsExactly("api_key");
         assertThat(claims.getStringClaim("acr")).isEqualTo("urn:themistra:acr:api_key");
         assertThat(claims.getStringListClaim("roles")).contains("MERCHANT");
@@ -150,17 +157,25 @@ class ApiKeyExchangeIntegrationTest {
     // Boundary / supporting tests
     // ---------------------------------------------------------------------
 
-    @Test // R32 - success writes last_used_at; a rejection never does
+    @Test // R32/AC9 - a rejection never touches last_used_at, on the SAME key that later
+          // succeeds (Kimi Phase 11 Gap 6: the original version of this test only proved it for a
+          // decoy key rejected by wrong-secret; this proves it across several rejection causes on
+          // the exact key that is then successfully exchanged).
     void lastUsedAtWrittenOnSuccessNeverOnRejection() {
         UUID accountUuid = seedMerchantWithConfirmedMfa("touch-last-used-http@example.com");
         ApiKeyService.CreateApiKeyResult created = apiKeyService.create(accountUuid, "touch key");
+        String prefix = created.plaintextKey().split("\\.", 2)[0];
         assertThat(soleMetadata(accountUuid, created.keyUuid()).lastUsedAt()).isNull();
 
-        // A rejection first - must not touch last_used_at.
-        ApiKeyService.CreateApiKeyResult decoy = apiKeyService.create(accountUuid, "decoy for wrong secret");
-        postToken("ApiKey " + decoy.plaintextKey().split("\\.", 2)[0] + "." + "z".repeat(32));
-        assertThat(soleMetadata(accountUuid, decoy.keyUuid()).lastUsedAt()).isNull();
+        // Wrong secret against this key's own prefix.
+        postToken("ApiKey " + prefix + "." + "z".repeat(32));
+        assertThat(soleMetadata(accountUuid, created.keyUuid()).lastUsedAt()).isNull();
 
+        // An entirely unrelated rejection cause (unknown prefix) must not touch it either.
+        postToken("ApiKey ck_live_completelyunrelated0000.abcdefghijklmnopqrstuvwxyzabcdef");
+        assertThat(soleMetadata(accountUuid, created.keyUuid()).lastUsedAt()).isNull();
+
+        // Now the real, correct key succeeds.
         ResponseEntity<String> response = postToken("ApiKey " + created.plaintextKey());
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -259,7 +274,8 @@ class ApiKeyExchangeIntegrationTest {
     @Test // AC11 - the response envelope names are exactly access_token/token_type/expires_in,
           // no extra/renamed fields, and no key/hash/email/internal id is ever echoed
     void responseEnvelopeHasExactlyTheThreeExpectedFieldsAndNoSecretMaterial() {
-        UUID accountUuid = seedMerchantWithConfirmedMfa("envelope-fields@example.com");
+        String email = "envelope-fields@example.com";
+        UUID accountUuid = seedMerchantWithConfirmedMfa(email);
         ApiKeyService.CreateApiKeyResult created = apiKeyService.create(accountUuid, "envelope key");
 
         ResponseEntity<String> response = postToken("ApiKey " + created.plaintextKey());
@@ -268,7 +284,10 @@ class ApiKeyExchangeIntegrationTest {
         assertThat(body.fieldNames()).toIterable()
                 .containsExactlyInAnyOrder("access_token", "token_type", "expires_in");
         assertThat(response.getBody()).doesNotContain(created.plaintextKey());
-        assertThat(response.getBody()).doesNotContain("exchange-happy-path");
+        assertThat(response.getBody()).doesNotContain(email);
+        // Kimi Phase 11 Gap 9: AC11 forbids echoing an internal id - keyUuid is the key's internal
+        // handle and must never appear in the response.
+        assertThat(response.getBody()).doesNotContain(created.keyUuid().toString());
     }
 
     // ---------------------------------------------------------------------
