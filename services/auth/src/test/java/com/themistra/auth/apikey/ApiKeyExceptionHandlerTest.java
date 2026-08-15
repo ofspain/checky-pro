@@ -44,4 +44,40 @@ class ApiKeyExceptionHandlerTest {
         assertThat(first.getTitle()).isEqualTo(second.getTitle());
         assertThat(first.getDetail()).isEqualTo(second.getDetail());
     }
+
+    @Test // R35, R46, T26 - DELETE /api-keys/{keyUuid}: the single mapping for both "no such key"
+          // and "exists but isn't yours"
+    void onNotFoundReturnsUniform404() {
+        ProblemDetail problem = handler.onNotFound(new ApiKeyNotFoundException());
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(problem.getType()).isEqualTo(ProblemTypes.API_KEY_NOT_FOUND);
+        assertThat(problem.getTitle()).isEqualTo("API key not found");
+        assertThat(problem.getDetail()).isNull();
+        assertThat(problem.getInstance()).isNull();
+        assertThat(problem.getProperties()).isNull();
+    }
+
+    @Test // R35 - identical regardless of which of the two causes constructed the exception
+    void onNotFoundResponseIsIdenticalRegardlessOfConstructionSite() {
+        ProblemDetail first = handler.onNotFound(new ApiKeyNotFoundException());
+        ProblemDetail second = handler.onNotFound(new ApiKeyNotFoundException());
+
+        assertThat(first.getStatus()).isEqualTo(second.getStatus());
+        assertThat(first.getType()).isEqualTo(second.getType());
+        assertThat(first.getTitle()).isEqualTo(second.getTitle());
+        assertThat(first.getDetail()).isEqualTo(second.getDetail());
+    }
+
+    @Test // R30, R46, T26 - POST /api-keys: caller lacks MERCHANT or confirmed MFA
+    void onNotAuthorizedReturnsUniform403() {
+        ProblemDetail problem = handler.onNotAuthorized(new ApiKeyNotAuthorizedException());
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(problem.getType()).isEqualTo(ProblemTypes.API_KEY_NOT_AUTHORIZED);
+        assertThat(problem.getTitle()).isEqualTo("Not authorized to perform this action");
+        assertThat(problem.getDetail()).isNull();
+        assertThat(problem.getInstance()).isNull();
+        assertThat(problem.getProperties()).isNull();
+    }
 }

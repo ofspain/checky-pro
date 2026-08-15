@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 /**
- * Maps this module's domain exceptions to RFC 9457 responses (T25). Mirrors
+ * Maps this module's domain exceptions to RFC 9457 responses (T25, T26). Mirrors
  * {@code AccountExceptionHandler}'s shape for a single-cause-hidden rejection.
  */
 @RestControllerAdvice
