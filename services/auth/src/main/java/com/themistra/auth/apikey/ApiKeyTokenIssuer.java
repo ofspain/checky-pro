@@ -60,6 +60,13 @@ public class ApiKeyTokenIssuer {
      * Performance constraint, Kimi#10 struck the "no extra account lookups" limit).
      */
     public IssuedToken issue(UUID accountUuid, List<String> scopes) {
+        if (accountUuid == null) {
+            // ApiKeyService.exchange documents this as "should not happen in practice" (a
+            // best-effort account lookup on an otherwise-successful exchange) — surfaced here as
+            // an explicit, diagnosable failure rather than a bare NPE. Still yields the same
+            // opaque 500 via ApiExceptionHandler.onUnexpected, never the uniform 401 (D5).
+            throw new IllegalStateException("Exchanged API key has no resolvable owning account");
+        }
         Instant now = clock.instant();
         Instant expiry = now.plus(Duration.ofMinutes(apiKeyProperties.tokenTtlMinutes()));
 

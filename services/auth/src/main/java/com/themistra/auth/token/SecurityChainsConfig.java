@@ -66,8 +66,13 @@ public class SecurityChainsConfig {
                     auth.anyRequest().authenticated();
                 })
                 // APIs are bearer-authenticated and stateless; CSRF protects only the
-                // session-backed login/authorize pages
-                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**"))
+                // session-backed login/authorize pages. /api-keys/token is exempted alongside
+                // /api/** (T25, Phase 9 gate) because it is a genuinely session-less machine
+                // endpoint: the presented API key is its own credential, and a caller with no
+                // prior session has no way to obtain a CSRF token to begin with (confirmed by
+                // SasLoginIntegrationTest's own need to scrape one off /login first, which no
+                // machine client calling this endpoint ever does).
+                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/api-keys/token"))
                 .oauth2ResourceServer(rs -> rs.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
                 // Registering a provider directly on HttpSecurity (rather than relying on the
                 // global AuthenticationManager AuthenticationConfiguration would otherwise build

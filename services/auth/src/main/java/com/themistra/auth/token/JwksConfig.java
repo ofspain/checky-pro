@@ -42,9 +42,20 @@ public class JwksConfig {
      * back to {@code new NimbusJwtEncoder(jwkSource)} — same class, same {@link JWKSource}, same
      * CURRENT-key-first ordering from {@link SigningKeyMaterial} — so declaring it here does not
      * change how any existing grant (password, refresh, client-credentials) is signed.
+     *
+     * <p>An explicit {@code jwkSelector} is required (T25, Phase 9 gate): neither key built by
+     * {@link SigningKeyMaterial} declares a {@code keyUse} or {@code algorithm}, so once a
+     * PREVIOUS key is configured alongside CURRENT (a live key-rotation window), both keys match
+     * {@code NimbusJwtEncoder}'s default RS256 selection criteria identically. Without a selector,
+     * {@code NimbusJwtEncoder} throws rather than choosing between them — which would fail every
+     * token this service issues, not only API-key exchanges. {@code List::getFirst} makes the
+     * encoder actually honour the CURRENT-key-first ordering {@link SigningKeyMaterial}'s own
+     * Javadoc already promises.</p>
      */
     @Bean
     public JwtEncoder jwtEncoder(JWKSource<SecurityContext> jwkSource) {
-        return new NimbusJwtEncoder(jwkSource);
+        NimbusJwtEncoder encoder = new NimbusJwtEncoder(jwkSource);
+        encoder.setJwkSelector(List::getFirst);
+        return encoder;
     }
 }

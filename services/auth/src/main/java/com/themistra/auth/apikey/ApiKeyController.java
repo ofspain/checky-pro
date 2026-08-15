@@ -63,6 +63,13 @@ public class ApiKeyController {
      * audit row (R43/AC12); nothing here can bypass either. Truncating an over-length credential
      * would risk silently accepting a corrupted-but-valid-looking value, so it is rejected outright
      * instead, before ever reaching {@link ApiKeyHasher}.
+     *
+     * <p>Leading/trailing whitespace around the credential is trimmed before the blank/length
+     * checks (Phase 9 gate) — RFC 7235's {@code credentials} grammar separates scheme and
+     * credential with {@code 1*SP} (one or more spaces), so a compliant client sending an extra
+     * separator space is not malformed. A real {@code ck_live_<suffix>.<secret>} key never
+     * contains internal whitespace (L7), so trimming cannot turn one valid-looking key into
+     * another — it only affects headers that would otherwise fail on incidental formatting.</p>
      */
     private String extractCredential(String authorization) {
         if (authorization == null) {
@@ -76,7 +83,7 @@ public class ApiKeyController {
         if (!SCHEME.equalsIgnoreCase(scheme)) {
             return null;
         }
-        String credential = authorization.substring(separator + 1);
+        String credential = authorization.substring(separator + 1).trim();
         if (credential.isBlank() || credential.length() > MAX_CREDENTIAL_LENGTH) {
             return null;
         }
