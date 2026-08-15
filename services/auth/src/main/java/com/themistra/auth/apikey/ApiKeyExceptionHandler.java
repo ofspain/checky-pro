@@ -26,4 +26,26 @@ public class ApiKeyExceptionHandler {
         problem.setTitle("API key is invalid or revoked");
         return problem;
     }
+
+    /**
+     * {@code DELETE /api-keys/{keyUuid}} (R35, T26) — the single mapping for both "no such key"
+     * and "exists but isn't yours" (no detail that could distinguish them; {@link
+     * ApiKeyNotFoundException} itself carries no state to distinguish on).
+     */
+    @ExceptionHandler(ApiKeyNotFoundException.class)
+    ProblemDetail onNotFound(ApiKeyNotFoundException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setType(ProblemTypes.API_KEY_NOT_FOUND);
+        problem.setTitle("API key not found");
+        return problem;
+    }
+
+    /** {@code POST /api-keys} (R30, T26) — the caller lacks {@code MERCHANT} or confirmed MFA. */
+    @ExceptionHandler(ApiKeyNotAuthorizedException.class)
+    ProblemDetail onNotAuthorized(ApiKeyNotAuthorizedException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setType(ProblemTypes.API_KEY_NOT_AUTHORIZED);
+        problem.setTitle("Not authorized to perform this action");
+        return problem;
+    }
 }

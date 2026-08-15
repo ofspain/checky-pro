@@ -26,6 +26,11 @@ public final class ProblemTypes {
      * malformed, unknown-prefix, or hash-mismatched key, plus a missing/wrong-scheme/blank/
      * over-length {@code Authorization} header, all map here identically; never distinguished. */
     public static final URI API_KEY_EXCHANGE_REJECTED = URI.create(BASE + "api-key-exchange-rejected");
+    /** {@code DELETE /api-keys/{keyUuid}} (R35, T26) — identical whether the key doesn't exist or
+     * exists but isn't owned by the caller (no enumeration oracle between the two causes). */
+    public static final URI API_KEY_NOT_FOUND = URI.create(BASE + "api-key-not-found");
+    /** {@code POST /api-keys} (R30, T26) — the caller lacks {@code MERCHANT} or confirmed MFA. */
+    public static final URI API_KEY_NOT_AUTHORIZED = URI.create(BASE + "api-key-not-authorized");
 
     private ProblemTypes() {
     }
