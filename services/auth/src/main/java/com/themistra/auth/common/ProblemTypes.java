@@ -22,6 +22,10 @@ public final class ProblemTypes {
     /** Wrong current password on {@code POST /accounts/me/password} (R11) — not
      * enumeration-sensitive (the caller is already authenticated as this exact account). */
     public static final URI CURRENT_PASSWORD_MISMATCH = URI.create(BASE + "current-password-mismatch");
+    /** Uniform rejection for {@code POST /api-keys/token} (R33, T25) — a revoked, expired,
+     * malformed, unknown-prefix, or hash-mismatched key, plus a missing/wrong-scheme/blank/
+     * over-length {@code Authorization} header, all map here identically; never distinguished. */
+    public static final URI API_KEY_EXCHANGE_REJECTED = URI.create(BASE + "api-key-exchange-rejected");
 
     private ProblemTypes() {
     }
