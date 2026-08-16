@@ -168,6 +168,13 @@ public class VerificationTokenService {
         return resolveUsableAccount(token.getAccountId());
     }
 
+    /** Cleanup job (T30, R40) - hard-deletes tokens whose expiry has passed. Returns the number
+     * of rows deleted, for job-run logging. */
+    @Transactional
+    public int deleteExpiredTokens(Instant cutoff) {
+        return tokenRepository.deleteExpiredBefore(cutoff);
+    }
+
     private Optional<UUID> resolveUsableAccount(Long accountId) {
         return accountRepository.findById(accountId)
                 .filter(this::isAccountUsable)

@@ -100,6 +100,16 @@ public class RefreshTokenTracker {
                 .orElse(false);
     }
 
+    /** Cleanup job (T30, R40) - hard-deletes families revoked before the retention cutoff. The
+     * database's own {@code ON DELETE CASCADE} on {@code refresh_token_archive.family_id} (V2)
+     * removes each deleted family's archive rows automatically; active (never-revoked) families
+     * are never touched regardless of age (Phase 2 OQ1 - their archive rows are exactly what
+     * reuse detection still needs while they're alive). Returns the number of rows deleted. */
+    @Transactional
+    public int deleteRevokedFamiliesOlderThan(Instant cutoff) {
+        return familyRepository.deleteRevokedBefore(cutoff);
+    }
+
     /**
      * The reuse check. Call before trusting a presented refresh token's hash:
      * - hash matches a family's CURRENT hash → legitimate, valid presentation.

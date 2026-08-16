@@ -41,4 +41,11 @@ interface VerificationTokenRepository extends JpaRepository<VerificationToken, L
     int invalidateActive(@Param("accountId") Long accountId,
                           @Param("purpose") VerificationToken.Purpose purpose,
                           @Param("now") Instant now);
+
+    /** Cleanup job (T30, R40) - hard-deletes tokens whose expiry has passed. Bulk JPQL delete
+     * (one SQL statement), matching {@link #markConsumed}/{@link #invalidateActive}'s own
+     * {@code @Modifying} shape rather than entity-by-entity deletion. */
+    @Modifying
+    @Query("DELETE FROM VerificationToken t WHERE t.expiresAt < :cutoff")
+    int deleteExpiredBefore(@Param("cutoff") Instant cutoff);
 }
