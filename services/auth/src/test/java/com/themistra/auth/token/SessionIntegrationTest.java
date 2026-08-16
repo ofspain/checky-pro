@@ -7,6 +7,7 @@ import com.themistra.auth.account.AccountService;
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.apikey.ApiKeyTokenIssuer;
+import com.themistra.auth.common.ProblemTypes;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
@@ -122,6 +123,7 @@ class SessionIntegrationTest {
         String authorizationId = seedRealAuthorization(accountUuid);
         RefreshTokenFamily family = seedFamily(accountUuid, authorizationId, "device-1");
         String bearer = bearerTokenFor(accountUuid);
+        Instant before = Instant.now().minusSeconds(1);
 
         ResponseEntity<String> deleteResponse =
                 delete(bearer, "/accounts/me/sessions/" + family.getFamilyId());
@@ -130,6 +132,13 @@ class SessionIntegrationTest {
         assertThat(authorizationService.findById(authorizationId)).isNull();
         JsonNode listAfter = objectMapper.readTree(get(bearer, "/accounts/me/sessions").getBody());
         assertThat(listAfter).isEmpty();
+        // Kimi Phase 11 Gap 5: assert the family row itself, not just that it's absent from the
+        // active list (which could theoretically be empty for an unrelated reason).
+        RefreshTokenFamily reloaded = reloadFamily(family.getFamilyId());
+        assertThat(reloaded.getRevokedAt()).isNotNull();
+        assertThat(reloaded.getRevokedReason()).isEqualTo("USER_REVOKED");
+        // Kimi Phase 11 Gap 6: exactly one audit row for this revoke.
+        assertThat(countSessionRevokedAuditRows(accountUuid, before)).isEqualTo(1L);
     }
 
     @Test // Named test, R38 - revokes every active family and removes every live authorization
@@ -137,9 +146,10 @@ class SessionIntegrationTest {
         UUID accountUuid = registerAndActivate("sessions-revoke-all@example.com");
         String authorizationIdOne = seedRealAuthorization(accountUuid);
         String authorizationIdTwo = seedRealAuthorization(accountUuid);
-        seedFamily(accountUuid, authorizationIdOne, "device-1");
-        seedFamily(accountUuid, authorizationIdTwo, "device-2");
+        RefreshTokenFamily familyOne = seedFamily(accountUuid, authorizationIdOne, "device-1");
+        RefreshTokenFamily familyTwo = seedFamily(accountUuid, authorizationIdTwo, "device-2");
         String bearer = bearerTokenFor(accountUuid);
+        Instant before = Instant.now().minusSeconds(1);
 
         ResponseEntity<String> deleteResponse = delete(bearer, "/accounts/me/sessions");
 
@@ -148,6 +158,11 @@ class SessionIntegrationTest {
         assertThat(authorizationService.findById(authorizationIdTwo)).isNull();
         JsonNode listAfter = objectMapper.readTree(get(bearer, "/accounts/me/sessions").getBody());
         assertThat(listAfter).isEmpty();
+        // Kimi Phase 11 Gap 5: both family rows themselves, not just the empty active list.
+        assertThat(reloadFamily(familyOne.getFamilyId()).getRevokedReason()).isEqualTo("USER_REVOKED_ALL");
+        assertThat(reloadFamily(familyTwo.getFamilyId()).getRevokedReason()).isEqualTo("USER_REVOKED_ALL");
+        // Kimi Phase 11 Gap 6: one audit row per family revoked.
+        assertThat(countSessionRevokedAuditRows(accountUuid, before)).isEqualTo(2L);
     }
 
     @Test // R36 - a caller with no sessions gets an empty array, not an error
@@ -160,18 +175,27 @@ class SessionIntegrationTest {
         assertThat(objectMapper.readTree(response.getBody())).isEmpty();
     }
 
-    @Test // R37/AC7 - an unowned family and a genuinely nonexistent one get identical 404s
+    @Test // R37/AC7 - an unowned family and a genuinely nonexistent one get identical 404s.
+          // Kimi Phase 11 Gap 7: compares the raw response bodies (true byte-for-byte equality,
+          // matching this test's own name), plus explicit type/title checks - not just parsed-map
+          // equality, which is order/whitespace-insensitive and wouldn't catch every difference
+          // the name promises to rule out.
     void revokeOfUnownedAndNonexistentFamilyAreByteIdentical() throws Exception {
         UUID owner = registerAndActivate("sessions-owner@example.com");
         UUID stranger = registerAndActivate("sessions-stranger@example.com");
         RefreshTokenFamily ownersFamily = seedFamily(owner, "auth-owned", "device");
         String strangerBearer = bearerTokenFor(stranger);
 
-        Map<String, Object> unowned = rejectionBody(
-                delete(strangerBearer, "/accounts/me/sessions/" + ownersFamily.getFamilyId()));
-        Map<String, Object> nonexistent = rejectionBody(
-                delete(strangerBearer, "/accounts/me/sessions/" + UUID.randomUUID()));
+        ResponseEntity<String> unownedResponse =
+                delete(strangerBearer, "/accounts/me/sessions/" + ownersFamily.getFamilyId());
+        ResponseEntity<String> nonexistentResponse =
+                delete(strangerBearer, "/accounts/me/sessions/" + UUID.randomUUID());
 
+        Map<String, Object> unowned = rejectionBody(unownedResponse);
+        Map<String, Object> nonexistent = rejectionBody(nonexistentResponse);
+        assertThat(unowned.get("type")).isEqualTo(ProblemTypes.SESSION_NOT_FOUND.toString());
+        assertThat(unowned.get("title")).isEqualTo("Session not found");
+        assertThat(unownedResponse.getBody()).isEqualTo(nonexistentResponse.getBody());
         assertThat(unowned).isEqualTo(nonexistent);
     }
 
@@ -267,6 +291,27 @@ class SessionIntegrationTest {
         entityManager.persist(family);
         entityManager.flush();
         return family;
+    }
+
+    /** Kimi Phase 11 Gap 5: reloads a family row directly, bypassing the JPA first-level cache
+     * (this test's own {@code seedFamily} persisted the same managed instance, so a plain
+     * {@code entityManager.find} would just return the cached object rather than proving anything
+     * was actually written) so the assertion reflects what is genuinely in the database. */
+    private RefreshTokenFamily reloadFamily(UUID familyId) {
+        entityManager.clear();
+        return entityManager.find(RefreshTokenFamily.class, familyId);
+    }
+
+    /** Kimi Phase 11 Gap 6: one {@code auth_audit} row per family revoked (R43/AC6), queried
+     * natively since {@code AuditEventRepository} is package-private to the {@code audit} module. */
+    private long countSessionRevokedAuditRows(UUID accountUuid, Instant since) {
+        Number count = (Number) entityManager.createNativeQuery(
+                        "SELECT count(*) FROM auth_audit WHERE event_type = 'session.revoked' "
+                                + "AND outcome = 'SUCCESS' AND account_uuid = :accountUuid AND occurred_at >= :since")
+                .setParameter("accountUuid", accountUuid)
+                .setParameter("since", since)
+                .getSingleResult();
+        return count.longValue();
     }
 
     /** Saves one minimal, real {@link OAuth2Authorization} via the actual

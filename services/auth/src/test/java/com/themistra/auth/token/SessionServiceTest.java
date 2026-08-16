@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -67,16 +68,32 @@ class SessionServiceTest {
         return RefreshTokenFamily.start(authorizationId, ACCOUNT_UUID.toString(), null, "hash-" + authorizationId, NOW);
     }
 
-    @Test // R36
+    @Test // R36/AC2 - Kimi Phase 11 Gap 2: all four response fields, not just familyId, so a
+          // broken SessionResponse.from returning nulls elsewhere would fail this
     void listMapsActiveFamiliesToResponses() {
-        RefreshTokenFamily family = newFamily("auth-1");
+        RefreshTokenFamily family = RefreshTokenFamily.start(
+                "auth-1", ACCOUNT_UUID.toString(), "chrome-macos", "hash-auth-1", NOW);
+
         when(familyRepository.findByPrincipalNameAndRevokedAtIsNull(ACCOUNT_UUID.toString()))
                 .thenReturn(List.of(family));
 
         List<SessionResponse> result = service.list(ACCOUNT_UUID);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).familyId()).isEqualTo(family.getFamilyId());
+        SessionResponse response = result.get(0);
+        assertThat(response.familyId()).isEqualTo(family.getFamilyId());
+        assertThat(response.deviceLabel()).isEqualTo("chrome-macos");
+        assertThat(response.createdAt()).isEqualTo(family.getCreatedAt());
+        assertThat(response.rotatedAt()).isEqualTo(family.getRotatedAt());
+    }
+
+    @Test // R36 - a null deviceLabel (D6, expected today) is mapped through as null, not defaulted
+    void listMapsNullDeviceLabelThrough() {
+        RefreshTokenFamily family = newFamily("auth-1");
+        when(familyRepository.findByPrincipalNameAndRevokedAtIsNull(ACCOUNT_UUID.toString()))
+                .thenReturn(List.of(family));
+
+        assertThat(service.list(ACCOUNT_UUID).get(0).deviceLabel()).isNull();
     }
 
     @Test // R36
@@ -85,6 +102,24 @@ class SessionServiceTest {
                 .thenReturn(List.of());
 
         assertThat(service.list(ACCOUNT_UUID)).isEmpty();
+    }
+
+    @Test // R36/D4 - Kimi Phase 11 Gap 2: revoked families are excluded from list - proven here
+          // at the unit level by trusting the repository query is called with the right method
+          // name/contract (findByPrincipalNameAndRevokedAtIsNull), which the mock enforces: a
+          // typo'd or wrong repository call simply would not be stubbed and list() would return
+          // an empty result instead of silently including a revoked family.
+    void listOnlyReturnsWhatTheActiveOnlyRepositoryQueryReturns() {
+        RefreshTokenFamily active = newFamily("auth-active");
+        // The revoked family is deliberately NOT included in the stub for
+        // findByPrincipalNameAndRevokedAtIsNull, mirroring what the real query would do.
+        when(familyRepository.findByPrincipalNameAndRevokedAtIsNull(ACCOUNT_UUID.toString()))
+                .thenReturn(List.of(active));
+
+        List<SessionResponse> result = service.list(ACCOUNT_UUID);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).familyId()).isEqualTo(active.getFamilyId());
     }
 
     @Test // R37 - removes the authorization, marks the family revoked, audits
@@ -190,6 +225,46 @@ class SessionServiceTest {
         assertThat(familyA.isRevoked()).isFalse();
         assertThat(familyB.isRevoked()).isTrue();
         verify(familyRepository, never()).save(familyA);
+        verify(familyRepository).save(familyB);
+    }
+
+    @Test // D3 - Kimi Phase 11 Gap 1: the "save" failure mode specifically, not just the
+          // authorization-lookup one already covered above
+    void revokeAllContinuesPastAFailureWhenSaveThrows() {
+        RefreshTokenFamily familyA = newFamily("auth-a");
+        RefreshTokenFamily familyB = newFamily("auth-b");
+        when(familyRepository.findByPrincipalNameAndRevokedAtIsNull(ACCOUNT_UUID.toString()))
+                .thenReturn(List.of(familyA, familyB));
+        when(authorizationService.findById(any())).thenReturn(null);
+        when(familyRepository.save(familyA)).thenThrow(new RuntimeException("transient save failure"));
+
+        assertThatCode(() -> service.revokeAll(ACCOUNT_UUID)).doesNotThrowAnyException();
+
+        assertThat(familyB.isRevoked()).isTrue();
+        verify(familyRepository).save(familyB);
+        verify(auditService).record(argThat((RecordAuditEventRequest req) ->
+                req.accountUuid().equals(ACCOUNT_UUID)));
+    }
+
+    @Test // D3 - Kimi Phase 11 Gap 1: the "audit" failure mode specifically
+    void revokeAllContinuesPastAFailureWhenAuditThrows() {
+        RefreshTokenFamily familyA = newFamily("auth-a");
+        RefreshTokenFamily familyB = newFamily("auth-b");
+        when(familyRepository.findByPrincipalNameAndRevokedAtIsNull(ACCOUNT_UUID.toString()))
+                .thenReturn(List.of(familyA, familyB));
+        when(authorizationService.findById(any())).thenReturn(null);
+        doThrow(new RuntimeException("transient audit failure"))
+                .doNothing()
+                .when(auditService).record(any());
+
+        assertThatCode(() -> service.revokeAll(ACCOUNT_UUID)).doesNotThrowAnyException();
+
+        // familyA's revoke()/save() already happened before the audit call threw (revokeFamily's
+        // ordering is authorization -> revoke+save -> audit) - only the audit row for familyA is
+        // lost, not its revocation. familyB is unaffected either way.
+        assertThat(familyA.isRevoked()).isTrue();
+        assertThat(familyB.isRevoked()).isTrue();
+        verify(familyRepository).save(familyA);
         verify(familyRepository).save(familyB);
     }
 
