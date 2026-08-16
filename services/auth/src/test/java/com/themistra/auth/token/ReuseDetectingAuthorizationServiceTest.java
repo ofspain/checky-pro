@@ -213,6 +213,23 @@ class ReuseDetectingAuthorizationServiceTest {
         verify(auditService, never()).record(any());
     }
 
+    @Test // Kimi Phase 11 Gap 4 - a swallowed transient failure must not leave the service unable
+          // to revoke on a later, successful retry (the client-visible symptom of /oauth2/revoke
+          // returning success on retry after an earlier transient error).
+    void saveRetriesRevokeAfterTransientFailureAndThenAudits() {
+        OAuth2Authorization authorization = invalidatedRefreshTokenAuthorization("principal-uuid");
+        when(tracker.revokeForAuthorization(AUTHORIZATION_ID, "OAUTH2_REVOKE"))
+                .thenThrow(new RuntimeException("transient DB failure"))
+                .thenReturn(true);
+
+        assertThatCode(() -> service.save(authorization)).doesNotThrowAnyException();
+        verify(auditService, never()).record(any());
+
+        service.save(authorization);
+
+        verify(auditService).record(any());
+    }
+
     @Test
     void findByTokenReturnsDelegateResultOnValidPresentation() {
         when(tracker.checkAndRegisterPresentation(PRESENTED_HASH))

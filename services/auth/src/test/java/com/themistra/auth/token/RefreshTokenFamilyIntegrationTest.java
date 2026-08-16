@@ -2,6 +2,8 @@ package com.themistra.auth.token;
 
 import com.themistra.auth.TestcontainersConfiguration;
 import com.themistra.auth.common.Hashing;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -45,6 +47,12 @@ class RefreshTokenFamilyIntegrationTest {
 
     @Autowired
     private AuthClientsProperties authClientsProperties;
+
+    @Autowired
+    private RefreshTokenFamilyRepository familyRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Test
     void issuanceRotationAndReuseRevokeTheWholeFamily() {
@@ -98,12 +106,13 @@ class RefreshTokenFamilyIntegrationTest {
     @Test // R39, D3 - the decorator's real save() path revokes the family for a genuine
           // /oauth2/revoke-shaped invalidation, proven against the real JDBC-backed delegate.
     void savingAnInvalidatedRefreshTokenRevokesTheFamily() {
+        UUID principal = UUID.randomUUID();
         RegisteredClient client =
                 registeredClientRepository.findByClientId(authClientsProperties.spa().clientId());
         OAuth2RefreshToken refreshToken =
                 new OAuth2RefreshToken("refresh-" + UUID.randomUUID(), Instant.now());
         OAuth2Authorization authorization = OAuth2Authorization.withRegisteredClient(client)
-                .principalName(UUID.randomUUID().toString())
+                .principalName(principal.toString())
                 .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
                 .refreshToken(refreshToken)
                 .build();
@@ -111,6 +120,7 @@ class RefreshTokenFamilyIntegrationTest {
         authorizationService.save(authorization); // issuance - the decorator creates the family
         assertThat(tracker.familyMissingFor(authorization.getId())).isFalse();
 
+        Instant before = Instant.now().minusSeconds(1);
         OAuth2Authorization invalidated =
                 OAuth2Authorization.from(authorization).invalidate(refreshToken).build();
         authorizationService.save(invalidated); // simulates SAS's /oauth2/revoke save
@@ -118,6 +128,14 @@ class RefreshTokenFamilyIntegrationTest {
         String currentHash = Hashing.sha256(refreshToken.getTokenValue());
         assertThat(tracker.checkAndRegisterPresentation(currentHash).outcome())
                 .isEqualTo(RefreshTokenTracker.ReuseCheckResult.Outcome.UNKNOWN);
+        // Kimi Phase 11 Gap 1: assert the actual revocation reason, not just that the family is
+        // no longer active (which the REUSE_DETECTED path could equally have produced).
+        RefreshTokenFamily reloaded = familyRepository.findByAuthorizationId(authorization.getId())
+                .orElseThrow();
+        assertThat(reloaded.getRevokedReason()).isEqualTo("OAUTH2_REVOKE");
+        assertThat(reloaded.getRevokedAt()).isNotNull();
+        // Kimi Phase 11 Gap 2: exactly one audit row for this revoke.
+        assertThat(countSessionRevokedAuditRows(principal, before)).isEqualTo(1L);
     }
 
     @Test // Kimi Phase 8 Finding 1 regression, proven end-to-end: a revoke-shaped save for an
@@ -139,5 +157,17 @@ class RefreshTokenFamilyIntegrationTest {
         authorizationService.save(alreadyInvalidated); // first-ever save IS already a revoke
 
         assertThat(tracker.familyMissingFor(authorization.getId())).isTrue();
+    }
+
+    /** Mirrors {@code SessionIntegrationTest.countSessionRevokedAuditRows} (T28) - queried
+     * natively since {@code AuditEventRepository} is package-private to the {@code audit} module. */
+    private long countSessionRevokedAuditRows(UUID accountUuid, Instant since) {
+        Number count = (Number) entityManager.createNativeQuery(
+                        "SELECT count(*) FROM auth_audit WHERE event_type = 'session.revoked' "
+                                + "AND outcome = 'SUCCESS' AND account_uuid = :accountUuid AND occurred_at >= :since")
+                .setParameter("accountUuid", accountUuid)
+                .setParameter("since", since)
+                .getSingleResult();
+        return count.longValue();
     }
 }
