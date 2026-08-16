@@ -15,7 +15,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication
 @ConfigurationPropertiesScan
 @EnableScheduling
-@EnableSchedulerLock(defaultLockAtMostFor = "PT10M")
+@EnableSchedulerLock(defaultLockAtMostFor = "PT1H")
 public class AuthServiceApplication {
 
     public static void main(String[] args) {

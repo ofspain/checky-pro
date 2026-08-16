@@ -264,6 +264,17 @@ class RefreshTokenTrackerTest {
         verify(familyRepository, never()).save(any());
     }
 
+    @Test // T30, R40 - cleanup job delegation: the exact cutoff passed through unchanged
+    void deleteRevokedFamiliesOlderThanDelegatesToRepositoryWithGivenCutoffAndReturnsItsCount() {
+        Instant cutoff = NOW.minus(90, java.time.temporal.ChronoUnit.DAYS);
+        when(familyRepository.deleteRevokedBefore(cutoff)).thenReturn(5);
+
+        int deleted = tracker.deleteRevokedFamiliesOlderThan(cutoff);
+
+        assertThat(deleted).isEqualTo(5);
+        verify(familyRepository).deleteRevokedBefore(cutoff);
+    }
+
     @Test // Kimi Phase 11 Gap 3 - revokeForAuthorization sits next to trackRotation (which DOES
           // archive the superseded hash); guards against a future refactor accidentally reusing
           // that logic and archiving a hash that was never actually superseded.

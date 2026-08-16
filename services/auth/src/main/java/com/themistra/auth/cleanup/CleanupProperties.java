@@ -16,6 +16,8 @@ import org.springframework.validation.annotation.Validated;
 public record CleanupProperties(
 
         @NotBlank String cron,
+        /** Also governs stale {@code shedlock} row retention (deliberate reuse, Phase 2 OQ2 -
+         * ShedLock rows are low-cardinality, so a dedicated fourth property wasn't worth adding). */
         @Min(1) int tokenRetentionDays,
         @Min(1) int familyRetentionDays
 ) {

@@ -9,7 +9,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -54,7 +53,7 @@ public class CleanupJob {
     }
 
     @Scheduled(cron = "${themistra.auth.cleanup.cron}")
-    @SchedulerLock(name = "auth-cleanup-job", lockAtLeastFor = "PT1M", lockAtMostFor = "PT10M")
+    @SchedulerLock(name = "auth-cleanup-job", lockAtLeastFor = "PT1M", lockAtMostFor = "PT1H")
     public void run() {
         deleteExpiredTokens();
         deleteOldRevokedFamilies();
@@ -85,7 +84,7 @@ public class CleanupJob {
             Instant cutoff = clock.instant().minus(properties.tokenRetentionDays(), ChronoUnit.DAYS);
             int deleted = jdbcTemplate.update(
                     "DELETE FROM shedlock WHERE lock_until < ? AND lock_until < now()",
-                    Timestamp.from(cutoff));
+                    cutoff);
             log.info("Cleanup: deleted {} stale shedlock rows", deleted);
         } catch (Exception e) {
             log.error("Cleanup: failed to delete stale shedlock rows", e);

@@ -468,6 +468,17 @@ class VerificationTokenServiceTest {
         verify(tokenRepository, never()).markConsumed(eq(suspendedHash), any());
     }
 
+    @Test // T30, R40 - cleanup job delegation: the exact cutoff passed through unchanged
+    void deleteExpiredTokensDelegatesToRepositoryWithGivenCutoffAndReturnsItsCount() {
+        Instant cutoff = NOW.minusSeconds(3600);
+        when(tokenRepository.deleteExpiredBefore(cutoff)).thenReturn(3);
+
+        int deleted = service.deleteExpiredTokens(cutoff);
+
+        assertThat(deleted).isEqualTo(3);
+        verify(tokenRepository).deleteExpiredBefore(cutoff);
+    }
+
     /** Stubs {@code findByTokenHash} for the given raw token's real hash and returns that hash. */
     private String stubToken(String rawToken, Instant expiresAt, Instant usedAt) {
         return stubToken(rawToken, VerificationToken.Purpose.EMAIL_VERIFY, expiresAt, usedAt);
