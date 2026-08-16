@@ -11,6 +11,7 @@ import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.authz.DuplicateRoleException;
 import com.themistra.auth.authz.RoleService;
 import com.themistra.auth.authz.dto.CreateRoleRequest;
+import com.themistra.auth.common.ProblemTypes;
 import com.themistra.auth.mfa.MfaService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -106,17 +107,22 @@ class ApiKeyLifecycleIntegrationTest {
         UUID accountUuid = seedMerchantWithConfirmedMfa("lifecycle@example.com");
         String bearer = bearerTokenFor(accountUuid);
 
-        // 1. Create (R30).
+        // 1. Create (R30). Kimi Phase 11 Gap 3: exact field set + no hash-shaped value, so this
+        // entry point of the flow is self-contained rather than relying only on
+        // ApiKeyCrudIntegrationTest's (T26) equivalent coverage elsewhere.
         ResponseEntity<String> createResponse = postCreate(bearer, "{\"name\":\"lifecycle key\"}");
         assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         JsonNode created = readJson(createResponse);
+        assertThat(created.fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("keyUuid", "plaintextKey", "name", "createdAt");
+        assertThat(createResponse.getBody()).doesNotContainPattern("[a-f0-9]{64}");
         String keyUuid = created.get("keyUuid").asText();
         String plaintextKey = created.get("plaintextKey").asText();
         assertThat(plaintextKey).matches("^ck_live_[A-Za-z0-9]{24}\\.[A-Za-z0-9]{32}$");
 
         // 2. last_used_at is null before any exchange (D1).
         ResponseEntity<String> listBeforeExchange = get(bearer, "/api-keys");
-        assertThat(listBeforeExchange.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertOkJsonResponse(listBeforeExchange);
         JsonNode beforeExchange = findByKeyUuid(readJson(listBeforeExchange), keyUuid);
         assertThat(beforeExchange.get("lastUsedAt").isNull()).isTrue();
 
@@ -132,7 +138,7 @@ class ApiKeyLifecycleIntegrationTest {
 
         // 4. last_used_at is now set (R32, D1).
         ResponseEntity<String> listAfterExchange = get(bearer, "/api-keys");
-        assertThat(listAfterExchange.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertOkJsonResponse(listAfterExchange);
         JsonNode afterExchange = findByKeyUuid(readJson(listAfterExchange), keyUuid);
         assertThat(afterExchange.get("lastUsedAt").isNull()).isFalse();
 
@@ -144,17 +150,22 @@ class ApiKeyLifecycleIntegrationTest {
         // persisted state change, so a false pass (something else caused step 7 to fail) is ruled
         // out.
         ResponseEntity<String> listAfterRevoke = get(bearer, "/api-keys");
-        assertThat(listAfterRevoke.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertOkJsonResponse(listAfterRevoke);
         JsonNode afterRevoke = findByKeyUuid(readJson(listAfterRevoke), keyUuid);
         assertThat(afterRevoke.get("revokedAt").isNull()).isFalse();
 
         // 7. The identical key now fails exchange (R33) - uniform 401, application/problem+json,
-        // no detail (R46, Kimi Phase 8 Finding 3).
+        // no detail (R46, Kimi Phase 8 Finding 3), the exact locked problem type/title (Kimi
+        // Phase 11 Gap 1 - byte-for-byte equality alone wouldn't catch both sides consistently
+        // drifting to a different-but-still-uniform type/title).
         ResponseEntity<String> secondExchange = postToken("ApiKey " + plaintextKey);
         assertThat(secondExchange.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
         assertThat(secondExchange.getHeaders().getContentType()).isNotNull();
         assertThat(secondExchange.getHeaders().getContentType().toString()).contains("application/problem+json");
         assertThat(secondExchange.getBody()).doesNotContain("\"detail\"");
+        JsonNode secondExchangeBody = readJson(secondExchange);
+        assertThat(secondExchangeBody.get("type").asText()).isEqualTo(ProblemTypes.API_KEY_EXCHANGE_REJECTED.toString());
+        assertThat(secondExchangeBody.get("title").asText()).isEqualTo("API key is invalid or revoked");
 
         // 8. Proven uniform by comparison (D2), not asserted in isolation: an independent
         // rejection cause (a malformed key, never valid at all) produces a byte-for-byte
@@ -183,6 +194,15 @@ class ApiKeyLifecycleIntegrationTest {
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + bearer);
         return restTemplate.exchange(baseUrl() + path, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+    }
+
+    /** Kimi Phase 8 Finding 1 / Phase 11 Gap 2: asserts 200 and {@code application/json} before
+     * the caller parses the body - a regression on {@code GET /api-keys} now fails with a clear
+     * status/content-type mismatch instead of a confusing JSON-parse exception. */
+    private void assertOkJsonResponse(ResponseEntity<String> response) {
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getHeaders().getContentType()).isNotNull();
+        assertThat(response.getHeaders().getContentType().toString()).contains("application/json");
     }
 
     private ResponseEntity<String> delete(String bearer, String path) {
