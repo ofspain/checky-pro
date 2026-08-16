@@ -20,6 +20,42 @@ Reviews the Phase 6 diff (`artifacts/06-implementation-notes.md`) against the fr
 
 ---
 
+### Finding 2
+
+**Issue:** `ReuseDetectingAuthorizationServiceTest.saveTracksRotationWhenFamilyAlreadyExists` fails with an `UnnecessaryStubbingException` because the shared helper `authorizationWithRefreshToken` stubs `getPrincipalName()` unconditionally, but the rotation path does not consume it. This is a test-only defect in the refresh-token reuse-detection module that T28's session revocation relies on for actually killing live tokens (D2/AC4/AC5), so a broken test here blocks a green build for the same functional area.
+
+**Severity:** Low (test-only; production logic is correct)
+
+**Evidence:** `token/ReuseDetectingAuthorizationServiceTest.java:60` (`getPrincipalName()` stubbing inside `authorizationWithRefreshToken`) and line `80` (the rotation test that triggers Mockito strictness).
+
+**Recommendation:** Make the `getPrincipalName()` stubbing `lenient()`, since it is required by the issuance test but not by the rotation test. **Already applied in this session** so the Docker-independent unit-test subset passes; logged here per the guardrail against silent unrequested changes.
+
+---
+
+### Finding 3
+
+**Issue:** The full `services/auth` test suite cannot be executed in this environment because Docker is unavailable (`Could not find a valid Docker environment`). Every Testcontainers-backed integration test — including the T28-named integration tests (`shouldListActiveSessions`, `shouldRevokeSingleSessionFamily`, `shouldRevokeAllSessionFamilies`) and `ArchitectureTest` — errors at context startup rather than running assertions.
+
+**Severity:** Medium (blocks final verification; no production impact)
+
+**Evidence:** `mvn -pl services/auth test` output: all `ERROR`-count failures trace back to `TestcontainersConfiguration` / `DockerClientProviderStrategy` startup failure; unit-only subset (e.g., `ReuseDetectingAuthorizationServiceTest`, `AccountControllerTest`) passes.
+
+**Recommendation:** Re-run `mvn -pl services/auth verify` in a Docker-enabled environment before declaring T28 complete. This is an environment limitation, not a code fix.
+
+---
+
+### Finding 4
+
+**Issue:** No integration test class named `AccountControllerIntegrationTest` currently exists in the test tree, although it has been referenced in at least one earlier test-selector invocation. T28's named integration tests are expected in Phase 10, but the missing class is a visible gap against the task's required verification.
+
+**Severity:** Low (expected to be addressed in Phase 10; not a blocker for Phase 7)
+
+**Evidence:** `services/auth/src/test/java/com/themistra/auth/account/` contains `AccountControllerTest` (unit) and `AccountPersistenceIntegrationTest`, but no `AccountControllerIntegrationTest`.
+
+**Recommendation:** Track in Phase 10 test generation. If the class name was intended for T28's named tests, create it there; otherwise remove the stale selector reference.
+
+---
+
 ## Non-Issues Considered and Ruled Out
 
 - **`revokeOne`'s atomicity across the JDBC-based authorization removal and the JPA-based family save:** both operations run inside `revokeOne`'s single `@Transactional` method; assuming (as is standard for this codebase's single-`DataSource` architecture) that `JdbcOAuth2AuthorizationService`'s JDBC calls and JPA's `EntityManager` share the same transactional resource, a failure in either step rolls back both — `revokeOne` does not carry Finding 1's asymmetry. Not independently verified against a running database this session (Docker), but consistent with standard Spring Boot single-datasource behavior.
