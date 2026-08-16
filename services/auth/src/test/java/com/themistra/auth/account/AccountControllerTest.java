@@ -8,7 +8,9 @@ import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.dto.RegistrationAcknowledgement;
 import com.themistra.auth.account.dto.ResendVerificationRequest;
 import com.themistra.auth.account.dto.VerifyEmailRequest;
+import com.themistra.auth.token.SessionNotFoundException;
 import com.themistra.auth.token.SessionService;
+import com.themistra.auth.token.dto.SessionResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -18,6 +20,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -231,5 +234,67 @@ class AccountControllerTest {
         assertThatThrownBy(() -> controller.changePassword(
                 authentication, new ChangePasswordRequest("current-password", "short")))
                 .isInstanceOf(PasswordPolicy.PasswordPolicyViolationException.class);
+    }
+
+    // -----------------------------------------------------------------
+    // T28: session listing / revocation
+    // -----------------------------------------------------------------
+
+    @Test // R36 - returns exactly what the service returns
+    void listSessionsReturnsTheCallersOwnSessions() {
+        controller = new AccountController(accountService, sessionService);
+        UUID accountUuid = UUID.randomUUID();
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn(accountUuid.toString());
+        List<SessionResponse> sessions = List.of(
+                new SessionResponse(UUID.randomUUID(), "device", Instant.now(), Instant.now()));
+        when(sessionService.list(accountUuid)).thenReturn(sessions);
+
+        List<SessionResponse> result = controller.listSessions(authentication);
+
+        assertThat(result).isSameAs(sessions);
+        verify(sessionService).list(accountUuid);
+    }
+
+    @Test // R37 - wires the caller's UUID and the path-variable familyId straight through
+    void revokeSessionCallsServiceWithCallerAndFamilyId() {
+        controller = new AccountController(accountService, sessionService);
+        UUID accountUuid = UUID.randomUUID();
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn(accountUuid.toString());
+        UUID familyId = UUID.randomUUID();
+
+        ResponseEntity<Void> response = controller.revokeSession(authentication, familyId);
+
+        verify(sessionService).revokeOne(accountUuid, familyId);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(response.getBody()).isNull();
+    }
+
+    @Test // R37/AC3 - an unowned or nonexistent family propagates uncaught for
+          // SessionExceptionHandler to translate to a uniform 404
+    void revokeSessionPropagatesSessionNotFoundUncaught() {
+        controller = new AccountController(accountService, sessionService);
+        UUID accountUuid = UUID.randomUUID();
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn(accountUuid.toString());
+        UUID familyId = UUID.randomUUID();
+        doThrow(new SessionNotFoundException()).when(sessionService).revokeOne(accountUuid, familyId);
+
+        assertThatThrownBy(() -> controller.revokeSession(authentication, familyId))
+                .isInstanceOf(SessionNotFoundException.class);
+    }
+
+    @Test // R38 - wires the caller's UUID through to the bulk revoke
+    void revokeAllSessionsCallsServiceWithCaller() {
+        controller = new AccountController(accountService, sessionService);
+        UUID accountUuid = UUID.randomUUID();
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn(accountUuid.toString());
+
+        ResponseEntity<Void> response = controller.revokeAllSessions(authentication);
+
+        verify(sessionService).revokeAll(accountUuid);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
     }
 }
