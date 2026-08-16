@@ -115,7 +115,9 @@ class ApiKeyLifecycleIntegrationTest {
         assertThat(plaintextKey).matches("^ck_live_[A-Za-z0-9]{24}\\.[A-Za-z0-9]{32}$");
 
         // 2. last_used_at is null before any exchange (D1).
-        JsonNode beforeExchange = findByKeyUuid(readJson(get(bearer, "/api-keys")), keyUuid);
+        ResponseEntity<String> listBeforeExchange = get(bearer, "/api-keys");
+        assertThat(listBeforeExchange.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode beforeExchange = findByKeyUuid(readJson(listBeforeExchange), keyUuid);
         assertThat(beforeExchange.get("lastUsedAt").isNull()).isTrue();
 
         // 3. Exchange succeeds (R31, L8) - decode the JWT and confirm it is a real, usable token,
@@ -129,7 +131,9 @@ class ApiKeyLifecycleIntegrationTest {
         assertThat(claims.getStringListClaim("amr")).contains("api_key");
 
         // 4. last_used_at is now set (R32, D1).
-        JsonNode afterExchange = findByKeyUuid(readJson(get(bearer, "/api-keys")), keyUuid);
+        ResponseEntity<String> listAfterExchange = get(bearer, "/api-keys");
+        assertThat(listAfterExchange.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode afterExchange = findByKeyUuid(readJson(listAfterExchange), keyUuid);
         assertThat(afterExchange.get("lastUsedAt").isNull()).isFalse();
 
         // 5. Revoke (R35).
@@ -139,18 +143,27 @@ class ApiKeyLifecycleIntegrationTest {
         // 6. revoked_at is now set (D1) - closes the loop between the HTTP action and the
         // persisted state change, so a false pass (something else caused step 7 to fail) is ruled
         // out.
-        JsonNode afterRevoke = findByKeyUuid(readJson(get(bearer, "/api-keys")), keyUuid);
+        ResponseEntity<String> listAfterRevoke = get(bearer, "/api-keys");
+        assertThat(listAfterRevoke.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode afterRevoke = findByKeyUuid(readJson(listAfterRevoke), keyUuid);
         assertThat(afterRevoke.get("revokedAt").isNull()).isFalse();
 
-        // 7. The identical key now fails exchange (R33) - uniform 401.
+        // 7. The identical key now fails exchange (R33) - uniform 401, application/problem+json,
+        // no detail (R46, Kimi Phase 8 Finding 3).
         ResponseEntity<String> secondExchange = postToken("ApiKey " + plaintextKey);
         assertThat(secondExchange.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(secondExchange.getHeaders().getContentType()).isNotNull();
+        assertThat(secondExchange.getHeaders().getContentType().toString()).contains("application/problem+json");
+        assertThat(secondExchange.getBody()).doesNotContain("\"detail\"");
 
         // 8. Proven uniform by comparison (D2), not asserted in isolation: an independent
         // rejection cause (a malformed key, never valid at all) produces a byte-for-byte
         // identical body on the same running server.
         ResponseEntity<String> malformedExchange = postToken("ApiKey not-a-valid-key-shape");
         assertThat(malformedExchange.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(malformedExchange.getHeaders().getContentType()).isNotNull();
+        assertThat(malformedExchange.getHeaders().getContentType().toString()).contains("application/problem+json");
+        assertThat(malformedExchange.getBody()).doesNotContain("\"detail\"");
         assertThat(secondExchange.getBody()).isEqualTo(malformedExchange.getBody());
     }
 
