@@ -8,6 +8,7 @@ import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.dto.RegistrationAcknowledgement;
 import com.themistra.auth.account.dto.ResendVerificationRequest;
 import com.themistra.auth.account.dto.VerifyEmailRequest;
+import com.themistra.auth.token.SessionService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -33,11 +34,14 @@ class AccountControllerTest {
     @Mock
     private AccountService accountService;
 
+    @Mock
+    private SessionService sessionService;
+
     private AccountController controller;
 
     @Test
     void registerReturnsUniformAcknowledgementOnSuccess() {
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         when(accountService.register(any())).thenReturn(
                 new AccountResponse(UUID.randomUUID(), "new@example.com", false,
                         AccountStatus.PENDING_VERIFICATION, Instant.now()));
@@ -51,7 +55,7 @@ class AccountControllerTest {
 
     @Test
     void registerReturnsTheIdenticalAcknowledgementOnDuplicateEmail_enumerationSafety() {
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         when(accountService.register(any())).thenThrow(new DuplicateEmailException());
 
         ResponseEntity<RegistrationAcknowledgement> response =
@@ -66,7 +70,7 @@ class AccountControllerTest {
     void registerPropagatesPolicyViolationForTheExceptionHandlerToTranslate() {
         // No local catch for this exception type - only DuplicateEmailException is swallowed
         // here (enumeration safety). A policy violation must reach AccountExceptionHandler.
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         when(accountService.register(any()))
                 .thenThrow(new PasswordPolicy.PasswordPolicyViolationException("too short"));
 
@@ -77,7 +81,7 @@ class AccountControllerTest {
 
     @Test
     void meDerivesAccountFromAuthenticationPrincipalNotAPathVariable() {
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         UUID accountUuid = UUID.randomUUID();
         Authentication authentication = mock(Authentication.class);
         when(authentication.getName()).thenReturn(accountUuid.toString());
@@ -92,7 +96,7 @@ class AccountControllerTest {
 
     @Test
     void verifyEmailReturnsNoContentOnSuccess() {
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         when(accountService.activateFromVerificationToken("a-valid-token")).thenReturn(
                 new AccountResponse(UUID.randomUUID(), "verified@example.com", true,
                         AccountStatus.ACTIVE, Instant.now()));
@@ -108,7 +112,7 @@ class AccountControllerTest {
         // No local catch here (unlike register): the actual 400/INVALID_TOKEN response is
         // AccountExceptionHandler's job (AccountExceptionHandlerTest), not observable through
         // this plain-Mockito controller test.
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         when(accountService.activateFromVerificationToken(any()))
                 .thenThrow(new AccountService.VerificationTokenRejectedException());
 
@@ -120,7 +124,7 @@ class AccountControllerTest {
     void resendVerificationAlwaysReturnsTheSameAcknowledgementRegardlessOfMatch() {
         // resendVerificationIfPending is void - nothing for the controller to branch on, whether
         // it actually issued a token or silently no-opped (R6, as modified: uniform response).
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
 
         RegistrationAcknowledgement matchResponse =
                 controller.resendVerification(new ResendVerificationRequest("pending@example.com"));
@@ -139,7 +143,7 @@ class AccountControllerTest {
         // and, like resendVerification, nothing here to branch on since requestPasswordReset never
         // throws for a non-match. Kimi Phase 11 Gap 1: prove both a match and a non-match return
         // the identical acknowledgement, mirroring resendVerificationAlwaysReturnsTheSameAcknowledgementRegardlessOfMatch.
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
 
         RegistrationAcknowledgement matchResponse =
                 controller.passwordResetRequest(new PasswordResetRequest("reset-me@example.com"));
@@ -154,7 +158,7 @@ class AccountControllerTest {
 
     @Test
     void passwordResetReturnsNoContentOnSuccess() {
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
 
         ResponseEntity<Void> response =
                 controller.passwordReset(new PasswordResetConfirmRequest("valid-reset-token", "new-password"));
@@ -168,7 +172,7 @@ class AccountControllerTest {
     void passwordResetPropagatesRejectionForTheExceptionHandlerToTranslate() {
         // No local catch here (mirrors verifyEmail): the actual 400/INVALID_TOKEN response is
         // AccountExceptionHandler's job, not observable through this plain-Mockito controller test.
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         doThrow(new AccountService.VerificationTokenRejectedException())
                 .when(accountService).resetPassword(any(), any());
 
@@ -179,7 +183,7 @@ class AccountControllerTest {
 
     @Test
     void passwordResetPropagatesPolicyViolationForTheExceptionHandlerToTranslate() {
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         org.mockito.Mockito.doThrow(new PasswordPolicy.PasswordPolicyViolationException("too short"))
                 .when(accountService).resetPassword(any(), any());
 
@@ -190,7 +194,7 @@ class AccountControllerTest {
 
     @Test
     void changePasswordReturnsNoContentOnSuccess() {
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         UUID accountUuid = UUID.randomUUID();
         Authentication authentication = mock(Authentication.class);
         when(authentication.getName()).thenReturn(accountUuid.toString());
@@ -205,7 +209,7 @@ class AccountControllerTest {
 
     @Test
     void changePasswordPropagatesCurrentPasswordMismatchForTheExceptionHandlerToTranslate() {
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         Authentication authentication = mock(Authentication.class);
         when(authentication.getName()).thenReturn(UUID.randomUUID().toString());
         org.mockito.Mockito.doThrow(new AccountService.CurrentPasswordMismatchException())
@@ -218,7 +222,7 @@ class AccountControllerTest {
 
     @Test
     void changePasswordPropagatesPolicyViolationForTheExceptionHandlerToTranslate() {
-        controller = new AccountController(accountService);
+        controller = new AccountController(accountService, sessionService);
         Authentication authentication = mock(Authentication.class);
         when(authentication.getName()).thenReturn(UUID.randomUUID().toString());
         org.mockito.Mockito.doThrow(new PasswordPolicy.PasswordPolicyViolationException("too short"))

@@ -13,4 +13,10 @@ interface RefreshTokenFamilyRepository extends JpaRepository<RefreshTokenFamily,
     Optional<RefreshTokenFamily> findByCurrentTokenHashAndRevokedAtIsNull(String tokenHash);
 
     List<RefreshTokenFamily> findByPrincipalNameAndRevokedAtIsNull(String principalName);
+
+    /** For {@code DELETE /accounts/me/sessions/{familyId}} (T28, R37) — deliberately no
+     * {@code revokedAt} filter (frozen brief D1): an already-revoked-but-owned family must still
+     * be found here so {@link RefreshTokenFamily#revoke} idempotency (not this query) is what
+     * decides success, and a genuinely nonexistent or unowned family is the only 404 case. */
+    Optional<RefreshTokenFamily> findByFamilyIdAndPrincipalName(UUID familyId, String principalName);
 }

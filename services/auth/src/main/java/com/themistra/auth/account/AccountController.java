@@ -8,16 +8,21 @@ import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.dto.RegistrationAcknowledgement;
 import com.themistra.auth.account.dto.ResendVerificationRequest;
 import com.themistra.auth.account.dto.VerifyEmailRequest;
+import com.themistra.auth.token.SessionService;
+import com.themistra.auth.token.dto.SessionResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -33,9 +38,11 @@ import java.util.UUID;
 public class AccountController {
 
     private final AccountService accountService;
+    private final SessionService sessionService;
 
-    public AccountController(AccountService accountService) {
+    public AccountController(AccountService accountService, SessionService sessionService) {
         this.accountService = accountService;
+        this.sessionService = sessionService;
     }
 
     /**
@@ -125,6 +132,41 @@ public class AccountController {
             Authentication authentication, @Valid @RequestBody ChangePasswordRequest request) {
         UUID accountUuid = UUID.fromString(authentication.getName());
         accountService.changePassword(accountUuid, request.currentPassword(), request.newPassword());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Authenticated (R36) - the caller's own active sessions only. An empty list for a caller
+     * with no active sessions is a normal {@code 200}, not an error.
+     */
+    @GetMapping("/me/sessions")
+    public List<SessionResponse> listSessions(Authentication authentication) {
+        UUID accountUuid = UUID.fromString(authentication.getName());
+        return sessionService.list(accountUuid);
+    }
+
+    /**
+     * Authenticated (R37) - revokes one session the caller owns and removes its live SAS
+     * authorization. An unowned or nonexistent {@code familyId} propagates
+     * {@code SessionNotFoundException} uncaught for {@code SessionExceptionHandler} to translate
+     * to a uniform 404; an already-revoked-but-owned family still returns {@code 204} (idempotent).
+     */
+    @DeleteMapping("/me/sessions/{familyId}")
+    public ResponseEntity<Void> revokeSession(Authentication authentication, @PathVariable UUID familyId) {
+        UUID accountUuid = UUID.fromString(authentication.getName());
+        sessionService.revokeOne(accountUuid, familyId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Authenticated (R38) - revokes every active session the caller owns, best-effort per
+     * session, and removes each corresponding live SAS authorization. Always {@code 204},
+     * including when the caller has no active sessions.
+     */
+    @DeleteMapping("/me/sessions")
+    public ResponseEntity<Void> revokeAllSessions(Authentication authentication) {
+        UUID accountUuid = UUID.fromString(authentication.getName());
+        sessionService.revokeAll(accountUuid);
         return ResponseEntity.noContent().build();
     }
 }

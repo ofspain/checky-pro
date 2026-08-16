@@ -31,6 +31,9 @@ public final class ProblemTypes {
     public static final URI API_KEY_NOT_FOUND = URI.create(BASE + "api-key-not-found");
     /** {@code POST /api-keys} (R30, T26) — the caller lacks {@code MERCHANT} or confirmed MFA. */
     public static final URI API_KEY_NOT_AUTHORIZED = URI.create(BASE + "api-key-not-authorized");
+    /** {@code DELETE /accounts/me/sessions/{familyId}} (R37, T28) — identical whether the family
+     * doesn't exist or exists but isn't owned by the caller (no enumeration oracle). */
+    public static final URI SESSION_NOT_FOUND = URI.create(BASE + "session-not-found");
 
     private ProblemTypes() {
     }
