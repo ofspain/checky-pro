@@ -19,6 +19,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -57,7 +58,7 @@ class ReuseDetectingAuthorizationServiceTest {
 
         OAuth2Authorization authorization = mock(OAuth2Authorization.class);
         when(authorization.getId()).thenReturn(AUTHORIZATION_ID);
-        when(authorization.getPrincipalName()).thenReturn("principal-uuid");
+        lenient().when(authorization.getPrincipalName()).thenReturn("principal-uuid");
         when(authorization.getRefreshToken()).thenReturn(tokenHolder);
         return authorization;
     }
