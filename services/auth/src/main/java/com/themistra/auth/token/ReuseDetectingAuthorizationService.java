@@ -41,8 +41,11 @@ public class ReuseDetectingAuthorizationService implements OAuth2AuthorizationSe
     @Override
     public void save(OAuth2Authorization authorization) {
         delegate.save(authorization);
-        trackRefreshTokenIfPresent(authorization);
-        revokeFamilyIfRefreshTokenInvalidated(authorization);
+        if (isRefreshTokenInvalidated(authorization)) {
+            revokeFamilyForInvalidatedRefreshToken(authorization);
+        } else {
+            trackRefreshTokenIfPresent(authorization);
+        }
     }
 
     @Override
@@ -103,13 +106,30 @@ public class ReuseDetectingAuthorizationService implements OAuth2AuthorizationSe
      * invalidation (or an authorization with no refresh token at all, e.g. client-credentials)
      * leaves the family untouched, matching R39's own "called with a refresh token" scoping.
      */
-    private void revokeFamilyIfRefreshTokenInvalidated(OAuth2Authorization authorization) {
+    private static boolean isRefreshTokenInvalidated(OAuth2Authorization authorization) {
         OAuth2Authorization.Token<OAuth2RefreshToken> refreshToken = authorization.getRefreshToken();
-        if (refreshToken == null || !refreshToken.isInvalidated()) {
+        return refreshToken != null && refreshToken.isInvalidated();
+    }
+
+    /**
+     * Handles a revoke-shaped save exclusively of {@link #trackRefreshTokenIfPresent} (Kimi
+     * Phase 8 Finding 1): calling both on the same save, in the order {@code save} originally
+     * had them, would create a brand-new family via {@code trackIssuance} for an authorization
+     * this decorator had never tracked before, then immediately revoke that just-created row —
+     * a phantom family plus a misleading audit event for a session that was never active.
+     */
+    private void revokeFamilyForInvalidatedRefreshToken(OAuth2Authorization authorization) {
+        boolean revoked;
+        try {
+            revoked = tracker.revokeForAuthorization(authorization.getId(), "OAUTH2_REVOKE");
+        } catch (Exception e) {
+            // D1's safe-failure-direction: the SAS-side token invalidation already committed
+            // (delegate.save above); a family-revoke persistence failure must not surface as a
+            // caller-visible error for a call SAS itself already treated as successful.
+            log.error("Failed to revoke family for authorization {} during /oauth2/revoke",
+                    authorization.getId(), e);
             return;
         }
-
-        boolean revoked = tracker.revokeForAuthorization(authorization.getId(), "OAUTH2_REVOKE");
         if (revoked) {
             auditSessionRevoked(authorization.getId(), authorization.getPrincipalName());
         }

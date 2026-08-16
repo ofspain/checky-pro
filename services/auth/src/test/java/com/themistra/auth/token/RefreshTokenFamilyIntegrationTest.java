@@ -6,7 +6,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -16,6 +23,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * refresh_token_archive) — the specific end-to-end guarantee D-003 exists for: presenting an
  * already-rotated refresh token revokes the family, and the family's new current hash stops
  * validating once revoked.
+ *
+ * <p>Also covers T29 (R39, SAS {@code /oauth2/revoke} integration) at the D3-scoped level: calling
+ * the real {@link OAuth2AuthorizationService} bean's {@code save(...)} directly with a
+ * refresh-token-invalidated {@link OAuth2Authorization}, mirroring exactly what SAS's own
+ * revocation provider does (traced in Phase 0/3) — not a full HTTP {@code /oauth2/revoke}
+ * round-trip, which would need SAS client-credential plumbing out of this task's scope.</p>
  */
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
@@ -23,6 +36,15 @@ class RefreshTokenFamilyIntegrationTest {
 
     @Autowired
     private RefreshTokenTracker tracker;
+
+    @Autowired
+    private OAuth2AuthorizationService authorizationService;
+
+    @Autowired
+    private RegisteredClientRepository registeredClientRepository;
+
+    @Autowired
+    private AuthClientsProperties authClientsProperties;
 
     @Test
     void issuanceRotationAndReuseRevokeTheWholeFamily() {
@@ -67,5 +89,55 @@ class RefreshTokenFamilyIntegrationTest {
                 .isEqualTo(RefreshTokenTracker.ReuseCheckResult.Outcome.VALID);
         assertThat(tracker.checkAndRegisterPresentation(hashB).outcome())
                 .isEqualTo(RefreshTokenTracker.ReuseCheckResult.Outcome.VALID);
+    }
+
+    // -------------------------------------------------------------------
+    // T29 (R39) - saving an invalidated refresh token via the real OAuth2AuthorizationService
+    // -------------------------------------------------------------------
+
+    @Test // R39, D3 - the decorator's real save() path revokes the family for a genuine
+          // /oauth2/revoke-shaped invalidation, proven against the real JDBC-backed delegate.
+    void savingAnInvalidatedRefreshTokenRevokesTheFamily() {
+        RegisteredClient client =
+                registeredClientRepository.findByClientId(authClientsProperties.spa().clientId());
+        OAuth2RefreshToken refreshToken =
+                new OAuth2RefreshToken("refresh-" + UUID.randomUUID(), Instant.now());
+        OAuth2Authorization authorization = OAuth2Authorization.withRegisteredClient(client)
+                .principalName(UUID.randomUUID().toString())
+                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                .refreshToken(refreshToken)
+                .build();
+
+        authorizationService.save(authorization); // issuance - the decorator creates the family
+        assertThat(tracker.familyMissingFor(authorization.getId())).isFalse();
+
+        OAuth2Authorization invalidated =
+                OAuth2Authorization.from(authorization).invalidate(refreshToken).build();
+        authorizationService.save(invalidated); // simulates SAS's /oauth2/revoke save
+
+        String currentHash = Hashing.sha256(refreshToken.getTokenValue());
+        assertThat(tracker.checkAndRegisterPresentation(currentHash).outcome())
+                .isEqualTo(RefreshTokenTracker.ReuseCheckResult.Outcome.UNKNOWN);
+    }
+
+    @Test // Kimi Phase 8 Finding 1 regression, proven end-to-end: a revoke-shaped save for an
+          // authorization the decorator has never tracked before (its very first save is already
+          // an invalidation - e.g. after a deploy/restore gap) must not create a phantom family.
+    void savingAnInvalidatedRefreshTokenForAnUntrackedAuthorizationDoesNotCreateAPhantomFamily() {
+        RegisteredClient client =
+                registeredClientRepository.findByClientId(authClientsProperties.spa().clientId());
+        OAuth2RefreshToken refreshToken =
+                new OAuth2RefreshToken("refresh-" + UUID.randomUUID(), Instant.now());
+        OAuth2Authorization authorization = OAuth2Authorization.withRegisteredClient(client)
+                .principalName(UUID.randomUUID().toString())
+                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                .refreshToken(refreshToken)
+                .build();
+        OAuth2Authorization alreadyInvalidated =
+                OAuth2Authorization.from(authorization).invalidate(refreshToken).build();
+
+        authorizationService.save(alreadyInvalidated); // first-ever save IS already a revoke
+
+        assertThat(tracker.familyMissingFor(authorization.getId())).isTrue();
     }
 }

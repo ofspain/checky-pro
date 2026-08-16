@@ -220,4 +220,47 @@ class RefreshTokenTrackerTest {
 
         assertThat(family.getRevokedAt()).isEqualTo(firstRevokedAt);
     }
+
+    // -------------------------------------------------------------------
+    // revokeForAuthorization (T29, R39 - SAS /oauth2/revoke integration)
+    // -------------------------------------------------------------------
+
+    @Test
+    void revokeForAuthorizationRevokesExistingUnrevokedFamilyAndReturnsTrue() {
+        RefreshTokenFamily family = RefreshTokenFamily.start(
+                AUTHORIZATION_ID, PRINCIPAL, null, HASH_A, NOW.minusSeconds(60));
+        when(familyRepository.findByAuthorizationId(AUTHORIZATION_ID)).thenReturn(Optional.of(family));
+
+        boolean result = tracker.revokeForAuthorization(AUTHORIZATION_ID, "OAUTH2_REVOKE");
+
+        assertThat(result).isTrue();
+        assertThat(family.isRevoked()).isTrue();
+        assertThat(family.getRevokedReason()).isEqualTo("OAUTH2_REVOKE");
+        assertThat(family.getRevokedAt()).isEqualTo(NOW);
+        verify(familyRepository).save(family);
+    }
+
+    @Test
+    void revokeForAuthorizationIsANoOpOnAlreadyRevokedFamilyAndReturnsFalse() {
+        RefreshTokenFamily family = RefreshTokenFamily.start(
+                AUTHORIZATION_ID, PRINCIPAL, null, HASH_A, NOW.minusSeconds(60));
+        family.revoke("REUSE_DETECTED", NOW.minusSeconds(30));
+        when(familyRepository.findByAuthorizationId(AUTHORIZATION_ID)).thenReturn(Optional.of(family));
+
+        boolean result = tracker.revokeForAuthorization(AUTHORIZATION_ID, "OAUTH2_REVOKE");
+
+        assertThat(result).isFalse();
+        assertThat(family.getRevokedReason()).isEqualTo("REUSE_DETECTED"); // untouched, not overwritten
+        verify(familyRepository, never()).save(any());
+    }
+
+    @Test
+    void revokeForAuthorizationReturnsFalseWhenNoFamilyExists() {
+        when(familyRepository.findByAuthorizationId(AUTHORIZATION_ID)).thenReturn(Optional.empty());
+
+        boolean result = tracker.revokeForAuthorization(AUTHORIZATION_ID, "OAUTH2_REVOKE");
+
+        assertThat(result).isFalse();
+        verify(familyRepository, never()).save(any());
+    }
 }
