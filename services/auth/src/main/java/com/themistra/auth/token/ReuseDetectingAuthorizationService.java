@@ -42,6 +42,7 @@ public class ReuseDetectingAuthorizationService implements OAuth2AuthorizationSe
     public void save(OAuth2Authorization authorization) {
         delegate.save(authorization);
         trackRefreshTokenIfPresent(authorization);
+        revokeFamilyIfRefreshTokenInvalidated(authorization);
     }
 
     @Override
@@ -95,23 +96,59 @@ public class ReuseDetectingAuthorizationService implements OAuth2AuthorizationSe
     }
 
     /**
+     * Detects a SAS {@code /oauth2/revoke} call (T29, R39): SAS never calls {@link #remove}
+     * to revoke — it calls {@code save} with the presented token's invalidated metadata flag
+     * set (traced in SAS 1.5.1's {@code OAuth2TokenRevocationAuthenticationProvider}). Only a
+     * refresh-token invalidation cascades to revoking the family; an access-token-only
+     * invalidation (or an authorization with no refresh token at all, e.g. client-credentials)
+     * leaves the family untouched, matching R39's own "called with a refresh token" scoping.
+     */
+    private void revokeFamilyIfRefreshTokenInvalidated(OAuth2Authorization authorization) {
+        OAuth2Authorization.Token<OAuth2RefreshToken> refreshToken = authorization.getRefreshToken();
+        if (refreshToken == null || !refreshToken.isInvalidated()) {
+            return;
+        }
+
+        boolean revoked = tracker.revokeForAuthorization(authorization.getId(), "OAUTH2_REVOKE");
+        if (revoked) {
+            auditSessionRevoked(authorization.getId(), authorization.getPrincipalName());
+        }
+    }
+
+    private void auditSessionRevoked(String authorizationId, String principalName) {
+        UUID accountUuid = parseAccountUuid(principalName);
+        try {
+            auditService.record(new RecordAuditEventRequest(
+                    "session.revoked", AuditOutcome.SUCCESS, accountUuid, accountUuid,
+                    null, null, null, null));
+        } catch (Exception e) {
+            // The revoke itself already succeeded (tracker.revokeForAuthorization returned true
+            // before this call) - an audit failure must never undo it, so log and swallow rather
+            // than rethrow.
+            log.error("Failed to audit session revoke for authorization {}", authorizationId, e);
+        }
+    }
+
+    /**
      * principalName is the account UUID for interactive grants (AccountUserDetailsService) but
      * may be a client_id string for other flows; only UUID-shaped principals are attributable
      * to an account in the audit row — anything else is recorded with accountUuid=null rather
      * than guessed at.
      */
     private void auditReuseDetected(String principalName) {
-        UUID accountUuid = null;
-        if (principalName != null) {
-            try {
-                accountUuid = UUID.fromString(principalName);
-            } catch (IllegalArgumentException ignored) {
-                // not an account principal; audited without an account attribution
-            }
-        }
-
         auditService.record(new RecordAuditEventRequest(
-                "token.reuse_detected", AuditOutcome.FAILURE, accountUuid, null,
+                "token.reuse_detected", AuditOutcome.FAILURE, parseAccountUuid(principalName), null,
                 null, null, null, null));
+    }
+
+    private static UUID parseAccountUuid(String principalName) {
+        if (principalName == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(principalName);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 }

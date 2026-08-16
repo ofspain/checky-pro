@@ -81,6 +81,26 @@ public class RefreshTokenTracker {
     }
 
     /**
+     * Revokes the single family for this authorization (T29, R39 — SAS {@code /oauth2/revoke}
+     * integration), if one exists and isn't already revoked. Returns {@code true} only when a
+     * revoke actually happened, so the caller (the audit-owning
+     * {@link ReuseDetectingAuthorizationService}) knows whether to record an event — "not found"
+     * and "already revoked" both report {@code false}, matching every other revoke path's
+     * idempotency in this codebase.
+     */
+    @Transactional
+    public boolean revokeForAuthorization(String authorizationId, String reason) {
+        return familyRepository.findByAuthorizationId(authorizationId)
+                .filter(family -> !family.isRevoked())
+                .map(family -> {
+                    family.revoke(reason, clock.instant());
+                    familyRepository.save(family);
+                    return true;
+                })
+                .orElse(false);
+    }
+
+    /**
      * The reuse check. Call before trusting a presented refresh token's hash:
      * - hash matches a family's CURRENT hash → legitimate, valid presentation.
      * - hash matches an ARCHIVED (superseded) hash → replay: family is revoked and the
