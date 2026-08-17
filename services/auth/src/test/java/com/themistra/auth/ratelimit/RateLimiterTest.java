@@ -12,9 +12,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Unit tests for {@link RateLimiter} — T31, R41. Plain JUnit, no Spring context. Each test uses
  * its own small, distinct threshold via a fresh {@link RateLimitProperties} instance so bucket
  * exhaustion can be proven quickly without waiting out a real refill window (the window itself is
- * a fixed 60 real seconds, not configurable — recovery-after-refill is proven end-to-end in
- * {@code RateLimitIntegrationTest} instead of here, where a literal 60+ second wait would make
- * every unit test run slowly).
+ * a fixed 60 real seconds, not configurable). {@link #exhaustedBucketAllowsARequestAgainAfterItsWindowRefills}
+ * proves genuine refill using a high per-minute threshold (60) so the greedy refill rate is one
+ * token per second, keeping the real wait to just over a second instead of a full minute.
  */
 class RateLimiterTest {
 
@@ -98,5 +98,21 @@ class RateLimiterTest {
         assertThat(limiter.tryConsumeOauthToken(key).isConsumed()).isTrue();
         assertThat(limiter.tryConsumeOauthToken(key).isConsumed()).isTrue();
         assertThat(limiter.tryConsumeOauthToken(key).isConsumed()).isFalse();
+    }
+
+    @Test // AC5 - a throttled key is not a permanent block; it recovers once its bucket refills.
+          // Uses a 60/minute threshold so the greedy refill rate is one token per second, keeping
+          // the real wait here to just over a second rather than a full 60-second window.
+    void exhaustedBucketAllowsARequestAgainAfterItsWindowRefills() throws InterruptedException {
+        RateLimiter limiter = limiterWith(60, 5, 30);
+        String key = "user@example.com";
+        for (int i = 0; i < 60; i++) {
+            limiter.tryConsumeLogin(key);
+        }
+        assertThat(limiter.tryConsumeLogin(key).isConsumed()).isFalse();
+
+        Thread.sleep(1100);
+
+        assertThat(limiter.tryConsumeLogin(key).isConsumed()).isTrue();
     }
 }

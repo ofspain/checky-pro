@@ -17,9 +17,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.security.web.FilterChainProxy;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.session.DisableEncodeUrlFilter;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
+import jakarta.servlet.Filter;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.util.List;
@@ -39,9 +44,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Drives each path past its configured per-minute threshold (login 10, password-reset 5,
  * oauth-token 30 — {@code application.properties} defaults) directly, rather than waiting for the
- * threshold to reset, since the refill window is a fixed real 60 seconds not worth waiting out in
- * every test; only exhaustion is proven here, not post-window recovery (Bucket4j's own refill
- * mechanism is well-established, not this task's own logic to re-verify).</p>
+ * threshold to reset, since the refill window here is a fixed real 60 seconds not worth waiting
+ * out at these thresholds; refill/recovery (AC5) is proven instead in
+ * {@code RateLimiterTest.exhaustedBucketAllowsARequestAgainAfterItsWindowRefills} using a higher
+ * threshold that keeps the real wait to just over a second.</p>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(TestcontainersConfiguration.class)
@@ -58,6 +64,9 @@ class RateLimitIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private FilterChainProxy filterChainProxy;
 
     private String baseUrl;
 
@@ -149,6 +158,52 @@ class RateLimitIntegrationTest {
                 postOauthTokenRepeatedly("client_credentials", null, null, 35);
 
         assertThat(responses).noneMatch(r -> r.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS);
+    }
+
+    @Test // Kimi Phase 11 Gap 5 - D4's DoS-backstop value depends on RateLimitFilter running
+          // before credential validation in BOTH chains; every other test here proves this
+          // indirectly (wrong-password logins still get 429), this asserts the wiring directly so
+          // a future SecurityChainsConfig reorder can't silently weaken it while those still pass.
+          //
+          // DisableEncodeUrlFilter is Spring Security's own always-first infrastructure filter, so
+          // it is present (at index 0) in EVERY chain regardless of which chain RateLimitFilter was
+          // anchored to via addFilterBefore - it cannot be used to identify "the SAS chain" on its
+          // own. UsernamePasswordAuthenticationFilter, by contrast, only exists on the form-login
+          // application chain, so its presence is what distinguishes the two chains here.
+    void rateLimitFilterPrecedesAuthenticationInBothSecurityChains() {
+        for (SecurityFilterChain chain : filterChainProxy.getFilterChains()) {
+            List<Filter> filters = chain.getFilters();
+            int rateLimitIndex = indexOfType(filters, RateLimitFilter.class);
+            if (rateLimitIndex < 0) {
+                continue; // this chain doesn't carry the filter at all
+            }
+
+            int usernamePasswordIndex = indexOfType(filters, UsernamePasswordAuthenticationFilter.class);
+            if (usernamePasswordIndex >= 0) {
+                // The application chain (chain 2): anchored before UsernamePasswordAuthenticationFilter.
+                assertThat(rateLimitIndex)
+                        .as("RateLimitFilter must run before UsernamePasswordAuthenticationFilter on the application chain")
+                        .isLessThan(usernamePasswordIndex);
+            } else {
+                // The SAS chain (chain 1): anchored before DisableEncodeUrlFilter.
+                int disableEncodeUrlIndex = indexOfType(filters, DisableEncodeUrlFilter.class);
+                assertThat(disableEncodeUrlIndex)
+                        .as("DisableEncodeUrlFilter should be present in the SAS chain")
+                        .isGreaterThanOrEqualTo(0);
+                assertThat(rateLimitIndex)
+                        .as("RateLimitFilter must run before DisableEncodeUrlFilter on the SAS chain")
+                        .isLessThan(disableEncodeUrlIndex);
+            }
+        }
+    }
+
+    private static int indexOfType(List<Filter> filters, Class<?> type) {
+        for (int i = 0; i < filters.size(); i++) {
+            if (type.isInstance(filters.get(i))) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     // -------------------------------------------------------------------

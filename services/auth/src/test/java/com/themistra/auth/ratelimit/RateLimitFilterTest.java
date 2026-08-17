@@ -133,6 +133,19 @@ class RateLimitFilterTest {
         assertThat(response.getStatus()).isNotEqualTo(429);
     }
 
+    @Test // Kimi Phase 11 Gap 4 - a well-formed body missing the token field fails open too
+    void passwordResetRequestWithNoTokenFieldFailsOpen() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/accounts/password-reset");
+        request.setContent("{\"newPassword\":\"correct-horse-battery\"}".getBytes(StandardCharsets.UTF_8));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, filterChain);
+
+        verify(rateLimiter, never()).tryConsumePasswordReset(any());
+        verify(filterChain).doFilter(any(CachedBodyHttpServletRequest.class), eq(response));
+        assertThat(response.getStatus()).isNotEqualTo(429);
+    }
+
     // -------------------------------------------------------------------
     // /oauth2/token path
     // -------------------------------------------------------------------
@@ -172,6 +185,18 @@ class RateLimitFilterTest {
         filter.doFilter(request, response, filterChain);
 
         verifyNoInteractions(rateLimiter);
+    }
+
+    @Test // Kimi Phase 11 Gap 3 - a malformed refresh_token grant missing its own token fails open
+    void oauthTokenRefreshGrantWithMissingTokenIsNeverRateLimited() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+        request.setParameter("grant_type", "refresh_token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, filterChain);
+
+        verifyNoInteractions(rateLimiter);
+        verify(filterChain).doFilter(request, response);
     }
 
     @Test
@@ -218,6 +243,21 @@ class RateLimitFilterTest {
         assertThat(body.get("title").asText()).isEqualTo("Too many requests");
         assertThat(body.get("status").asInt()).isEqualTo(429);
         assertThat(body.get("instance").asText()).isEqualTo("/login");
+    }
+
+    @Test // Kimi Phase 11 Gap 2 - a sub-second wait must still round up to a valid Retry-After
+    void subSecondWaitRoundsUpToOneSecondRetryAfter() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/login");
+        request.setParameter("username", "throttled@example.com");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        ConsumptionProbe subSecondRejection =
+                ConsumptionProbe.rejected(0, TimeUnit.MILLISECONDS.toNanos(500), TimeUnit.SECONDS.toNanos(60));
+        when(rateLimiter.tryConsumeLogin(any())).thenReturn(subSecondRejection);
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getHeader("Retry-After")).isEqualTo("1");
     }
 
     @Test // D5 - a limiter failure must never surface to the caller nor block the request
