@@ -38,7 +38,23 @@ task.
   scratch/probe files from any of the four temporary verification runs across Phases 5, 7, and 9.
 - No `mvn` build step applies (no code was written or changed).
 
+## Kimi Phase 11 test review — disposition
+
+Kimi's Phase 11 review raised the same concern as Phase 8 Finding 4 a second time, now with a
+concrete proposed design ("parse `token-claims.md` and compare claim names against the code").
+**femi's gate decision (final): defer as a follow-up task, not implemented in T34.** The proposed
+test is harder than it first appears — unlike T33's `auth.yaml` (structured YAML), `token-claims.md`
+is prose mixed with markdown tables, so reliably parsing "the claim names" out of it would need
+either fragile regex-based markdown parsing or a second hand-maintained expectation list (which
+would test the code against a parallel data structure, not literally the doc's own prose — a
+lesser guarantee than it sounds like). The doc's own Verification section already names this gap
+explicitly and suggests a future test — an honest, visible acknowledgment rather than a silent
+risk. A real solution (likely restructuring the doc into something more machine-parseable, or
+deliberately accepting the parallel-list approach) is a bigger design decision than fits this
+task's own doc-only scope and deserves its own task.
+
 ---
 
-**Phase 10 complete — test manifest written (no tests, by design).** Proceed to Phase 11 (Kimi test
-review) on approval.
+**Phase 10 complete — test manifest written (no tests, by design; Phase 11's recurrence of the same
+suggestion explicitly deferred, not silently dropped).** Proceed to Phase 12 (Specification
+Verification) on approval.
