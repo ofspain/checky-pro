@@ -48,6 +48,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.StreamSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -132,6 +133,185 @@ class AuthOpenApiContractTest {
         }
     }
 
+    /** Kimi Phase 8 Finding 2: proves auth.yaml's own AccountStatus enum doesn't silently fall
+     * behind Java, mirroring UserLifecycleEventPayloadContractTest's identical-purpose test. */
+    @Test
+    void everyAccountStatusValueIsCoveredByTheAccountResponseSchemaEnum() throws Exception {
+        JsonNode authYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
+        JsonNode statusEnum = authYaml.get("components").get("schemas")
+                .get("AccountResponse").get("properties").get("status").get("enum");
+        var allowedStatuses = StreamSupport.stream(statusEnum.spliterator(), false)
+                .map(JsonNode::asText)
+                .toList();
+
+        for (AccountStatus status : AccountStatus.values()) {
+            assertThat(allowedStatuses)
+                    .as("AccountResponse.status schema enum covers AccountStatus.%s", status)
+                    .contains(status.name());
+        }
+    }
+
+    /** Kimi Phase 8 Finding 2: same proof for AuditOutcome. */
+    @Test
+    void everyAuditOutcomeValueIsCoveredByTheAuditEventResponseSchemaEnum() throws Exception {
+        JsonNode authYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
+        JsonNode outcomeEnum = authYaml.get("components").get("schemas")
+                .get("AuditEventResponse").get("properties").get("outcome").get("enum");
+        var allowedOutcomes = StreamSupport.stream(outcomeEnum.spliterator(), false)
+                .map(JsonNode::asText)
+                .toList();
+
+        for (AuditOutcome outcome : AuditOutcome.values()) {
+            assertThat(allowedOutcomes)
+                    .as("AuditEventResponse.outcome schema enum covers AuditOutcome.%s", outcome)
+                    .contains(outcome.name());
+        }
+    }
+
+    /**
+     * Kimi Phase 8 Finding 1: none of the other checks prove an operation's own {@code $ref}
+     * actually names the CORRECT component — {@link #everyComponentSchemaMatchesItsRealDtoShape}
+     * only checks that named components are internally correct, and completeness only checks that
+     * routes exist. This maps every route with a documented response to its expected component
+     * (Phase 5's own inventory table, restated here as the executable check) and resolves the
+     * YAML's actual {@code $ref} to compare. Deliberately an explicit expectation table, not fully
+     * automated type-reflection: {@code ApiKeyService.CreateApiKeyResult}'s YAML component is
+     * intentionally named {@code ApiKeyCreateResult} (not a 1:1 simple-name match), and resolving
+     * generic wrapper types ({@code List<T>}/{@code Set<String>}) via reflection would add real
+     * complexity for the same result this table already gives directly.
+     */
+    @Test
+    void everyOperationResponseReferencesTheExpectedSchema() throws Exception {
+        JsonNode authYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
+        for (Map.Entry<Route, ExpectedSchema> entry : expectedResponseSchemas().entrySet()) {
+            assertThat(actualResponseSchema(authYaml, entry.getKey()))
+                    .as("%s response schema", entry.getKey())
+                    .isEqualTo(entry.getValue());
+        }
+    }
+
+    /** Kimi Phase 8 Finding 1, request-body half. */
+    @Test
+    void everyOperationRequestBodyReferencesTheExpectedSchema() throws Exception {
+        JsonNode authYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
+        for (Map.Entry<Route, ExpectedSchema> entry : expectedRequestSchemas().entrySet()) {
+            assertThat(actualRequestSchema(authYaml, entry.getKey()))
+                    .as("%s request schema", entry.getKey())
+                    .isEqualTo(entry.getValue());
+        }
+    }
+
+    private record ExpectedSchema(String kind, String name) {
+        static ExpectedSchema ref(String name) {
+            return new ExpectedSchema("ref", name);
+        }
+
+        static ExpectedSchema arrayOfRef(String name) {
+            return new ExpectedSchema("arrayRef", name);
+        }
+
+        static ExpectedSchema arrayOfPrimitive() {
+            return new ExpectedSchema("arrayPrimitive", null);
+        }
+
+        static ExpectedSchema none() {
+            return new ExpectedSchema("none", null);
+        }
+    }
+
+    private ExpectedSchema actualResponseSchema(JsonNode authYaml, Route route) {
+        JsonNode operation = authYaml.get("paths").get(route.path()).get(route.method().toLowerCase(Locale.ROOT));
+        JsonNode responses = operation.get("responses");
+        var statusCodes = responses.fieldNames();
+        while (statusCodes.hasNext()) {
+            String status = statusCodes.next();
+            if (status.startsWith("2")) {
+                JsonNode content = responses.get(status).get("content");
+                if (content == null) {
+                    return ExpectedSchema.none();
+                }
+                return parseSchemaNode(content.get("application/json").get("schema"));
+            }
+        }
+        return ExpectedSchema.none();
+    }
+
+    private ExpectedSchema actualRequestSchema(JsonNode authYaml, Route route) {
+        JsonNode operation = authYaml.get("paths").get(route.path()).get(route.method().toLowerCase(Locale.ROOT));
+        JsonNode requestBody = operation.get("requestBody");
+        if (requestBody == null) {
+            return ExpectedSchema.none();
+        }
+        return parseSchemaNode(requestBody.get("content").get("application/json").get("schema"));
+    }
+
+    private ExpectedSchema parseSchemaNode(JsonNode schema) {
+        if (schema.has("$ref")) {
+            return ExpectedSchema.ref(refName(schema.get("$ref").asText()));
+        }
+        if (schema.has("type") && "array".equals(schema.get("type").asText())) {
+            JsonNode items = schema.get("items");
+            if (items.has("$ref")) {
+                return ExpectedSchema.arrayOfRef(refName(items.get("$ref").asText()));
+            }
+            return ExpectedSchema.arrayOfPrimitive();
+        }
+        throw new IllegalStateException("Unrecognized schema node shape: " + schema);
+    }
+
+    private String refName(String ref) {
+        return ref.substring(ref.lastIndexOf('/') + 1);
+    }
+
+    private Map<Route, ExpectedSchema> expectedResponseSchemas() {
+        Map<Route, ExpectedSchema> m = new LinkedHashMap<>();
+        m.put(new Route("POST", "/accounts"), ExpectedSchema.ref("RegistrationAcknowledgement"));
+        m.put(new Route("GET", "/accounts/me"), ExpectedSchema.ref("AccountResponse"));
+        m.put(new Route("POST", "/accounts/verify-email"), ExpectedSchema.none());
+        m.put(new Route("POST", "/accounts/resend-verification"), ExpectedSchema.ref("RegistrationAcknowledgement"));
+        m.put(new Route("POST", "/accounts/password-reset-request"), ExpectedSchema.ref("RegistrationAcknowledgement"));
+        m.put(new Route("POST", "/accounts/password-reset"), ExpectedSchema.none());
+        m.put(new Route("POST", "/accounts/me/password"), ExpectedSchema.none());
+        m.put(new Route("GET", "/accounts/me/sessions"), ExpectedSchema.arrayOfRef("SessionResponse"));
+        m.put(new Route("DELETE", "/accounts/me/sessions/{familyId}"), ExpectedSchema.none());
+        m.put(new Route("DELETE", "/accounts/me/sessions"), ExpectedSchema.none());
+        m.put(new Route("GET", "/admin/accounts/{accountUuid}"), ExpectedSchema.ref("AccountResponse"));
+        m.put(new Route("POST", "/admin/accounts/{accountUuid}/activate"), ExpectedSchema.ref("AccountResponse"));
+        m.put(new Route("POST", "/admin/accounts/{accountUuid}/suspend"), ExpectedSchema.ref("AccountResponse"));
+        m.put(new Route("POST", "/admin/accounts/{accountUuid}/reinstate"), ExpectedSchema.ref("AccountResponse"));
+        m.put(new Route("DELETE", "/admin/accounts/{accountUuid}"), ExpectedSchema.ref("AccountResponse"));
+        m.put(new Route("POST", "/admin/accounts/{accountUuid}/unlock"), ExpectedSchema.ref("AccountResponse"));
+        m.put(new Route("POST", "/api-keys"), ExpectedSchema.ref("ApiKeyCreateResult"));
+        m.put(new Route("GET", "/api-keys"), ExpectedSchema.arrayOfRef("ApiKeyMetadata"));
+        m.put(new Route("DELETE", "/api-keys/{keyUuid}"), ExpectedSchema.none());
+        m.put(new Route("POST", "/api-keys/token"), ExpectedSchema.ref("ApiKeyTokenResponse"));
+        m.put(new Route("GET", "/admin/accounts/{accountUuid}/roles"), ExpectedSchema.arrayOfPrimitive());
+        m.put(new Route("POST", "/admin/accounts/{accountUuid}/roles/{roleName}"), ExpectedSchema.none());
+        m.put(new Route("DELETE", "/admin/accounts/{accountUuid}/roles/{roleName}"), ExpectedSchema.none());
+        m.put(new Route("POST", "/admin/accounts/{accountUuid}/role-templates/{templateName}"), ExpectedSchema.none());
+        m.put(new Route("DELETE", "/admin/accounts/{accountUuid}/role-templates/{templateName}"), ExpectedSchema.none());
+        m.put(new Route("POST", "/admin/roles"), ExpectedSchema.ref("RoleResponse"));
+        m.put(new Route("GET", "/admin/roles"), ExpectedSchema.arrayOfRef("RoleResponse"));
+        m.put(new Route("POST", "/admin/role-templates"), ExpectedSchema.ref("RoleTemplateResponse"));
+        m.put(new Route("GET", "/admin/role-templates"), ExpectedSchema.arrayOfRef("RoleTemplateResponse"));
+        m.put(new Route("GET", "/admin/audit"), ExpectedSchema.ref("AuditEventPage"));
+        return m;
+    }
+
+    private Map<Route, ExpectedSchema> expectedRequestSchemas() {
+        Map<Route, ExpectedSchema> m = new LinkedHashMap<>();
+        m.put(new Route("POST", "/accounts"), ExpectedSchema.ref("RegisterAccountRequest"));
+        m.put(new Route("POST", "/accounts/verify-email"), ExpectedSchema.ref("VerifyEmailRequest"));
+        m.put(new Route("POST", "/accounts/resend-verification"), ExpectedSchema.ref("ResendVerificationRequest"));
+        m.put(new Route("POST", "/accounts/password-reset-request"), ExpectedSchema.ref("PasswordResetRequest"));
+        m.put(new Route("POST", "/accounts/password-reset"), ExpectedSchema.ref("PasswordResetConfirmRequest"));
+        m.put(new Route("POST", "/accounts/me/password"), ExpectedSchema.ref("ChangePasswordRequest"));
+        m.put(new Route("POST", "/api-keys"), ExpectedSchema.ref("CreateApiKeyRequest"));
+        m.put(new Route("POST", "/admin/roles"), ExpectedSchema.ref("CreateRoleRequest"));
+        m.put(new Route("POST", "/admin/role-templates"), ExpectedSchema.ref("CreateRoleTemplateRequest"));
+        return m;
+    }
+
     private Set<Route> yamlRoutes() throws Exception {
         JsonNode authYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
         Set<Route> routes = new LinkedHashSet<>();
@@ -144,6 +324,14 @@ class AuthOpenApiContractTest {
         return routes;
     }
 
+    /**
+     * Known limitation (Phase 7 self-review Finding 1 / Kimi Phase 8 Finding 4): a handler using a
+     * bare {@code @RequestMapping} with no explicit HTTP method yields an empty
+     * {@code mapping.method()} array, so the loop below silently adds zero routes for it — such a
+     * handler would be skipped by both completeness checks rather than flagged. No handler in this
+     * codebase does this today (every one uses a method-fixing shorthand like {@code @GetMapping}),
+     * so this is a documented, currently-dormant gap, not a live defect.
+     */
     private Set<Route> controllerRoutes() {
         Set<Route> routes = new LinkedHashSet<>();
         for (Class<?> controller : CONTROLLERS) {
