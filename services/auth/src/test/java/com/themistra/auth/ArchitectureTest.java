@@ -83,6 +83,16 @@ class ArchitectureTest {
                     + "confined to mfa.MfaSeedEncryption and nowhere else");
 
     @ArchTest
+    static final ArchRule cleanup_job_never_depends_on_repositories_directly = noClasses()
+            .that().resideInAPackage("com.themistra.auth.cleanup..")
+            .should().dependOnClassesThat().haveSimpleNameEndingWith("Repository")
+            .because("the T30 cleanup job resolves the account/token module-boundary tension "
+                    + "(Phase 4 D1) by calling VerificationTokenService/RefreshTokenTracker only "
+                    + "— it must never depend on either module's repository directly, even though "
+                    + "the repositories_are_never_public rule above already keeps both "
+                    + "package-private");
+
+    @ArchTest
     static final ArchRule admin_controller_handlers_require_preauthorize = methods()
             .that().arePublic()
             .and().areDeclaredInClassesThat().haveSimpleNameStartingWith("Admin")

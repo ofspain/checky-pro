@@ -2,6 +2,7 @@ package com.themistra.auth.cleanup;
 
 import com.themistra.auth.account.VerificationTokenService;
 import com.themistra.auth.token.RefreshTokenTracker;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -9,7 +10,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 
+import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -54,6 +57,24 @@ class CleanupJobTest {
         job = new CleanupJob(verificationTokenService, refreshTokenTracker, jdbcTemplate, properties, fixedClock);
     }
 
+    @Test // Kimi Phase 11 Gap 3 - every other test here either mocks collaborators or calls
+          // run() directly, bypassing ShedLock's AOP proxy entirely; a future edit that silently
+          // dropped @SchedulerLock (breaking AC5's multi-replica guarantee) would still pass every
+          // other test in this file, so this reflects on the method itself to catch it.
+    void runIsAnnotatedWithScheduledAndSchedulerLock() throws NoSuchMethodException {
+        Method run = CleanupJob.class.getDeclaredMethod("run");
+
+        Scheduled scheduled = run.getAnnotation(Scheduled.class);
+        assertThat(scheduled).isNotNull();
+        assertThat(scheduled.cron()).isEqualTo("${themistra.auth.cleanup.cron}");
+
+        SchedulerLock schedulerLock = run.getAnnotation(SchedulerLock.class);
+        assertThat(schedulerLock).isNotNull();
+        assertThat(schedulerLock.name()).isEqualTo("auth-cleanup-job");
+        assertThat(schedulerLock.lockAtLeastFor()).isEqualTo("PT1M");
+        assertThat(schedulerLock.lockAtMostFor()).isEqualTo("PT1H");
+    }
+
     @Test
     void runDeletesExpiredTokensUsingCurrentInstantAsCutoff() {
         job.run();
@@ -76,10 +97,11 @@ class CleanupJobTest {
         ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
         verify(jdbcTemplate).update(sqlCaptor.capture(), cutoffCaptor.capture());
 
+        // Kimi Phase 11 Gap 4 - exact match, not substring: a substring check alone wouldn't
+        // catch the two lock_until clauses being ORed instead of ANDed, which would defeat D4's
+        // safety guard while still containing all three substrings.
         assertThat(sqlCaptor.getValue())
-                .contains("DELETE FROM shedlock")
-                .contains("lock_until < ?")
-                .contains("lock_until < now()"); // D4's safety guard: never prune a currently-held lock
+                .isEqualTo("DELETE FROM shedlock WHERE lock_until < ? AND lock_until < now()");
         assertThat(cutoffCaptor.getValue()).isEqualTo(NOW.minus(TOKEN_RETENTION_DAYS, ChronoUnit.DAYS));
     }
 
