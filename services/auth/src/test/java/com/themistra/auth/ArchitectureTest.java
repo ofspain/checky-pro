@@ -2,7 +2,9 @@ package com.themistra.auth;
 
 import com.themistra.auth.common.PublicEndpoints;
 import com.themistra.auth.token.SecurityChainsConfig;
+import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaModifier;
+import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -124,5 +126,23 @@ class ArchitectureTest {
     void apiKeysTokenExchangeIsInThePublicAllowlist() {
         assertThat(PublicEndpoints.METHOD_SCOPED)
                 .contains(new PublicEndpoints.MethodScoped(HttpMethod.POST, "/api-keys/token"));
+    }
+
+    /**
+     * Kimi Phase 8 Finding 2: ArchUnit's own JUnit 5 engine does not execute under this project's
+     * Maven Surefire setup today (confirmed via a real negative-proof run — a deliberately
+     * introduced violation did not fail {@code mvn test}), so {@code @ArchTest} fields alone do
+     * not currently gate a real build. This plain {@code @Test} (JUnit Jupiter, proven to execute
+     * under Surefire) re-imports the same classes {@code @AnalyzeClasses} would and directly
+     * invokes {@link #shouldEnforcePublicEndpointAllowlist}'s own {@code check(...)}, so this
+     * task's specific named rule is enforced by {@code mvn test} regardless of the separate,
+     * out-of-scope Surefire/ArchUnit engine-integration gap.
+     */
+    @Test
+    void shouldEnforcePublicEndpointAllowlistActuallyRunsUnderThisBuild() {
+        JavaClasses classes = new ClassFileImporter()
+                .withImportOption(new ImportOption.DoNotIncludeTests())
+                .importPackages("com.themistra.auth");
+        shouldEnforcePublicEndpointAllowlist.check(classes);
     }
 }
