@@ -22,7 +22,7 @@ added in this phase — this is purely the manifest.
 | `payloadWithNullAccountAndActorUuidStillMatchesTheSchema` | AC2 — proves the schema's `required` list doesn't wrongly demand the genuinely-nullable `accountUuid`/`actorUuid` (Phase 1's confirmed nullability). |
 | `everyAuditOutcomeValueIsCoveredByTheSchemaEnum` | AC2 — the schema's `outcome` enum doesn't silently fall behind `AuditOutcome`. |
 
-## `AuthOpenApiContractTest.java` (new — 7 tests, the named test `shouldConformToAuthOpenApiContract`'s intent split across purpose-named methods)
+## `AuthOpenApiContractTest.java` (10 tests after Phase 11 — see gap closures below)
 
 | Test | Verifies |
 |---|---|
@@ -33,12 +33,27 @@ added in this phase — this is purely the manifest.
 | `everyOperationRequestBodyReferencesTheExpectedSchema` (Kimi Phase 8 Finding 1 closure) | AC3 — same proof for the 9 operations with request bodies. |
 | `everyAccountStatusValueIsCoveredByTheAccountResponseSchemaEnum` (Kimi Phase 8 Finding 2 closure) | AC3 — `AccountResponse.status`'s OpenAPI enum doesn't silently fall behind `AccountStatus`. |
 | `everyAuditOutcomeValueIsCoveredByTheAuditEventResponseSchemaEnum` (Kimi Phase 8 Finding 2 closure) | AC3 — same proof for `AuditEventResponse.outcome`. |
+| `shouldConformToAuthOpenApiContract` (Kimi Phase 11 Gap 1 closure) | The named test itself — delegates to the 7 rows above. |
+| `expectedResponseSchemasCoverEveryControllerRoute` (Kimi Phase 11 Gap 2 closure) | Meta-guard — the hand-maintained `expectedResponseSchemas()` table can't silently miss a route; negative-proofed by removing an entry and confirming this test (not a downstream one) names the gap. |
+| `expectedRequestSchemasCoverEveryRequestBodyHandler` (Kimi Phase 11 Gap 2 closure) | Meta-guard — same guarantee for `expectedRequestSchemas()`, compared against real `@RequestBody`-bearing handlers via reflection. |
 
-**Named test mapping:** `package.md` §8's `shouldConformToAuthOpenApiContract` is realized as all 7
-methods above together, not one single method — each proves a distinct, independently-nameable
-failure mode (missing endpoint, stale endpoint, wrong component shape, wrong component *reference*,
-enum drift) rather than one monolithic assertion whose failure message would need to explain which
-of five different things went wrong.
+**Named test mapping:** `package.md` §8's `shouldConformToAuthOpenApiContract` exists as its own
+method (added at Phase 11, closing Kimi's Gap 1 — a single greppable name matching the spec
+exactly), which delegates to all 7 methods above so each still reports its own specific failure
+message rather than one opaque pass/fail.
+
+## Kimi Phase 11 test review — gaps closed
+
+| Gap | Disposition |
+|---|---|
+| Gap 1 — no single method named `shouldConformToAuthOpenApiContract` | Closed — added, delegates to the 7 purpose-named checks. |
+| Gap 2 — `expectedResponseSchemas()`/`expectedRequestSchemas()` are hand-maintained with no guard against a forgotten entry | Closed — added `expectedResponseSchemasCoverEveryControllerRoute` and `expectedRequestSchemasCoverEveryRequestBodyHandler`, each asserting the table's key set exactly matches the real routes (the latter via a new `routesWithRequestBody()` reflection helper detecting `@RequestBody`-annotated parameters). Negative-proofed: removing one entry from `expectedResponseSchemas()` failed the new guard test by name; reverted. |
+| Gap 3 — 2xx response selection relied on YAML field-iteration order | Closed — `actualResponseSchema` now picks the numerically-lowest 2xx status explicitly. |
+| Gap 4 — contract file path is relative to Surefire's working directory | Accepted, no change — identical to `UserLifecycleEventPayloadContractTest`'s own existing, already-accepted convention; fixing it here alone would be inconsistent with the pattern this task was instructed to mirror, and fixing it everywhere is a separate, unrelated task. |
+
+`AuthOpenApiContractTest` grew from 7 to 10 tests (the named test + 2 guard tests added, the
+existing 7 unchanged in behavior aside from Gap 3's determinism fix). T33's full new-test count is
+now **15** (2 + 3 + 10).
 
 **`shouldRouteEmailRequestedEventsToAuthEmailRequestedTopic`** — already existed
 (`EventTopicsTest.java`, added in an earlier task), reconfirmed green as a regression check, no
@@ -65,14 +80,13 @@ new work.
 ## Verification performed
 
 - `mvn -pl services/auth clean test-compile` — clean, no errors.
-- `mvn -pl services/auth test -Dtest='AuthOpenApiContractTest,EmailRequestedEventPayloadContractTest,AuditMirrorPayloadContractTest'`
-  — **12/12 pass** (7 + 2 + 3).
-- `mvn -pl services/auth test -Dtest='EventTopicsTest'` — **3/3 pass**, confirms no regression to
-  the pre-existing named test.
-- Five total negative-proof runs across Phases 6 and 9 (two completeness, one YAML-syntax-error
-  discovery, two `$ref`-correctness), each confirmed to fail for the right reason and reverted
-  before this manifest was written.
+- `mvn -pl services/auth test -Dtest='AuthOpenApiContractTest,EmailRequestedEventPayloadContractTest,AuditMirrorPayloadContractTest,EventTopicsTest'`
+  — **18/18 pass** (10 + 2 + 3 + 3).
+- Six total negative-proof runs across Phases 6, 9, and 11 (two completeness, one
+  YAML-syntax-error discovery, two `$ref`-correctness, one guard-test-catches-a-forgotten-table-entry),
+  each confirmed to fail for the right reason and reverted before this manifest was finalized.
 
 ---
 
-**Phase 10 complete — test manifest written.** Proceed to Phase 11 (Kimi test review) on approval.
+**Phase 10 complete — test manifest written and updated post-Phase-11.** Proceed to Phase 12
+(Specification Verification) on approval.

@@ -35,6 +35,7 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 import java.lang.reflect.Method;
@@ -201,6 +202,72 @@ class AuthOpenApiContractTest {
         }
     }
 
+    /**
+     * The named test (`package.md` §8): {@code shouldConformToAuthOpenApiContract}. Kimi Phase 11
+     * Gap 1 — the conformance intent is split across seven purpose-named methods so each failure
+     * mode reports its own clear message, but a single greppable method matching the spec's own
+     * name is still needed for tooling/reviewers; this delegates to all seven.
+     */
+    @Test
+    void shouldConformToAuthOpenApiContract() throws Exception {
+        everyControllerHandlerIsDocumentedInAuthYaml();
+        authYamlDocumentsNoRouteThatDoesNotHaveARealHandler();
+        everyComponentSchemaMatchesItsRealDtoShape();
+        everyOperationResponseReferencesTheExpectedSchema();
+        everyOperationRequestBodyReferencesTheExpectedSchema();
+        everyAccountStatusValueIsCoveredByTheAccountResponseSchemaEnum();
+        everyAuditOutcomeValueIsCoveredByTheAuditEventResponseSchemaEnum();
+    }
+
+    /** Kimi Phase 11 Gap 2: fails loudly if a route is ever added without also adding it to
+     * {@link #expectedResponseSchemas()} — without this, a forgotten table entry would simply
+     * never be checked by {@link #everyOperationResponseReferencesTheExpectedSchema()}. */
+    @Test
+    void expectedResponseSchemasCoverEveryControllerRoute() {
+        assertThat(expectedResponseSchemas().keySet())
+                .as("expectedResponseSchemas() must have one entry per real controller route")
+                .isEqualTo(controllerRoutes());
+    }
+
+    /** Kimi Phase 11 Gap 2: same guarantee for {@link #expectedRequestSchemas()}, compared against
+     * the actual set of routes whose handler takes a {@code @RequestBody} parameter. */
+    @Test
+    void expectedRequestSchemasCoverEveryRequestBodyHandler() {
+        assertThat(expectedRequestSchemas().keySet())
+                .as("expectedRequestSchemas() must have one entry per real @RequestBody handler")
+                .isEqualTo(routesWithRequestBody());
+    }
+
+    private Set<Route> routesWithRequestBody() {
+        Set<Route> routes = new LinkedHashSet<>();
+        for (Class<?> controller : CONTROLLERS) {
+            RequestMapping classMapping = AnnotatedElementUtils.findMergedAnnotation(controller, RequestMapping.class);
+            String basePath = classMapping != null && classMapping.value().length > 0 ? classMapping.value()[0] : "";
+            for (Method method : controller.getDeclaredMethods()) {
+                RequestMapping mapping = AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class);
+                if (mapping == null) {
+                    continue;
+                }
+                boolean hasRequestBody = false;
+                for (var parameter : method.getParameters()) {
+                    if (parameter.isAnnotationPresent(RequestBody.class)) {
+                        hasRequestBody = true;
+                        break;
+                    }
+                }
+                if (!hasRequestBody) {
+                    continue;
+                }
+                String subPath = mapping.value().length > 0 ? mapping.value()[0] : "";
+                String fullPath = basePath + subPath;
+                for (var httpMethod : mapping.method()) {
+                    routes.add(new Route(httpMethod.name(), fullPath));
+                }
+            }
+        }
+        return routes;
+    }
+
     private record ExpectedSchema(String kind, String name) {
         static ExpectedSchema ref(String name) {
             return new ExpectedSchema("ref", name);
@@ -219,21 +286,34 @@ class AuthOpenApiContractTest {
         }
     }
 
+    /**
+     * Kimi Phase 11 Gap 3: picks the numerically-lowest 2xx status rather than the first one
+     * encountered in YAML field-iteration order — deterministic even if a future operation ever
+     * documents more than one 2xx response (none does today, but field order is an incidental
+     * property of the YAML file, not a contract this test should rely on).
+     */
     private ExpectedSchema actualResponseSchema(JsonNode authYaml, Route route) {
         JsonNode operation = authYaml.get("paths").get(route.path()).get(route.method().toLowerCase(Locale.ROOT));
         JsonNode responses = operation.get("responses");
+        Integer lowest = null;
         var statusCodes = responses.fieldNames();
         while (statusCodes.hasNext()) {
             String status = statusCodes.next();
             if (status.startsWith("2")) {
-                JsonNode content = responses.get(status).get("content");
-                if (content == null) {
-                    return ExpectedSchema.none();
+                int code = Integer.parseInt(status);
+                if (lowest == null || code < lowest) {
+                    lowest = code;
                 }
-                return parseSchemaNode(content.get("application/json").get("schema"));
             }
         }
-        return ExpectedSchema.none();
+        if (lowest == null) {
+            return ExpectedSchema.none();
+        }
+        JsonNode content = responses.get(String.valueOf(lowest)).get("content");
+        if (content == null) {
+            return ExpectedSchema.none();
+        }
+        return parseSchemaNode(content.get("application/json").get("schema"));
     }
 
     private ExpectedSchema actualRequestSchema(JsonNode authYaml, Route route) {
@@ -263,6 +343,13 @@ class AuthOpenApiContractTest {
         return ref.substring(ref.lastIndexOf('/') + 1);
     }
 
+    /**
+     * Kimi Phase 11 Gap 2: this table must be updated whenever a route is added, removed, or
+     * changes its response shape — the route-completeness tests alone would not catch a missing
+     * entry here (a new route simply wouldn't be checked by the two operation-reference tests
+     * below). {@link #expectedResponseSchemasCoverEveryControllerRoute()} guards against silently
+     * forgetting to update this table when a route is added.
+     */
     private Map<Route, ExpectedSchema> expectedResponseSchemas() {
         Map<Route, ExpectedSchema> m = new LinkedHashMap<>();
         m.put(new Route("POST", "/accounts"), ExpectedSchema.ref("RegistrationAcknowledgement"));
@@ -298,6 +385,10 @@ class AuthOpenApiContractTest {
         return m;
     }
 
+    /**
+     * Kimi Phase 11 Gap 2: same maintenance risk as {@link #expectedResponseSchemas()}, guarded by
+     * {@link #expectedRequestSchemasCoverEveryRequestBodyHandler()}.
+     */
     private Map<Route, ExpectedSchema> expectedRequestSchemas() {
         Map<Route, ExpectedSchema> m = new LinkedHashMap<>();
         m.put(new Route("POST", "/accounts"), ExpectedSchema.ref("RegisterAccountRequest"));
