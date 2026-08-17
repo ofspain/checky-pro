@@ -26,8 +26,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * design decision said "no module may do X" — this class is where that stops being a comment
  * and starts being something that fails the build.
  */
-@AnalyzeClasses(packages = "com.themistra.auth", importOptions = ImportOption.DoNotIncludeTests.class)
+@AnalyzeClasses(packages = ArchitectureTest.ANALYZED_PACKAGE, importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
+
+    /** Single source of truth for the package {@code @AnalyzeClasses} scans — also used by
+     * {@link #analyzedClasses()} so the two can never silently drift apart (Kimi Phase 11 Gap 1). */
+    static final String ANALYZED_PACKAGE = "com.themistra.auth";
 
     @ArchTest
     static final ArchRule only_the_account_module_may_touch_the_Account_entity = noClasses()
@@ -136,13 +140,22 @@ class ArchitectureTest {
      * under Surefire) re-imports the same classes {@code @AnalyzeClasses} would and directly
      * invokes {@link #shouldEnforcePublicEndpointAllowlist}'s own {@code check(...)}, so this
      * task's specific named rule is enforced by {@code mvn test} regardless of the separate,
-     * out-of-scope Surefire/ArchUnit engine-integration gap.
+     * out-of-scope Surefire/ArchUnit engine-integration gap. Deliberately scoped to only this one
+     * rule (Kimi Phase 11 Gap 2) — the other 9 pre-existing {@code @ArchTest} rules in this file
+     * remain un-gated by {@code mvn test} until that separate, broader issue is fixed; generalizing
+     * this workaround to cover all of them was judged out of scope for this task.
      */
     @Test
-    void shouldEnforcePublicEndpointAllowlistActuallyRunsUnderThisBuild() {
-        JavaClasses classes = new ClassFileImporter()
+    void shouldEnforcePublicEndpointAllowlistIsCheckedDuringStandardBuild() {
+        shouldEnforcePublicEndpointAllowlist.check(analyzedClasses());
+    }
+
+    /** Kimi Phase 11 Gap 1: the exact same scan configuration {@code @AnalyzeClasses} declares,
+     * so {@link #shouldEnforcePublicEndpointAllowlistIsCheckedDuringStandardBuild} can never
+     * silently check a different class set than the annotation-driven rules do. */
+    private static JavaClasses analyzedClasses() {
+        return new ClassFileImporter()
                 .withImportOption(new ImportOption.DoNotIncludeTests())
-                .importPackages("com.themistra.auth");
-        shouldEnforcePublicEndpointAllowlist.check(classes);
+                .importPackages(ANALYZED_PACKAGE);
     }
 }
