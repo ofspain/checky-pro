@@ -9,21 +9,24 @@ because another path happens to include it.
 
 ## The 13 claims
 
-| Claim | Meaning |
-|---|---|
-| `iss` | The issuer URI of this auth service. |
-| `sub` | The token's principal — an account UUID, or a client id, depending on issuance path (see below). |
-| `aud` | The intended audience — a client id in every path. |
-| `exp` | Expiry time (Unix seconds). |
-| `iat` | Issued-at time (Unix seconds). |
-| `nbf` | Not-before time (Unix seconds) — always equal to `iat` in this service. |
-| `jti` | A random, per-token UUID. |
-| `scope` | The authorized OAuth2 scopes, as a **JSON array of strings** (verified against a real, running token — see Verification below; not a space-separated string). |
-| `roles` | This service's effective, template-expanded RBAC role names, as a flat JSON array of strings. |
-| `client_id` | The client the token was issued for. |
-| `amr` | Authentication Methods Reference — how the caller authenticated, as a JSON array of strings. |
-| `acr` | Authentication Context Class Reference — a single URN summarizing the authentication strength achieved. |
-| `email_verified` | Whether the account's email is verified — semantics vary sharply by path (see below). |
+**Presence by path** (Kimi Phase 8 Finding 3 — a reader must not assume a claim is present just
+because it's in this table; see the three per-path sections below for the authoritative shape):
+
+| Claim | Meaning | Path 1 (interactive) | Path 2 (`client_credentials`) | Path 3 (API-key) |
+|---|---|---|---|---|
+| `iss` | The issuer URI of this auth service. | ✓ | ✓ | ✓ |
+| `sub` | The token's principal — an account UUID, or a client id, depending on issuance path. | ✓ | ✓ | ✓ |
+| `aud` | The intended audience — a client id, serialized as a **bare JSON string** in every path today (each path constructs a one-element list; Nimbus's JWT serialization collapses a single audience to a string per RFC 7519 §4.1.3, not `["..."]` — verified against the same real token used to verify `scope`'s shape). | ✓ | ✓ | ✓ |
+| `exp` | Expiry time (Unix seconds). | ✓ | ✓ | ✓ |
+| `iat` | Issued-at time (Unix seconds). | ✓ | ✓ | ✓ |
+| `nbf` | Not-before time (Unix seconds) — always equal to `iat` in this service. | ✓ | ✓ | ✓ |
+| `jti` | A random, per-token UUID. | ✓ | ✓ | ✓ |
+| `scope` | The authorized OAuth2 scopes, as a **JSON array of strings** (verified against a real, running token — see Verification below; not a space-separated string). | ✓ | ✓ | ✓ |
+| `roles` | This service's effective, template-expanded RBAC role names, as a flat JSON array of strings. | ✓ | — | ✓ |
+| `client_id` | The client the token was issued for. | — | — | ✓ |
+| `amr` | Authentication Methods Reference — how the caller authenticated, as a JSON array of strings. | ✓ | ✓ | ✓ |
+| `acr` | Authentication Context Class Reference — a single URN summarizing the authentication strength achieved. | ✓ | — | ✓ |
+| `email_verified` | Whether the account's email is verified — semantics vary sharply by path (see below). | ✓ | — | ✓ |
 
 **No PII beyond `email_verified`.** No access token issued by this service ever contains an email
 address or a name; those live in the `id_token`/`/userinfo` response for interactive logins only.
@@ -38,14 +41,14 @@ address or a name; those live in the `id_token`/`/userinfo` response for interac
 |---|---|
 | `iss` | This service's configured issuer URI (Spring Authorization Server default). |
 | `sub` | The account UUID. |
-| `aud` | The client id (e.g. `checky-spa` for the first-party SPA) — SAS default. |
+| `aud` | The client id (e.g. `checky-spa` for the first-party SPA), as a bare string — SAS default. |
 | `exp` / `iat` / `nbf` | SAS defaults; 10-minute access-token TTL. |
 | `jti` | Random UUID, SAS default. |
 | `scope` | JSON array of the scopes authorized for this login (e.g. `["openid"]`). |
 | `roles` | Effective roles, resolved fresh on every token issuance (never cached) — a role-template edit affects only future tokens. |
 | `amr` | `["pwd"]`, or `["pwd","otp"]` if TOTP/recovery-code verification was completed this login. |
 | `acr` | `urn:themistra:acr:pwd`, or `urn:themistra:acr:otp` if MFA was completed. |
-| `email_verified` | `true` if and only if the `email` OIDC scope was authorized for this request — reflects scope authorization, not literally "has this account verified its email" (a `PENDING_VERIFICATION` account cannot reach an interactive login at all, so in practice this is always `true` for any token that exists). |
+| `email_verified` | `true` if and only if the `email` OIDC scope was authorized for this specific request — reflects scope authorization, not literally "has this account verified its email." Callers may see either value depending on what the client requested at `/oauth2/authorize`: a real, currently-issued token requesting only `scope=openid` (no `email` scope) carries `email_verified=false` — confirmed directly against a real token, not assumed. |
 | `client_id` | **Absent.** Spring Authorization Server's `JwtGenerator` (1.5.1) never adds a `client_id` claim to any JWT it mints, for any grant type — confirmed directly in its source. Nothing in this service adds one back for this path. |
 
 ## Path 2 — Service-to-service (`client_credentials` grant)
@@ -56,7 +59,7 @@ address or a name; those live in the `id_token`/`/userinfo` response for interac
 |---|---|
 | `iss` / `exp` / `iat` / `nbf` / `jti` | Same Spring Authorization Server defaults as Path 1. |
 | `sub` | The service client's own client id — for `client_credentials`, the authenticated client itself is the token's principal. |
-| `aud` | The same client id (identical default mechanism to Path 1). |
+| `aud` | The same client id, as a bare string (identical default mechanism to Path 1). |
 | `scope` | JSON array of the scopes configured for that service client. |
 | `amr` | `["client_secret"]`. |
 | `roles` | **Absent.** A service client has no RBAC roles of its own — there is no account to resolve them against. |
@@ -76,7 +79,7 @@ for this one path, which is why it alone reaches all 13.
 |---|---|
 | `iss` | The same configured issuer URI, read directly from configuration (no SAS grant to source it from). |
 | `sub` | The account UUID that owns the exchanged API key. |
-| `aud` | `["checky-api-key"]` — a fixed literal. No real `RegisteredClient` is seeded for API-key exchanges, so both `aud` and `client_id` name this synthetic, unbacked client identifier directly. |
+| `aud` | `"checky-api-key"` — a fixed literal, as a bare string (verified directly: `NimbusJwtEncoder` collapses this path's single-element audience list the same way it does for Paths 1-2). No real `RegisteredClient` is seeded for API-key exchanges, so both `aud` and `client_id` name this synthetic, unbacked client identifier directly. |
 | `exp` / `iat` / `nbf` / `jti` | Assembled manually with the same semantics as the SAS-default paths; 10-minute TTL (independently configured, confirmed equal to Paths 1/2's default). |
 | `scope` | The exchanged key's own `scopes` column, echoed verbatim as a JSON array — never widened or narrowed. |
 | `roles` | Effective roles, resolved fresh on every exchange (same underlying role-resolution call as Path 1). |
@@ -106,6 +109,10 @@ Path 1's complete claim set was additionally verified against a real, running in
 (`SasLoginIntegrationTest`, a genuine Docker-backed `authorization_code` flow) that decoded an
 actually-issued token and printed its full claim set, rather than relying on source-reading alone
 — the path most likely to be assumed "the normal, complete case" by a future reader, and the one
-where that assumption would be wrong.
+where that assumption would be wrong. The `aud`/`scope` wire-shape claims above were each verified
+directly by encoding a real JWT through the same `NimbusJwtEncoder` mechanism every path uses.
 
-A future change to any of the three files above should update this document in the same change.
+A future change to any of the three files above should update this document in the same change —
+there is no automated test enforcing this today (this task is documentation-only); a lightweight
+future test parsing both source files and asserting their claim sets stay consistent with this
+document would close that gap if it becomes worth the cost.
