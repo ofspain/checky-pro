@@ -170,6 +170,13 @@
       <version>4.2.2</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <!-- T33: parses contracts/api/auth.yaml for AuthOpenApiContractTest; version managed by
+           Spring Boot's own dependency BOM, matching the resolved Jackson version everywhere else -->
+      <groupId>com.fasterxml.jackson.dataformat</groupId>
+      <artifactId>jackson-dataformat-yaml</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

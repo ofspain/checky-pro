@@ -1,0 +1,831 @@
+openapi: 3.0.3
+info:
+  title: auth-service API
+  description: >
+    All non-SAS HTTP endpoints exposed by auth-service. Spring Authorization Server's own
+    protocol endpoints (/oauth2/**, /.well-known/**, /userinfo, /login) are governed by SAS
+    itself and are intentionally not documented here (R47/T33 scope).
+  version: "1.0"
+servers:
+  - url: /
+
+paths:
+  /accounts:
+    post:
+      summary: Register a new account
+      operationId: registerAccount
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterAccountRequest'
+      responses:
+        '202':
+          description: >
+            Always returned regardless of whether the email was already registered
+            (enumeration-safe).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationAcknowledgement'
+
+  /accounts/me:
+    get:
+      summary: Get the authenticated caller's own account
+      operationId: getOwnAccount
+      responses:
+        '200':
+          description: The caller's account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+
+  /accounts/verify-email:
+    post:
+      summary: Verify an email address using a possession token
+      operationId: verifyEmail
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+      responses:
+        '204':
+          description: Email verified
+
+  /accounts/resend-verification:
+    post:
+      summary: Resend the verification email
+      operationId: resendVerification
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendVerificationRequest'
+      responses:
+        '200':
+          description: Always returned regardless of whether the email matches an account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationAcknowledgement'
+
+  /accounts/password-reset-request:
+    post:
+      summary: Request a password-reset email
+      operationId: requestPasswordReset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '200':
+          description: Always returned regardless of whether the email matches an account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationAcknowledgement'
+
+  /accounts/password-reset:
+    post:
+      summary: Confirm a password reset using a possession token
+      operationId: confirmPasswordReset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+      responses:
+        '204':
+          description: Password reset
+
+  /accounts/me/password:
+    post:
+      summary: Change the authenticated caller's own password
+      operationId: changeOwnPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: Password changed
+
+  /accounts/me/sessions:
+    get:
+      summary: List the authenticated caller's own active sessions
+      operationId: listOwnSessions
+      responses:
+        '200':
+          description: The caller's active sessions (empty array if none)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionResponse'
+    delete:
+      summary: Revoke all of the authenticated caller's own active sessions
+      operationId: revokeAllOwnSessions
+      responses:
+        '204':
+          description: All sessions revoked (idempotent — 204 even if none were active)
+
+  /accounts/me/sessions/{familyId}:
+    delete:
+      summary: Revoke one of the authenticated caller's own sessions
+      operationId: revokeOwnSession
+      parameters:
+        - name: familyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Session revoked (idempotent — 204 even if already revoked)
+
+  /admin/accounts/{accountUuid}:
+    get:
+      summary: Get any account by UUID (admin)
+      operationId: adminGetAccount
+      security:
+        - bearerAuth: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+      responses:
+        '200':
+          description: The requested account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+    delete:
+      summary: Delete an account (admin)
+      operationId: adminDeleteAccount
+      security:
+        - bearerAuth: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+      responses:
+        '200':
+          description: The account's new state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+
+  /admin/accounts/{accountUuid}/activate:
+    post:
+      summary: Activate a pending account (admin stopgap for email verification)
+      operationId: adminActivateAccount
+      security:
+        - bearerAuth: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+      responses:
+        '200':
+          description: The account's new state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+
+  /admin/accounts/{accountUuid}/suspend:
+    post:
+      summary: Suspend an account (admin or compliance)
+      operationId: adminSuspendAccount
+      security:
+        - bearerAuth: [ADMIN, COMPLIANCE]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+      responses:
+        '200':
+          description: The account's new state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+
+  /admin/accounts/{accountUuid}/reinstate:
+    post:
+      summary: Reinstate a suspended account (admin or compliance)
+      operationId: adminReinstateAccount
+      security:
+        - bearerAuth: [ADMIN, COMPLIANCE]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+      responses:
+        '200':
+          description: The account's new state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+
+  /admin/accounts/{accountUuid}/unlock:
+    post:
+      summary: Clear a brute-force lockout (admin or compliance)
+      operationId: adminUnlockAccount
+      security:
+        - bearerAuth: [ADMIN, COMPLIANCE]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+      responses:
+        '200':
+          description: The account's new state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+
+  /api-keys:
+    post:
+      summary: Create a new API key for the authenticated caller
+      operationId: createApiKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyRequest'
+      responses:
+        '201':
+          description: >
+            The new key. plaintextKey is returned exactly once and never retrievable again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreateResult'
+    get:
+      summary: List the authenticated caller's own API keys (metadata only, no key material)
+      operationId: listApiKeys
+      responses:
+        '200':
+          description: The caller's keys (empty array if none)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiKeyMetadata'
+
+  /api-keys/{keyUuid}:
+    delete:
+      summary: Revoke an API key owned by the authenticated caller
+      operationId: revokeApiKey
+      parameters:
+        - name: keyUuid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Key revoked (idempotent — 204 even if already revoked)
+
+  /api-keys/token:
+    post:
+      summary: Exchange an API key for a short-lived JWT
+      operationId: exchangeApiKeyForToken
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The issued JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyTokenResponse'
+
+  /admin/accounts/{accountUuid}/roles:
+    get:
+      summary: Get an account's effective roles (direct + template-derived)
+      operationId: getEffectiveRoles
+      security:
+        - bearerAuth: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+      responses:
+        '200':
+          description: The account's effective role names
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /admin/accounts/{accountUuid}/roles/{roleName}:
+    post:
+      summary: Assign a role directly to an account (admin)
+      operationId: assignRole
+      security:
+        - bearerAuth: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+        - $ref: '#/components/parameters/RoleNamePath'
+      responses:
+        '204':
+          description: Role assigned
+    delete:
+      summary: Remove a directly-assigned role from an account (admin)
+      operationId: removeRole
+      security:
+        - bearerAuth: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+        - $ref: '#/components/parameters/RoleNamePath'
+      responses:
+        '204':
+          description: Role removed
+
+  /admin/accounts/{accountUuid}/role-templates/{templateName}:
+    post:
+      summary: Assign a role template to an account (admin)
+      operationId: assignRoleTemplate
+      security:
+        - bearerAuth: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+        - name: templateName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Role template assigned
+    delete:
+      summary: Remove a role template from an account (admin)
+      operationId: removeRoleTemplate
+      security:
+        - bearerAuth: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/AccountUuidPath'
+        - name: templateName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Role template removed
+
+  /admin/roles:
+    post:
+      summary: Create a new role (admin)
+      operationId: createRole
+      security:
+        - bearerAuth: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoleRequest'
+      responses:
+        '201':
+          description: The created role
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+    get:
+      summary: List all roles (admin)
+      operationId: listRoles
+      security:
+        - bearerAuth: [ADMIN]
+      responses:
+        '200':
+          description: All roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RoleResponse'
+
+  /admin/role-templates:
+    post:
+      summary: Create a new role template (admin)
+      operationId: createRoleTemplate
+      security:
+        - bearerAuth: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoleTemplateRequest'
+      responses:
+        '201':
+          description: The created role template
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleTemplateResponse'
+    get:
+      summary: List all role templates (admin)
+      operationId: listRoleTemplates
+      security:
+        - bearerAuth: [ADMIN]
+      responses:
+        '200':
+          description: All role templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RoleTemplateResponse'
+
+  /admin/audit:
+    get:
+      summary: List audit events (admin or compliance), optionally filtered by account
+      operationId: listAuditEvents
+      security:
+        - bearerAuth: [ADMIN, COMPLIANCE]
+      parameters:
+        - name: accountUuid
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            default: occurredAt,desc
+      responses:
+        '200':
+          description: A page of audit events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEventPage'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: >
+        Authorization: ApiKey <key> — a custom scheme, never Bearer (L11/D4).
+
+  parameters:
+    AccountUuidPath:
+      name: accountUuid
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RoleNamePath:
+      name: roleName
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    RegisterAccountRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+
+    RegistrationAcknowledgement:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    VerifyEmailRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+
+    ResendVerificationRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    PasswordResetRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    PasswordResetConfirmRequest:
+      type: object
+      required: [token, newPassword]
+      properties:
+        token:
+          type: string
+        newPassword:
+          type: string
+
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+
+    AccountResponse:
+      type: object
+      required: [accountUuid, email, emailVerified, status, createdAt]
+      properties:
+        accountUuid:
+          type: string
+          format: uuid
+        email:
+          type: string
+        emailVerified:
+          type: boolean
+        status:
+          type: string
+          enum: [PENDING_VERIFICATION, ACTIVE, LOCKED, SUSPENDED, DELETED]
+        createdAt:
+          type: string
+          format: date-time
+
+    SessionResponse:
+      type: object
+      required: [familyId, createdAt, rotatedAt]
+      properties:
+        familyId:
+          type: string
+          format: uuid
+        deviceLabel:
+          type: string
+          nullable: true
+          description: Always null today — no device-label source is wired yet (design.md O3, unresolved).
+        createdAt:
+          type: string
+          format: date-time
+        rotatedAt:
+          type: string
+          format: date-time
+
+    CreateApiKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 100
+
+    ApiKeyCreateResult:
+      type: object
+      required: [keyUuid, plaintextKey, name, createdAt]
+      properties:
+        keyUuid:
+          type: string
+          format: uuid
+        plaintextKey:
+          type: string
+          description: Returned exactly once. Never retrievable again after this response.
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ApiKeyMetadata:
+      type: object
+      required: [keyUuid, name, scopes, createdAt]
+      properties:
+        keyUuid:
+          type: string
+          format: uuid
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ApiKeyTokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          format: int64
+
+    CreateRoleRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        description:
+          type: string
+          maxLength: 255
+          nullable: true
+
+    RoleResponse:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+
+    CreateRoleTemplateRequest:
+      type: object
+      required: [name, roleNames]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        description:
+          type: string
+          maxLength: 255
+          nullable: true
+        roleNames:
+          type: array
+          items:
+            type: string
+
+    RoleTemplateResponse:
+      type: object
+      required: [name, roleNames]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        roleNames:
+          type: array
+          items:
+            type: string
+
+    AuditEventResponse:
+      type: object
+      required: [id, occurredAt, eventType, outcome, details]
+      properties:
+        id:
+          type: integer
+          format: int64
+        occurredAt:
+          type: string
+          format: date-time
+        eventType:
+          type: string
+        outcome:
+          type: string
+          enum: [SUCCESS, FAILURE]
+        accountUuid:
+          type: string
+          format: uuid
+          nullable: true
+        actorUuid:
+          type: string
+          format: uuid
+          nullable: true
+        ip:
+          type: string
+          nullable: true
+        userAgentHash:
+          type: string
+          nullable: true
+        traceId:
+          type: string
+          nullable: true
+        details:
+          type: object
+          additionalProperties: true
+
+    AuditEventPage:
+      type: object
+      description: >
+        Spring Data's own default Page<T> Jackson shape (raw PageImpl serialization — confirmed
+        against a real instance, not assumed). content is the only field this service's clients
+        need; the rest are Spring Data's standard pagination metadata.
+      required: [content, totalPages, totalElements, last, first, numberOfElements, size, number, empty]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEventResponse'
+        pageable:
+          type: object
+          properties:
+            pageNumber:
+              type: integer
+            pageSize:
+              type: integer
+            offset:
+              type: integer
+            paged:
+              type: boolean
+            unpaged:
+              type: boolean
+            sort:
+              $ref: '#/components/schemas/SpringSort'
+        totalPages:
+          type: integer
+        totalElements:
+          type: integer
+          format: int64
+        last:
+          type: boolean
+        first:
+          type: boolean
+        numberOfElements:
+          type: integer
+        size:
+          type: integer
+        number:
+          type: integer
+        sort:
+          $ref: '#/components/schemas/SpringSort'
+        empty:
+          type: boolean
+
+    SpringSort:
+      type: object
+      properties:
+        sorted:
+          type: boolean
+        unsorted:
+          type: boolean
+        empty:
+          type: boolean
