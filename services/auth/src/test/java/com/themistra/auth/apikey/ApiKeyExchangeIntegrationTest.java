@@ -27,6 +27,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -81,6 +83,18 @@ class ApiKeyExchangeIntegrationTest {
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    /** {@code createRawExpiredApiKeyRow}'s raw {@code EntityManager} update is a custom
+     * operation called directly from this test, bypassing {@code ApiKeyService}'s own
+     * {@code @Transactional} boundary — it needs its own short-lived transaction, matching
+     * {@code ApiKeyServiceIntegrationTest}/{@code MfaPersistenceIntegrationTest}'s established
+     * {@code inOwnTransaction} convention for exactly this situation. */
+    private void inOwnTransaction(Runnable action) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> action.run());
+    }
 
     private String baseUrl;
 
@@ -387,10 +401,11 @@ class ApiKeyExchangeIntegrationTest {
         String fullKey = prefix + "." + secret;
         ApiKey apiKey = apiKeyRepository.save(ApiKey.create(accountId, prefix,
                 com.themistra.auth.common.Hashing.sha256(fullKey), name, List.of("merchant.api"), Instant.now()));
-        entityManager.createNativeQuery("UPDATE api_keys SET expires_at = :expiresAt WHERE id = :id")
+        inOwnTransaction(() -> entityManager
+                .createNativeQuery("UPDATE api_keys SET expires_at = :expiresAt WHERE id = :id")
                 .setParameter("expiresAt", Instant.now().minusSeconds(3600))
                 .setParameter("id", apiKey.getId())
-                .executeUpdate();
+                .executeUpdate());
         return fullKey;
     }
 

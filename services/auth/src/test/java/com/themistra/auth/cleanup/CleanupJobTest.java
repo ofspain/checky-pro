@@ -10,9 +10,12 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.PreparedStatementSetter;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.lang.reflect.Method;
+import java.sql.PreparedStatement;
+import java.sql.Types;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -21,7 +24,7 @@ import java.time.temporal.ChronoUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -90,19 +93,29 @@ class CleanupJobTest {
     }
 
     @Test
-    void runDeletesStaleShedLockRowsUsingTokenRetentionDaysCutoffAndTheSafetyGuardPredicate() {
+    void runDeletesStaleShedLockRowsUsingTokenRetentionDaysCutoffAndTheSafetyGuardPredicate() throws Exception {
         job.run();
 
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
-        verify(jdbcTemplate).update(sqlCaptor.capture(), cutoffCaptor.capture());
+        ArgumentCaptor<PreparedStatementSetter> setterCaptor = ArgumentCaptor.forClass(PreparedStatementSetter.class);
+        verify(jdbcTemplate).update(sqlCaptor.capture(), setterCaptor.capture());
 
         // Kimi Phase 11 Gap 4 - exact match, not substring: a substring check alone wouldn't
         // catch the two lock_until clauses being ORed instead of ANDed, which would defeat D4's
         // safety guard while still containing all three substrings.
         assertThat(sqlCaptor.getValue())
                 .isEqualTo("DELETE FROM shedlock WHERE lock_until < ? AND lock_until < now()");
-        assertThat(cutoffCaptor.getValue()).isEqualTo(NOW.minus(TOKEN_RETENTION_DAYS, ChronoUnit.DAYS));
+
+        // The cutoff is bound as an OffsetDateTime (UTC) via an explicit TIMESTAMP_WITH_TIMEZONE
+        // setObject hint - neither a raw Object... varargs bind nor a raw Instant with this type
+        // hint work against the real driver (verified against pgjdbc's own source: it only
+        // accepts OffsetDateTime/PGTimestamp for TIMESTAMP_WITH_TIMEZONE), only discoverable once
+        // this actually ran against a real database.
+        PreparedStatement ps = mock(PreparedStatement.class);
+        setterCaptor.getValue().setValues(ps);
+        verify(ps).setObject(1,
+                NOW.minus(TOKEN_RETENTION_DAYS, ChronoUnit.DAYS).atOffset(ZoneOffset.UTC),
+                Types.TIMESTAMP_WITH_TIMEZONE);
     }
 
     @Test // D2/AC7 - a failure in the token-deletion step must not prevent the other two
@@ -112,7 +125,7 @@ class CleanupJobTest {
         assertThatCode(() -> job.run()).doesNotThrowAnyException();
 
         verify(refreshTokenTracker).deleteRevokedFamiliesOlderThan(any());
-        verify(jdbcTemplate).update(any(String.class), any(Instant.class));
+        verify(jdbcTemplate).update(any(String.class), any(PreparedStatementSetter.class));
     }
 
     @Test // D2/AC7 - a failure in the family-deletion step must not prevent the other two
@@ -122,13 +135,13 @@ class CleanupJobTest {
         assertThatCode(() -> job.run()).doesNotThrowAnyException();
 
         verify(verificationTokenService).deleteExpiredTokens(any());
-        verify(jdbcTemplate).update(any(String.class), any(Instant.class));
+        verify(jdbcTemplate).update(any(String.class), any(PreparedStatementSetter.class));
     }
 
     @Test // D2/AC7 - a failure in the ShedLock-row-deletion step must not roll back or hide the
           // fact the other two already ran (both precede it in run()'s own sequence)
     void runContinuesPastAFailureInDeleteStaleShedLockRows() {
-        when(jdbcTemplate.update(any(String.class), eq(NOW.minus(TOKEN_RETENTION_DAYS, ChronoUnit.DAYS))))
+        when(jdbcTemplate.update(any(String.class), any(PreparedStatementSetter.class)))
                 .thenThrow(new RuntimeException("db down"));
 
         assertThatCode(() -> job.run()).doesNotThrowAnyException();

@@ -27,8 +27,11 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -82,10 +85,24 @@ class SessionIntegrationTest {
     private AuthClientsProperties authClientsProperties;
 
     @Autowired
+    private RefreshTokenFamilyRepository familyRepository;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    /** {@code seedFamily}'s raw {@code EntityManager} persist is a custom operation called
+     * directly from this test, bypassing any {@code @Transactional} service boundary — it needs
+     * its own short-lived transaction, matching {@code ApiKeyServiceIntegrationTest}/
+     * {@code MfaPersistenceIntegrationTest}'s established {@code inOwnTransaction} convention. */
+    private void inOwnTransaction(Runnable action) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> action.run());
+    }
 
     private String baseUrl;
 
@@ -120,8 +137,12 @@ class SessionIntegrationTest {
     @Test // Named test, R37 - revokes one family and genuinely removes its live SAS authorization
     void shouldRevokeSingleSessionFamily() throws Exception {
         UUID accountUuid = registerAndActivate("sessions-revoke-one@example.com");
+        // seedRealAuthorization's own save() already auto-creates the family (the decorator's
+        // trackRefreshTokenIfPresent runs on every save with a refresh token) - a second,
+        // separately-seeded family for the same authorizationId would violate the
+        // UNIQUE(authorization_id) constraint, so the auto-created row is looked up instead.
         String authorizationId = seedRealAuthorization(accountUuid);
-        RefreshTokenFamily family = seedFamily(accountUuid, authorizationId, "device-1");
+        RefreshTokenFamily family = familyRepository.findByAuthorizationId(authorizationId).orElseThrow();
         String bearer = bearerTokenFor(accountUuid);
         Instant before = Instant.now().minusSeconds(1);
 
@@ -144,10 +165,12 @@ class SessionIntegrationTest {
     @Test // Named test, R38 - revokes every active family and removes every live authorization
     void shouldRevokeAllSessionFamilies() throws Exception {
         UUID accountUuid = registerAndActivate("sessions-revoke-all@example.com");
+        // Same reasoning as shouldRevokeSingleSessionFamily: seedRealAuthorization already
+        // auto-creates each family via the decorator's own save() path.
         String authorizationIdOne = seedRealAuthorization(accountUuid);
         String authorizationIdTwo = seedRealAuthorization(accountUuid);
-        RefreshTokenFamily familyOne = seedFamily(accountUuid, authorizationIdOne, "device-1");
-        RefreshTokenFamily familyTwo = seedFamily(accountUuid, authorizationIdTwo, "device-2");
+        RefreshTokenFamily familyOne = familyRepository.findByAuthorizationId(authorizationIdOne).orElseThrow();
+        RefreshTokenFamily familyTwo = familyRepository.findByAuthorizationId(authorizationIdTwo).orElseThrow();
         String bearer = bearerTokenFor(accountUuid);
         Instant before = Instant.now().minusSeconds(1);
 
@@ -175,28 +198,39 @@ class SessionIntegrationTest {
         assertThat(objectMapper.readTree(response.getBody())).isEmpty();
     }
 
-    @Test // R37/AC7 - an unowned family and a genuinely nonexistent one get identical 404s.
-          // Kimi Phase 11 Gap 7: compares the raw response bodies (true byte-for-byte equality,
-          // matching this test's own name), plus explicit type/title checks - not just parsed-map
-          // equality, which is order/whitespace-insensitive and wouldn't catch every difference
-          // the name promises to rule out.
+    @Test // R37/AC7 - an unowned family and a genuinely nonexistent one get identical 404s on
+          // every field except `instance`. `instance` is auto-populated by Spring from the
+          // request path itself (verified: no code in this service calls setInstance), so it
+          // legitimately differs between these two calls - it echoes the caller's own input
+          // back, not a server-side decision that could leak which cause applied. Discovered
+          // once this test actually ran against a live server for the first time (Docker was
+          // never available before); the original byte-for-byte premise never a real body.
     void revokeOfUnownedAndNonexistentFamilyAreByteIdentical() throws Exception {
         UUID owner = registerAndActivate("sessions-owner@example.com");
         UUID stranger = registerAndActivate("sessions-stranger@example.com");
         RefreshTokenFamily ownersFamily = seedFamily(owner, "auth-owned", "device");
         String strangerBearer = bearerTokenFor(stranger);
+        UUID nonexistentFamilyId = UUID.randomUUID();
 
         ResponseEntity<String> unownedResponse =
                 delete(strangerBearer, "/accounts/me/sessions/" + ownersFamily.getFamilyId());
         ResponseEntity<String> nonexistentResponse =
-                delete(strangerBearer, "/accounts/me/sessions/" + UUID.randomUUID());
+                delete(strangerBearer, "/accounts/me/sessions/" + nonexistentFamilyId);
 
         Map<String, Object> unowned = rejectionBody(unownedResponse);
         Map<String, Object> nonexistent = rejectionBody(nonexistentResponse);
         assertThat(unowned.get("type")).isEqualTo(ProblemTypes.SESSION_NOT_FOUND.toString());
         assertThat(unowned.get("title")).isEqualTo("Session not found");
-        assertThat(unownedResponse.getBody()).isEqualTo(nonexistentResponse.getBody());
-        assertThat(unowned).isEqualTo(nonexistent);
+        assertThat(unowned.get("instance"))
+                .isEqualTo("/accounts/me/sessions/" + ownersFamily.getFamilyId());
+        assertThat(nonexistent.get("instance"))
+                .isEqualTo("/accounts/me/sessions/" + nonexistentFamilyId);
+
+        Map<String, Object> unownedWithoutInstance = new HashMap<>(unowned);
+        unownedWithoutInstance.remove("instance");
+        Map<String, Object> nonexistentWithoutInstance = new HashMap<>(nonexistent);
+        nonexistentWithoutInstance.remove("instance");
+        assertThat(unownedWithoutInstance).isEqualTo(nonexistentWithoutInstance);
     }
 
     @Test // R37, D1 - revoking an already-revoked family is idempotent, not an error
@@ -288,8 +322,10 @@ class SessionIntegrationTest {
         RefreshTokenFamily family = RefreshTokenFamily.start(
                 authorizationId, accountUuid.toString(), deviceLabel,
                 "hash-" + UUID.randomUUID(), Instant.now());
-        entityManager.persist(family);
-        entityManager.flush();
+        inOwnTransaction(() -> {
+            entityManager.persist(family);
+            entityManager.flush();
+        });
         return family;
     }
 

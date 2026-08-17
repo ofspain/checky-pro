@@ -5,6 +5,7 @@ import com.themistra.auth.authn.LoginSuccessHandler;
 import com.themistra.auth.authn.TotpAuthenticationDetailsSource;
 import com.themistra.auth.authn.TotpAuthenticationProvider;
 import com.themistra.auth.common.PublicEndpoints;
+import com.themistra.auth.ratelimit.RateLimitFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -17,6 +18,8 @@ import org.springframework.security.oauth2.server.authorization.config.annotatio
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.session.DisableEncodeUrlFilter;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
 
 /**
@@ -36,7 +39,8 @@ public class SecurityChainsConfig {
 
     @Bean
     @Order(1)
-    public SecurityFilterChain authorizationServerChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain authorizationServerChain(
+            HttpSecurity http, RateLimitFilter rateLimitFilter) throws Exception {
         OAuth2AuthorizationServerConfigurer authorizationServer =
                 OAuth2AuthorizationServerConfigurer.authorizationServer();
 
@@ -46,7 +50,10 @@ public class SecurityChainsConfig {
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
                 .exceptionHandling(ex -> ex.defaultAuthenticationEntryPointFor(
                         new LoginUrlAuthenticationEntryPoint("/login"),
-                        new MediaTypeRequestMatcher(MediaType.TEXT_HTML)));
+                        new MediaTypeRequestMatcher(MediaType.TEXT_HTML)))
+                // T31, R41/D4: runs before SAS processes the /oauth2/token grant at all, so an
+                // exhausted refresh-token bucket never reaches token validation/rotation work.
+                .addFilterBefore(rateLimitFilter, DisableEncodeUrlFilter.class);
 
         return http.build();
     }
@@ -57,7 +64,8 @@ public class SecurityChainsConfig {
             HttpSecurity http, JwtAuthenticationConverter jwtAuthenticationConverter,
             LoginFailureHandler loginFailureHandler, LoginSuccessHandler loginSuccessHandler,
             TotpAuthenticationProvider totpAuthenticationProvider,
-            TotpAuthenticationDetailsSource totpAuthenticationDetailsSource) throws Exception {
+            TotpAuthenticationDetailsSource totpAuthenticationDetailsSource,
+            RateLimitFilter rateLimitFilter) throws Exception {
         http
                 .authorizeHttpRequests(auth -> {
                     auth.requestMatchers(PublicEndpoints.PATTERNS).permitAll();
@@ -87,7 +95,11 @@ public class SecurityChainsConfig {
                 .formLogin(form -> form
                         .authenticationDetailsSource(totpAuthenticationDetailsSource)
                         .failureHandler(loginFailureHandler)
-                        .successHandler(loginSuccessHandler));
+                        .successHandler(loginSuccessHandler))
+                // T31, R41/D4: runs before UsernamePasswordAuthenticationFilter, i.e. before any
+                // password/TOTP verification work for /login, and well before the
+                // password-reset controller method for the same reason.
+                .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

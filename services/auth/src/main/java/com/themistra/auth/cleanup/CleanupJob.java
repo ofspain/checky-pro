@@ -11,6 +11,8 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 
 /**
@@ -82,9 +84,20 @@ public class CleanupJob {
     private void deleteStaleShedLockRows() {
         try {
             Instant cutoff = clock.instant().minus(properties.tokenRetentionDays(), ChronoUnit.DAYS);
+            // A plain Object... varargs bind (jdbcTemplate.update(sql, cutoff)) fails at runtime -
+            // the resolved pgjdbc driver's 2-arg setObject cannot infer a SQL type for a raw
+            // Instant ("Can't infer the SQL type to use for an instance of java.time.Instant"),
+            // discovered only once this ran against a real database for the first time (Docker
+            // was never available before). An explicit TIMESTAMP_WITH_TIMEZONE type hint alone
+            // isn't enough either - pgjdbc's own setObject only accepts OffsetDateTime (or
+            // PGTimestamp) for that SQL type, throwing "Cannot cast an instance of
+            // java.time.Instant" otherwise (verified directly against pgjdbc's PgPreparedStatement
+            // source). Converting to OffsetDateTime at UTC is unambiguous - equivalent to the
+            // Instant, and immune to java.sql.Timestamp's JVM-default-timezone risk.
+            OffsetDateTime cutoffUtc = cutoff.atOffset(ZoneOffset.UTC);
             int deleted = jdbcTemplate.update(
                     "DELETE FROM shedlock WHERE lock_until < ? AND lock_until < now()",
-                    cutoff);
+                    ps -> ps.setObject(1, cutoffUtc, java.sql.Types.TIMESTAMP_WITH_TIMEZONE));
             log.info("Cleanup: deleted {} stale shedlock rows", deleted);
         } catch (Exception e) {
             log.error("Cleanup: failed to delete stale shedlock rows", e);

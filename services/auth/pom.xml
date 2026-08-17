@@ -118,6 +118,13 @@
       <version>7.7.0</version>
     </dependency>
 
+    <!-- Rate limiting (T31, R41) -->
+    <dependency>
+      <groupId>com.bucket4j</groupId>
+      <artifactId>bucket4j_jdk17-core</artifactId>
+      <version>8.14.0</version>
+    </dependency>
+
     <!-- Test -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

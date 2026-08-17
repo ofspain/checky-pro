@@ -34,6 +34,10 @@ public final class ProblemTypes {
     /** {@code DELETE /accounts/me/sessions/{familyId}} (R37, T28) — identical whether the family
      * doesn't exist or exists but isn't owned by the caller (no enumeration oracle). */
     public static final URI SESSION_NOT_FOUND = URI.create(BASE + "session-not-found");
+    /** Per-account request-rate backstop exceeded (R41, T31) — login (incl. MFA verification,
+     * which happens inside the same request), password-reset confirmation, or the
+     * {@code /oauth2/token} refresh_token grant. */
+    public static final URI RATE_LIMIT_EXCEEDED = URI.create(BASE + "rate-limit-exceeded");
 
     private ProblemTypes() {
     }

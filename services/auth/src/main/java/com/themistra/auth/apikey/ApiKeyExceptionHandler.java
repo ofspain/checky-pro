@@ -1,6 +1,8 @@
 package com.themistra.auth.apikey;
 
 import com.themistra.auth.common.ProblemTypes;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -9,8 +11,13 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 /**
  * Maps this module's domain exceptions to RFC 9457 responses (T25, T26). Mirrors
  * {@code AccountExceptionHandler}'s shape for a single-cause-hidden rejection.
+ *
+ * <p>{@code @Order(HIGHEST_PRECEDENCE)} is load-bearing — see {@code SessionExceptionHandler}'s
+ * Javadoc for why a domain-specific advice needs this to reliably outrank
+ * {@code ApiExceptionHandler}'s catch-all {@code Exception.class} handler.</p>
  */
 @RestControllerAdvice
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class ApiKeyExceptionHandler {
 
     /**

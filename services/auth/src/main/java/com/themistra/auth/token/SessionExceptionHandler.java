@@ -1,6 +1,8 @@
 package com.themistra.auth.token;
 
 import com.themistra.auth.common.ProblemTypes;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -13,8 +15,15 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * resolution is global and type-matched, not package-scoped (the same mechanism T26's D6 already
  * relied on for a foreign-module exception resolving correctly), so the module that owns the
  * exception also owns its translation.
+ *
+ * <p>{@code @Order(HIGHEST_PRECEDENCE)} is load-bearing: without an explicit order, this class
+ * defaults to the same {@code LOWEST_PRECEDENCE} value as {@code ApiExceptionHandler}'s catch-all
+ * {@code Exception.class} handler, and Spring's advice-bean iteration only breaks that tie by
+ * incidental registration order — discovered when a real HTTP call showed
+ * {@code SessionNotFoundException} falling through to a 500 instead of this class's 404.</p>
  */
 @RestControllerAdvice
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class SessionExceptionHandler {
 
     /**

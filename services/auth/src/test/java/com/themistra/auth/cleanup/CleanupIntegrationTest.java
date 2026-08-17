@@ -15,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -50,6 +52,17 @@ class CleanupIntegrationTest {
     @PersistenceContext
     private EntityManager entityManager;
 
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    /** Every raw {@code EntityManager} write in this test bypasses any {@code @Transactional}
+     * service boundary — each needs its own short-lived transaction, matching
+     * {@code ApiKeyServiceIntegrationTest}/{@code MfaPersistenceIntegrationTest}'s established
+     * {@code inOwnTransaction} convention for exactly this situation. */
+    private void inOwnTransaction(Runnable action) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> action.run());
+    }
+
     @Test // Named test, R40 - AC1 (expired tokens) + AC2 (old revoked families) together
     void shouldCleanupExpiredTokensAndFamilies() {
         UUID accountUuid = registerAndActivate("cleanup-test@example.com");
@@ -62,38 +75,39 @@ class CleanupIntegrationTest {
         VerificationToken freshToken = VerificationToken.create(
                 accountId, VerificationToken.Purpose.EMAIL_VERIFY, "hash-" + UUID.randomUUID(),
                 now, now.plusSeconds(1800));
-        entityManager.persist(expiredToken);
-        entityManager.persist(freshToken);
-
         // AC2/AC3: revoked well past the 90-day retention, with an archive row that must cascade away.
         RefreshTokenFamily oldRevokedFamily = RefreshTokenFamily.start(
                 "auth-old-" + UUID.randomUUID(), accountUuid.toString(), null,
                 Hashing.sha256("old-token-" + UUID.randomUUID()), now.minus(100, ChronoUnit.DAYS));
         oldRevokedFamily.revoke("TEST_OLD", now.minus(95, ChronoUnit.DAYS));
-        entityManager.persist(oldRevokedFamily);
-        entityManager.persist(new RefreshTokenArchiveEntry(
-                oldRevokedFamily.getFamilyId(), Hashing.sha256("old-superseded-" + UUID.randomUUID()),
-                now.minus(96, ChronoUnit.DAYS)));
 
         // Survivor: revoked, but well within the 90-day retention.
         RefreshTokenFamily recentlyRevokedFamily = RefreshTokenFamily.start(
                 "auth-recent-" + UUID.randomUUID(), accountUuid.toString(), null,
                 Hashing.sha256("recent-token-" + UUID.randomUUID()), now);
         recentlyRevokedFamily.revoke("TEST_RECENT", now.minusSeconds(60));
-        entityManager.persist(recentlyRevokedFamily);
 
         // Survivor: never revoked at all, regardless of age.
         RefreshTokenFamily neverRevokedFamily = RefreshTokenFamily.start(
                 "auth-active-" + UUID.randomUUID(), accountUuid.toString(), null,
                 Hashing.sha256("active-token-" + UUID.randomUUID()), now.minus(200, ChronoUnit.DAYS));
-        entityManager.persist(neverRevokedFamily);
 
         String staleLockName = "stale-lock-" + UUID.randomUUID();
         String freshLockName = "fresh-lock-" + UUID.randomUUID();
-        insertShedLockRow(staleLockName, now.minus(30, ChronoUnit.DAYS)); // AC4: older than 7-day retention
-        insertShedLockRow(freshLockName, now.plusSeconds(600)); // AC4: currently-held, must never be pruned
 
-        entityManager.flush();
+        inOwnTransaction(() -> {
+            entityManager.persist(expiredToken);
+            entityManager.persist(freshToken);
+            entityManager.persist(oldRevokedFamily);
+            entityManager.persist(new RefreshTokenArchiveEntry(
+                    oldRevokedFamily.getFamilyId(), Hashing.sha256("old-superseded-" + UUID.randomUUID()),
+                    now.minus(96, ChronoUnit.DAYS)));
+            entityManager.persist(recentlyRevokedFamily);
+            entityManager.persist(neverRevokedFamily);
+            insertShedLockRow(staleLockName, now.minus(30, ChronoUnit.DAYS)); // AC4: older than 7-day retention
+            insertShedLockRow(freshLockName, now.plusSeconds(600)); // AC4: currently-held, must never be pruned
+            entityManager.flush();
+        });
 
         cleanupJob.run();
 

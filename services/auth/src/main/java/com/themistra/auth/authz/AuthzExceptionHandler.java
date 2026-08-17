@@ -1,13 +1,21 @@
 package com.themistra.auth.authz;
 
 import com.themistra.auth.common.ProblemTypes;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-/** All admin-only, so no enumeration-safety concern applies here (unlike account registration). */
+/** All admin-only, so no enumeration-safety concern applies here (unlike account registration).
+ *
+ * <p>{@code @Order(HIGHEST_PRECEDENCE)} is load-bearing — see {@code SessionExceptionHandler}'s
+ * Javadoc for why a domain-specific advice needs this to reliably outrank
+ * {@code ApiExceptionHandler}'s catch-all {@code Exception.class} handler.</p>
+ */
 @RestControllerAdvice
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class AuthzExceptionHandler {
 
     @ExceptionHandler({RoleNotFoundException.class, RoleTemplateNotFoundException.class})

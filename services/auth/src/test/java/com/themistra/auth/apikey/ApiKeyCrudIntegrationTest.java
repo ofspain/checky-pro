@@ -27,6 +27,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -229,21 +230,34 @@ class ApiKeyCrudIntegrationTest {
         assertThat(response.getBody()).doesNotContain("keyHash");
     }
 
-    @Test // R35/AC7 - an unowned key and a genuinely nonexistent UUID get byte-identical 404s
+    @Test // R35/AC7 - an unowned key and a genuinely nonexistent UUID get identical 404s on every
+          // field except `instance`. `instance` is auto-populated by Spring from the request path
+          // itself (no code in this service calls setInstance), so it legitimately differs between
+          // these two calls - it echoes the caller's own input back, not a server-side decision
+          // that could leak which cause applied. Discovered once this test actually ran against a
+          // live server for the first time (Docker was never available before).
     void deleteOfUnownedKeyAndNonexistentKeyAreByteIdentical() throws Exception {
         UUID owner = seedMerchantWithConfirmedMfa("crud-owner@example.com");
         UUID stranger = seedMerchantWithConfirmedMfa("crud-stranger@example.com");
         JsonNode created = readJson(postCreate(bearerTokenFor(owner), "{\"name\":\"owner's key\"}"));
         String ownedKeyUuid = created.get("keyUuid").asText();
+        String nonexistentKeyUuid = UUID.randomUUID().toString();
 
         Map<String, Object> unowned = rejectionBody(
                 delete(bearerTokenFor(stranger), "/api-keys/" + ownedKeyUuid),
                 HttpStatus.NOT_FOUND, ProblemTypes.API_KEY_NOT_FOUND, "API key not found");
         Map<String, Object> nonexistent = rejectionBody(
-                delete(bearerTokenFor(stranger), "/api-keys/" + UUID.randomUUID()),
+                delete(bearerTokenFor(stranger), "/api-keys/" + nonexistentKeyUuid),
                 HttpStatus.NOT_FOUND, ProblemTypes.API_KEY_NOT_FOUND, "API key not found");
 
-        assertThat(unowned).isEqualTo(nonexistent);
+        assertThat(unowned.get("instance")).isEqualTo("/api-keys/" + ownedKeyUuid);
+        assertThat(nonexistent.get("instance")).isEqualTo("/api-keys/" + nonexistentKeyUuid);
+
+        Map<String, Object> unownedWithoutInstance = new HashMap<>(unowned);
+        unownedWithoutInstance.remove("instance");
+        Map<String, Object> nonexistentWithoutInstance = new HashMap<>(nonexistent);
+        nonexistentWithoutInstance.remove("instance");
+        assertThat(unownedWithoutInstance).isEqualTo(nonexistentWithoutInstance);
     }
 
     @Test // Kimi Phase 11 Gap 5 / Phase 7-8's shared finding: a malformed keyUuid path segment
