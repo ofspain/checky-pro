@@ -34,7 +34,15 @@ import java.util.Locale;
  * safety — a fabricated email is bucketed identically to a real one). The password-reset and
  * {@code /oauth2/token} keys are the SHA-256 hash of the submitted token (D3's token-hash-keying
  * pattern, applied consistently to both token-possession-based paths) — this is a per-session,
- * not strictly per-account, granularity for {@code /oauth2/token}, an accepted narrowing.</p>
+ * not strictly per-account, granularity for {@code /oauth2/token}, an accepted narrowing. The same
+ * narrowing applies to password-reset confirmation (Kimi Phase 8 Finding 4, femi's gate decision):
+ * since each reset request issues a fresh token, an account requesting many tokens gets an
+ * independent budget per token rather than one shared per-account budget. Accepted because a
+ * reset token is already single-use and time-limited — this limit's real value is slowing
+ * brute-force guessing of one specific token's confirmation, not capping how many tokens an
+ * account can request (that would need per-account keying via a DB lookup, reintroducing exactly
+ * the complexity D2 avoids, for a threat R42's ingress-level backstop is better positioned to
+ * cover).</p>
  *
  * <p>Fail-open (Phase 4 D5): if the limiter or key-derivation logic itself throws, the request is
  * allowed through and the error is logged — mirroring this codebase's existing R13/HIBP
@@ -81,7 +89,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         if (probe != null && !probe.isConsumed()) {
-            writeTooManyRequests(response, probe);
+            writeTooManyRequests(request, response, probe);
             return;
         }
         filterChain.doFilter(effectiveRequest, response);
@@ -105,7 +113,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     /** Coupled to {@code .formLogin(Customizer.withDefaults())}'s default username parameter
      * name, same coupling {@code LoginFailureHandler} already documents. No database access
      * (D2) — a missing/blank submission still gets a (shared) bucket key, so it can't bypass
-     * the limiter by omitting the field. */
+     * the limiter by omitting the field.
+     *
+     * <p>Assumes form-encoded submission (Kimi Phase 8 Finding 3) — this is not a new assumption
+     * introduced here: {@code SecurityChainsConfig}'s {@code .formLogin(...)} has no JSON-body
+     * support configured at all today, so {@code UsernamePasswordAuthenticationFilter} itself
+     * already only authenticates form-encoded {@code /login} submissions; a hypothetical future
+     * JSON login capability would need this method updated alongside whatever adds that support,
+     * not before it exists.</p> */
     private static String normalizedUsername(HttpServletRequest request) {
         String username = request.getParameter("username");
         return username == null ? "" : username.trim().toLowerCase(Locale.ROOT);
@@ -122,10 +137,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return refreshToken == null ? null : Hashing.sha256(refreshToken);
     }
 
-    private void writeTooManyRequests(HttpServletResponse response, ConsumptionProbe probe) throws IOException {
+    private void writeTooManyRequests(HttpServletRequest request, HttpServletResponse response,
+                                      ConsumptionProbe probe) throws IOException {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.TOO_MANY_REQUESTS);
         problem.setType(ProblemTypes.RATE_LIMIT_EXCEEDED);
         problem.setTitle("Too many requests");
+        // Every other rejection in this service gets `instance` auto-populated by Spring's MVC
+        // dispatch machinery; this response is built and written manually outside that machinery
+        // (Kimi Phase 8 Finding 2), so it must be set explicitly for the same consistent shape.
+        problem.setInstance(java.net.URI.create(request.getRequestURI()));
 
         long retryAfterSeconds = Math.max(1, probe.getNanosToWaitForRefill() / 1_000_000_000L);
 

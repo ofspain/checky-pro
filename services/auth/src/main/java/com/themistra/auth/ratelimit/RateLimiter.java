@@ -3,7 +3,6 @@ package com.themistra.auth.ratelimit;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
-import io.github.bucket4j.Refill;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -58,6 +57,9 @@ public class RateLimiter {
     }
 
     private static Bandwidth bandwidthFor(int perMinute) {
-        return Bandwidth.classic(perMinute, Refill.greedy(perMinute, Duration.ofMinutes(1)));
+        return Bandwidth.builder()
+                .capacity(perMinute)
+                .refillGreedy(perMinute, Duration.ofMinutes(1))
+                .build();
     }
 }
