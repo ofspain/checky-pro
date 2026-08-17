@@ -1,16 +1,22 @@
 package com.themistra.auth;
 
+import com.themistra.auth.common.PublicEndpoints;
+import com.themistra.auth.token.SecurityChainsConfig;
 import com.tngtech.archunit.core.domain.JavaModifier;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.config.annotation.web.configurers.AuthorizeHttpRequestsConfigurer;
 import org.springframework.web.bind.annotation.RestController;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Compiles every module-boundary invariant this service has accumulated (D-004, D-017, D-018,
@@ -104,4 +110,19 @@ class ArchitectureTest {
                     + "only' permitAll on /api/roles/** (gap-analysis §2) was exactly this "
                     + "failure one layer up; this rule catches the authorization-layer version "
                     + "of the same mistake — an admin method that forgot its @PreAuthorize");
+
+    @ArchTest
+    static final ArchRule shouldEnforcePublicEndpointAllowlist = noClasses()
+            .that().doNotBelongToAnyOf(SecurityChainsConfig.class)
+            .should().callMethod(AuthorizeHttpRequestsConfigurer.AuthorizedUrl.class, "permitAll")
+            .because("L11 (task 32): SecurityChainsConfig is the only class that may declare an "
+                    + "unauthenticated path, and it must do so only via PublicEndpoints — a stray "
+                    + "permitAll() anywhere else would silently create an undocumented public "
+                    + "endpoint (gap-analysis §2's 'testing only' whitelist lesson)");
+
+    @Test
+    void apiKeysTokenExchangeIsInThePublicAllowlist() {
+        assertThat(PublicEndpoints.METHOD_SCOPED)
+                .contains(new PublicEndpoints.MethodScoped(HttpMethod.POST, "/api-keys/token"));
+    }
 }
