@@ -218,13 +218,25 @@ class EndToEndLifecycleIntegrationTest {
         // would not be caught by the event assertion alone.
         assertThat(accountService.getByUuid(merchantUuid).status()).isEqualTo(AccountStatus.ACTIVE);
 
-        // 3. Admin bootstrap (plumbing, not a tested step) + "admin assigns MERCHANT" (real HTTP).
+        // 3. Login (password) - Phase 11, Kimi Gap 7: the task statement lists this as its own
+        // distinct step, before the account holds any mandatory-MFA role. A plain password login
+        // must succeed on its own (no MFA gate applies yet) - full authorize flow, amr=[pwd] only.
+        FullFlowResult passwordOnlyLogin = attemptFullAuthorizeFlow(
+                merchantEmail, PASSWORD, null, generatePkce(), UUID.randomUUID().toString());
+        assertThat(passwordOnlyLogin.authorizationCode()).isPresent();
+
+        // 4. Admin bootstrap (plumbing, not a tested step) + "admin assigns MERCHANT" (real HTTP).
         String adminBearer = bootstrapAdminBearerToken();
         ensureRoleExists("MERCHANT");
         ResponseEntity<String> assignRoleResponse = assignRoleViaHttp(adminBearer, merchantUuid, "MERCHANT");
         assertThat(assignRoleResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        // Phase 11, Kimi Gap 4: assert the grant actually persisted, not just that the HTTP call
+        // returned 204 - otherwise a silently-no-op assignment would make the next step's "blocked"
+        // assertion pass for the wrong reason (no MERCHANT role at all, rather than a genuine
+        // enrollment gate).
+        assertThat(roleService.resolveEffectiveRoles(merchantUuid)).contains("MERCHANT");
 
-        // 4. Next login requires MFA enrollment - AC2: the freshly MERCHANT-assigned account gets
+        // 5. Next login requires MFA enrollment - AC2: the freshly MERCHANT-assigned account gets
         // no authorization code at the /oauth2/authorize layer, pre-enrollment.
         FullFlowResult preEnrollment = attemptFullAuthorizeFlow(
                 merchantEmail, PASSWORD, null, generatePkce(), UUID.randomUUID().toString());
@@ -236,10 +248,10 @@ class EndToEndLifecycleIntegrationTest {
                 .isNotNull()
                 .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
 
-        // 5. Enroll TOTP - the one step with no HTTP surface in this codebase (Phase 4 gate).
+        // 6. Enroll TOTP - the one step with no HTTP surface in this codebase (Phase 4 gate).
         byte[] totpSecret = enrollTotp(merchantUuid);
 
-        // 6. Login with TOTP (AC3) - full authorize flow now succeeds; the issued token's amr
+        // 7. Login with TOTP (AC3) - full authorize flow now succeeds; the issued token's amr
         // includes "otp", proving the MFA gate was genuinely exercised, not just bypassed.
         PkcePair pkce = generatePkce();
         String state = UUID.randomUUID().toString();
@@ -250,7 +262,7 @@ class EndToEndLifecycleIntegrationTest {
         String sasAccessToken = exchangeCodeForToken(withTotp.authorizationCode().orElseThrow(), pkce.verifier());
         assertThat(parseClaims(sasAccessToken).getStringListClaim("amr")).contains("otp");
 
-        // 7. Create API key (AC4) - authenticated with the token this same login just produced.
+        // 8. Create API key (AC4) - authenticated with the token this same login just produced.
         ResponseEntity<String> createResponse = post(sasAccessToken, "/api-keys", "{\"name\":\"e2e key\"}");
         assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         JsonNode created = readJson(createResponse);
@@ -260,7 +272,7 @@ class EndToEndLifecycleIntegrationTest {
         // matching ApiKeyLifecycleIntegrationTest's established check.
         assertThat(createResponse.getBody()).doesNotContainPattern("[a-f0-9]{64}");
 
-        // 8. Exchange key for JWT (AC5).
+        // 9. Exchange key for JWT (AC5).
         ResponseEntity<String> exchangeResponse = postApiKeyExchange(plaintextKey);
         assertThat(exchangeResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode exchangeBody = readJson(exchangeResponse);
@@ -274,9 +286,15 @@ class EndToEndLifecycleIntegrationTest {
         assertThat(exchangedClaims.getSubject()).isEqualTo(merchantUuid.toString());
         assertThat(exchangedClaims.getStringListClaim("scope")).contains("merchant.api");
         assertThat(exchangedClaims.getStringListClaim("amr")).contains("api_key");
+        // Phase 11, Kimi Gap 2 (narrowed): ApiKeyTokenIssuerTest already exhaustively covers claim
+        // *assembly* with a mocked RoleService - this is the only test that proves the account's
+        // REAL, actually-persisted MERCHANT role (granted via real HTTP in step 4) resolves
+        // correctly through the full exchange path. Other static/mechanical claims (iss, aud,
+        // client_id, acr, timestamps) add no equivalent real-data value and stay in that unit test.
+        assertThat(exchangedClaims.getStringListClaim("roles")).contains("MERCHANT");
 
-        // 9. Call session list (AC6) - authenticated with the exchanged JWT; the family created by
-        // step 6's interactive login is expected to be the caller's only active session.
+        // 10. Call session list (AC6) - authenticated with the exchanged JWT; the family created by
+        // step 7's interactive login is expected to be the caller's only active session.
         ResponseEntity<String> listResponse = get(exchangedToken, "/accounts/me/sessions");
         assertThat(listResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode sessions = readJson(listResponse);
@@ -291,7 +309,7 @@ class EndToEndLifecycleIntegrationTest {
         // the expected shape, not a defect.
         assertThat(session.has("deviceLabel")).isTrue();
 
-        // 10. Revoke session (AC7).
+        // 11. Revoke session (AC7).
         ResponseEntity<String> revokeResponse = delete(exchangedToken, "/accounts/me/sessions/" + familyId);
         assertThat(revokeResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         JsonNode sessionsAfterRevoke = readJson(get(exchangedToken, "/accounts/me/sessions"));
@@ -414,6 +432,10 @@ class EndToEndLifecycleIntegrationTest {
                     JsonNode purpose = payload.get("purpose");
                     JsonNode rawToken = payload.get("token");
                     if (purpose != null && rawToken != null && "verify_email".equals(purpose.asText())) {
+                        // Phase 11, Kimi Gap 8: verify the full email-requested.v1.schema.json
+                        // required-field shape, not just the two fields this helper needs to act on.
+                        assertThat(payload.get("accountUuid").asText()).isEqualTo(accountUuid.toString());
+                        assertThat(payload.get("occurredAt").asText()).isNotBlank();
                         token.set(rawToken.asText());
                     }
                 }
