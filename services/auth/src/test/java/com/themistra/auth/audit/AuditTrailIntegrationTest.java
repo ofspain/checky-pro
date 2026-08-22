@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Pageable;
 import org.testcontainers.kafka.KafkaContainer;
 
 import java.time.Duration;
@@ -83,6 +84,12 @@ class AuditTrailIntegrationTest {
                 "account.suspended", AuditOutcome.SUCCESS, accountUuid, null,
                 "203.0.113.9", "Mozilla/5.0 integration-test-agent", "trace-xyz",
                 Map.of("reason", "integration-test")));
+
+        // Phase 11, Kimi Gap 6: assert the auth_audit row itself, not just its Kafka mirror - a
+        // regression that wrote only to Kafka (or silently dropped the DB insert) would otherwise
+        // pass this test on the mirror assertion alone.
+        assertThat(auditService.list(accountUuid, Pageable.unpaged()).getContent())
+                .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("account.suspended"));
 
         Awaitility.await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
             ConsumerRecords<String, String> records = testConsumer.poll(Duration.ofMillis(500));
