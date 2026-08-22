@@ -1,5 +1,7 @@
 package com.themistra.auth.audit;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.auth.TestcontainersConfiguration;
 import com.themistra.auth.account.AccountService;
 import com.themistra.auth.account.dto.AccountResponse;
@@ -45,6 +47,9 @@ class AuditTrailIntegrationTest {
     private AccountService accountService;
 
     @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
     private KafkaContainer kafka;
 
     private Consumer<String, String> testConsumer;
@@ -84,7 +89,11 @@ class AuditTrailIntegrationTest {
             boolean found = false;
             for (ConsumerRecord<String, String> record : records) {
                 if (record.key().equals(accountUuid.toString())) {
-                    assertThat(record.value()).contains("\"eventType\":\"account.suspended\"");
+                    // Phase 8, Kimi Finding 4: parse rather than string-match, matching newer
+                    // tests' established technique (e.g. EndToEndLifecycleIntegrationTest) - not
+                    // brittle to formatting/field-order changes.
+                    JsonNode payload = objectMapper.readTree(record.value());
+                    assertThat(payload.get("eventType").asText()).isEqualTo("account.suspended");
                     assertThat(record.value()).doesNotContain("Mozilla/5.0 integration-test-agent");
                     assertThat(record.value()).doesNotContain("203.0.113.9");
                     found = true;
