@@ -1,7 +1,11 @@
 package com.themistra.auth;
 
+import com.themistra.auth.account.AccountController;
+import com.themistra.auth.account.AdminAccountController;
+import com.themistra.auth.authn.LockoutService;
 import com.themistra.auth.common.PublicEndpoints;
 import com.themistra.auth.token.SecurityChainsConfig;
+import com.themistra.auth.token.SessionService;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaModifier;
@@ -44,21 +48,36 @@ class ArchitectureTest {
 
     /** T35 Phase 4 D2 — the immediate subpackages of {@code com.themistra.auth} that contain
      * domain code. {@code common} and same-module subpackages (e.g. {@code account.dto}) are not
-     * separate modules for {@link #featureModuleOf(JavaClass)}'s purposes. */
+     * separate modules for {@link #featureModuleOf(JavaClass)}'s purposes. <b>When adding a new
+     * top-level package under {@code com.themistra.auth}, add it here too</b> (Kimi Phase 8
+     * Finding 4) — {@link #shouldPreventCrossModuleEntityImports} and
+     * {@link #controllersDependOnlyOnTheirOwnModuleServices} both now fail fast (Phase 9,
+     * Findings 1/8) if an {@code @Entity}/{@code @RestController} class is found outside every
+     * module listed here, so forgetting to update this list is caught by the build, not silently
+     * missed. See {@code spec/auth-service/agents.md}'s package-layout section. */
     private static final List<String> FEATURE_MODULES = List.of(
             "account", "authn", "authz", "audit", "token", "mfa", "apikey", "events",
             "cleanup", "ratelimit");
 
+    /** T35 Phase 9 Finding 2: {@code common} is deliberately not in {@link #FEATURE_MODULES} — it
+     * is checked separately in {@link #dependOnlyOnServicesFromTheSameFeatureModuleOrAnAllowedException()}
+     * because its entire design purpose (L12/{@code agents.md}: "shared plumbing lives in
+     * common") is to be usable by every module, unlike a feature module's own services. */
+    private static final String COMMON_PACKAGE = "com.themistra.auth.common";
+
     /** T35 Phase 4 D2 — the two pre-existing, deliberate controller-to-another-module-service
      * dependencies this codebase already ships (T14/R20, T28), explicitly allowlisted rather than
-     * silently broken by {@link #controllersDependOnlyOnTheirOwnModuleServices}. */
+     * silently broken by {@link #controllersDependOnlyOnTheirOwnModuleServices}. Keyed by
+     * {@code Class.getName()} rather than string literals (Kimi Phase 8 Finding 3) so a future
+     * rename of any of these four classes breaks compilation here, instead of silently
+     * invalidating the allowlist and making a real rename look like a new violation. */
     private static final Set<String> ALLOWED_CROSS_MODULE_CONTROLLER_SERVICE_DEPENDENCIES = Set.of(
-            "com.themistra.auth.account.AccountController->com.themistra.auth.token.SessionService",
-            "com.themistra.auth.account.AdminAccountController->com.themistra.auth.authn.LockoutService");
+            AccountController.class.getName() + "->" + SessionService.class.getName(),
+            AdminAccountController.class.getName() + "->" + LockoutService.class.getName());
 
     /** Returns the feature-module name (e.g. {@code "account"}) a class belongs to, per
      * {@link #FEATURE_MODULES}, or {@code null} if it isn't inside any of them (e.g. {@code
-     * common} or top-level code) — such classes are simply not constrained by either T35 rule. */
+     * common} or top-level code). */
     private static String featureModuleOf(JavaClass javaClass) {
         String packageName = javaClass.getPackageName();
         for (String module : FEATURE_MODULES) {
@@ -68,6 +87,11 @@ class ArchitectureTest {
             }
         }
         return null;
+    }
+
+    private static boolean isInCommonModule(JavaClass javaClass) {
+        String packageName = javaClass.getPackageName();
+        return packageName.equals(COMMON_PACKAGE) || packageName.startsWith(COMMON_PACKAGE + ".");
     }
 
     /**
@@ -90,6 +114,15 @@ class ArchitectureTest {
             public void check(JavaClass entityClass, ConditionEvents events) {
                 String entityModule = featureModuleOf(entityClass);
                 if (entityModule == null) {
+                    // T35 Phase 9 Findings 1/8: fail fast rather than silently enforcing nothing —
+                    // every @Entity class must live in a module FEATURE_MODULES already knows
+                    // about; if this fires, either the entity is misplaced or FEATURE_MODULES
+                    // itself needs updating for a new module, and either way the build should say
+                    // so rather than silently stop checking this entity's cross-module boundary.
+                    events.add(new SimpleConditionEvent(entityClass, false, entityClass.getName()
+                            + " is annotated @Entity but does not reside in any module listed in "
+                            + "FEATURE_MODULES — add its module there, or this entity's cross-"
+                            + "module boundary is not being enforced at all"));
                     return;
                 }
                 // Dependency-based (getDirectDependenciesToSelf), not access-based
@@ -109,11 +142,18 @@ class ArchitectureTest {
 
     /**
      * T35 Phase 4 D2: no controller may depend on another module's {@code @Service}, except the
-     * two pre-existing, deliberate exceptions in {@link #ALLOWED_CROSS_MODULE_CONTROLLER_SERVICE_DEPENDENCIES}.
-     * {@code @RestControllerAdvice} classes are excluded from this rule for free — confirmed via
-     * bytecode that {@code @RestControllerAdvice} is meta-annotated {@code @AliasFor(annotation =
-     * ControllerAdvice.class)}, never {@code @RestController}, so {@code areAnnotatedWith
-     * (RestController.class)} never selects one.
+     * two pre-existing, deliberate exceptions in {@link #ALLOWED_CROSS_MODULE_CONTROLLER_SERVICE_DEPENDENCIES}
+     * and any {@code @Service} in {@code common} (Phase 9 Finding 2 — {@code common}'s entire
+     * purpose is to be shared, so a controller using a common service isn't the coupling this
+     * rule exists to prevent). {@code @RestControllerAdvice} classes are excluded from this rule
+     * for free — confirmed via bytecode that {@code @RestControllerAdvice} is meta-annotated
+     * {@code @AliasFor(annotation = ControllerAdvice.class)}, never {@code @RestController}, so
+     * {@code areAnnotatedWith(RestController.class)} never selects one. Detection is deliberately
+     * narrow (Kimi Phase 8 Findings 6/7): controllers are exactly {@code @RestController}
+     * classes, services are exactly {@code @Service}-annotated classes — a future plain
+     * {@code @Controller} or a service-layer class using only {@code @Component} would not be
+     * seen by this rule; every controller/service in this codebase uses these two annotations
+     * today.
      */
     @ArchTest
     static final ArchRule controllersDependOnlyOnTheirOwnModuleServices = classes()
@@ -121,24 +161,39 @@ class ArchitectureTest {
             .should(dependOnlyOnServicesFromTheSameFeatureModuleOrAnAllowedException())
             .because("L12: a controller reaching into another module's service layer without a "
                     + "defined boundary is the same class of coupling L12 forbids at the entity "
-                    + "level — two pre-existing, deliberate exceptions are explicitly allowlisted, "
-                    + "not silently broken by this rule; service-to-service cross-module "
-                    + "dependencies (e.g. LockoutService -> AccountService) are a separate, "
-                    + "accepted, out-of-scope pattern this rule does not constrain");
+                    + "level — two pre-existing, deliberate exceptions are explicitly allowlisted "
+                    + "and common services are always allowed, neither silently broken by this "
+                    + "rule; service-to-service cross-module dependencies (e.g. LockoutService -> "
+                    + "AccountService) are a separate, accepted, out-of-scope pattern this rule "
+                    + "does not constrain");
 
     private static ArchCondition<JavaClass> dependOnlyOnServicesFromTheSameFeatureModuleOrAnAllowedException() {
         return new ArchCondition<JavaClass>(
-                "depend only on services from the same feature module, or an allowed exception") {
+                "depend only on services from the same feature module, common, or an allowed exception") {
             @Override
             public void check(JavaClass controllerClass, ConditionEvents events) {
                 String controllerModule = featureModuleOf(controllerClass);
+                if (controllerModule == null) {
+                    // T35 Phase 9 Finding 1: same fail-fast symmetry as the entity rule — a
+                    // @RestController outside every known module means FEATURE_MODULES itself
+                    // needs updating, not that this rule should quietly stop checking it.
+                    events.add(new SimpleConditionEvent(controllerClass, false, controllerClass.getName()
+                            + " is annotated @RestController but does not reside in any module "
+                            + "listed in FEATURE_MODULES — add its module there, or this "
+                            + "controller's service dependencies are not being enforced at all"));
+                    return;
+                }
                 controllerClass.getDirectDependenciesFromSelf().forEach(dependency -> {
                     JavaClass targetClass = dependency.getTargetClass();
                     if (!targetClass.isAnnotatedWith(Service.class)) {
                         return;
                     }
+                    if (isInCommonModule(targetClass)) {
+                        events.add(new SimpleConditionEvent(dependency, true, dependency.getDescription()));
+                        return;
+                    }
                     String serviceModule = featureModuleOf(targetClass);
-                    boolean sameModule = controllerModule != null && controllerModule.equals(serviceModule);
+                    boolean sameModule = controllerModule.equals(serviceModule);
                     boolean allowed = ALLOWED_CROSS_MODULE_CONTROLLER_SERVICE_DEPENDENCIES.contains(
                             controllerClass.getName() + "->" + targetClass.getName());
                     events.add(new SimpleConditionEvent(
@@ -248,22 +303,33 @@ class ArchitectureTest {
      * invokes {@link #shouldEnforcePublicEndpointAllowlist}'s own {@code check(...)}, so this
      * task's specific named rule is enforced by {@code mvn test} regardless of the separate,
      * out-of-scope Surefire/ArchUnit engine-integration gap. Deliberately scoped to only this one
-     * rule (Kimi Phase 11 Gap 2) — the other 9 pre-existing {@code @ArchTest} rules in this file
-     * remain un-gated by {@code mvn test} until that separate, broader issue is fixed; generalizing
-     * this workaround to cover all of them was judged out of scope for this task.
+     * rule (Kimi Phase 11 Gap 2) — every other pre-existing {@code @ArchTest} rule in this file
+     * (a count deliberately not restated here — Kimi Phase 8 Finding 5 caught it going stale the
+     * first time this file grew) remains un-gated by {@code mvn test} until that separate, broader
+     * issue is fixed; generalizing this workaround to cover all of them was judged out of scope
+     * for this task.
      */
     @Test
     void shouldEnforcePublicEndpointAllowlistIsCheckedDuringStandardBuild() {
         shouldEnforcePublicEndpointAllowlist.check(analyzedClasses());
     }
 
-    /** Kimi Phase 11 Gap 1: the exact same scan configuration {@code @AnalyzeClasses} declares,
-     * so {@link #shouldEnforcePublicEndpointAllowlistIsCheckedDuringStandardBuild} can never
-     * silently check a different class set than the annotation-driven rules do. */
+    /** Lazily imported once and reused by every canary (Kimi Phase 8 Finding 10 — three canaries
+     * each separately re-importing the whole analyzed package was wasted, linearly-scaling work);
+     * still the exact same scan configuration {@code @AnalyzeClasses} declares, so no canary can
+     * silently check a different class set than the annotation-driven rules do (Kimi Phase 11
+     * Gap 1). JUnit Jupiter runs this class's test methods sequentially by default (no parallel
+     * execution configured anywhere in this project), so the lazy-init here needs no
+     * synchronization. */
+    private static JavaClasses analyzedClasses;
+
     private static JavaClasses analyzedClasses() {
-        return new ClassFileImporter()
-                .withImportOption(new ImportOption.DoNotIncludeTests())
-                .importPackages(ANALYZED_PACKAGE);
+        if (analyzedClasses == null) {
+            analyzedClasses = new ClassFileImporter()
+                    .withImportOption(new ImportOption.DoNotIncludeTests())
+                    .importPackages(ANALYZED_PACKAGE);
+        }
+        return analyzedClasses;
     }
 
     /** T35: same non-execution gap as T32 (ArchUnit's own JUnit 5 engine doesn't run under this
