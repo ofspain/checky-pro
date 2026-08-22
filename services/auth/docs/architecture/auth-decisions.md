@@ -228,15 +228,24 @@ mapping: `gap-analysis.md`.
   false-positive-lockout a legitimate user retrying a typo), flagged explicitly per `package.md` §11
   Q2's "confirm or replace the placeholders" instruction, and confirmed via human gate rather than
   chosen after weighing several concrete alternative numbers.
-- **Selected:** `login-per-minute=10`, `password-reset-per-minute=5`, `oauth-token-per-minute=30`
-  (`application.properties:104-106`). No separate MFA-verify threshold exists — MFA code submission
-  is folded into the same `/login` bucket by construction, not an oversight: `TotpAuthenticationProvider`
-  verifies the TOTP/recovery code inside the same `/login` POST as the password (T20's single-request
-  design, O4/D-028), so there is no separate HTTP call for MFA verification to rate-limit
-  independently. `RateLimitFilter.java`'s own Javadoc (lines 23-26) states this explicitly.
+- **Selected:** `login-per-minute=10`, `password-reset-per-minute=5`,
+  `oauth-token-per-minute=30` — the last applies only to `POST /oauth2/token` with
+  `grant_type=refresh_token` (`RateLimitFilter.isOAuthTokenRefreshRequest`), not every grant type;
+  `authorization_code` requests are not limited by this filter (`application.properties:104-106`).
+  No separate MFA-verify threshold exists — MFA code submission is folded into the same `/login`
+  bucket by construction, not an oversight: `TotpAuthenticationProvider` verifies the TOTP/recovery
+  code inside the same `/login` POST as the password (T20's single-request design, O4/D-028), so
+  there is no separate HTTP call for MFA verification to rate-limit independently.
+  `RateLimitFilter.java`'s own Javadoc (lines 23-26) states this explicitly.
 - **Trade-offs:** A merchant with confirmed MFA who mistypes their TOTP code repeatedly consumes the
   same budget as password-guessing attempts — accepted, since both are legitimately part of "how many
-  login attempts per minute is reasonable," not two independent concerns.
+  login attempts per minute is reasonable," not two independent concerns. Separately, both the
+  password-reset and `/oauth2/token` refresh buckets are keyed by the SHA-256 hash of the submitted
+  token, not by account (`RateLimitFilter.java`'s own Javadoc, lines 32-44) — a per-token, not
+  strictly per-account, granularity, accepted (Kimi Phase 8 Finding 4, femi's T31 gate decision)
+  because each reset/refresh token is already single-use and time-limited; the limit's real value is
+  slowing brute-force guessing of one specific token, not capping how many tokens an account can
+  request.
 - **Impact:** Three `@ConfigurationProperties` values, each environment-overridable
   (`RATE_LIMIT_LOGIN_PER_MINUTE`, etc.); `RateLimitFilter` enforces all three paths before credential
   validation (D4, DoS-backstop value).
@@ -275,9 +284,11 @@ mapping: `gap-analysis.md`.
   design), so no template customization was needed to support the second factor. A custom template
   remains a low-risk future addition (branding/UX) if ever wanted — nothing about the authentication
   mechanism depends on the page's markup.
-- **Impact:** Zero frontend/template code in this service; `SasLoginIntegrationTest`'s own CSRF-
-  scraping helper relies on the real default-login-page markup, confirming this is the actual,
-  currently-shipped behavior, not an assumption.
+- **Impact:** Zero frontend/template code in this service; `SecurityChainsConfig.applicationChain`'s
+  `.formLogin(...)` configures `authenticationDetailsSource`/`failureHandler`/`successHandler` but
+  never calls `.loginPage(...)`, so Spring Security's default auto-generated login page renders
+  as-is. `SasLoginIntegrationTest`'s own CSRF-scraping helper relies on the real default-login-page
+  markup, confirming this is the actual, currently-shipped behavior, not an assumption.
 - **Reference influence:** None (reference's login flow was a JSON API, not a server-rendered page).
 
 ## D-029 · Recovery-code hashing: SHA-256 (resolves O5)
