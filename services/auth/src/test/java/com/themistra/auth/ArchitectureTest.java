@@ -2,18 +2,27 @@ package com.themistra.auth;
 
 import com.themistra.auth.common.PublicEndpoints;
 import com.themistra.auth.token.SecurityChainsConfig;
+import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaModifier;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
+import com.tngtech.archunit.lang.ConditionEvents;
+import com.tngtech.archunit.lang.SimpleConditionEvent;
+import jakarta.persistence.Entity;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.config.annotation.web.configurers.AuthorizeHttpRequestsConfigurer;
+import org.springframework.stereotype.Service;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
@@ -33,13 +42,111 @@ class ArchitectureTest {
      * {@link #analyzedClasses()} so the two can never silently drift apart (Kimi Phase 11 Gap 1). */
     static final String ANALYZED_PACKAGE = "com.themistra.auth";
 
+    /** T35 Phase 4 D2 — the immediate subpackages of {@code com.themistra.auth} that contain
+     * domain code. {@code common} and same-module subpackages (e.g. {@code account.dto}) are not
+     * separate modules for {@link #featureModuleOf(JavaClass)}'s purposes. */
+    private static final List<String> FEATURE_MODULES = List.of(
+            "account", "authn", "authz", "audit", "token", "mfa", "apikey", "events",
+            "cleanup", "ratelimit");
+
+    /** T35 Phase 4 D2 — the two pre-existing, deliberate controller-to-another-module-service
+     * dependencies this codebase already ships (T14/R20, T28), explicitly allowlisted rather than
+     * silently broken by {@link #controllersDependOnlyOnTheirOwnModuleServices}. */
+    private static final Set<String> ALLOWED_CROSS_MODULE_CONTROLLER_SERVICE_DEPENDENCIES = Set.of(
+            "com.themistra.auth.account.AccountController->com.themistra.auth.token.SessionService",
+            "com.themistra.auth.account.AdminAccountController->com.themistra.auth.authn.LockoutService");
+
+    /** Returns the feature-module name (e.g. {@code "account"}) a class belongs to, per
+     * {@link #FEATURE_MODULES}, or {@code null} if it isn't inside any of them (e.g. {@code
+     * common} or top-level code) — such classes are simply not constrained by either T35 rule. */
+    private static String featureModuleOf(JavaClass javaClass) {
+        String packageName = javaClass.getPackageName();
+        for (String module : FEATURE_MODULES) {
+            String modulePackage = "com.themistra.auth." + module;
+            if (packageName.equals(modulePackage) || packageName.startsWith(modulePackage + ".")) {
+                return module;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * T35 Phase 4 D1b: generalizes what was originally an Account-only rule
+     * ({@code only_the_account_module_may_touch_the_Account_entity}) to every {@code @Entity}
+     * class in every feature module — the original's {@code resideOutsideOfPackage(...)} (no
+     * {@code ..} wildcard) also had a real bug incorrectly flagging {@code account.dto}/{@code
+     * account.event}, fixed here by computing each entity's own module instead of hardcoding one.
+     */
     @ArchTest
-    static final ArchRule only_the_account_module_may_touch_the_Account_entity = noClasses()
-            .that().resideOutsideOfPackage("com.themistra.auth.account")
-            .should().dependOnClassesThat().haveFullyQualifiedName("com.themistra.auth.account.Account")
-            .because("the Account aggregate is account-module-private (its own Javadoc: the "
-                    + "internal id never leaves this service); other modules address accounts "
-                    + "via AccountService, UUIDs, and account.dto/account.event types only");
+    static final ArchRule shouldPreventCrossModuleEntityImports = classes()
+            .that().areAnnotatedWith(Entity.class)
+            .should(onlyBeAccessedFromTheSameFeatureModule())
+            .because("L12: no feature module may import an entity class from another feature "
+                    + "module");
+
+    private static ArchCondition<JavaClass> onlyBeAccessedFromTheSameFeatureModule() {
+        return new ArchCondition<JavaClass>("only be accessed from the same feature module") {
+            @Override
+            public void check(JavaClass entityClass, ConditionEvents events) {
+                String entityModule = featureModuleOf(entityClass);
+                if (entityModule == null) {
+                    return;
+                }
+                // Dependency-based (getDirectDependenciesToSelf), not access-based
+                // (getAccessesToSelf) — a field/parameter of the entity's type is already a real
+                // cross-module coupling even if nothing ever calls a method on it; access-based
+                // tracking only sees actual get/put/invoke bytecode and would miss a
+                // declared-but-unused field of the entity's type entirely (caught by this task's
+                // own negative-proof: an access-based first attempt let exactly that through).
+                entityClass.getDirectDependenciesToSelf().forEach(dependency -> {
+                    String dependingModule = featureModuleOf(dependency.getOriginClass());
+                    boolean satisfied = entityModule.equals(dependingModule);
+                    events.add(new SimpleConditionEvent(dependency, satisfied, dependency.getDescription()));
+                });
+            }
+        };
+    }
+
+    /**
+     * T35 Phase 4 D2: no controller may depend on another module's {@code @Service}, except the
+     * two pre-existing, deliberate exceptions in {@link #ALLOWED_CROSS_MODULE_CONTROLLER_SERVICE_DEPENDENCIES}.
+     * {@code @RestControllerAdvice} classes are excluded from this rule for free — confirmed via
+     * bytecode that {@code @RestControllerAdvice} is meta-annotated {@code @AliasFor(annotation =
+     * ControllerAdvice.class)}, never {@code @RestController}, so {@code areAnnotatedWith
+     * (RestController.class)} never selects one.
+     */
+    @ArchTest
+    static final ArchRule controllersDependOnlyOnTheirOwnModuleServices = classes()
+            .that().areAnnotatedWith(RestController.class)
+            .should(dependOnlyOnServicesFromTheSameFeatureModuleOrAnAllowedException())
+            .because("L12: a controller reaching into another module's service layer without a "
+                    + "defined boundary is the same class of coupling L12 forbids at the entity "
+                    + "level — two pre-existing, deliberate exceptions are explicitly allowlisted, "
+                    + "not silently broken by this rule; service-to-service cross-module "
+                    + "dependencies (e.g. LockoutService -> AccountService) are a separate, "
+                    + "accepted, out-of-scope pattern this rule does not constrain");
+
+    private static ArchCondition<JavaClass> dependOnlyOnServicesFromTheSameFeatureModuleOrAnAllowedException() {
+        return new ArchCondition<JavaClass>(
+                "depend only on services from the same feature module, or an allowed exception") {
+            @Override
+            public void check(JavaClass controllerClass, ConditionEvents events) {
+                String controllerModule = featureModuleOf(controllerClass);
+                controllerClass.getDirectDependenciesFromSelf().forEach(dependency -> {
+                    JavaClass targetClass = dependency.getTargetClass();
+                    if (!targetClass.isAnnotatedWith(Service.class)) {
+                        return;
+                    }
+                    String serviceModule = featureModuleOf(targetClass);
+                    boolean sameModule = controllerModule != null && controllerModule.equals(serviceModule);
+                    boolean allowed = ALLOWED_CROSS_MODULE_CONTROLLER_SERVICE_DEPENDENCIES.contains(
+                            controllerClass.getName() + "->" + targetClass.getName());
+                    events.add(new SimpleConditionEvent(
+                            dependency, sameModule || allowed, dependency.getDescription()));
+                });
+            }
+        };
+    }
 
     @ArchTest
     static final ArchRule authz_never_depends_on_the_account_module = noClasses()
@@ -157,5 +264,20 @@ class ArchitectureTest {
         return new ClassFileImporter()
                 .withImportOption(new ImportOption.DoNotIncludeTests())
                 .importPackages(ANALYZED_PACKAGE);
+    }
+
+    /** T35: same non-execution gap as T32 (ArchUnit's own JUnit 5 engine doesn't run under this
+     * project's {@code mvn test}) — this canary re-invokes the rule directly via the JUnit
+     * Jupiter engine, proven to execute under Surefire, matching
+     * {@link #shouldEnforcePublicEndpointAllowlistIsCheckedDuringStandardBuild}'s exact pattern. */
+    @Test
+    void shouldPreventCrossModuleEntityImportsIsCheckedDuringStandardBuild() {
+        shouldPreventCrossModuleEntityImports.check(analyzedClasses());
+    }
+
+    /** T35: same canary pattern for the controller-to-service rule. */
+    @Test
+    void controllersDependOnlyOnTheirOwnModuleServicesIsCheckedDuringStandardBuild() {
+        controllersDependOnlyOnTheirOwnModuleServices.check(analyzedClasses());
     }
 }
