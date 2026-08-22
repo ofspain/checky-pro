@@ -317,41 +317,50 @@ public class AccountService {
         Account account = getAccount(accountUuid);
         if (account.getStatus() == AccountStatus.ACTIVE) {
             account.lock();
+            publishLifecycleEvent(account, "user.locked");
+            recordAudit("account.locked", accountUuid, null);
         }
     }
 
-    /** Guarded, idempotent unlock — a no-op unless the account is currently {@code LOCKED}. */
+    /** Guarded, idempotent unlock — a no-op unless the account is currently {@code LOCKED}.
+     * System-initiated (called by {@link com.themistra.auth.authn.LockoutService} after
+     * failed-attempt evaluation, no authenticated caller) — delegates to {@link
+     * #unlock(UUID, UUID)} with a {@code null} actor, matching this class's established
+     * convention for honestly recording an unknown actor rather than fabricating one (D-022). */
     @Transactional
     public void unlock(UUID accountUuid) {
-        Account account = getAccount(accountUuid);
-        if (account.getStatus() == AccountStatus.LOCKED) {
-            account.unlock();
-        }
+        unlock(accountUuid, null);
     }
 
     /**
      * Admin/compliance-initiated unlock (T14, R20) — the counterpart to {@link
-     * #suspend}/{@link #reinstate}/{@link #delete}. Reuses {@link #unlock(UUID)}'s own guard
-     * (status-transition idempotent: a no-op on {@code Account.status} if the account isn't
-     * currently {@code LOCKED}). The lifecycle event and audit record are conditioned on a real
-     * {@code LOCKED → ACTIVE} transition having actually occurred (Phase 9, human-approved) — not
-     * unconditional as first implemented, since {@code unlock(UUID)}'s guard is a no-op for
-     * *any* non-{@code LOCKED} status (e.g. {@code SUSPENDED}, {@code DELETED}), and firing a
-     * {@code "user.unlocked"} event whose own payload still carries {@code SUSPENDED}/{@code
-     * DELETED} would be a materially misleading signal to anything consuming it. {@code
-     * actorUuid} is the authenticated admin/compliance caller, never defaulted to {@code
-     * accountUuid} (unlike every self-service call site in this class).
+     * #suspend}/{@link #reinstate}/{@link #delete}. Delegates to the same {@link #unlock(UUID,
+     * UUID)} the automatic path uses (T40, R43) — a single place fires the lifecycle event/audit,
+     * gated on a real {@code LOCKED → ACTIVE} transition having actually occurred (Phase 9,
+     * human-approved) so a no-op unlock (e.g. an already-{@code ACTIVE},
+     * {@code SUSPENDED}/{@code DELETED} account) never fires a misleading {@code "user.unlocked"}
+     * signal. {@code actorUuid} is the authenticated admin/compliance caller, never defaulted to
+     * {@code accountUuid} (unlike every self-service call site in this class).
      */
     @Transactional
     public AccountResponse adminUnlock(UUID accountUuid, UUID actorUuid) {
-        boolean wasLocked = getAccount(accountUuid).getStatus() == AccountStatus.LOCKED;
-        unlock(accountUuid);
+        unlock(accountUuid, actorUuid);
+        return AccountResponse.from(getAccount(accountUuid));
+    }
+
+    /** The single place that actually performs an unlock, gated + audited/published exactly
+     * once — both {@link #unlock(UUID)} (system-initiated, null actor) and {@link
+     * #adminUnlock(UUID, UUID)} (real admin actor) delegate here rather than each firing their
+     * own event/audit, which previously double-fired when {@code adminUnlock} called the plain
+     * {@code unlock(UUID)} internally (T40 self-review catch, before this was ever run for
+     * real). */
+    private void unlock(UUID accountUuid, UUID actorUuid) {
         Account account = getAccount(accountUuid);
-        if (wasLocked) {
+        if (account.getStatus() == AccountStatus.LOCKED) {
+            account.unlock();
             publishLifecycleEvent(account, "user.unlocked");
             recordAudit("account.unlocked", accountUuid, actorUuid);
         }
-        return AccountResponse.from(account);
     }
 
     /**

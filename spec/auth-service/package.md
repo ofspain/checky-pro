@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Spec ID | `AUTH-PHASE1` |
-| Version | `0.1` |
+| Version | `0.2` |
 | Author (senior/owner) | `<name>` |
 | Implementer | `TBD` |
-| Status | `DRAFT` |
+| Status | `READY FOR IMPL` |
 | Target repo / service | `services/auth` |
 | Skills to load | `spec-authoring`, `code-review` |
 | Standing rules | [`agents.md`](agents.md) in this directory is authoritative for `services/auth` (distilled from `ARCHITECTURE.md`, `docs/service-languages.pdf`, the ADRs, and `auth-decisions.md` D-001…D-014). This spec references it and does not restate or override it except where §4a says so explicitly. |
@@ -146,8 +146,27 @@ The existing tests (`ArchitectureTest`, account/authz/audit/token integration te
 ## 11. Open questions for the author
 
 - Q1. **TOTP seed encryption KMS approach.** ~~`target-design.md` says AES-GCM with KMS-enveloped data key, but D-010 forbids AWS SDK in application code. Is the preference to (a) inject a symmetric data key via External Secrets and encrypt locally, (b) relax D-010 for a narrow KMS envelope-encryption call, or (c) route encryption through the Crypto Service? This is a blocker for MFA implementation.~~ **Resolved (2026-07-22):** option (b) — a narrow KMS envelope-encryption call, confined to `MfaSeedEncryption`, as a named exception to D-010. See `design.md` L14, `auth-decisions.md` D-025, `docs/adr/0003-narrow-kms-exception-for-totp-seed-encryption.md`.
-- Q2. **Per-account rate-limit thresholds.** What are the permitted requests-per-minute limits for login attempts, `/oauth2/token`, password-reset confirmation, and MFA verify? Please confirm or replace the placeholders in `design.md` §4b-O2.
-- Q3. **API key limits and scopes.** Should there be a maximum number of active API keys per merchant? Is the only scope at launch `merchant.api`, or are additional scopes needed?
-- Q4. **Email link base URL.** Verification and password-reset links need a base URL + path. Should this come from `SPA_REDIRECT_URI` / `AUTH_ISSUER_URI`, or does the Notification Service need a new `AUTH_EMAIL_LINK_BASE_URL` secret?
-- Q5. **Lockout event publication.** Is lock/unlock published only as an `auth.security.audit` mirror, or also as a lifecycle event on `auth.user.lifecycle`? The schema currently only has status enum values.
+- Q2. **Per-account rate-limit thresholds.** ~~What are the permitted requests-per-minute limits for login attempts, `/oauth2/token`, password-reset confirmation, and MFA verify? Please confirm or replace the placeholders in `design.md` §4b-O2.~~ **Resolved (2026-08-22):** 10 login attempts/minute (MFA verify folded into the same `/login` bucket, not separately limited), 5 password-reset confirmations/minute, 30 `/oauth2/token` `refresh_token`-grant requests/minute. See `auth-decisions.md` D-026.
+- Q3. **API key limits and scopes.** ~~Should there be a maximum number of active API keys per merchant? Is the only scope at launch `merchant.api`, or are additional scopes needed?~~ **Partially resolved (2026-08-22):** the only scope at launch is `merchant.api` (`ApiKeyService.DEFAULT_SCOPES`). No maximum active-key count is implemented or enforced — deferred as a future guard if operational need arises, not yet a deliberate limit decision.
+- Q4. **Email link base URL.** ~~Verification and password-reset links need a base URL + path. Should this come from `SPA_REDIRECT_URI` / `AUTH_ISSUER_URI`, or does the Notification Service need a new `AUTH_EMAIL_LINK_BASE_URL` secret?~~ **Out of `services/auth`'s own scope (2026-08-22):** `EmailRequestedEventPayload` carries only `accountUuid`/`purpose`/`token`/`occurredAt` — no URL or link field. Link construction is entirely the Notification Service's responsibility; if it needs a base-URL secret, that is a `spec/notification-service/` question, not this spec's.
+- Q5. **Lockout event publication.** ~~Is lock/unlock published only as an `auth.security.audit` mirror, or also as a lifecycle event on `auth.user.lifecycle`? The schema currently only has status enum values.~~ **Resolved (2026-08-22, T40):** both. `AccountService.lock`/`unlock` now publish `"user.locked"`/`"user.unlocked"` to `auth.user.lifecycle` and record `"account.locked"`/`"account.unlocked"` to `auth_audit` (mirrored to `auth.security.audit`) on every real state transition — closing a real R43 gap where the automatic (non-admin) lock/unlock path was previously unaudited while the admin-initiated path already was.
 - Q6. **Agents / standing rules file.** ~~No repo `agents.md` exists.~~ **Resolved (2026-07-20):** a per-service `spec/auth-service/agents.md` now holds the durable rules, distilled from `ARCHITECTURE.md` / `service-languages.pdf` / `auth-decisions.md`; this spec references it instead of restating stack assumptions. Open follow-up: whether to also seed a single repo-root `agents.md` for the platform-common section shared by all four service files (dedupe), or keep them self-contained per service.
+
+## 12. Test-suite status at status bump (T40, 2026-08-22)
+
+`mvn -pl services/auth verify` does not exit zero as of this status bump. Two already-diagnosed,
+independently-corroborated groups remain, both explicitly accepted as named exceptions rather than
+silently ignored:
+
+- **Kafka producer→broker environment connectivity** (first logged T36, reproduced again T37/T38):
+  blocks `EndToEndLifecycleIntegrationTest`, `AccountPersistenceIntegrationTest`,
+  `AuditTrailIntegrationTest`'s Kafka-wait step. No known code-level fix — local Docker/host
+  networking, not a `services/auth` defect. Confirmed: no stale containers, no hardcoded
+  `bootstrap-servers` override.
+- **Null-response flakiness under full-suite load** (first observed T31, unconfirmed root cause):
+  affects `ApiKeyLifecycleIntegrationTest`/`ApiKeyExchangeIntegrationTest`. Not reproduced in
+  isolation; no fix attempted without a confirmed cause.
+
+Every other test, including the T38 gap-analysis regression suite and every requirement-scoped
+integration test, passes. All feature work (T01-T39) is complete and reviewed; these two groups are
+environmental/unconfirmed, not open feature gaps.

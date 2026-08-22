@@ -5,12 +5,14 @@ import com.themistra.auth.account.AccountService;
 import com.themistra.auth.account.AccountStatus;
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
+import com.themistra.auth.audit.AuditService;
 import com.themistra.auth.authn.LockoutStateMachine.AccountStatusChange;
 import com.themistra.auth.authn.LockoutStateMachine.LockoutDecision;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Pageable;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -43,6 +45,9 @@ class LockoutPersistenceIntegrationTest {
 
     @Autowired
     private LockoutStateRepository lockoutStateRepository;
+
+    @Autowired
+    private AuditService auditService;
 
     @Test
     void findAccountIdByUuidResolvesTheRealInternalId() {
@@ -82,6 +87,11 @@ class LockoutPersistenceIntegrationTest {
         assertThat(persisted).isPresent();
         assertThat(persisted.get().getFailedAttempts()).isEqualTo(5);
         assertThat(persisted.get().getLockCount()).isEqualTo(1);
+
+        // T40, R43: the automatic lock must be audited, matching adminUnlock's already-correct
+        // pattern - this was a real gap until this task's own AccountService.lock fix.
+        assertThat(auditService.list(accountUuid, Pageable.unpaged()).getContent())
+                .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("account.locked"));
     }
 
     @Test
@@ -103,6 +113,10 @@ class LockoutPersistenceIntegrationTest {
         assertThat(persisted).isPresent();
         assertThat(persisted.get().getFailedAttempts()).isZero();
         assertThat(persisted.get().getLockedUntil()).isNull();
+
+        // T40, R43: the automatic unlock must also be audited (same fix as the lock side above).
+        assertThat(auditService.list(accountUuid, Pageable.unpaged()).getContent())
+                .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("account.unlocked"));
     }
 
     @Test
