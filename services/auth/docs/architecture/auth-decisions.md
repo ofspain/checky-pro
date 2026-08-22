@@ -217,3 +217,80 @@ mapping: `gap-analysis.md`.
 - **Trade-offs:** Stronger custody than (a) — the data key is unwrapped per-operation via KMS rather than living in the environment for the pod's lifetime — without grafting an unrelated responsibility onto the Crypto Service (c). Costs a KMS network call on enroll and on every verification, plus a narrow, named D-010 exception (scoped IAM: `kms:GenerateDataKey`/`kms:Decrypt` on one CMK ARN, no wildcard).
 - **Impact:** Ciphertext envelope layout (format-version byte, wrapped-data-key length/bytes, nonce, AES-GCM ciphertext+tag) fixed in ADR-0003. `mfa_enrollments.secret_encrypted`'s existing V1 comment ("AES-GCM, KMS-enveloped data key") already describes this outcome accurately — no migration needed. KMS's own automatic annual CMK rotation (infra/CDK) handles rotation; the application does not track key versions.
 - **Reference influence:** None (reference has no MFA).
+
+## D-026 · Rate-limit thresholds: 10/5/30 per minute, MFA folded into the login bucket (resolves O2)
+
+- **Context:** D-013 selected the *mechanism* (in-process Bucket4j per replica + durable lockout
+  backstop) but deferred the specific threshold numbers `design.md` §4b O2 asks for: login,
+  `/oauth2/token`, password-reset confirm, and MFA verify.
+- **Alternatives:** no rich numeric trade-off study — task #31's Phase 1/2 proposed the specific
+  values below directly (tight enough to meaningfully slow credential guessing, loose enough not to
+  false-positive-lockout a legitimate user retrying a typo), flagged explicitly per `package.md` §11
+  Q2's "confirm or replace the placeholders" instruction, and confirmed via human gate rather than
+  chosen after weighing several concrete alternative numbers.
+- **Selected:** `login-per-minute=10`, `password-reset-per-minute=5`, `oauth-token-per-minute=30`
+  (`application.properties:104-106`). No separate MFA-verify threshold exists — MFA code submission
+  is folded into the same `/login` bucket by construction, not an oversight: `TotpAuthenticationProvider`
+  verifies the TOTP/recovery code inside the same `/login` POST as the password (T20's single-request
+  design, O4/D-028), so there is no separate HTTP call for MFA verification to rate-limit
+  independently. `RateLimitFilter.java`'s own Javadoc (lines 23-26) states this explicitly.
+- **Trade-offs:** A merchant with confirmed MFA who mistypes their TOTP code repeatedly consumes the
+  same budget as password-guessing attempts — accepted, since both are legitimately part of "how many
+  login attempts per minute is reasonable," not two independent concerns.
+- **Impact:** Three `@ConfigurationProperties` values, each environment-overridable
+  (`RATE_LIMIT_LOGIN_PER_MINUTE`, etc.); `RateLimitFilter` enforces all three paths before credential
+  validation (D4, DoS-backstop value).
+- **Reference influence:** None (reference had no rate limiting at all — gap-analysis §1 #14).
+
+## D-027 · Session device-label source: still open (O3 — recorded as unresolved, not resolved)
+
+- **Context:** `design.md` §4b O3 asks how a refresh-token family's `device_label` is determined:
+  (a) a client-supplied label in the authorize request, (b) a hash of the `User-Agent`, or (c) a
+  generic default.
+- **Current state:** None of the three was ever chosen. `ReuseDetectingAuthorizationService.java:95`
+  passes a literal `null` for `deviceLabel` on every real token issuance
+  (`tracker.trackIssuance(authorization.getId(), authorization.getPrincipalName(), null, hash)`).
+  `SessionResponse`'s own Javadoc already documents the consequence: `deviceLabel` is `null` for
+  every session returned by `GET /accounts/me/sessions` today.
+- **Why it's recorded as open, not closed:** The schema and API surface fully support the concept
+  (D-003) — this is a genuine gap in a decision that was never made, not a deliberate "generic
+  default" selection retroactively dressed up as one. Recording it as resolved (e.g., "chose (c),
+  generic default/null") would misrepresent that any choice was actually weighed; `null` is simply
+  what happens when nothing computes a value.
+- **What would resolve it:** A future task implementing one of the three named options — most likely
+  (b), a `User-Agent` hash, since it requires no client-side change and gives genuinely
+  distinguishing information for the `GET /accounts/me/sessions` UI this was designed to support.
+- **Reference influence:** None (reference had no per-device session concept at all).
+
+## D-028 · Login page: default Spring Security form, no custom template (resolves O4)
+
+- **Context:** `design.md` §4b O4 asks whether SAS's first-party `/login` page should be the default
+  Spring Security form or a custom Thymeleaf template supporting password + TOTP/recovery-code
+  fields.
+- **Alternatives:** (a) default Spring Security form login page; (b) a custom Thymeleaf template.
+- **Selected:** (a) — no custom template was built; `src/main/resources` contains no login HTML.
+- **Trade-offs:** The default form's markup is less polished than a purpose-built template, but it is
+  fully sufficient: `TotpAuthenticationProvider` consumes an additional `mfaCode` form parameter on
+  the same `/login` POST the default form already submits (T20's single-request password+MFA
+  design), so no template customization was needed to support the second factor. A custom template
+  remains a low-risk future addition (branding/UX) if ever wanted — nothing about the authentication
+  mechanism depends on the page's markup.
+- **Impact:** Zero frontend/template code in this service; `SasLoginIntegrationTest`'s own CSRF-
+  scraping helper relies on the real default-login-page markup, confirming this is the actual,
+  currently-shipped behavior, not an assumption.
+- **Reference influence:** None (reference's login flow was a JSON API, not a server-rendered page).
+
+## D-029 · Recovery-code hashing: SHA-256 (resolves O5)
+
+- **Context:** `design.md` §4b O5 asks for the recovery-code hashing primitive, defaulting to
+  SHA-256 unless a case for bcrypt (defensible if rotation is rare) is made.
+- **Alternatives:** (a) SHA-256 (the suggested default); (b) bcrypt.
+- **Selected:** (a) SHA-256. `RecoveryCode.codeHash` stores a SHA-256 hex digest
+  (`RecoveryCode.java:15-17,39-41`, `CHAR(64)`), produced via `Hashing.sha256(rawCode)`
+  (`MfaService.java:139`, the same shared primitive D-021 established).
+- **Trade-offs:** Unlike a password, a recovery code is high-entropy and single-use (consumed and
+  invalidated on first successful use, L6) — bcrypt's deliberate slowness defends against offline
+  guessing of a *low*-entropy secret, which does not apply here. SHA-256 is the correct-cost choice
+  for a value that is never brute-forceable in the first place.
+- **Impact:** No new hashing dependency; reuses `common.Hashing` (D-021).
+- **Reference influence:** None (reference has no MFA/recovery-code concept).
