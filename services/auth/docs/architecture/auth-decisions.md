@@ -253,6 +253,9 @@ mapping: `gap-analysis.md`.
 
 ## D-027 · Session device-label source: still open (O3 — recorded as unresolved, not resolved)
 
+See `spec/auth-service/design.md` §4b O3 for the original framing — this entry records that none of
+the three options it names was ever selected; `design.md` itself is not edited by this task.
+
 - **Context:** `design.md` §4b O3 asks how a refresh-token family's `device_label` is determined:
   (a) a client-supplied label in the authorize request, (b) a hash of the `User-Agent`, or (c) a
   generic default.
