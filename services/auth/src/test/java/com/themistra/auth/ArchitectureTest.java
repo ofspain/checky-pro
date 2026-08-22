@@ -314,21 +314,19 @@ class ArchitectureTest {
         shouldEnforcePublicEndpointAllowlist.check(analyzedClasses());
     }
 
-    /** Lazily imported once and reused by every canary (Kimi Phase 8 Finding 10 — three canaries
-     * each separately re-importing the whole analyzed package was wasted, linearly-scaling work);
-     * still the exact same scan configuration {@code @AnalyzeClasses} declares, so no canary can
-     * silently check a different class set than the annotation-driven rules do (Kimi Phase 11
-     * Gap 1). JUnit Jupiter runs this class's test methods sequentially by default (no parallel
-     * execution configured anywhere in this project), so the lazy-init here needs no
-     * synchronization. */
-    private static JavaClasses analyzedClasses;
+    /** Imported once, eagerly, at class-load time, and reused by every canary (Kimi Phase 8
+     * Finding 10 — three canaries each separately re-importing the whole analyzed package was
+     * wasted, linearly-scaling work); still the exact same scan configuration
+     * {@code @AnalyzeClasses} declares, so no canary can silently check a different class set
+     * than the annotation-driven rules do (Kimi Phase 11 Gap 1). Eager (not lazy) initialization
+     * deliberately sidesteps Kimi Phase 11 Gap 5's race-on-lazy-init concern entirely, rather than
+     * adding synchronization for a scenario (parallel test execution) nothing in this project
+     * configures today — simpler than guarding a check that doesn't need to exist. */
+    private static final JavaClasses analyzedClasses = new ClassFileImporter()
+            .withImportOption(new ImportOption.DoNotIncludeTests())
+            .importPackages(ANALYZED_PACKAGE);
 
     private static JavaClasses analyzedClasses() {
-        if (analyzedClasses == null) {
-            analyzedClasses = new ClassFileImporter()
-                    .withImportOption(new ImportOption.DoNotIncludeTests())
-                    .importPackages(ANALYZED_PACKAGE);
-        }
         return analyzedClasses;
     }
 
@@ -345,5 +343,49 @@ class ArchitectureTest {
     @Test
     void controllersDependOnlyOnTheirOwnModuleServicesIsCheckedDuringStandardBuild() {
         controllersDependOnlyOnTheirOwnModuleServices.check(analyzedClasses());
+    }
+
+    /**
+     * Kimi Phase 11 Gap 3: {@link #ALLOWED_CROSS_MODULE_CONTROLLER_SERVICE_DEPENDENCIES} only has
+     * meaning while the two dependencies it names actually exist in code — if a future refactor
+     * ever removed one, the allowlist entry would become silent dead configuration (the rule
+     * would just never have anything to apply it to, not fail), and no other test would notice.
+     * This fails loudly instead, so removing one of these two dependencies forces a conscious
+     * decision to also remove its now-pointless allowlist entry.
+     */
+    @Test
+    void allowlistedControllerServiceDependenciesStillExistInCode() {
+        assertThat(hasDirectDependency(AccountController.class, SessionService.class))
+                .as("%s should still depend on %s — if this is no longer true, remove the now-stale "
+                        + "allowlist entry for it", AccountController.class.getSimpleName(),
+                        SessionService.class.getSimpleName())
+                .isTrue();
+        assertThat(hasDirectDependency(AdminAccountController.class, LockoutService.class))
+                .as("%s should still depend on %s — if this is no longer true, remove the now-stale "
+                        + "allowlist entry for it", AdminAccountController.class.getSimpleName(),
+                        LockoutService.class.getSimpleName())
+                .isTrue();
+    }
+
+    private static boolean hasDirectDependency(Class<?> origin, Class<?> target) {
+        JavaClass originClass = analyzedClasses().get(origin);
+        return originClass.getDirectDependenciesFromSelf().stream()
+                .anyMatch(dependency -> dependency.getTargetClass().getFullName().equals(target.getName()));
+    }
+
+    /**
+     * Kimi Phase 11 Gap 4: no controller currently depends on a {@code common} service, so
+     * {@code isInCommonModule(...)}'s allow-branch inside
+     * {@link #dependOnlyOnServicesFromTheSameFeatureModuleOrAnAllowedException()} has zero live
+     * coverage from the canary above — a regression that silently deleted or inverted that check
+     * would not fail any test until a controller legitimately needed a common service. This
+     * directly exercises the helper's own invariants instead (weaker than a live dependency, but
+     * proven correct via a real negative-proof in Phase 9 — see the resolution log — this test
+     * exists to catch a *regression* of that already-verified behavior, not to reprove it).
+     */
+    @Test
+    void isInCommonModuleHelperCorrectlyIdentifiesCommonAndNonCommonClasses() {
+        assertThat(isInCommonModule(analyzedClasses().get(PublicEndpoints.class))).isTrue();
+        assertThat(isInCommonModule(analyzedClasses().get(AccountController.class))).isFalse();
     }
 }
