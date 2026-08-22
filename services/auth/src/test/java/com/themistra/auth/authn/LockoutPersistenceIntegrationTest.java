@@ -208,6 +208,11 @@ class LockoutPersistenceIntegrationTest {
         LockoutState persisted = lockoutStateRepository.findByAccountUuidForUpdate(accountUuid).orElseThrow();
         assertThat(persisted.getFailedAttempts()).isZero();
         assertThat(persisted.getLockedUntil()).isNull();
+
+        // T40, Kimi Phase 8 Finding 2: resetLockout also routes through the now-audited
+        // AccountService.unlock(UUID, UUID) path - assert it, not just the row/status change.
+        assertThat(auditService.list(accountUuid, Pageable.unpaged()).getContent())
+                .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("account.unlocked"));
     }
 
     private UUID registerAndActivate(String email) {

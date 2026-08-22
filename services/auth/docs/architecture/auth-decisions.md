@@ -308,3 +308,29 @@ the three options it names was ever selected; `design.md` itself is not edited b
   for a value that is never brute-forceable in the first place.
 - **Impact:** No new hashing dependency; reuses `common.Hashing` (D-021).
 - **Reference influence:** None (reference has no MFA/recovery-code concept).
+
+## D-030 · No maximum active API-key count per merchant (partially resolves Q3)
+
+- **Context:** `package.md` §11 Q3 asks two things: the launch scope vocabulary (answered — only
+  `merchant.api` exists, `ApiKeyService.DEFAULT_SCOPES`) and whether a maximum active-key count per
+  merchant should be enforced. `ApiKeyProperties` (`prefix`, `tokenTtlMinutes`) has no such field;
+  `ApiKeyService.create` has no quota check.
+- **Alternatives:** (a) no limit (current, implicit); (b) a fixed, configurable default limit (e.g.
+  100 active keys/merchant) as a defensive guard even without a demonstrated abuse pattern; (c) no
+  limit now, add one only if operational abuse is actually observed.
+- **Selected:** (c), made explicit here rather than left as an unexamined absence. No demonstrated
+  operational need exists yet (no merchant-facing API-key abuse pattern observed in this service's
+  history); a speculative limit would be exactly the kind of "design for a hypothetical future
+  requirement" this project's own engineering principles decline to do without evidence.
+- **Trade-offs:** An unbounded key count is a real, if currently theoretical, exposure (a
+  compromised or careless merchant integration could accumulate many live credentials). Accepted
+  because revoking is already self-service and cheap (`DELETE /api-keys/{keyUuid}`), and a wrong
+  guess at a limit now (too low blocks legitimate multi-environment merchant integrations; too high
+  provides no real protection) is worse than deferring to real usage data.
+- **Impact:** None to current code. If a limit is added later, `ApiKeyProperties` gains a
+  `maxActiveKeysPerMerchant` field and `ApiKeyService.create` gains a count check against
+  `ApiKeyRepository`'s existing per-account query — no other design change anticipated.
+- **Revisit trigger:** observed operational abuse (a merchant with an anomalously high active-key
+  count) or a concrete partner/compliance requirement.
+- **Reference influence:** None (reference has no API-key concept — merchant integrations are
+  net-new, gap-analysis §1 #12).
