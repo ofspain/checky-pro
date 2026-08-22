@@ -1,6 +1,9 @@
 package com.themistra.auth.audit;
 
 import com.themistra.auth.TestcontainersConfiguration;
+import com.themistra.auth.account.AccountService;
+import com.themistra.auth.account.dto.AccountResponse;
+import com.themistra.auth.account.dto.RegisterAccountRequest;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -33,8 +36,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Import(TestcontainersConfiguration.class)
 class AuditTrailIntegrationTest {
 
+    private static final String PASSWORD = "correct-horse-battery";
+
     @Autowired
     private AuditService auditService;
+
+    @Autowired
+    private AccountService accountService;
 
     @Autowired
     private KafkaContainer kafka;
@@ -62,7 +70,9 @@ class AuditTrailIntegrationTest {
 
     @Test
     void recordMirrorsToKafkaWithoutLeakingIpOrUserAgent() {
-        UUID accountUuid = UUID.randomUUID();
+        // T37 fix: a real account is required - auth_audit.account_uuid has a real FK to accounts,
+        // and a fabricated UUID.randomUUID() (this test's original form) violates it.
+        UUID accountUuid = registerAndActivate("audit-trail-" + UUID.randomUUID() + "@example.com");
 
         auditService.record(new RecordAuditEventRequest(
                 "account.suspended", AuditOutcome.SUCCESS, accountUuid, null,
@@ -82,5 +92,11 @@ class AuditTrailIntegrationTest {
             }
             assertThat(found).as("audit mirror for %s observed on the real topic", accountUuid).isTrue();
         });
+    }
+
+    private UUID registerAndActivate(String email) {
+        AccountResponse registered = accountService.register(new RegisterAccountRequest(email, PASSWORD));
+        accountService.activateEmail(registered.accountUuid(), registered.accountUuid());
+        return registered.accountUuid();
     }
 }
