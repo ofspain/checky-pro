@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.JWTParser;
 import com.themistra.auth.account.AccountService;
+import com.themistra.auth.account.AccountStatus;
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.dto.VerifyEmailRequest;
@@ -39,6 +40,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -142,6 +144,9 @@ class EndToEndLifecycleIntegrationTest {
     @Autowired
     private KafkaContainer kafka;
 
+    @Autowired
+    private OAuth2AuthorizationService authorizationService;
+
     @PersistenceContext
     private EntityManager entityManager;
 
@@ -208,6 +213,10 @@ class EndToEndLifecycleIntegrationTest {
         // "eventType" field on the wire (OutboxRelay never serializes one) - status=ACTIVE on
         // auth.user.lifecycle for this account is exactly what that transition looks like on Kafka.
         awaitUserRegisteredLifecycleEvent(merchantUuid);
+        // Direct assertion of the actual AC1 transition, not just its Kafka proxy (Phase 9, Kimi
+        // Finding 6): a bug that emitted the event while leaving the account PENDING_VERIFICATION
+        // would not be caught by the event assertion alone.
+        assertThat(accountService.getByUuid(merchantUuid).status()).isEqualTo(AccountStatus.ACTIVE);
 
         // 3. Admin bootstrap (plumbing, not a tested step) + "admin assigns MERCHANT" (real HTTP).
         String adminBearer = bootstrapAdminBearerToken();
@@ -220,6 +229,9 @@ class EndToEndLifecycleIntegrationTest {
         FullFlowResult preEnrollment = attemptFullAuthorizeFlow(
                 merchantEmail, PASSWORD, null, generatePkce(), UUID.randomUUID().toString());
         assertThat(preEnrollment.authorizationCode()).isEmpty();
+        // Phase 9, Kimi Finding 8: assert the redirect status itself, not just that some Location
+        // header happens to contain the error substring.
+        assertThat(preEnrollment.loginResponse().getStatusCode()).isEqualTo(HttpStatus.FOUND);
         assertThat(preEnrollment.loginResponse().getHeaders().getLocation())
                 .isNotNull()
                 .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
@@ -244,11 +256,19 @@ class EndToEndLifecycleIntegrationTest {
         JsonNode created = readJson(createResponse);
         String plaintextKey = created.get("plaintextKey").asText();
         assertThat(plaintextKey).matches("^ck_live_[A-Za-z0-9]{24}\\.[A-Za-z0-9]{32}$");
+        // Phase 9, Kimi Finding 5: guard against a hash-shaped value leaking into the response,
+        // matching ApiKeyLifecycleIntegrationTest's established check.
+        assertThat(createResponse.getBody()).doesNotContainPattern("[a-f0-9]{64}");
 
         // 8. Exchange key for JWT (AC5).
         ResponseEntity<String> exchangeResponse = postApiKeyExchange(plaintextKey);
         assertThat(exchangeResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode exchangeBody = readJson(exchangeResponse);
+        // Phase 9, Kimi Finding 4: assert the OAuth2 response envelope's token_type/expires_in
+        // (the 10-minute TTL, L8), not just the claims inside the token. Full L9 claim coverage is
+        // already asserted exhaustively by ApiKeyTokenIssuerTest - not duplicated here.
+        assertThat(exchangeBody.get("token_type").asText()).isEqualTo("Bearer");
+        assertThat(exchangeBody.get("expires_in").asLong()).isEqualTo(600L);
         String exchangedToken = exchangeBody.get("access_token").asText();
         JWTClaimsSet exchangedClaims = parseClaims(exchangedToken);
         assertThat(exchangedClaims.getSubject()).isEqualTo(merchantUuid.toString());
@@ -261,7 +281,15 @@ class EndToEndLifecycleIntegrationTest {
         assertThat(listResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode sessions = readJson(listResponse);
         assertThat(sessions).hasSize(1);
-        UUID familyId = UUID.fromString(sessions.get(0).get("familyId").asText());
+        JsonNode session = sessions.get(0);
+        UUID familyId = UUID.fromString(session.get("familyId").asText());
+        // Phase 9, Kimi Finding 3: assert the required fields the AC itself names (device label,
+        // created, last-rotated), not just that a session exists.
+        assertThat(session.get("createdAt").asText()).isNotBlank();
+        assertThat(session.get("rotatedAt").asText()).isNotBlank();
+        // deviceLabel is documented (SessionResponse) as always null today - present-but-null is
+        // the expected shape, not a defect.
+        assertThat(session.has("deviceLabel")).isTrue();
 
         // 10. Revoke session (AC7).
         ResponseEntity<String> revokeResponse = delete(exchangedToken, "/accounts/me/sessions/" + familyId);
@@ -271,6 +299,10 @@ class EndToEndLifecycleIntegrationTest {
         RefreshTokenFamily reloaded = reloadFamily(familyId);
         assertThat(reloaded.getRevokedAt()).isNotNull();
         assertThat(reloaded.getRevokedReason()).isEqualTo("USER_REVOKED");
+        // Phase 9, Kimi Finding 7: R37 requires the live SAS authorization to be removed too, not
+        // just the family row - matches SessionIntegrationTest.shouldRevokeSingleSessionFamily's
+        // own assertion of the same fact.
+        assertThat(authorizationService.findById(reloaded.getAuthorizationId())).isNull();
     }
 
     // ---------------------------------------------------------------------
@@ -278,13 +310,21 @@ class EndToEndLifecycleIntegrationTest {
     // ---------------------------------------------------------------------
 
     /** {@code /accounts} and {@code /accounts/verify-email} are not in {@code SecurityChainsConfig}'s
-     * CSRF-ignored matchers ({@code /api/**}, {@code /api-keys/token}) - unlike this test's other
-     * calls, which are all Bearer/API-key authenticated and empirically unaffected (confirmed by
-     * {@code ApiKeyLifecycleIntegrationTest}'s already-passing precedent), these two are genuinely
+     * CSRF-ignored matchers ({@code /api/**}, {@code /api-keys/token}) - these two are genuinely
      * anonymous session-realm calls and need a real CSRF token, obtained the same way
      * {@code SasLoginIntegrationTest} obtains one for {@code /login}: scrape it off a GET response,
      * carry the session cookie it was issued against, and submit both on the POST - as a header
-     * ({@code X-CSRF-TOKEN}) rather than a form field, since these two endpoints take JSON bodies. */
+     * ({@code X-CSRF-TOKEN}) rather than a form field, since these two endpoints take JSON bodies.
+     * This test's other Bearer/API-key-authenticated calls ({@code /api-keys}, {@code /api-keys/token},
+     * {@code /admin/accounts/.../roles/{roleName}}, session list/revoke) are <em>expected</em> to be
+     * CSRF-exempt the same way (stateless Bearer auth) - {@code ApiKeyLifecycleIntegrationTest}'s
+     * already-passing test is real precedent for {@code /api-keys}/{@code /api-keys/token} specifically,
+     * but not for the admin role-assignment call, which has no precedent test anywhere in this
+     * codebase. Phase 9 correction: earlier prose here additionally overstated this as verified by
+     * "this test's own successful progression" - in fact this test's only live run so far never got
+     * past the Kafka-dependent step 2 (a separately logged environment blocker), so *none* of these
+     * later calls have actually been exercised live by this file yet. If a future run shows the admin
+     * call fails the same way {@code /accounts} initially did, apply the identical fix. */
     private CsrfContext fetchCsrfContext() {
         ResponseEntity<String> page = restTemplate.getForEntity(baseUrl() + "/login", String.class);
         List<String> cookies = page.getHeaders().get(HttpHeaders.SET_COOKIE);
@@ -371,8 +411,10 @@ class EndToEndLifecycleIntegrationTest {
             for (ConsumerRecord<String, String> record : records) {
                 if ("auth.email.requested".equals(record.topic()) && accountUuid.toString().equals(record.key())) {
                     JsonNode payload = objectMapper.readTree(record.value());
-                    if ("verify_email".equals(payload.get("purpose").asText())) {
-                        token.set(payload.get("token").asText());
+                    JsonNode purpose = payload.get("purpose");
+                    JsonNode rawToken = payload.get("token");
+                    if (purpose != null && rawToken != null && "verify_email".equals(purpose.asText())) {
+                        token.set(rawToken.asText());
                     }
                 }
             }
@@ -388,9 +430,12 @@ class EndToEndLifecycleIntegrationTest {
             ConsumerRecords<String, String> records = testConsumer.poll(Duration.ofMillis(500));
             boolean found = false;
             for (ConsumerRecord<String, String> record : records) {
-                if ("auth.user.lifecycle".equals(record.topic()) && accountUuid.toString().equals(record.key())
-                        && record.value().contains("\"status\":\"ACTIVE\"")) {
-                    found = true;
+                if ("auth.user.lifecycle".equals(record.topic()) && accountUuid.toString().equals(record.key())) {
+                    JsonNode payload = objectMapper.readTree(record.value());
+                    JsonNode status = payload.get("status");
+                    if (status != null && "ACTIVE".equals(status.asText())) {
+                        found = true;
+                    }
                 }
             }
             assertThat(found).as("auth.user.lifecycle(ACTIVE) event observed for %s", accountUuid).isTrue();
