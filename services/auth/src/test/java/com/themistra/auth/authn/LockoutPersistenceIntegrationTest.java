@@ -90,8 +90,12 @@ class LockoutPersistenceIntegrationTest {
 
         // T40, R43: the automatic lock must be audited, matching adminUnlock's already-correct
         // pattern - this was a real gap until this task's own AccountService.lock fix.
+        // Phase 11 Gap 2/3: exact count (catches a double-fire regression, not just absence) and
+        // a null actor (D-022 - no authenticated caller exists for this system-initiated event).
         assertThat(auditService.list(accountUuid, Pageable.unpaged()).getContent())
-                .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("account.locked"));
+                .filteredOn(event -> event.eventType().equals("account.locked"))
+                .hasSize(1)
+                .allSatisfy(event -> assertThat(event.actorUuid()).isNull());
     }
 
     @Test
@@ -115,8 +119,11 @@ class LockoutPersistenceIntegrationTest {
         assertThat(persisted.get().getLockedUntil()).isNull();
 
         // T40, R43: the automatic unlock must also be audited (same fix as the lock side above).
+        // Phase 11 Gap 2/3: exact count + null actor, same reasoning as the lock assertion above.
         assertThat(auditService.list(accountUuid, Pageable.unpaged()).getContent())
-                .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("account.unlocked"));
+                .filteredOn(event -> event.eventType().equals("account.unlocked"))
+                .hasSize(1)
+                .allSatisfy(event -> assertThat(event.actorUuid()).isNull());
     }
 
     @Test
@@ -211,8 +218,12 @@ class LockoutPersistenceIntegrationTest {
 
         // T40, Kimi Phase 8 Finding 2: resetLockout also routes through the now-audited
         // AccountService.unlock(UUID, UUID) path - assert it, not just the row/status change.
+        // Phase 11 Gap 2/3: exact count + null actor. The earlier 5-failure sequence already
+        // produced one "account.locked" row (a different eventType, no cross-contamination risk).
         assertThat(auditService.list(accountUuid, Pageable.unpaged()).getContent())
-                .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("account.unlocked"));
+                .filteredOn(event -> event.eventType().equals("account.unlocked"))
+                .hasSize(1)
+                .allSatisfy(event -> assertThat(event.actorUuid()).isNull());
     }
 
     private UUID registerAndActivate(String email) {

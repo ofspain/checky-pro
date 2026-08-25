@@ -1076,6 +1076,19 @@ class AccountServiceTest {
         service.lock(accountUuid);
 
         assertThat(account.getStatus()).isEqualTo(AccountStatus.LOCKED);
+        // T40, R43, Phase 11 Gap 3/4: system-initiated lock is now audited/published, with a
+        // null actor (D-022 - no authenticated caller exists at this layer) and a payload that
+        // reflects the real post-transition LOCKED status.
+        ArgumentCaptor<UserLifecycleEventPayload> payloadCaptor =
+                ArgumentCaptor.forClass(UserLifecycleEventPayload.class);
+        verify(outboxPublisher).publish(
+                eq("account"), anyString(), eq("user.locked"), eq(1), payloadCaptor.capture());
+        assertThat(payloadCaptor.getValue().status()).isEqualTo(AccountStatus.LOCKED);
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
+                ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().eventType()).isEqualTo("account.locked");
+        assertThat(auditCaptor.getValue().actorUuid()).isNull();
     }
 
     @Test
@@ -1093,6 +1106,29 @@ class AccountServiceTest {
         assertThatCode(() -> service.lock(accountUuid)).doesNotThrowAnyException();
 
         assertThat(account.getStatus()).isEqualTo(AccountStatus.LOCKED);
+        // T40, Phase 11 Gap 1: matches D-027's own documented limitation - an escalating re-lock
+        // (Account.status already LOCKED) is a guarded no-op at this layer and does not itself
+        // audit/publish a second time.
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void lockCalledTwiceOnlyAuditsAndPublishesOnce() {
+        // T40, Phase 11 Gap 1: mirrors adminUnlockCalledTwiceOnlyAuditsAndPublishesOnce - the
+        // second call (already LOCKED) produces zero additional audit rows or lifecycle events.
+        Account account = Account.register("double-lock@example.com", ENCODED);
+        account.activateEmail();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+        service.lock(accountUuid);
+        service.lock(accountUuid);
+
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.LOCKED);
+        verify(outboxPublisher, org.mockito.Mockito.times(1))
+                .publish(eq("account"), anyString(), eq("user.locked"), eq(1), any());
+        verify(auditService, org.mockito.Mockito.times(1)).record(any());
     }
 
     @Test
@@ -1106,6 +1142,13 @@ class AccountServiceTest {
         service.unlock(accountUuid);
 
         assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        // T40, R43, Phase 11 Gap 3: same as the lock side above, with a null actor.
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
+                ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().eventType()).isEqualTo("account.unlocked");
+        assertThat(auditCaptor.getValue().actorUuid()).isNull();
+        verify(outboxPublisher).publish(eq("account"), anyString(), eq("user.unlocked"), eq(1), any());
     }
 
     @Test
@@ -1118,6 +1161,27 @@ class AccountServiceTest {
         assertThatCode(() -> service.unlock(accountUuid)).doesNotThrowAnyException();
 
         assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), anyInt(), any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void unlockCalledTwiceOnlyAuditsAndPublishesOnce() {
+        // T40, Phase 11 Gap 1: mirrors adminUnlockCalledTwiceOnlyAuditsAndPublishesOnce for the
+        // system-initiated path.
+        Account account = Account.register("double-unlock@example.com", ENCODED);
+        account.activateEmail();
+        account.lock();
+        UUID accountUuid = account.getAccountUuid();
+        when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+        service.unlock(accountUuid);
+        service.unlock(accountUuid);
+
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        verify(outboxPublisher, org.mockito.Mockito.times(1))
+                .publish(eq("account"), anyString(), eq("user.unlocked"), eq(1), any());
+        verify(auditService, org.mockito.Mockito.times(1)).record(any());
     }
 
     /** Shared fixture for a PASSWORD_RESET-purposed issue(...) result - mirrors setUp()'s EMAIL_VERIFY stub. */
