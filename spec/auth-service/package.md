@@ -170,7 +170,11 @@ silently ignored:
   `bootstrap-servers` override. **Reproducibility criterion**: these tests pass once the Kafka
   broker configured by `spring.kafka.bootstrap-servers` is genuinely reachable from the test JVM;
   failure occurs specifically when it is not (visible as repeated
-  `Bootstrap broker ... disconnected` warnings in the test log).
+  `Bootstrap broker ... disconnected` warnings in the test log). **Re-confirmed at crypto-service
+  T01 (2026-08-25)**, run as an AC5 sibling-build check: all three named tests failed with this
+  exact symptom, unrelated to the crypto-service change itself (no file under `services/auth` was
+  touched by that task; `-pl services/auth` never reads the root `<modules>` list a sibling-module
+  addition changes).
 - **Timing-dependent flakiness in `ApiKeyLifecycleIntegrationTest`/`ApiKeyExchangeIntegrationTest`**
   (first observed T31, unconfirmed root cause): **not a clean "isolation always passes" pattern** —
   verified directly at T40 (2026-08-22) by running the pair in isolation three times: one run
@@ -181,7 +185,10 @@ silently ignored:
   outbox relay's async Kafka delivery and a test's own assertion), not a deterministic full-suite-only
   defect. **Reproducibility criterion**: no clean one; treat any failure in either class as a
   candidate instance of this accepted, already-logged flakiness unless its symptom is neither of the
-  two documented above, in which case investigate as a possible new regression.
+  two documented above, in which case investigate as a possible new regression. **Re-confirmed at
+  crypto-service T01 (2026-08-25)**: a further isolated run reproduced the already-documented
+  off-by-one symptom again (`auditRecordsOneFailureRowAndOneOutboxMirrorPerRejection`, "expected 1L
+  was 2L") — a third recurrence of a known symptom, not a new one.
 
 Every other test, including the T38 gap-analysis regression suite and every requirement-scoped
 integration test, passes. All feature work (T01-T39) is complete and reviewed; these two groups are
