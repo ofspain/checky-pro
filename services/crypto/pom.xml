@@ -91,6 +91,21 @@
     <finalName>crypto-service</finalName>
     <plugins>
       <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
+      <!-- Local-dev only, mirrors services/auth/pom.xml exactly except schemas: runs solely via
+           explicit `mvn flyway:migrate`, never during package/verify/CI or the production Docker
+           build. Uses the admin (checky) role; the app's own runtime datasource (application.properties)
+           connects as the separate, non-owner crypto_app role instead (T02 AC2/AC3). -->
+      <plugin>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-maven-plugin</artifactId>
+        <version>11.7.2</version>
+        <configuration>
+          <url>jdbc:postgresql://localhost:5432/checky</url>
+          <user>checky</user>
+          <password>checky-local-only</password>
+          <schemas>chain</schemas>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 </project>
