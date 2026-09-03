@@ -97,6 +97,20 @@ class ProviderPropertiesTest {
     }
 
     @Test
+    void failsWhenChainIsLowercase() {
+        // Phase 11 Gap 12: the @Pattern is case-sensitive by design (spec consistently uses
+        // uppercase chain identifiers) - a lowercase value must not silently bind as "valid".
+        contextRunner.withPropertyValues(
+                        "themistra.crypto.providers.chains[0].chain=ethereum",
+                        "themistra.crypto.providers.chains[0].providers[0].name=x",
+                        "themistra.crypto.providers.chains[0].providers[0].url=http://localhost",
+                        "themistra.crypto.providers.chains[0].providers[0].timeout-seconds=5",
+                        "themistra.crypto.providers.chains[0].providers[0].api-key-secret-name=k",
+                        "themistra.crypto.providers.quorum-threshold=1")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
     void failsWhenQuorumThresholdExceedsConfiguredProviderCount() {
         contextRunner.withPropertyValues(
                         "themistra.crypto.providers.chains[0].chain=ETHEREUM",
@@ -105,7 +119,9 @@ class ProviderPropertiesTest {
                         "themistra.crypto.providers.chains[0].providers[0].timeout-seconds=5",
                         "themistra.crypto.providers.chains[0].providers[0].api-key-secret-name=k",
                         "themistra.crypto.providers.quorum-threshold=5")
-                .run(context -> assertThat(context).hasFailed());
+                .run(context -> assertThat(context.getStartupFailure())
+                        .rootCause().isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("quorum-threshold").hasMessageContaining("ETHEREUM"));
     }
 
     @Test

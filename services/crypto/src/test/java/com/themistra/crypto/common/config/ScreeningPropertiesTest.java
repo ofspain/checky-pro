@@ -7,7 +7,10 @@ import org.springframework.context.annotation.Configuration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** AC5/AC6 (frozen brief), L12, Phase 9 Finding 3 — see class Javadoc on {@link ScreeningProperties}. */
+/**
+ * AC5/AC6 (frozen brief), L12, Phase 9 Finding 3, Phase 11 Gaps 2/9/10 — see class Javadoc on
+ * {@link ScreeningProperties}.
+ */
 class ScreeningPropertiesTest {
 
     @Configuration
@@ -50,7 +53,9 @@ class ScreeningPropertiesTest {
         contextRunner.withPropertyValues(
                         "themistra.crypto.screening.enabled=true",
                         "themistra.crypto.screening.api-key-secret-name=fake-secret")
-                .run(context -> assertThat(context).hasFailed());
+                .run(context -> assertThat(context.getStartupFailure())
+                        .rootCause().isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("base-url"));
     }
 
     @Test
@@ -58,7 +63,9 @@ class ScreeningPropertiesTest {
         contextRunner.withPropertyValues(
                         "themistra.crypto.screening.enabled=true",
                         "themistra.crypto.screening.base-url=https://fake-screening-vendor.example")
-                .run(context -> assertThat(context).hasFailed());
+                .run(context -> assertThat(context.getStartupFailure())
+                        .rootCause().isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("api-key-secret-name"));
     }
 
     @Test
@@ -69,7 +76,9 @@ class ScreeningPropertiesTest {
                         "themistra.crypto.screening.enabled=false",
                         "themistra.crypto.screening.base-url=https://fake-screening-vendor.example",
                         "themistra.crypto.screening.api-key-secret-name=fake-secret")
-                .run(context -> assertThat(context).hasFailed());
+                .run(context -> assertThat(context.getStartupFailure())
+                        .rootCause().isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("base-url").hasMessageContaining("enabled=false"));
     }
 
     @Test
@@ -79,6 +88,48 @@ class ScreeningPropertiesTest {
         contextRunner.withPropertyValues(
                         "themistra.crypto.screening.base-url=https://fake-screening-vendor.example",
                         "themistra.crypto.screening.api-key-secret-name=fake-secret")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void failsWhenApiKeySecretNameSetButNotEnabled() {
+        // Phase 11 Gap 9: the reverse guard originally only checked base-url - widened to also
+        // catch api-key-secret-name configured alone with enabled left false.
+        contextRunner.withPropertyValues(
+                        "themistra.crypto.screening.enabled=false",
+                        "themistra.crypto.screening.api-key-secret-name=fake-secret")
+                .run(context -> assertThat(context.getStartupFailure())
+                        .rootCause().isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("api-key-secret-name").hasMessageContaining("enabled=false"));
+    }
+
+    @Test
+    void failsWhenConnectTimeoutIsNonPositive() {
+        contextRunner.withPropertyValues(
+                        "themistra.crypto.screening.enabled=false",
+                        "themistra.crypto.screening.connect-timeout-seconds=0",
+                        "themistra.crypto.screening.read-timeout-seconds=5",
+                        "themistra.crypto.screening.retry-max-attempts=2")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void failsWhenReadTimeoutIsNegative() {
+        contextRunner.withPropertyValues(
+                        "themistra.crypto.screening.enabled=false",
+                        "themistra.crypto.screening.connect-timeout-seconds=5",
+                        "themistra.crypto.screening.read-timeout-seconds=-1",
+                        "themistra.crypto.screening.retry-max-attempts=2")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void failsWhenRetryMaxAttemptsIsNegative() {
+        contextRunner.withPropertyValues(
+                        "themistra.crypto.screening.enabled=false",
+                        "themistra.crypto.screening.connect-timeout-seconds=5",
+                        "themistra.crypto.screening.read-timeout-seconds=5",
+                        "themistra.crypto.screening.retry-max-attempts=-1")
                 .run(context -> assertThat(context).hasFailed());
     }
 }

@@ -104,3 +104,37 @@ mvn -pl services/crypto test -Dtest='ProviderPropertiesTest,FinalityPropertiesTe
   ResourceServerConfigIntegrationTest,T01SkeletonRegressionTest'
   → Tests run: 57, Failures: 0, Errors: 0, Skipped: 0 — BUILD SUCCESS
 ```
+
+## Addendum — Phase 11 (Kimi test review) follow-up
+
+Kimi's Phase 11 review (`artifacts/11-test-review.md`) raised 15 gaps. There is no dedicated
+resolution phase for test findings (unlike Phase 9 for code), so — consistent with this pipeline's
+own judgment-call precedent elsewhere — the clearly valuable, low-risk, in-scope ones were applied
+directly before Phase 12; the rest were rejected/deferred with reasons, mirroring the Phase 9
+resolution-log format:
+
+| Gap | Decision | Change |
+|---|---|---|
+| 1 (`anyRequest().authenticated()` untested) | REJECTED | Duplicate of Phase 9 Kimi Finding 2, already rejected (matches auth precedent) |
+| 2 (generic `hasFailed()` masks wrong-cause failures) | **ACCEPTED** | Strengthened the 4 custom compact-constructor checks (quorum-vs-provider-count, both screening enabled-mismatch directions) to assert `rootCause().isInstanceOf(IllegalStateException.class).hasMessageContaining(...)` instead of bare `hasFailed()` |
+| 3 (problem+json only substring-checked) | **ACCEPTED** | 401/403 tests now assert full `type`/`title`/`status`/`detail` via `jsonPath()` |
+| 4 (actuator positive tests pass even if exposure config is removed) | **ACCEPTED (lightweight)** | New `ApplicationPropertiesSecurityConfigTest` reads the real committed `application.properties` and asserts the exact `management.*` values, instead of the heavier `@SpringBootTest`+Docker route Kimi suggested |
+| 5 (`PublicEndpoints.PATTERNS` wiring-identity not proven via reflection) | REJECTED | Already behaviorally proven (single source of truth, no parallel hardcoded list exists to diverge from); reflecting Spring Security's internal matcher list for a stability guarantee it doesn't offer is excessive coupling |
+| 6 (`missingTokenEntirely` redundant) | **ACCEPTED** | Replaced with `shouldRejectNonBearerAuthorizationScheme` (a `Basic` header — genuine new edge case) |
+| 7 (real `scope`→authority conversion untested) | **ACCEPTED** | New `ScopeClaimConversionTest` exercises Spring's actual default `JwtGrantedAuthoritiesConverter` against a JSON-array `scope` claim shaped per `contracts/api/token-claims.md` Path 2 |
+| 8 (`issuer-uri` not exercised) | **ACCEPTED (lightweight)** | Folded into `ApplicationPropertiesSecurityConfigTest` — asserts the key is present and non-blank; proving Spring Boot's internal `JwtIssuerValidator` wiring itself was judged not worth reimplementing Boot's own autoconfiguration in a test |
+| 9 (screening guard only covers `baseUrl`, not `apiKeySecretName` alone) | **ACCEPTED — production fix** | Widened `ScreeningProperties`'s reverse-direction compact-constructor check to also guard `apiKeySecretName`; added `failsWhenApiKeySecretNameSetButNotEnabled` |
+| 10 (invalid screening timeout/retry untested) | **ACCEPTED** | Added 3 negative tests (`connect-timeout-seconds=0`, `read-timeout-seconds=-1`, `retry-max-attempts=-1`) |
+| 11 (placeholder-value rejection untested) | REJECTED | Re-raise of the already-rejected Phase 4 amendment #14 ask |
+| 12 (chain case-sensitivity untested) | **ACCEPTED** | Added `failsWhenChainIsLowercase` to both `ProviderPropertiesTest` and `FinalityPropertiesTest` |
+| 13 (duplicate chain entries unconstrained) | REJECTED (deferred) | New validation beyond what Phase 9 scoped; duplicates are redundant, not unsafe — no explicit AC requires it |
+| 14 (finality/provider chain cross-consistency) | REJECTED | Duplicate of Phase 9 Kimi Finding 8, already rejected/deferred |
+| 15 (no full-context `local` boot smoke test) | ACKNOWLEDGED, no action | Already an honest disclosed limitation above; Docker still unavailable in this environment |
+
+**Result: 67/67 tests passing** (was 57; +10 from gaps 9, 10, 12 (×2), plus 2 new test classes for
+gaps 4/7/8, with gap 6 a net-zero swap and gaps 2/3 strengthening existing tests in place).
+Negative-proof performed on both new mechanisms: temporarily removing the widened screening guard
+(gap 9's fix) caused `failsWhenApiKeySecretNameSetButNotEnabled` to fail with the wrong exception
+type — concretely confirming gap 2's own point, since a bare `hasFailed()` assertion would have
+missed that regression entirely (the context still failed, just for the wrong reason). Reverted
+cleanly (`diff` against pre-mutation backup — byte-identical); full suite green again afterward.

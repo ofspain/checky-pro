@@ -55,6 +55,13 @@ class FinalityPropertiesTest {
     }
 
     @Test
+    void failsWhenChainIsLowercase() {
+        // Phase 11 Gap 12: case-sensitive by design, mirrors ProviderPropertiesTest's equivalent.
+        contextRunner.withPropertyValues("themistra.crypto.finality.enabled-chains[0]=ethereum")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
     void hasNoConfirmationOrThresholdShapedField() {
         RecordComponent[] components = FinalityProperties.class.getRecordComponents();
         assertThat(components).hasSize(1);

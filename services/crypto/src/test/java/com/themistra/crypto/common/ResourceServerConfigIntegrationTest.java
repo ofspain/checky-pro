@@ -13,11 +13,11 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.stream.Stream;
 
-import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -28,9 +28,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@code SecurityMockMvcRequestPostProcessors.jwt()} injects a pre-built authentication directly,
  * which is exactly right for proving the {@code authorizeHttpRequests}/{@code hasAuthority} rules
  * in isolation. It does not exercise real signature/issuer validation or the default
- * scope-claim-to-authority conversion from an actual token — those are Spring
- * Security/Boot-owned behaviors, reasoned through in the implementation notes rather than
- * re-proven here.
+ * scope-claim-to-authority conversion from an actual token — {@link ScopeClaimConversionTest}
+ * covers the latter directly; real signature/issuer validation remains a documented limitation
+ * (Phase 10 notes) since it needs a reachable JWKS endpoint.
  */
 @WebMvcTest(controllers = InternalTestController.class)
 @Import(ResourceServerConfig.class)
@@ -57,7 +57,10 @@ class ResourceServerConfigIntegrationTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, "Bearer"))
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
-                .andExpect(content().string(containsString("\"status\":401")));
+                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.title").value("Unauthorized"))
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.detail").value("A valid service-to-service token is required."));
     }
 
     @ParameterizedTest
@@ -67,7 +70,10 @@ class ResourceServerConfigIntegrationTest {
                         .with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_something.else"))))
                 .andExpect(status().isForbidden())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
-                .andExpect(content().string(containsString("\"status\":403")));
+                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.title").value("Forbidden"))
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.detail").value("The token does not carry the required scope."));
     }
 
     @ParameterizedTest
@@ -79,10 +85,12 @@ class ResourceServerConfigIntegrationTest {
     }
 
     @Test
-    void shouldRequireInternalScopeForWatchAndAttestEndpoints_missingTokenEntirely() throws Exception {
-        // No .with(jwt(...)) at all - a bare unauthenticated request, distinct from "authenticated
-        // but under-scoped" above. Confirms both absence-of-token and wrong-scope are rejected.
-        mockMvc.perform(request(HttpMethod.POST, "/internal/v1/attest"))
+    void shouldRejectNonBearerAuthorizationScheme() throws Exception {
+        // Phase 11 Gap 6 (replaces the redundant bare-unauthenticated test with a real edge case):
+        // a Basic-scheme header isn't a bearer token at all, so BearerTokenResolver never attempts
+        // to extract/decode it - the request falls through as anonymous and is still rejected.
+        mockMvc.perform(request(HttpMethod.POST, "/internal/v1/attest")
+                        .header(HttpHeaders.AUTHORIZATION, "Basic dXNlcjpwYXNzd29yZA=="))
                 .andExpect(status().isUnauthorized());
     }
 
