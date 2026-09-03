@@ -9,9 +9,12 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Method;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -232,5 +235,105 @@ class QuorumDecisionServiceTest {
         assertThatThrownBy(() -> service.evaluate(null, "0xabc", FactType.EXISTENCE, answers))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("chain");
+    }
+
+    @Test
+    void rejectsANullTxHash() {
+        // Phase 11 Gap 1: mirrors rejectsANullChain for the other identity parameters.
+        List<ProviderAnswer<Boolean>> answers = List.of(
+                new ProviderAnswer<>("alchemy", true),
+                new ProviderAnswer<>("quicknode", true),
+                new ProviderAnswer<>("infura", false));
+
+        assertThatThrownBy(() -> service.evaluate("ETHEREUM", null, FactType.EXISTENCE, answers))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("txHash");
+    }
+
+    @Test
+    void rejectsANullFactType() {
+        // Phase 11 Gap 1.
+        List<ProviderAnswer<Boolean>> answers = List.of(
+                new ProviderAnswer<>("alchemy", true),
+                new ProviderAnswer<>("quicknode", true),
+                new ProviderAnswer<>("infura", false));
+
+        assertThatThrownBy(() -> service.evaluate("ETHEREUM", "0xabc", null, answers))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("factType");
+    }
+
+    @Test
+    void bigDecimalAmountAnswersWithDifferentScaleAreTreatedAsAgreedThroughTheFullService() {
+        // Phase 11 Gap 5: the evaluator has a dedicated scale-invariance test, but this proves the
+        // same behavior end-to-end through ProviderAnswer -> extractValues -> QuorumEvaluator ->
+        // persistence, catching a regression in the extraction step the evaluator-only test cannot.
+        stubNoExistingDecision();
+        ArgumentCaptor<QuorumDecision> captor = ArgumentCaptor.forClass(QuorumDecision.class);
+        when(repository.save(captor.capture())).thenAnswer(invocation -> invocation.getArgument(0));
+        List<ProviderAnswer<BigDecimal>> answers = List.of(
+                new ProviderAnswer<>("alchemy", new BigDecimal("1.0")),
+                new ProviderAnswer<>("quicknode", new BigDecimal("1.00")),
+                new ProviderAnswer<>("infura", new BigDecimal("2.0")));
+
+        service.evaluate("ETHEREUM", "0xabc", FactType.AMOUNT, answers);
+
+        assertThat(captor.getValue().outcome()).isEqualTo(QuorumOutcome.AGREED);
+        assertThat(captor.getValue().agreeingCount()).isEqualTo((short) 2);
+    }
+
+    @Test
+    void existingDecisionIsCheckedBeforeDuplicateProviderRejection() {
+        // Phase 11 Gap 7: proves the actual invocation order rather than assuming it - a refactor
+        // that swapped the two pre-flight checks would flip which exception type is thrown here.
+        QuorumDecision existing = QuorumDecision.create("ETHEREUM", "0xabc", FactType.EXISTENCE,
+                QuorumOutcome.AGREED, 2, 3, FIXED_INSTANT);
+        when(repository.findByChainAndTxHashAndFactType("ETHEREUM", "0xabc", FactType.EXISTENCE))
+                .thenReturn(Optional.of(existing));
+        List<ProviderAnswer<Boolean>> duplicateProviderAnswers = List.of(
+                new ProviderAnswer<>("alchemy", true),
+                new ProviderAnswer<>("alchemy", false),
+                new ProviderAnswer<>("infura", true));
+
+        assertThatThrownBy(() -> service.evaluate("ETHEREUM", "0xabc", FactType.EXISTENCE, duplicateProviderAnswers))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("already exists");
+    }
+
+    @Test
+    void decisionIsAlreadyPersistedWhenTheAlerterThrows() {
+        // Phase 11 Gap 8 (corrected from Kimi's own description - a thrown exception and a
+        // returned value are mutually exclusive for the same call): proves the "alert is
+        // best-effort after persistence" semantics - repository.save has already happened, and its
+        // result is not rolled back, by the time the alerter's exception propagates to the caller.
+        stubNoExistingDecision();
+        stubSuccessfulSave();
+        RuntimeException alerterFailure = new RuntimeException("paging webhook unreachable");
+        org.mockito.Mockito.doThrow(alerterFailure).when(alerter).alert(any(), any(), any(), any());
+        List<ProviderAnswer<String>> disagreeingAnswers = List.of(
+                new ProviderAnswer<>("alchemy", "A"),
+                new ProviderAnswer<>("quicknode", "B"),
+                new ProviderAnswer<>("infura", "C"));
+
+        assertThatThrownBy(() -> service.evaluate("ETHEREUM", "0xabc", FactType.TOKEN, disagreeingAnswers))
+                .isSameAs(alerterFailure);
+
+        verify(repository).save(any());
+    }
+
+    @Test
+    void serviceIsNotAnnotatedTransactional() {
+        // Phase 11 Gap 13: regression guard for the deliberate absence of @Transactional (documented
+        // in QuorumDecisionService's own class Javadoc) - SimpleJpaRepository.save is already
+        // individually transactional, so a broader @Transactional here would be unnecessary scope
+        // widening, not a correctness fix.
+        assertThat(QuorumDecisionService.class.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class))
+                .isFalse();
+        Method evaluateMethod = Arrays.stream(QuorumDecisionService.class.getDeclaredMethods())
+                .filter(m -> m.getName().equals("evaluate"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(evaluateMethod.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class))
+                .isFalse();
     }
 }

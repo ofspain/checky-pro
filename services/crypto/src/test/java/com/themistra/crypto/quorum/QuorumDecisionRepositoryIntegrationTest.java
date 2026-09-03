@@ -106,6 +106,14 @@ class QuorumDecisionRepositoryIntegrationTest {
     }
 
     @Test
+    void findByChainAndTxHashAndFactTypeReturnsEmptyWhenNoDecisionExists() {
+        // Phase 11 Gap 12: QuorumDecisionService.rejectExistingDecision relies on this empty path.
+        var found = repository.findByChainAndTxHashAndFactType("ETHEREUM", uniqueTxHash(), FactType.EXISTENCE);
+
+        assertThat(found).isEmpty();
+    }
+
+    @Test
     void repositoryHasNoUpdateOrDeleteMethodReachableAtTheDatabaseLevel() {
         // AC5, real enforcement: crypto_app has no UPDATE/DELETE grant on chain.quorum_decisions (T02).
         QuorumDecision saved = repository.save(QuorumDecision.create("ETHEREUM", uniqueTxHash(),

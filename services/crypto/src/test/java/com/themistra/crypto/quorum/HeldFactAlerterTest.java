@@ -42,7 +42,11 @@ class HeldFactAlerterTest {
                     .contains("EXISTENCE")
                     .contains("alchemy")
                     .contains("quicknode")
-                    .contains("infura");
+                    .contains("infura")
+                    // Phase 11 Gap 9: the disagreeing values themselves are the main point of the
+                    // alert for ops debugging, not just which providers were involved.
+                    .contains("true")
+                    .contains("false");
         } finally {
             logger.detachAppender(appender);
         }
