@@ -8,10 +8,15 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * T02 — real Testcontainers proof that V1/V2 do what the frozen brief's AC1-AC3 claim, not just
+ * T02 — real Testcontainers proof that V1/V2 do what the frozen brief's AC1-AC4 claim, not just
  * that the SQL text looks right. Runs both migrations via the Flyway Java API (runtime Flyway is
  * disabled in application.properties by design, so there is no Spring-context auto-migration path
  * to piggyback on here) against a real Postgres 16 container, then connects as crypto_app over
@@ -29,6 +34,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 @Testcontainers
 class ChainBaselineMigrationIntegrationTest {
+
+    private static final List<String> GRANTED_TABLES = List.of("observations", "attestations", "quorum_decisions");
+    private static final List<String> UNGRANTED_TABLES = List.of("watches", "provider_health", "chain_cursors",
+            "token_allowlist", "screening_results", "outbox", "shedlock");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -50,20 +59,85 @@ class ChainBaselineMigrationIntegrationTest {
     }
 
     @Test
-    void allTenBaselineTablesExist() throws SQLException {
+    void allTenBaselineTablesExistAndNoOthers() throws SQLException {
         List<String> expected = List.of("watches", "observations", "quorum_decisions", "provider_health",
                 "chain_cursors", "token_allowlist", "screening_results", "attestations", "outbox", "shedlock");
 
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
-             var resultSet = statement.executeQuery(
-                     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'chain'")) {
-            List<String> actual = new java.util.ArrayList<>();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT table_name FROM information_schema.tables "
+                             + "WHERE table_schema = 'chain' AND table_name != 'flyway_schema_history'")) {
+            List<String> actual = new ArrayList<>();
             while (resultSet.next()) {
                 actual.add(resultSet.getString(1));
             }
-            assertThat(actual).containsAll(expected);
+            assertThat(actual).containsExactlyInAnyOrderElementsOf(expected);
         }
+    }
+
+    /** AC1's own "byte-for-byte" claim, automated: the strongest possible regression guard for the
+     * verbatim artifact, stronger than any column/constraint introspection could be, since it
+     * catches literally any textual deviation from design.md §4c - the same check Phase 6 ran
+     * manually via `diff`, now permanent. */
+    @Test
+    void v1MigrationFileIsByteForByteIdenticalToDesignDocVerbatimBlock() throws IOException {
+        Path designDoc = Path.of("../../spec/crypto-service/design.md");
+        Path v1Migration = Path.of("src/main/resources/db/migration/V1__chain_baseline.sql");
+
+        String verbatimBlock = extractFirstSqlFence(Files.readString(designDoc));
+        String migrationContent = Files.readString(v1Migration);
+
+        assertThat(migrationContent).isEqualTo(verbatimBlock);
+    }
+
+    private static String extractFirstSqlFence(String designDocContent) {
+        String[] lines = designDocContent.split("\n", -1);
+        StringBuilder block = new StringBuilder();
+        boolean inFence = false;
+        for (String line : lines) {
+            if (!inFence && line.equals("```sql")) {
+                inFence = true;
+                continue;
+            }
+            if (inFence && line.equals("```")) {
+                break;
+            }
+            if (inFence) {
+                block.append(line).append('\n');
+            }
+        }
+        return block.toString();
+    }
+
+    @Test
+    void bothMigrationsAreRecordedAsSuccessfulInFlywayHistory() throws SQLException {
+        // Flyway also inserts a synthetic, unversioned "schema creation" row before the versioned
+        // migrations; only the versioned rows (V1, V2) are this assertion's concern.
+        try (Connection admin = adminConnection();
+             Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT version, success FROM chain.flyway_schema_history "
+                             + "WHERE version IS NOT NULL ORDER BY installed_rank")) {
+            List<String> succeededVersions = new ArrayList<>();
+            while (resultSet.next()) {
+                assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
+                succeededVersions.add(resultSet.getString("version"));
+            }
+            assertThat(succeededVersions).containsExactly("1", "2");
+        }
+    }
+
+    /** Kimi Finding 3: V2's `IF NOT EXISTS` role guard must survive a genuine re-run, not just look
+     * idempotent. Mirrors Phase 7's manual drop-and-recreate proof, now automated. */
+    @Test
+    void v2RoleCreationGuardIsIdempotentUnderARealReRun() {
+        assertThatCode(() -> Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas("chain")
+                .load()
+                .migrate())
+                .doesNotThrowAnyException();
     }
 
     @Test
@@ -79,26 +153,78 @@ class ChainBaselineMigrationIntegrationTest {
     @Test
     void cryptoAppCanInsertAndSelectButNotUpdateOrDeleteOnTheThreeGrantedTables() throws SQLException {
         try (Connection app = connectAsCryptoApp(CRYPTO_APP_PASSWORD)) {
-            for (String table : List.of("observations", "attestations", "quorum_decisions")) {
-                assertInsertSucceedsUpdateAndDeleteAreDenied(app, table);
+            for (String table : GRANTED_TABLES) {
+                assertInsertAndSelectSucceedUpdateAndDeleteAreDenied(app, table);
             }
         }
     }
 
     @Test
-    void cryptoAppHasNoAccessToTablesOutsideAc3Scope() throws SQLException {
-        try (Connection app = connectAsCryptoApp(CRYPTO_APP_PASSWORD);
-             Statement statement = app.createStatement()) {
-            assertThatThrownBy(() -> statement.executeQuery("SELECT * FROM chain.watches"))
-                    .isInstanceOf(SQLException.class)
-                    .hasMessageContaining("permission denied");
+    void cryptoAppHasNoAccessAtAllToTablesOutsideAc3Scope() throws SQLException {
+        try (Connection app = connectAsCryptoApp(CRYPTO_APP_PASSWORD); Statement statement = app.createStatement()) {
+            for (String table : UNGRANTED_TABLES) {
+                assertThatThrownBy(() -> statement.executeQuery("SELECT * FROM chain." + table))
+                        .as("SELECT on %s must be denied for crypto_app (not one of AC3's three named tables)", table)
+                        .isInstanceOf(SQLException.class)
+                        .hasMessageContaining("permission denied");
+            }
         }
     }
 
-    private void assertInsertSucceedsUpdateAndDeleteAreDenied(Connection app, String table) throws SQLException {
+    @Test
+    void cryptoAppCannotPerformDdlInTheChainSchema() throws SQLException {
+        // CREATE without schema CREATE privilege is denied as "permission denied"; DROP/ALTER on a
+        // table crypto_app doesn't own is denied as "must be owner of table X" - both are Postgres's
+        // real, legitimate denial messages for these two different DDL categories.
+        try (Connection app = connectAsCryptoApp(CRYPTO_APP_PASSWORD); Statement statement = app.createStatement()) {
+            assertThatThrownBy(() -> statement.execute("CREATE TABLE chain.evil_test(id int)"))
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+
+            assertThatThrownBy(() -> statement.execute("DROP TABLE chain.observations"))
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("must be owner of table observations");
+        }
+    }
+
+    /** The entire AC3 owner/grantee split (Kimi T02-Phase8 Finding 2) only means anything if the
+     * baseline tables are owned by the migration/admin role, never by crypto_app. */
+    @Test
+    void baselineTablesAreOwnedByTheMigrationRoleNeverByCryptoApp() throws SQLException {
+        try (Connection admin = adminConnection();
+             Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT tablename, tableowner FROM pg_tables WHERE schemaname = 'chain'")) {
+            while (resultSet.next()) {
+                assertThat(resultSet.getString("tableowner"))
+                        .as("chain.%s must not be owned by crypto_app", resultSet.getString("tablename"))
+                        .isNotEqualTo("crypto_app");
+            }
+        }
+    }
+
+    /** AC4: mirrors Phase 9's manual smoke-test finding (correct password boots clean with zero
+     * Flyway activity, wrong password fails) as a permanent, fast, non-Spring-context guard against
+     * the property itself being silently reverted. */
+    @Test
+    void runtimeFlywayIsDisabledInApplicationProperties() throws IOException {
+        var properties = new java.util.Properties();
+        try (var in = Files.newInputStream(Path.of("src/main/resources/application.properties"))) {
+            properties.load(in);
+        }
+        assertThat(properties.getProperty("spring.flyway.enabled")).isEqualTo("false");
+    }
+
+    private void assertInsertAndSelectSucceedUpdateAndDeleteAreDenied(Connection app, String table) throws SQLException {
         String txHash = "0xit-" + table;
         try (Statement statement = app.createStatement()) {
             statement.execute(insertStatementFor(table, txHash));
+
+            try (ResultSet resultSet = statement.executeQuery(
+                    "SELECT count(*) FROM chain." + table + " WHERE tx_hash = '" + txHash + "'")) {
+                resultSet.next();
+                assertThat(resultSet.getInt(1)).as("SELECT on %s must see the row crypto_app just inserted", table).isEqualTo(1);
+            }
 
             assertThatThrownBy(() -> statement.execute("UPDATE chain." + table + " SET chain = 'TRON' WHERE tx_hash = '" + txHash + "'"))
                     .as("UPDATE on %s must be denied for crypto_app", table)
