@@ -36,8 +36,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ChainBaselineMigrationIntegrationTest {
 
     private static final List<String> GRANTED_TABLES = List.of("observations", "attestations", "quorum_decisions");
+    // outbox moved out of this list in T04 (V3__crypto_app_outbox_grant.sql grants
+    // INSERT/SELECT/UPDATE) - its own access is verified separately by
+    // OutboxGrantMigrationIntegrationTest, including that DELETE is still denied.
     private static final List<String> UNGRANTED_TABLES = List.of("watches", "provider_health", "chain_cursors",
-            "token_allowlist", "screening_results", "outbox", "shedlock");
+            "token_allowlist", "screening_results", "shedlock");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -111,9 +114,9 @@ class ChainBaselineMigrationIntegrationTest {
     }
 
     @Test
-    void bothMigrationsAreRecordedAsSuccessfulInFlywayHistory() throws SQLException {
+    void allMigrationsAreRecordedAsSuccessfulInFlywayHistory() throws SQLException {
         // Flyway also inserts a synthetic, unversioned "schema creation" row before the versioned
-        // migrations; only the versioned rows (V1, V2) are this assertion's concern.
+        // migrations; only the versioned rows (V1, V2, and T04's V3) are this assertion's concern.
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
@@ -124,7 +127,7 @@ class ChainBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2");
+            assertThat(succeededVersions).containsExactly("1", "2", "3");
         }
     }
 

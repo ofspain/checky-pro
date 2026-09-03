@@ -58,13 +58,14 @@ public class OutboxEvent {
     }
 
     public static OutboxEvent create(String aggregateType, String aggregateId, String eventType,
-                                      String idempotencyKey, String payloadJson) {
+                                      String idempotencyKey, String payloadJson, Instant createdAt) {
         OutboxEvent event = new OutboxEvent();
         event.aggregateType = aggregateType;
         event.aggregateId = aggregateId;
         event.eventType = eventType;
         event.idempotencyKey = idempotencyKey;
         event.payload = payloadJson;
+        event.createdAt = createdAt;
         return event;
     }
 
@@ -76,9 +77,17 @@ public class OutboxEvent {
         return publishedAt != null;
     }
 
+    /**
+     * Fallback guard only (agents.md: "use java.time with an injectable Clock") — {@link
+     * OutboxPublisher} always sets {@code createdAt} explicitly from its injected {@link
+     * java.time.Clock} via {@link #create}; this only fires if some future path ever persists an
+     * {@code OutboxEvent} without going through that factory method.
+     */
     @PrePersist
     void onCreate() {
-        this.createdAt = Instant.now();
+        if (createdAt == null) {
+            createdAt = Instant.now();
+        }
     }
 
     public Long getId() {

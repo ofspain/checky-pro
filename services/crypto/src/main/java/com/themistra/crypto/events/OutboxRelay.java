@@ -2,6 +2,7 @@ package com.themistra.crypto.events;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -9,6 +10,9 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Polls unpublished outbox rows and forwards them to Kafka. At-least-once by design: two replicas
@@ -31,6 +35,7 @@ public class OutboxRelay {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
     private static final int BATCH_SIZE = 100;
+    private static final long SEND_TIMEOUT_SECONDS = 30;
 
     private final OutboxEventRepository repository;
     private final KafkaTemplate<String, String> kafkaTemplate;
@@ -59,16 +64,30 @@ public class OutboxRelay {
         try {
             topic = EventTopics.forAggregateType(event.getAggregateType());
         } catch (IllegalStateException e) {
+            // Left unpublished, re-logged and re-fetched on every poll until a code fix mapping
+            // this aggregate type is deployed - no quarantine/terminal state exists (T04 scope: the
+            // outbox table's shape is fixed verbatim by design.md §4c and carries no such column).
+            // No aggregate type this service currently emits is unroutable; this path only fires on
+            // a genuine future coding mistake.
             log.error("Unroutable outbox event {} ({}): {}", event.getId(), event.getEventType(), e.getMessage());
-            return; // left unpublished; a config fix + redeploy will pick it up on the next poll
+            return;
         }
 
         try {
-            kafkaTemplate.send(topic, event.getAggregateId(), event.getPayload()).get();
+            kafkaTemplate.send(topic, event.getAggregateId(), event.getPayload())
+                    .get(SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             event.markPublished(clock.instant());
             repository.save(event);
-        } catch (Exception e) {
+        } catch (ExecutionException | TimeoutException e) {
             log.warn("Failed to relay outbox event {} to {}; will retry", event.getId(), topic, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Interrupted while relaying outbox event {} to {}; will retry", event.getId(), topic, e);
+        } catch (DataAccessException e) {
+            // Kafka send already succeeded here; only the mark-published save failed. The row
+            // stays unpublished and will be resent next poll - a harmless duplicate under the
+            // platform's idempotent-consumer/dedupe guarantee (L5), not a lost event.
+            log.warn("Failed to persist published state for outbox event {}; will retry", event.getId(), e);
         }
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.util.Objects;
 
 /**
@@ -29,10 +30,12 @@ public class OutboxPublisher {
 
     private final OutboxEventRepository repository;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
-    public OutboxPublisher(OutboxEventRepository repository, ObjectMapper objectMapper) {
+    public OutboxPublisher(OutboxEventRepository repository, ObjectMapper objectMapper, Clock clock) {
         this.repository = repository;
         this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
     public void publish(String aggregateType, String aggregateId, String eventType,
@@ -50,6 +53,7 @@ public class OutboxPublisher {
             throw new IllegalStateException(
                     "Failed to serialize event payload for " + aggregateType + "/" + eventType, e);
         }
-        repository.save(OutboxEvent.create(aggregateType, aggregateId, eventType, idempotencyKey, json));
+        repository.save(OutboxEvent.create(
+                aggregateType, aggregateId, eventType, idempotencyKey, json, clock.instant()));
     }
 }
