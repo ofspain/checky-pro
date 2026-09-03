@@ -26,6 +26,13 @@ import java.util.Objects;
  * <p>{@code AGREED} denotes that providers converged on the same value - it does not mean the value
  * itself is boolean-true. Two providers agreeing an {@code EXISTENCE} fact is {@code false} (the
  * transaction does not exist) is a correct, expected {@code AGREED} outcome.</p>
+ *
+ * <p><b>The exactly-3 requirement is deliberate, not a launch-only simplification to relax later
+ * casually (Phase 9, Kimi Phase 8 Issue 5, re-raising Phase 3 Issues 3/10).</b> A degraded-provider
+ * scenario (only 2 of 3 reachable) is explicitly out of this task's scope - see the frozen brief's own
+ * "Out: {@code ProviderHealth}/{@code chain.provider.degraded} (task 10)." Task 10 must define its own
+ * resolution for evaluating with fewer than 3 answers (e.g. a separate code path, or waiting for the
+ * third provider); it is not this evaluator's job to guess that shape now.</p>
  */
 public class QuorumEvaluator {
 

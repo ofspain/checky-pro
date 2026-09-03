@@ -14,6 +14,13 @@ import java.util.List;
  * concern for a future metrics/alerting task, not something this task claims to satisfy alone. Kept as
  * its own class specifically so a real paging integration can replace its internals later without
  * touching {@link QuorumDecisionService} or {@link QuorumEvaluator}.
+ *
+ * <p><b>Logs at {@code error} level by design (Phase 9, Kimi Phase 8 Issue 6).</b> This is the "ops
+ * alert" itself (L2/R2 require disagreement to be surfaced, not buried); downgrading to
+ * {@code debug}/{@code trace} would defeat that purpose. {@code answer} values are logged verbatim -
+ * every value type this task's own callers ever supply is a typed blockchain fact ({@code Boolean},
+ * {@code BigDecimal}, a contract address {@code String}), never a secret or PII. Callers must never
+ * pass a {@code T} whose {@code toString()} could contain secret or personal data.</p>
  */
 @Component
 public class HeldFactAlerter {

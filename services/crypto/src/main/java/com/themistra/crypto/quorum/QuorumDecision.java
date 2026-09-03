@@ -85,10 +85,21 @@ public class QuorumDecision {
         decision.txHash = txHash;
         decision.factType = factType;
         decision.outcome = outcome;
-        decision.agreeingCount = (short) agreeingCount;
-        decision.providerCount = (short) providerCount;
+        decision.agreeingCount = toShort(agreeingCount, "agreeingCount");
+        decision.providerCount = toShort(providerCount, "providerCount");
         decision.decidedAt = decidedAt;
         return decision;
+    }
+
+    /** Phase 9 (Kimi Phase 8 Issue 3): {@code create} is a public factory with no documented range
+     * contract of its own - a silent {@code (short)} narrowing cast would truncate an out-of-range
+     * value instead of failing. */
+    private static short toShort(int value, String fieldName) {
+        if (value < 0 || value > Short.MAX_VALUE) {
+            throw new IllegalArgumentException(
+                    fieldName + " must be between 0 and " + Short.MAX_VALUE + ", got " + value);
+        }
+        return (short) value;
     }
 
     public Long id() {

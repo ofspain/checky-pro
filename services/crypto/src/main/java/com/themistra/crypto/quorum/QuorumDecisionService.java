@@ -7,6 +7,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -27,6 +28,16 @@ import java.util.Set;
  * <p><b>Duplicate-provider rejection (Phase 3 Kimi Issue 6).</b> A buggy caller submitting two answers
  * from the same provider could artificially manufacture a false {@code AGREED} - rejected here, before
  * either {@link QuorumEvaluator} or any collaborator is invoked.</p>
+ *
+ * <p><b>Alert-after-persist ordering, and a pre-flight existing-decision check (Phase 9, Kimi Phase 8
+ * Issues 1 and 7).</b> {@link HeldFactAlerter} is invoked only after {@link
+ * QuorumDecisionRepository#save} succeeds, not before - an ops alert always corresponds to a durably
+ * persisted decision. A pre-flight {@link QuorumDecisionRepository#findByChainAndTxHashAndFactType}
+ * check rejects a second evaluation of the same {@code (chain, txHash, factType)} with a clear {@link
+ * IllegalStateException} before any alert or save is attempted, rather than letting it fail obscurely
+ * against {@code uq_quorum_tx_fact} (frozen brief Amendment #7 - re-evaluation is out of this task's
+ * own scope, and this makes that boundary an explicit, named failure rather than a raw constraint
+ * violation).</p>
  */
 @Component
 public class QuorumDecisionService {
@@ -47,18 +58,33 @@ public class QuorumDecisionService {
     public <T extends Comparable<T>> QuorumDecision evaluate(String chain, String txHash,
                                                                FactType factType,
                                                                List<ProviderAnswer<T>> answers) {
+        Objects.requireNonNull(chain, "chain");
+        Objects.requireNonNull(txHash, "txHash");
+        Objects.requireNonNull(factType, "factType");
+        Objects.requireNonNull(answers, "answers");
+        rejectExistingDecision(chain, txHash, factType);
         rejectDuplicateProviders(answers);
 
         QuorumEvaluator.Result result = evaluator.evaluate(extractValues(answers));
         Instant decidedAt = clock.instant();
 
+        QuorumDecision decision = QuorumDecision.create(chain, txHash, factType, result.outcome(),
+                result.agreeingCount(), result.providerCount(), decidedAt);
+        QuorumDecision saved = repository.save(decision);
+
         if (result.outcome() == QuorumOutcome.HELD) {
             alerter.alert(chain, txHash, factType, answers);
         }
 
-        QuorumDecision decision = QuorumDecision.create(chain, txHash, factType, result.outcome(),
-                result.agreeingCount(), result.providerCount(), decidedAt);
-        return repository.save(decision);
+        return saved;
+    }
+
+    private void rejectExistingDecision(String chain, String txHash, FactType factType) {
+        if (repository.findByChainAndTxHashAndFactType(chain, txHash, factType).isPresent()) {
+            throw new IllegalStateException("a quorum decision already exists for chain=" + chain
+                    + " txHash=" + txHash + " factType=" + factType
+                    + " - re-evaluation of the same fact is not supported (see frozen brief Amendment #7)");
+        }
     }
 
     private <T> void rejectDuplicateProviders(List<ProviderAnswer<T>> answers) {
