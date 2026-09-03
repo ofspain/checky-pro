@@ -175,6 +175,15 @@ class TronAdapterTest {
         when(apiWrapper.getNowBlock(NodeType.SOLIDITY_NODE)).thenReturn(blockAt(number));
     }
 
+    // ---------- chain ----------
+
+    @Test
+    void chainReturnsTron() {
+        // Phase 11 Gap 1: AC4 - a direct, unit-level assertion distinct from the config test's
+        // indirect reflection-based check.
+        assertThat(adapter.chain()).isEqualTo(com.themistra.crypto.adapter.Chain.TRON);
+    }
+
     // ---------- getFinalityStatus ----------
 
     @Test
@@ -216,6 +225,45 @@ class TronAdapterTest {
                 .hasMessageContaining("140");
     }
 
+    @Test
+    void throwsWhenTxBlockExceedsCurrentBlock() throws IllegalException {
+        // Phase 11 Gap 13: the same class of impossible-state guard as the finalized-vs-current one
+        // above, closed in Phase 9's resolution - a provider claiming the transaction's own block is
+        // ahead of the chain head it just reported.
+        when(apiWrapper.getTransactionInfoById(TX_HASH)).thenReturn(minedInfo(150L));
+        stubCurrentBlock(140L);
+        stubSolidBlock(100L);
+
+        assertThatThrownBy(() -> adapter.getFinalityStatus(TX_HASH))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("150")
+                .hasMessageContaining("140");
+    }
+
+    @Test
+    void getFinalityStatusPropagatesCurrentBlockTransportFailure() throws IllegalException {
+        when(apiWrapper.getTransactionInfoById(TX_HASH)).thenReturn(minedInfo(100L));
+        when(apiWrapper.getNowBlock(NodeType.FULL_NODE)).thenThrow(new IllegalException("deadline exceeded"));
+
+        assertThatThrownBy(() -> adapter.getFinalityStatus(TX_HASH))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("getNowBlock")
+                .hasCauseInstanceOf(IllegalException.class);
+    }
+
+    @Test
+    void getFinalityStatusPropagatesSolidityBlockTransportFailure() throws IllegalException {
+        when(apiWrapper.getTransactionInfoById(TX_HASH)).thenReturn(minedInfo(100L));
+        stubCurrentBlock(150L);
+        when(apiWrapper.getNowBlock(NodeType.SOLIDITY_NODE))
+                .thenThrow(new IllegalException("deadline exceeded"));
+
+        assertThatThrownBy(() -> adapter.getFinalityStatus(TX_HASH))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("getNowBlock")
+                .hasCauseInstanceOf(IllegalException.class);
+    }
+
     // ---------- getTx ----------
 
     @Test
@@ -245,6 +293,21 @@ class TronAdapterTest {
         assertThat(result.amount().longValueExact()).isEqualTo(500L);
         assertThat(result.confirmations()).isEqualTo(1);
         verify(apiWrapper, never()).getTransactionById(any());
+    }
+
+    @Test
+    void getTxUsesFirstTransferLogWhenMultipleArePresent() throws IllegalException {
+        // Phase 11 Gap 9: deliberate, Ethereum-mirroring behavior for a direct getTx(txHash) lookup -
+        // see the class Javadoc's "Multiple-Transfer-log limitation" precedent from EthereumAdapter.
+        TransactionInfo.Log first = transferLog(CONTRACT_BODY, SENDER_BODY, WATCHED_BODY, 111L);
+        TransactionInfo.Log second = transferLog(fill20((byte) 0xEE), SENDER_BODY, WATCHED_BODY, 222L);
+        when(apiWrapper.getTransactionInfoById(TX_HASH)).thenReturn(minedInfo(100L, first, second));
+        stubCurrentBlock(100L);
+
+        TxResult result = adapter.getTx(TX_HASH);
+
+        assertThat(result.tokenContractAddress()).isEqualTo(CONTRACT_ADDRESS);
+        assertThat(result.amount().longValueExact()).isEqualTo(111L);
     }
 
     @Test
@@ -336,6 +399,21 @@ class TronAdapterTest {
     }
 
     @Test
+    void getTxPropagatesTransactionByIdTransportFailureUnchecked() throws IllegalException {
+        // Phase 11 Gap 7: the existing propagates-failure test only covers getTransactionInfoById -
+        // this covers the distinct fallback call site (getTransactionById, reached when no Transfer
+        // log is present).
+        when(apiWrapper.getTransactionInfoById(TX_HASH)).thenReturn(minedInfo(100L));
+        stubCurrentBlock(100L);
+        when(apiWrapper.getTransactionById(TX_HASH)).thenThrow(new IllegalException("deadline exceeded"));
+
+        assertThatThrownBy(() -> adapter.getTx(TX_HASH))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("getTransactionById")
+                .hasCauseInstanceOf(IllegalException.class);
+    }
+
+    @Test
     void getTxDoesNotMatchATransferLogWithFewerThanThreeTopics() throws IllegalException {
         // Phase 9 (Kimi Issue 3): a log with a colliding topic[0] but only 2 topics must not match -
         // falls back to the native-TRX path instead of throwing IndexOutOfBoundsException.
@@ -399,6 +477,40 @@ class TronAdapterTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(CONTRACT_ADDRESS)
                 .hasCauseInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void getTokenInfoDecodesTheMaximumUint8DecimalsValue() {
+        // Phase 11 Gap 8, revised: Kimi's suggested "decimals() overflows int" premise does not hold
+        // - direct bytecode inspection of Trc20Contract$3 (decimals()'s own TypeReference) confirmed
+        // its output type is Uint8, not Uint256, so FunctionReturnDecoder can never legitimately
+        // produce a decoded value outside 0-255 for it; intValueExact() cannot overflow through any
+        // real ABI response. Verified this rather than shipping a test that could never fail as
+        // intended. This test instead pins the boundary that IS reachable: decimals() == 255 (the
+        // max a real uint8 can carry) still decodes correctly through to TokenInfo.
+        byte[] symbolEncoded = hexToBytes(
+                "0000000000000000000000000000000000000000000000000000000000000020"
+                        + "0000000000000000000000000000000000000000000000000000000000000004"
+                        + "5553445400000000000000000000000000000000000000000000000000000000");
+        byte[] decimalsEncoded = hexToBytes(
+                "00000000000000000000000000000000000000000000000000000000000000ff");
+
+        TransactionExtention symbolResponse = TransactionExtention.newBuilder()
+                .addConstantResult(ByteString.copyFrom(symbolEncoded))
+                .build();
+        TransactionExtention decimalsResponse = TransactionExtention.newBuilder()
+                .addConstantResult(ByteString.copyFrom(decimalsEncoded))
+                .build();
+
+        Contract contract = new Contract(ByteString.copyFrom(prefixed(CONTRACT_BODY)), null,
+                ByteString.EMPTY, 0L, "", 1L);
+        when(apiWrapper.getContract(CONTRACT_ADDRESS)).thenReturn(contract);
+        when(apiWrapper.constantCall(anyString(), anyString(), any()))
+                .thenReturn(symbolResponse, decimalsResponse);
+
+        TokenInfo tokenInfo = adapter.getTokenInfo(CONTRACT_ADDRESS);
+
+        assertThat(tokenInfo.decimals()).isEqualTo(255);
     }
 
     private static byte[] hexToBytes(String hex) {
@@ -467,6 +579,123 @@ class TronAdapterTest {
         adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
 
         verify(apiWrapper).getNowBlock(NodeType.FULL_NODE);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void subscribeAddressSchedulesWithFixedDelayUsingTheConfiguredPollInterval() throws IllegalException {
+        // Phase 11 Gap 2: the adapter is constructed in setUp() with a 3-second poll interval.
+        stubCurrentBlock(100L);
+        when(scheduler.scheduleWithFixedDelay(any(), anyLong(), anyLong(), any()))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+
+        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+
+        long expectedMillis = Duration.ofSeconds(3).toMillis();
+        verify(scheduler).scheduleWithFixedDelay(
+                any(), eq(expectedMillis), eq(expectedMillis), eq(TimeUnit.MILLISECONDS));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void pollSkipsEthGetLogsEntirelyWhenNoNewBlocksExistSinceTheLastPoll() throws IllegalException {
+        // Phase 11 Gap 4: the fromBlock > headBlock early-return guard - a regression removing it
+        // would issue a block-number query with a reversed/inverted range instead of skipping it.
+        stubCurrentBlock(100L);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+
+        // No re-stub of the current block - the chain head hasn't moved since the cursor was seeded.
+        taskCaptor.getValue().run();
+        taskCaptor.getValue().run();
+
+        verify(apiWrapper, never()).getTransactionInfoByBlockNum(anyLong());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void cursorAdvancesToToBlockAfterARoutinePoll() throws IllegalException {
+        // Phase 11 Gap 3: a regression that forgot to advance lastScannedBlock would have every
+        // subsequent poll re-scan the same block(s).
+        stubCurrentBlock(100L);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+
+        when(apiWrapper.getTransactionInfoByBlockNum(101L)).thenReturn(infoListOf());
+        stubCurrentBlock(101L);
+        taskCaptor.getValue().run();
+
+        when(apiWrapper.getTransactionInfoByBlockNum(102L)).thenReturn(infoListOf());
+        stubCurrentBlock(102L);
+        taskCaptor.getValue().run();
+
+        verify(apiWrapper, org.mockito.Mockito.times(1)).getTransactionInfoByBlockNum(101L);
+        verify(apiWrapper).getTransactionInfoByBlockNum(102L);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void observationCarriesConfirmationsBasedOnPollHeadBlock() throws IllegalException {
+        // Phase 11 Gap 5.
+        stubCurrentBlock(100L);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        List<TxResult> received = new ArrayList<>();
+        adapter.subscribeAddress(WATCHED_ADDRESS, received::add);
+
+        TransactionInfo.Log log = transferLog(CONTRACT_BODY, SENDER_BODY, WATCHED_BODY, 10L);
+        for (long block = 101L; block <= 110L; block++) {
+            when(apiWrapper.getTransactionInfoByBlockNum(block)).thenReturn(infoListOf());
+        }
+        when(apiWrapper.getTransactionInfoByBlockNum(105L)).thenReturn(infoListOf(minedInfo(105L, log)));
+        stubCurrentBlock(110L);
+
+        taskCaptor.getValue().run();
+
+        assertThat(received).hasSize(1);
+        assertThat(received.get(0).confirmations()).isEqualTo(6); // 110 - 105 + 1
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void pollBoundarySurvivesAnInvalidBase58WatchAddress() throws IllegalException {
+        // Phase 11 Gap 10: topicForAddress -> ApiWrapper.parseAddress validates Base58Check and
+        // throws on invalid input; the poll boundary (Phase 9) must swallow this like any other
+        // unexpected failure rather than crash the scheduler.
+        stubCurrentBlock(100L);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        adapter.subscribeAddress("not-a-valid-base58-address", result -> { });
+
+        stubCurrentBlock(101L);
+
+        assertThatCode(() -> taskCaptor.getValue().run()).doesNotThrowAnyException();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void pollBoundarySurvivesATransactionInfoWithNoId() throws IllegalException {
+        // Phase 11 Gap 14: ByteArray.toHexString(info.getId().toByteArray()) on a default/empty id
+        // must not crash the poll loop - the exception boundary (Phase 9) catches it, dropping just
+        // that one tick's observations rather than propagating.
+        stubCurrentBlock(100L);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+
+        TransactionInfo.Log log = transferLog(CONTRACT_BODY, SENDER_BODY, WATCHED_BODY, 10L);
+        TransactionInfo infoWithNoId = TransactionInfo.newBuilder().setBlockNumber(101L).addLog(log).build();
+        when(apiWrapper.getTransactionInfoByBlockNum(101L)).thenReturn(infoListOf(infoWithNoId));
+        stubCurrentBlock(101L);
+
+        assertThatCode(() -> taskCaptor.getValue().run()).doesNotThrowAnyException();
     }
 
     @Test

@@ -3,6 +3,9 @@ package com.themistra.crypto.adapter.tron;
 import com.themistra.crypto.common.config.ProviderProperties;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedConstruction;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.mock.env.MockEnvironment;
 import org.tron.trident.core.ApiWrapper;
 import org.tron.trident.core.ApiWrapperBuilder;
@@ -168,6 +171,45 @@ class TronAdapterConfigTest {
 
             assertThat(schedulerA.isShutdown()).isTrue();
             assertThat(schedulerB.isShutdown()).isTrue();
+        }
+    }
+
+    @Configuration
+    @EnableConfigurationProperties(ProviderProperties.class)
+    static class TestConfig {
+    }
+
+    @Test
+    void preDestroyIsHonoredWhenTheSpringContextCloses() {
+        // Phase 11 Gap 11: proves the @PreDestroy annotation itself is wired, not just that
+        // TronAdapterConfig.shutdown()'s own logic works (shutdownClosesEveryBuiltAdapterAndItsScheduler
+        // above calls it directly). Confirmed via a spike that Mockito's mockConstruction interception
+        // does span a synchronous ApplicationContextRunner.run() call (Spring's context refresh runs on
+        // the calling thread), resolving the uncertainty the class Javadoc's original reasoning left
+        // open - this is a real context test, not a documented manual-verification gap.
+        try (MockedConstruction<ApiWrapperBuilder> mocked = mockBuilderConstruction()) {
+            new ApplicationContextRunner()
+                    .withUserConfiguration(TestConfig.class, TronAdapterConfig.class)
+                    .withPropertyValues(
+                            "themistra.crypto.adapter.tron.poll-interval-ms=3000",
+                            "themistra.crypto.providers.chains[0].chain=TRON",
+                            "themistra.crypto.providers.chains[0].providers[0].name=fake-tron-a",
+                            "themistra.crypto.providers.chains[0].providers[0].url=localhost:9903",
+                            "themistra.crypto.providers.chains[0].providers[0].timeout-seconds=5",
+                            "themistra.crypto.providers.chains[0].providers[0].api-key-secret-name=UNSET",
+                            "themistra.crypto.providers.quorum-threshold=1")
+                    .run(context -> {
+                        assertThat(context).hasNotFailed();
+                        @SuppressWarnings("unchecked")
+                        List<TronAdapter> adapters = context.getBean("tronAdapters", List.class);
+                        assertThat(adapters).hasSize(1);
+                        ScheduledExecutorService scheduler = schedulerOf(adapters.get(0));
+                        assertThat(scheduler.isShutdown()).isFalse();
+
+                        context.close();
+
+                        assertThat(scheduler.isShutdown()).isTrue();
+                    });
         }
     }
 

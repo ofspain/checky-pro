@@ -194,6 +194,15 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
                     "Provider " + providerName + " reported a solidified block (" + finalizedBlockNumber
                             + ") ahead of its own current block (" + currentBlockNumber + ")");
         }
+        if (txBlockNumber > currentBlockNumber) {
+            // Phase 11 (Kimi Gap 13): the same class of impossible-state guard as above and as
+            // computeConfirmations - getTransactionInfoById and getNowBlock are independent gRPC
+            // round trips, so a provider claiming the transaction's own block is ahead of the chain
+            // head it just reported must fail loudly rather than hand back a nonsensical FinalityStatus.
+            throw new IllegalStateException(
+                    "Provider " + providerName + " reported a transaction block (" + txBlockNumber
+                            + ") ahead of its own current block (" + currentBlockNumber + ")");
+        }
 
         return new FinalityStatus(txBlockNumber, currentBlockNumber, finalizedBlockNumber);
     }
