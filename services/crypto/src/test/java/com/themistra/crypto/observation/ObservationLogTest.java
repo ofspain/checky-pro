@@ -125,4 +125,33 @@ class ObservationLogTest {
 
         assertThat(captor.getValue().observedAt()).isEqualTo(FIXED_INSTANT);
     }
+
+    @Test
+    void recordPropagatesWhenPostgresInsertFailsAfterASuccessfulS3Write() {
+        // Phase 11 Gap 6: proves, rather than assumes, the accepted orphan-S3-object outcome (frozen
+        // brief amendment #4) - a DB failure after a successful S3 write must still surface as a
+        // clear exception to the caller, not be silently swallowed.
+        when(snapshotStore.store(any(), any(), any(), any(), any(), any())).thenReturn(Optional.of("key.json"));
+        RuntimeException dbFailure = new RuntimeException("connection refused");
+        when(repository.save(any())).thenThrow(dbFailure);
+
+        assertThatThrownBy(() -> observationLog.record("ETHEREUM", "0xabc", "alchemy",
+                FactType.EXISTENCE, "{}"))
+                .isSameAs(dbFailure);
+    }
+
+    @Test
+    void recordIsNotAnnotatedTransactional() {
+        // Phase 11 Gap 8: regression guard for the Phase 9 fix (Kimi/self-review Issue 2) - a
+        // returning @Transactional would once again hold a DB connection open for the S3 call above
+        // repository.save(...).
+        assertThat(ObservationLog.class.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class))
+                .isFalse();
+        java.lang.reflect.Method recordMethod = java.util.Arrays.stream(ObservationLog.class.getDeclaredMethods())
+                .filter(m -> m.getName().equals("record"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(recordMethod.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class))
+                .isFalse();
+    }
 }
