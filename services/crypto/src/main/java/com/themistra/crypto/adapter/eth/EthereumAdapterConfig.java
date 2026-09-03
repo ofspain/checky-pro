@@ -1,6 +1,7 @@
 package com.themistra.crypto.adapter.eth;
 
 import com.themistra.crypto.common.config.ProviderProperties;
+import jakarta.annotation.PreDestroy;
 import okhttp3.OkHttpClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -11,6 +12,7 @@ import org.web3j.protocol.http.HttpService;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
@@ -21,16 +23,27 @@ import java.util.concurrent.ScheduledExecutorService;
 @Configuration
 public class EthereumAdapterConfig {
 
+    /** Every adapter this config has ever built, so {@link #shutdown()} can close them all on
+     * context shutdown (Phase 9 Finding: nothing was closing the Web3j client or scheduler before). */
+    private final List<EthereumAdapter> createdAdapters = new CopyOnWriteArrayList<>();
+
     @Bean
     public List<EthereumAdapter> ethereumAdapters(
             ProviderProperties providerProperties,
             Environment environment,
             @Value("${themistra.crypto.adapter.ethereum.poll-interval-ms}") long pollIntervalMs) {
-        return providerProperties.chains().stream()
+        List<EthereumAdapter> adapters = providerProperties.chains().stream()
                 .filter(chainProviders -> "ETHEREUM".equals(chainProviders.chain()))
                 .flatMap(chainProviders -> chainProviders.providers().stream())
                 .map(entry -> buildAdapter(entry, environment, pollIntervalMs))
                 .toList();
+        createdAdapters.addAll(adapters);
+        return adapters;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        createdAdapters.forEach(EthereumAdapter::close);
     }
 
     private EthereumAdapter buildAdapter(
@@ -40,6 +53,8 @@ public class EthereumAdapterConfig {
         OkHttpClient httpClient = new OkHttpClient.Builder()
                 .connectTimeout(Duration.ofSeconds(entry.timeoutSeconds()))
                 .readTimeout(Duration.ofSeconds(entry.timeoutSeconds()))
+                .writeTimeout(Duration.ofSeconds(entry.timeoutSeconds()))
+                .callTimeout(Duration.ofSeconds(entry.timeoutSeconds()))
                 .build();
         Web3j web3j = Web3j.build(new HttpService(resolvedUrl, httpClient));
 
@@ -50,12 +65,19 @@ public class EthereumAdapterConfig {
     }
 
     /**
-     * Non-throwing by design: substitutes the resolved credential into a {@code {apiKey}} placeholder
-     * in {@code entry.url()} when both the placeholder is present and the environment value resolves;
-     * otherwise returns the URL unchanged. {@code local} profile's own fixture URLs contain no
-     * placeholder at all, so this never fails at wiring time regardless of whether a credential
-     * resolves — {@code Web3j}/{@code HttpService} construction is itself lazy (no network call until
-     * a method is invoked), so an unreachable/fake URL is harmless until something actually calls it.
+     * Substitutes the resolved credential into a {@code {apiKey}} placeholder in {@code entry.url()}.
+     * Two cases are handled differently on purpose (Phase 9 Finding 5 refined this):
+     * <ul>
+     *   <li>No {@code {apiKey}} placeholder at all → the URL is returned unchanged, no lookup
+     *       attempted. This is what keeps {@code local} profile's own fixture URLs (which have no
+     *       placeholder) safe — {@code Web3j}/{@code HttpService} construction is itself lazy, so an
+     *       unreachable/fake URL is harmless until something actually calls it.</li>
+     *   <li>A placeholder is present but the environment value does not resolve → **fails fast here**,
+     *       at wiring time, rather than silently booting with a broken URL that would only surface as
+     *       a confusing network/DNS error on the first real RPC call. This is the one case L13's
+     *       "fail startup on missing/invalid config" principle actually applies to for this value —
+     *       a missing credential for a URL that structurally requires one.</li>
+     * </ul>
      */
     private String resolveUrl(ProviderProperties.ProviderEntry entry, Environment environment) {
         String url = entry.url();
@@ -63,6 +85,13 @@ public class EthereumAdapterConfig {
             return url;
         }
         String apiKey = environment.getProperty(entry.apiKeySecretName());
-        return apiKey == null ? url : url.replace("{apiKey}", apiKey);
+        if (apiKey == null) {
+            throw new IllegalStateException(
+                    "Provider '" + entry.name() + "'s url contains {apiKey} but no value resolved for "
+                            + "apiKeySecretName '" + entry.apiKeySecretName() + "' - set that "
+                            + "environment variable/property before this service can reach a real "
+                            + "Ethereum RPC endpoint.");
+        }
+        return url.replace("{apiKey}", apiKey);
     }
 }

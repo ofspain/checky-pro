@@ -24,7 +24,17 @@
   </properties>
 
   <!-- ADR-0004: the narrow, named exception permitting the AWS KMS SDK, confined to the future
-       attest module's KmsSigner (kms:Sign only). -->
+       attest module's KmsSigner (kms:Sign only).
+
+       T06: web3j:core 6.0.0's own tools.jackson.core:jackson-databind:3.1.0 dependency requires
+       com.fasterxml.jackson.core:jackson-annotations 2.21+ (its JacksonAnnotationIntrospector
+       static-references JsonSerializeAs, only present from 2.21 on). Spring Boot 3.5.4 imports
+       jackson-bom 2.19.2, which manages that same artifact down to 2.19.2 and otherwise wins
+       (nearer, via the parent's own dependencyManagement import) — leaving any real
+       HttpService/Web3j construction crash with NoClassDefFoundError at the first RPC call site,
+       not just in tests. This module's own dependencyManagement entry is nearer still, so it wins
+       instead. jackson-annotations is additive/back-compat within the 2.x line, so pinning up is
+       safe for Spring's own (2.19.2-targeting) Jackson 2 usage elsewhere in this module. -->
   <dependencyManagement>
     <dependencies>
       <dependency>
@@ -33,6 +43,11 @@
         <version>2.50.2</version>
         <type>pom</type>
         <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-annotations</artifactId>
+        <version>2.21</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

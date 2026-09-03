@@ -21,6 +21,8 @@ import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameter;
 import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.methods.request.EthFilter;
+import org.web3j.protocol.core.methods.response.EthBlock;
+import org.web3j.protocol.core.methods.response.EthCall;
 import org.web3j.protocol.core.methods.response.EthLog;
 import org.web3j.protocol.core.methods.response.Log;
 import org.web3j.protocol.core.methods.response.Transaction;
@@ -45,8 +47,26 @@ import java.util.concurrent.atomic.AtomicLong;
  * failure-vs-negative-answer contract this class honors throughout: an unchecked exception means the
  * provider/transport couldn't answer at all; a transaction not observed as mined is a normal
  * {@code TxResult(exists=false, ...)}, never a throw.
+ *
+ * <p><b>Multiple-Transfer-log limitation (Phase 9 Finding).</b> {@link #getTx} reports the *first*
+ * ERC-20 {@code Transfer} log in a transaction's receipt (or the native value if none). For a
+ * transaction emitting more than one {@code Transfer} event (e.g. a DEX router or aggregator swap),
+ * a direct {@code getTx(txHash)} call has no way to disambiguate which transfer is "the payment of
+ * interest" — {@code ChainAdapter.getTx(String)} takes no recipient parameter to filter by. Callers
+ * dealing with a transaction that may carry multiple transfers must not assume this result represents
+ * a specific counterparty without their own disambiguation. {@link #subscribeAddress}'s own polling
+ * does not have this ambiguity — it builds each observation directly from the specific,
+ * recipient-filtered log it matched, never through this method.</p>
+ *
+ * <p><b>Credential-in-URL risk (Phase 9 Finding).</b> {@link EthereumAdapterConfig} attaches the
+ * resolved API key by substituting it into the request URL (the mechanism most real Ethereum RPC
+ * providers require). A transport-level {@link IOException} from web3j/OkHttp may itself embed the
+ * full URL — including the key — in its own message; this class does not scrub that nested cause.
+ * Structured logging/alerting configured for this service should treat this class's exceptions (and
+ * anything wrapping them) as potentially sensitive, not just the log lines this class writes itself
+ * (which never include the key directly).</p>
  */
-public class EthereumAdapter implements ChainAdapter {
+public class EthereumAdapter implements ChainAdapter, AutoCloseable {
 
     /** keccak256("Transfer(address,address,uint256)") — the standard ERC-20 Transfer event topic. */
     private static final String TRANSFER_EVENT_TOPIC =
@@ -83,7 +103,7 @@ public class EthereumAdapter implements ChainAdapter {
         TransactionReceipt receipt = fetchReceipt(txHash);
         BigInteger currentBlock = fetchLatestBlockNumber();
         BigInteger txBlock = tx.getBlockNumber();
-        int confirmations = currentBlock.subtract(txBlock).add(BigInteger.ONE).intValue();
+        int confirmations = computeConfirmations(currentBlock, txBlock);
 
         Optional<Log> transferLog = receipt == null ? Optional.empty() : findTransferLog(receipt);
         if (transferLog.isPresent()) {
@@ -136,6 +156,14 @@ public class EthereumAdapter implements ChainAdapter {
         return new FinalityStatus(txBlockNumber, currentBlockNumber, finalizedBlockNumber);
     }
 
+    /** Closes the underlying {@code Web3j} client and shuts down the polling scheduler. Called by
+     * {@link EthereumAdapterConfig} on application context shutdown. */
+    @Override
+    public void close() {
+        web3j.shutdown();
+        scheduler.shutdown();
+    }
+
     private void pollOnce(String address, ObservationSink sink, AtomicLong lastScannedBlock) {
         BigInteger fromBlock = BigInteger.valueOf(lastScannedBlock.get() + 1);
         BigInteger toBlock = fetchLatestBlockNumber();
@@ -150,14 +178,41 @@ public class EthereumAdapter implements ChainAdapter {
                 .addNullTopic()
                 .addSingleTopic(topicForAddress(address));
 
+        // Builds each TxResult directly from the specific, recipient-filtered log this query
+        // matched - never via getTx(...) - so the observation can never disagree with what this
+        // poll actually found, even for a transaction carrying multiple Transfer events elsewhere
+        // in the same receipt (Phase 9 Finding 1).
         List<EthLog.LogResult<?>> logs = fetchLogs(filter);
         for (EthLog.LogResult<?> logResult : logs) {
             Log log = (Log) logResult.get();
-            TxResult result = getTx(log.getTransactionHash());
-            sink.onObservation(result);
+            sink.onObservation(buildTxResultFromLog(log, toBlock));
         }
 
         lastScannedBlock.set(toBlock.longValue());
+    }
+
+    private TxResult buildTxResultFromLog(Log log, BigInteger currentBlock) {
+        String fromAddress = decodeAddressTopic(log.getTopics().get(1));
+        String toAddress = decodeAddressTopic(log.getTopics().get(2));
+        BigDecimal amount = new BigDecimal(decodeUint256(log.getData()));
+        BigInteger txBlock = log.getBlockNumber();
+        int confirmations = computeConfirmations(currentBlock, txBlock);
+        return new TxResult(true, log.getTransactionHash(), fromAddress, toAddress, log.getAddress(),
+                amount, confirmations, txBlock.longValue());
+    }
+
+    /** A transaction included in the current latest block has 1 confirmation, not 0 (frozen brief
+     * amendment #6). Throws if the provider reports an internally-inconsistent state (current block
+     * earlier than the transaction's own block) rather than silently returning a negative count, and
+     * fails loudly rather than silently wrapping on an implausibly large difference. */
+    private int computeConfirmations(BigInteger currentBlock, BigInteger txBlock) {
+        BigInteger difference = currentBlock.subtract(txBlock).add(BigInteger.ONE);
+        if (difference.signum() < 0) {
+            throw new IllegalStateException(
+                    "Provider " + providerName + " reported a current block (" + currentBlock
+                            + ") earlier than the transaction's own block (" + txBlock + ")");
+        }
+        return Math.toIntExact(difference.longValueExact());
     }
 
     private TxResult notObservedResult(String txHash) {
@@ -186,7 +241,6 @@ public class EthereumAdapter implements ChainAdapter {
         return "0x" + TypeEncoder.encode(new Address(address));
     }
 
-    @SuppressWarnings("unchecked")
     private String callErc20StringFunction(String contractAddress, String functionName) {
         Function function = new Function(functionName, Collections.emptyList(),
                 Collections.singletonList(TypeReference.create(Utf8String.class)));
@@ -195,7 +249,6 @@ public class EthereumAdapter implements ChainAdapter {
         return ((Utf8String) decoded.get(0)).getValue();
     }
 
-    @SuppressWarnings("unchecked")
     private int callErc20Uint8Function(String contractAddress, String functionName) {
         Function function = new Function(functionName, Collections.emptyList(),
                 Collections.singletonList(TypeReference.create(Uint8.class)));
@@ -210,7 +263,13 @@ public class EthereumAdapter implements ChainAdapter {
                 org.web3j.protocol.core.methods.request.Transaction.createEthCallTransaction(
                         null, contractAddress, encodedFunction);
         try {
-            return web3j.ethCall(callTransaction, DefaultBlockParameterName.LATEST).send().getValue();
+            EthCall response = web3j.ethCall(callTransaction, DefaultBlockParameterName.LATEST).send();
+            if (response.hasError()) {
+                throw new IllegalStateException(
+                        "Provider " + providerName + " rejected eth_call to " + contractAddress
+                                + " (" + function.getName() + "): " + response.getError().getMessage());
+            }
+            return response.getValue();
         } catch (IOException e) {
             throw new IllegalStateException(
                     "Provider " + providerName + " failed to answer eth_call for " + contractAddress, e);
@@ -241,7 +300,13 @@ public class EthereumAdapter implements ChainAdapter {
 
     private long fetchBlockNumber(DefaultBlockParameterName tag) {
         try {
-            return web3j.ethGetBlockByNumber(tag, false).send().getBlock().getNumber().longValue();
+            EthBlock.Block block = web3j.ethGetBlockByNumber(tag, false).send().getBlock();
+            if (block == null) {
+                throw new IllegalStateException(
+                        "Provider " + providerName + " returned no block for eth_getBlockByNumber("
+                                + tag.getValue() + ")");
+            }
+            return block.getNumber().longValue();
         } catch (IOException e) {
             throw new IllegalStateException(
                     "Provider " + providerName + " failed to answer eth_getBlockByNumber(" + tag.getValue() + ")", e);
@@ -250,7 +315,12 @@ public class EthereumAdapter implements ChainAdapter {
 
     private List<EthLog.LogResult<?>> fetchLogs(EthFilter filter) {
         try {
-            return web3j.ethGetLogs(filter).send().getLogs();
+            List<EthLog.LogResult<?>> logs = web3j.ethGetLogs(filter).send().getLogs();
+            if (logs == null) {
+                throw new IllegalStateException(
+                        "Provider " + providerName + " returned a null logs list for eth_getLogs");
+            }
+            return logs;
         } catch (IOException e) {
             throw new IllegalStateException("Provider " + providerName + " failed to answer eth_getLogs", e);
         }
