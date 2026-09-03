@@ -58,3 +58,30 @@ mvn -pl services/crypto -am compile / test-compile   → BUILD SUCCESS
 mvn -pl services/crypto test -Dtest='FakeChainAdapterTest,ChainAdapterShapeTest'
   → Tests run: 11, Failures: 0, Errors: 0, Skipped: 0 — BUILD SUCCESS
 ```
+
+## Addendum — Phase 11 (Kimi test review) follow-up
+
+Kimi's Phase 11 review (`artifacts/11-test-review.md`) raised 12 gaps, all against test coverage —
+none proposed a production-code change or re-litigated a Phase 4/9 design decision. All 12 accepted,
+several folded into a lighter implementation than literally suggested:
+
+| Gap | Decision | Change |
+|---|---|---|
+| 1 (`exists=false` non-throw path not explicit) | **ACCEPTED** | `getTxReturnsExistsFalseForAnUnobservedTransactionRatherThanThrowing` |
+| 2 (`Chain` enum values untested) | **ACCEPTED** | New `ChainTest.hasExactlyEthereumAndTron` |
+| 3 (`TokenInfo` identity rule untested) | **ACCEPTED, lighter** | New `TokenInfoTest` — documents the *already-decided* behavior (records unequal across `symbol`, compare via `contractAddress()`), not a request to change it |
+| 4 (`FinalityStatus` shape untested) | **ACCEPTED** | New `FinalityStatusShapeTest`, mirrors `ChainAdapterShapeTest`'s reflection technique |
+| 5 (reorg only tested on `fromAddress`) | **ACCEPTED** | `reorgPushesToASubscriptionOnTheToAddressToo` |
+| 6 (multiple subscriptions untested) | **ACCEPTED** | `reorgPushesToEveryMatchingSubscriptionNotJustTheFirst` |
+| 7 (reorg to `exists=false` untested) | **ACCEPTED** | `reorgCanPushAnExistsFalseResultRepresentingAnInvalidatedTransaction` |
+| 8 (`scriptTx` no-push behavior untested) | **ACCEPTED** | `scriptTxAfterSubscriptionIsActiveDoesNotPush` |
+| 9 (`cancel()` idempotency untested) | **ACCEPTED** | `cancelIsIdempotent` |
+| 10 (`chain()` constructor-value untested) | **ACCEPTED** | `chainReturnsTheValuePassedToTheConstructor` |
+| 11 (enum/config-string bridge untested) | **ACCEPTED, lighter** | Folded into `ChainTest.valueOfBridgesFromT03sConfigStringSpellingsForBothChains` — direct `Chain.valueOf` proof rather than reflecting into T03's `@Pattern` annotation (avoids a fragile cross-package test dependency for the same coverage) |
+| 12 (shape test ignores interface-ness) | **ACCEPTED, scoped** | Added `chainAdapterIsAnInterface` to `ChainAdapterShapeTest`; skipped the suggested per-method modifier/superinterface assertions — redundant with interface methods' implicit `public abstract` language guarantee, and the existing list-equality assertion already fails on an added/removed method |
+
+**Result: 25/25 tests passing** (was 11; +14 across 2 new test classes plus additions to
+`FakeChainAdapterTest` and `ChainAdapterShapeTest`). A second negative-proof was performed on the
+highest-value new logic (the multi-subscription push loop, gap 6): temporarily added a `break` after
+the first matching subscription, confirmed `reorgPushesToEveryMatchingSubscriptionNotJustTheFirst`
+failed exactly as expected, reverted cleanly (`diff`-confirmed), full suite green again.

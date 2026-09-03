@@ -26,6 +26,13 @@ class ChainAdapterShapeTest {
     }
 
     @Test
+    void chainAdapterIsAnInterface() {
+        // Phase 11 Gap 12: name/return-type/parameter-type comparison alone wouldn't fail if this
+        // were refactored into an abstract class - design.md §4c fixes it as "public interface".
+        assertThat(ChainAdapter.class.isInterface()).isTrue();
+    }
+
+    @Test
     void chainAdapterHasExactlyTheFiveMethodsDesignSpecifiesVerbatim() {
         List<MethodShape> expected = List.of(
                 new MethodShape("chain", Chain.class, List.of()),
