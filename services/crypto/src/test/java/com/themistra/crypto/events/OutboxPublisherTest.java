@@ -87,4 +87,51 @@ class OutboxPublisherTest {
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("payload");
     }
+
+    @Test
+    void blankAggregateTypeThrows() {
+        assertThatThrownBy(() -> publisher.publish("  ", "watch-1", "chain.tx.seen", "k", new SamplePayload("v")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("aggregateType");
+    }
+
+    @Test
+    void blankAggregateIdThrows() {
+        assertThatThrownBy(() -> publisher.publish("tx-seen", "", "chain.tx.seen", "k", new SamplePayload("v")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("aggregateId");
+    }
+
+    @Test
+    void blankEventTypeThrows() {
+        assertThatThrownBy(() -> publisher.publish("tx-seen", "watch-1", " ", "k", new SamplePayload("v")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("eventType");
+    }
+
+    @Test
+    void blankIdempotencyKeyThrows() {
+        assertThatThrownBy(() -> publisher.publish("tx-seen", "watch-1", "chain.tx.seen", "", new SamplePayload("v")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("idempotencyKey");
+    }
+
+    /** A getter that throws is Jackson's own reliable way to turn any serialization attempt into a
+     * real {@code JsonProcessingException} (wrapped as {@code JsonMappingException}), without relying
+     * on any special ObjectMapper configuration. */
+    private static final class UnserializablePayload {
+        public String getBoom() {
+            throw new RuntimeException("cannot serialize this field");
+        }
+    }
+
+    @Test
+    void unserializablePayloadWrapsJsonProcessingExceptionAsIllegalStateException() {
+        assertThatThrownBy(() -> publisher.publish("tx-seen", "watch-1", "chain.tx.seen", "k",
+                new UnserializablePayload()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("tx-seen")
+                .hasMessageContaining("chain.tx.seen")
+                .hasCauseInstanceOf(com.fasterxml.jackson.core.JsonProcessingException.class);
+    }
 }

@@ -3,6 +3,8 @@ package com.themistra.crypto.events;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -16,9 +18,12 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -84,7 +89,7 @@ class OutboxRelayTest {
         when(repository.findByPublishedAtIsNullOrderByCreatedAtAsc(any(Pageable.class)))
                 .thenReturn(List.of(event));
         CompletableFuture<SendResult<String, String>> future = mock(CompletableFuture.class);
-        when(future.get(30, java.util.concurrent.TimeUnit.SECONDS)).thenThrow(new InterruptedException());
+        when(future.get(30, TimeUnit.SECONDS)).thenThrow(new InterruptedException());
         when(kafkaTemplate.send("chain.tx.seen", "watch-1", "{}")).thenReturn(future);
 
         try {
@@ -96,6 +101,67 @@ class OutboxRelayTest {
         } finally {
             Thread.interrupted(); // clear the flag so it doesn't leak into later tests on a pooled thread
         }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void timedOutSendLeavesEventUnpublishedForRetry() throws Exception {
+        // Same CompletableFuture-mocking technique as the InterruptedException test above -
+        // exercising the .get(30, SECONDS) timeout branch without a real 30-second wait.
+        OutboxEvent event = pendingEvent("tx-seen");
+        when(repository.findByPublishedAtIsNullOrderByCreatedAtAsc(any(Pageable.class)))
+                .thenReturn(List.of(event));
+        CompletableFuture<SendResult<String, String>> future = mock(CompletableFuture.class);
+        when(future.get(30, TimeUnit.SECONDS)).thenThrow(new TimeoutException());
+        when(kafkaTemplate.send("chain.tx.seen", "watch-1", "{}")).thenReturn(future);
+
+        relay.relay();
+
+        assertThat(event.isPublished()).isFalse();
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void oneFailedSendDoesNotStopTheRestOfTheBatch() {
+        OutboxEvent first = pendingEvent("tx-seen");
+        OutboxEvent second = OutboxEvent.create("tx-confirmed", "watch-2", "chain.tx.confirmed",
+                "ETHEREUM:0xdef:confirmed", "{}", NOW);
+        when(repository.findByPublishedAtIsNullOrderByCreatedAtAsc(any(Pageable.class)))
+                .thenReturn(List.of(first, second));
+
+        CompletableFuture<SendResult<String, String>> failed = new CompletableFuture<>();
+        failed.completeExceptionally(new RuntimeException("broker unavailable"));
+        when(kafkaTemplate.send("chain.tx.seen", "watch-1", "{}")).thenReturn(failed);
+        when(kafkaTemplate.send("chain.tx.confirmed", "watch-2", "{}"))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+
+        relay.relay();
+
+        assertThat(first.isPublished()).as("first event's failed send must not block the second").isFalse();
+        assertThat(second.isPublished()).as("second event must still be relayed despite the first's failure").isTrue();
+        verify(repository, never()).save(first);
+        verify(repository).save(second);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "tx-seen, chain.tx.seen",
+            "tx-confirmed, chain.tx.confirmed",
+            "tx-finalized, chain.tx.finalized",
+            "tx-reorged, chain.tx.reorged",
+            "provider, chain.provider.degraded"
+    })
+    void eachAggregateTypeIsSentToItsOwnEventTopicsMappedTopic(String aggregateType, String expectedTopic) {
+        OutboxEvent event = OutboxEvent.create(aggregateType, "watch-1", "some.event.type", "k:" + aggregateType, "{}", NOW);
+        when(repository.findByPublishedAtIsNullOrderByCreatedAtAsc(any(Pageable.class)))
+                .thenReturn(List.of(event));
+        when(kafkaTemplate.send(eq(expectedTopic), eq("watch-1"), eq("{}")))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+
+        relay.relay();
+
+        assertThat(event.isPublished()).isTrue();
+        verify(kafkaTemplate).send(expectedTopic, "watch-1", "{}");
     }
 
     @Test

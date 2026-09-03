@@ -28,4 +28,20 @@ class EventTopicsTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("unmapped-thing");
     }
+
+    @Test
+    void blankAggregateTypeIsTreatedAsUnmapped() {
+        assertThatThrownBy(() -> EventTopics.forAggregateType(""))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void nullAggregateTypeThrowsNullPointerException() {
+        // Map.of(...) rejects a null key lookup itself - documented here as this class's actual
+        // behavior (matches services/auth's identical EventTopics, which has the same characteristic).
+        // Not converted to IllegalStateException: a null aggregate type is a caller bug, not a
+        // "configuration error" the way an unmapped-but-present string is.
+        assertThatThrownBy(() -> EventTopics.forAggregateType(null))
+                .isInstanceOf(NullPointerException.class);
+    }
 }

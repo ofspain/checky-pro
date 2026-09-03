@@ -89,10 +89,37 @@ correctness logic, not just a mirror of auth's precedent):
   `CryptoServiceApplication`, specifically to avoid starting `OutboxRelay`'s `@Scheduled` polling
   and `KafkaProducerConfig`'s beans against a Kafka broker that isn't running in the test — this is a
   deliberate scope-narrowing choice, not an oversight, documented in the test class's own Javadoc.
-- No test exercises the `ExecutionException`/`TimeoutException` branch of `OutboxRelay.relayOne`
-  under an actual 30-second timeout — doing so would require either a real 30-second wait (unacceptable
-  for a unit test) or a design change to make the timeout injectable, which wasn't part of Phase 9's
-  approved fix. `ExecutionException` is exercised via `failedSendLeavesEventUnpublishedForRetry`
-  (an already-failed future, same catch block), which covers the branch's actual logic; only the
-  JDK-guaranteed fact that `.get(timeout, unit)` throws `TimeoutException` on expiry — not this
-  codebase's own logic — goes unexercised.
+- ~~No test exercises the `TimeoutException` branch~~ — **resolved in the Phase 11 addendum below**
+  using the same `CompletableFuture`-mocking technique already used for `InterruptedException`, which
+  this manifest overlooked when first written.
+
+## Addendum — Phase 11 (Kimi test review) follow-up
+
+Kimi's Phase 11 review (`artifacts/11-test-review.md`) raised 12 gaps. Following the same precedent
+established on T03 (no dedicated resolution phase exists for test findings), all 12 were assessed and
+applied directly before Phase 12:
+
+| Gap | Decision | Change |
+|---|---|---|
+| 1 (duplicate idempotency key untested) | **ACCEPTED** | Added `publishingTheSameIdempotencyKeyTwiceInSeparateTransactionsThrowsOnTheSecondAttempt` to `OutboxTransactionIntegrationTest` (needs Docker) |
+| 2 (`JsonProcessingException` path untested) | **ACCEPTED** | Added `unserializablePayloadWrapsJsonProcessingExceptionAsIllegalStateException` to `OutboxPublisherTest`, using a getter-that-throws payload — Jackson's own reliable way to force a real `JsonProcessingException` |
+| 3 (blank string parameters not validated) | **ACCEPTED — production fix** | Added `requireNonBlank` checks (in addition to the existing `requireNonNull`) to `OutboxPublisher.publish` for all 4 required `String` parameters, throwing `IllegalArgumentException`; added 4 corresponding tests |
+| 4 (no multi-event/partial-batch-failure test) | **ACCEPTED** | Added `oneFailedSendDoesNotStopTheRestOfTheBatch` to `OutboxRelayTest` — 2-event batch, first fails, second still succeeds |
+| 5 (only one aggregate type exercised through the relay) | **ACCEPTED** | Added `eachAggregateTypeIsSentToItsOwnEventTopicsMappedTopic`, parameterized over all 5 `EventTopics` mappings |
+| 6 (transaction test only asserted row count) | **ACCEPTED** | Rewrote `OutboxTransactionIntegrationTest`'s assertions to look up rows by idempotency key and assert full content, not table-wide size (this also fixed a latent test-isolation bug — the old size-based assertions would have broken once more than one test committed a row to the shared container) |
+| 7 (no test for `KafkaProducerConfig`'s producer properties) | **ACCEPTED** | New `KafkaProducerConfigTest` (`ApplicationContextRunner`, no Docker) asserts `acks=all`, `enable.idempotence=true`, and exactly one `KafkaTemplate<String,String>` bean, with `KafkaAutoConfiguration` deliberately included to prove the explicit bean wins |
+| 8 (no test for `ddl-auto`/`open-in-view`) | **ACCEPTED** | New `ApplicationPropertiesJpaConfigTest` (plain properties-file read, no Docker, no Testcontainers) |
+| 9 (V3 re-run idempotency untested) | **ACCEPTED** | Added `v3GrantIsIdempotentUnderARealReRunAndPrivilegesAreUnchanged` to `OutboxGrantMigrationIntegrationTest`, mirroring T02's `v2RoleCreationGuardIsIdempotentUnderARealReRun` (needs Docker) |
+| 10 (`TimeoutException` branch untested) | **ACCEPTED** | Added `timedOutSendLeavesEventUnpublishedForRetry` to `OutboxRelayTest`, using the same `CompletableFuture`-mocking technique as the existing `InterruptedException` test — no real wait, no design change needed (this manifest's own original limitation note was simply an oversight) |
+| 11 (`@PrePersist` fallback guard untested) | **ACCEPTED** | Added `prePersistFallbackGuardOnlyFillsCreatedAtWhenAbsent` to `OutboxTransactionIntegrationTest`, bypassing `OutboxPublisher` to construct `OutboxEvent`s directly on both sides of the null check (needs Docker) |
+| 12 (null/blank aggregate types untested in `EventTopics`) | **ACCEPTED, test-only** | Added `blankAggregateTypeIsTreatedAsUnmapped` and `nullAggregateTypeThrowsNullPointerException` to `EventTopicsTest`; rejected changing production code to convert null into `IllegalStateException` — matches auth's identical unguarded precedent, and NPE-on-null is arguably more correct (a caller bug, not a "configuration error") |
+
+**Also added** (necessary infrastructure for gaps 1/6, not itself a numbered gap): `OutboxEventRepository.findByIdempotencyKey(String)`, so tests could assert on a specific row rather than the whole (test-class-shared) table.
+
+**Result: 42 Docker-independent tests passing** (was 25; +17 across the accepted gaps), plus the
+Docker-dependent suite grew to 4 tests in `OutboxTransactionIntegrationTest` and 4 in
+`OutboxGrantMigrationIntegrationTest` (written, compiling, not run in this environment). A second
+negative-proof was performed on the highest-value new logic (the partial-batch-failure continuation):
+temporarily made the relay loop `break` after the first event, confirmed
+`oneFailedSendDoesNotStopTheRestOfTheBatch` failed as expected, reverted cleanly (`diff`-confirmed),
+full suite green again.

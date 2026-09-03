@@ -45,6 +45,10 @@ public class OutboxPublisher {
         Objects.requireNonNull(eventType, "eventType must not be null");
         Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
         Objects.requireNonNull(payload, "payload must not be null");
+        requireNonBlank(aggregateType, "aggregateType");
+        requireNonBlank(aggregateId, "aggregateId");
+        requireNonBlank(eventType, "eventType");
+        requireNonBlank(idempotencyKey, "idempotencyKey");
 
         String json;
         try {
@@ -55,5 +59,11 @@ public class OutboxPublisher {
         }
         repository.save(OutboxEvent.create(
                 aggregateType, aggregateId, eventType, idempotencyKey, json, clock.instant()));
+    }
+
+    private static void requireNonBlank(String value, String paramName) {
+        if (value.isBlank()) {
+            throw new IllegalArgumentException(paramName + " must not be blank");
+        }
     }
 }

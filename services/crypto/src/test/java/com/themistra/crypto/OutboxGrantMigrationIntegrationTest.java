@@ -15,6 +15,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -43,6 +44,33 @@ class OutboxGrantMigrationIntegrationTest {
         try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
             statement.execute("ALTER ROLE crypto_app PASSWORD '" + CRYPTO_APP_PASSWORD + "'");
         }
+    }
+
+    /** Phase 11 Gap 9: mirrors {@code ChainBaselineMigrationIntegrationTest.v2RoleCreationGuardIsIdempotentUnderARealReRun} —
+     * V3 is grant-only (no CREATE ROLE), so no explicit guard was added (frozen brief amendment #9);
+     * this proves that holds under a genuine re-run, not just in theory. */
+    @Test
+    void v3GrantIsIdempotentUnderARealReRunAndPrivilegesAreUnchanged() throws SQLException {
+        assertThatCode(() -> Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas("chain")
+                .load()
+                .migrate())
+                .doesNotThrowAnyException();
+
+        try (Connection app = connectAsCryptoApp();
+             Statement statement = app.createStatement()) {
+            statement.execute(
+                    "INSERT INTO chain.outbox (aggregate_type, aggregate_id, event_type, idempotency_key, payload) "
+                            + "VALUES ('tx-seen', 'it-watch-rerun', 'chain.tx.seen', 'it-idempotency-key-rerun', '{}'::jsonb)");
+            statement.execute(
+                    "UPDATE chain.outbox SET published_at = now() WHERE idempotency_key = 'it-idempotency-key-rerun'");
+            assertThatThrownBy(() -> statement.execute(
+                    "DELETE FROM chain.outbox WHERE idempotency_key = 'it-idempotency-key-rerun'"))
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+        }
+        cleanUp("it-idempotency-key-rerun");
     }
 
     @Test
