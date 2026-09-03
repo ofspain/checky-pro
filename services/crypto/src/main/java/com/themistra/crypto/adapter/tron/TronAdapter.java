@@ -19,7 +19,10 @@ import org.tron.trident.proto.Chain.Transaction;
 import org.tron.trident.proto.Chain.Transaction.Contract.ContractType;
 import org.tron.trident.proto.Contract.TransferContract;
 import org.tron.trident.proto.Response.TransactionInfo;
+import org.tron.trident.proto.Response.TransactionInfoList;
 import org.tron.trident.utils.Base58Check;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -69,6 +72,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * separately — conflating them would silently corrupt one of the two address sources.
  */
 public class TronAdapter implements ChainAdapter, AutoCloseable {
+
+    private static final Logger logger = LoggerFactory.getLogger(TronAdapter.class);
 
     /** keccak256("Transfer(address,address,uint256)") — the standard ERC-20/TRC-20 Transfer event
      * topic; TVM is EVM-bytecode-compatible so a ported TRC-20 contract emits the identical signature
@@ -138,14 +143,26 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
 
     @Override
     public TokenInfo getTokenInfo(String contractAddress) {
-        Contract contract = fetchContract(contractAddress);
-        // Owner address for a read-only constant call (symbol()/decimals() never touch state or
-        // require a funded/real account) - the well-known all-zero Tron address, the standard
-        // placeholder for a caller identity that doesn't matter for a constant call.
-        Trc20Contract trc20 = new Trc20Contract(contract, zeroAddressBase58(), apiWrapper);
-        String symbol = trc20.symbol();
-        int decimals = trc20.decimals().intValueExact();
-        return new TokenInfo(contractAddress, symbol, decimals);
+        // Phase 9 (Kimi Issues 4+9, merged): ApiWrapper.getContract never throws or returns null for
+        // an unknown address (confirmed via bytecode inspection - it unconditionally wraps whatever
+        // the gRPC call returns), so the previously-planned null guard on fetchContract was dead code.
+        // Rather than guess at whichever internal failure mode Trc20Contract's own construction or
+        // symbol()/decimals() calls might produce for an unknown/non-TRC-20 address, this wraps the
+        // whole lookup and converts any unexpected failure into this class's usual named,
+        // provider-and-address-scoped IllegalStateException.
+        try {
+            Contract contract = apiWrapper.getContract(contractAddress);
+            // Owner address for a read-only constant call (symbol()/decimals() never touch state or
+            // require a funded/real account) - the well-known all-zero Tron address, the standard
+            // placeholder for a caller identity that doesn't matter for a constant call.
+            Trc20Contract trc20 = new Trc20Contract(contract, zeroAddressBase58(), apiWrapper);
+            String symbol = trc20.symbol();
+            int decimals = trc20.decimals().intValueExact();
+            return new TokenInfo(contractAddress, symbol, decimals);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException(
+                    "Provider " + providerName + " failed to read TRC-20 metadata for " + contractAddress, e);
+        }
     }
 
     @Override
@@ -183,11 +200,29 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
 
     @Override
     public void close() {
-        apiWrapper.close();
-        scheduler.shutdown();
+        // Phase 9 (Kimi Issue 10): scheduler shuts down first, so no further poll tick can start once
+        // apiWrapper.close() runs; try/finally ensures the scheduler is always shut down even if
+        // apiWrapper.close() itself throws, rather than leaking its threads.
+        try {
+            scheduler.shutdown();
+        } finally {
+            apiWrapper.close();
+        }
     }
 
     private void pollOnce(String address, ObservationSink sink, AtomicLong lastScannedBlock) {
+        // Phase 9 (Kimi Issue 2/7): scheduleWithFixedDelay silently and permanently cancels all future
+        // executions of this task if it ever throws - one transient RPC failure (or a malformed watch
+        // address reaching topicForAddress) must not silently end this subscription's polling forever.
+        try {
+            pollOnceUnguarded(address, sink, lastScannedBlock);
+        } catch (RuntimeException e) {
+            logger.error("Provider {} poll tick failed for watch address {} - will retry next tick",
+                    providerName, address, e);
+        }
+    }
+
+    private void pollOnceUnguarded(String address, ObservationSink sink, AtomicLong lastScannedBlock) {
         long fromBlock = lastScannedBlock.get() + 1;
         long headBlock = fetchCurrentBlockNumber();
         if (fromBlock > headBlock) {
@@ -233,6 +268,13 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
 
     private TxResult buildNativeTransferResult(String txHash, Transaction tx, int confirmations,
                                                 long txBlock) {
+        if (tx.getRawData().getContractCount() == 0) {
+            // Phase 9 (Kimi Issue 5): the protobuf repeated field doesn't structurally guarantee at
+            // least one contract, even though every real broadcast transaction carries exactly one -
+            // a named, contextual failure beats a bare IndexOutOfBoundsException.
+            throw new IllegalStateException(
+                    "Provider " + providerName + " returned a Transaction with no contracts for " + txHash);
+        }
         Transaction.Contract contract = tx.getRawData().getContract(0);
         if (contract.getType() != ContractType.TransferContract) {
             // Amendment #10: TRC-10 and any other contract type is out of scope - report existence
@@ -255,8 +297,11 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
     }
 
     private static Optional<TransactionInfo.Log> findTransferLog(TransactionInfo info) {
+        // Phase 9 (Kimi Issue 3): matches isMatchingTransferLog's guard exactly - a log whose topic[0]
+        // collides with the Transfer signature but carries fewer than 3 topics must not match here
+        // either, or buildTxResultFromLog's getTopics(1)/getTopics(2) below throws unguarded.
         return info.getLogList().stream()
-                .filter(log -> log.getTopicsCount() > 0
+                .filter(log -> log.getTopicsCount() >= 3
                         && TRANSFER_EVENT_TOPIC.equalsIgnoreCase(hex(log.getTopics(0))))
                 .findFirst();
     }
@@ -340,21 +385,20 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
 
     private List<TransactionInfo> fetchTransactionInfoByBlockNum(long blockNum) {
         try {
-            return apiWrapper.getTransactionInfoByBlockNum(blockNum).getTransactionInfoList();
+            TransactionInfoList response = apiWrapper.getTransactionInfoByBlockNum(blockNum);
+            if (response == null) {
+                // Phase 9 (Kimi Issue 6): a null response was never confirmed impossible - guard
+                // rather than let getTransactionInfoList() NPE with no provider/block context.
+                throw new IllegalStateException(
+                        "Provider " + providerName + " returned a null response for "
+                                + "getTransactionInfoByBlockNum for block " + blockNum);
+            }
+            return response.getTransactionInfoList();
         } catch (IllegalException e) {
             throw new IllegalStateException(
                     "Provider " + providerName + " failed to answer getTransactionInfoByBlockNum for block "
                             + blockNum, e);
         }
-    }
-
-    private Contract fetchContract(String contractAddress) {
-        Contract contract = apiWrapper.getContract(contractAddress);
-        if (contract == null) {
-            throw new IllegalStateException(
-                    "Provider " + providerName + " returned no contract for " + contractAddress);
-        }
-        return contract;
     }
 
     private long fetchCurrentBlockNumber() {
