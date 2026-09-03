@@ -152,6 +152,15 @@ public class EthereumAdapter implements ChainAdapter, AutoCloseable {
         long txBlockNumber = tx.getBlockNumber().longValue();
         long currentBlockNumber = fetchLatestBlockNumber().longValue();
         long finalizedBlockNumber = fetchBlockNumber(DefaultBlockParameterName.FINALIZED);
+        if (finalizedBlockNumber > currentBlockNumber) {
+            // Same class of guard as computeConfirmations - the two block-tag calls are independent
+            // RPC round trips, so a provider returning an inconsistent snapshot (or a bug on its
+            // end) must fail loudly here rather than hand a caller a FinalityStatus that claims a
+            // block is finalized ahead of the chain's own current head (Phase 11 Gap 10).
+            throw new IllegalStateException(
+                    "Provider " + providerName + " reported a finalized block (" + finalizedBlockNumber
+                            + ") ahead of its own current block (" + currentBlockNumber + ")");
+        }
 
         return new FinalityStatus(txBlockNumber, currentBlockNumber, finalizedBlockNumber);
     }

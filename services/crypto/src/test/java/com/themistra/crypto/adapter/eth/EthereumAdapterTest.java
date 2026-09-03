@@ -12,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameterName;
+import org.web3j.protocol.core.DefaultBlockParameterNumber;
 import org.web3j.protocol.core.Request;
 import org.web3j.protocol.core.Response;
 import org.web3j.protocol.core.methods.request.EthFilter;
@@ -170,6 +171,21 @@ class EthereumAdapterTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void getFinalityStatusThrowsWhenFinalizedBlockExceedsCurrentBlock() throws IOException {
+        // Phase 11 Gap 10: the LATEST and FINALIZED tags are two independent RPC round trips: a
+        // provider returning an inconsistent snapshot must fail loudly, not hand back a
+        // FinalityStatus claiming a block is finalized ahead of the chain's own current head.
+        stubTransaction(minedTransaction(100L, "0xfrom", "0xto", BigInteger.ZERO));
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 140L);
+        stubBlockNumber(DefaultBlockParameterName.FINALIZED, 150L);
+
+        assertThatThrownBy(() -> adapter.getFinalityStatus(TX_HASH))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("150")
+                .hasMessageContaining("140");
+    }
+
     // ---------- getTx ----------
 
     @Test
@@ -286,6 +302,40 @@ class EthereumAdapterTest {
                 .hasCauseInstanceOf(IOException.class);
     }
 
+    @Test
+    void getTxFallsBackToNativeValueWhenReceiptIsNullButTransactionIsMined() throws IOException {
+        // Phase 11 Gap 4: an indexing-lag race where eth_getTransactionByHash reports a transaction
+        // as mined but eth_getTransactionReceipt still returns null - fetchReceipt itself already
+        // returns null in that case (Optional.ofNullable(null).orElse(null)); this proves getTx
+        // handles that null receipt the same way it handles an empty-logs receipt.
+        stubTransaction(minedTransaction(100L, "0xfrom", "0xto", BigInteger.valueOf(777)));
+        stubReceipt(null);
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 100L);
+
+        TxResult result = adapter.getTx(TX_HASH);
+
+        assertThat(result.exists()).isTrue();
+        assertThat(result.tokenContractAddress()).isNull();
+        assertThat(result.amount().longValueExact()).isEqualTo(777L);
+        assertThat(result.fromAddress()).isEqualTo("0xfrom");
+        assertThat(result.toAddress()).isEqualTo("0xto");
+    }
+
+    @Test
+    void getTxPropagatesReceiptIoExceptionUnchecked() throws IOException {
+        // Phase 11 Gap 5: mirrors getTxPropagatesAMockedIoExceptionUnchecked, but for the receipt
+        // fetch rather than the transaction fetch - a distinct RPC call this method also makes.
+        stubTransaction(minedTransaction(100L, "0xfrom", "0xto", BigInteger.ZERO));
+        Request<?, EthGetTransactionReceipt> failing = mock(Request.class);
+        when(failing.send()).thenThrow(new IOException("connection refused"));
+        when(web3j.ethGetTransactionReceipt(TX_HASH)).thenReturn((Request) failing);
+
+        assertThatThrownBy(() -> adapter.getTx(TX_HASH))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("eth_getTransactionReceipt")
+                .hasCauseInstanceOf(IOException.class);
+    }
+
     // ---------- getTokenInfo ----------
 
     @Test
@@ -376,6 +426,101 @@ class EthereumAdapterTest {
         // must have been called once during subscribeAddress itself (to seed the cursor), which this
         // verifies happened before any scheduled task could have run.
         verify(web3j).ethGetBlockByNumber(DefaultBlockParameterName.LATEST, false);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void subscribeAddressSchedulesWithFixedDelayUsingTheConfiguredPollInterval() throws IOException {
+        // Phase 11 Gap 6: the adapter is constructed in setUp() with a 15-second poll interval -
+        // asserts both the initial delay and the period are exactly that value, in milliseconds, and
+        // that scheduleWithFixedDelay (not scheduleAtFixedRate) is the method actually called.
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 100L);
+        when(scheduler.scheduleWithFixedDelay(any(), anyLong(), anyLong(), any()))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+
+        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+
+        long expectedMillis = Duration.ofSeconds(15).toMillis();
+        verify(scheduler).scheduleWithFixedDelay(
+                any(), eq(expectedMillis), eq(expectedMillis), eq(TimeUnit.MILLISECONDS));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void pollAdvancesCursorSoASecondPollDoesNotRescanTheSameBlocks() throws IOException {
+        // Phase 11 Gap 2: a regression that forgot to advance lastScannedBlock after a poll would
+        // have every subsequent poll re-fetch the same block range, producing duplicate observations.
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 100L);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+
+        EthLog emptyLogResponse = mock(EthLog.class);
+        when(emptyLogResponse.getLogs()).thenReturn(List.of());
+        Request<?, EthLog> emptyLogRequest = requestReturning(emptyLogResponse);
+        ArgumentCaptor<EthFilter> filterCaptor = ArgumentCaptor.forClass(EthFilter.class);
+        when(web3j.ethGetLogs(filterCaptor.capture())).thenReturn((Request) emptyLogRequest);
+
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 105L);
+        taskCaptor.getValue().run();
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 110L);
+        taskCaptor.getValue().run();
+
+        List<EthFilter> filters = filterCaptor.getAllValues();
+        assertThat(filters).hasSize(2);
+        assertThat(((DefaultBlockParameterNumber) filters.get(0).getFromBlock()).getBlockNumber())
+                .isEqualTo(BigInteger.valueOf(101L)); // seeded at 100 (subscribe-time cursor) + 1
+        assertThat(((DefaultBlockParameterNumber) filters.get(1).getFromBlock()).getBlockNumber())
+                .isEqualTo(BigInteger.valueOf(106L)); // first poll advanced the cursor to 105
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void pollSkipsEthGetLogsEntirelyWhenNoNewBlocksExistSinceTheLastPoll() throws IOException {
+        // Phase 11 Gap 3: the fromBlock > toBlock early-return guard - a regression removing it would
+        // issue an eth_getLogs call with a reversed block range instead of skipping the call.
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 100L);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+
+        // No LATEST re-stub - the chain head hasn't moved since the cursor was seeded at 100.
+        taskCaptor.getValue().run();
+        taskCaptor.getValue().run();
+
+        verify(web3j, never()).ethGetLogs(any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void pollEmitsOneObservationPerMatchedLog() throws IOException {
+        // Phase 11 Gap 7: the existing tests only ever stub a single matched log - a bug that broke
+        // iteration (e.g. returning after the first log) would only be caught with two or more.
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 100L);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        List<TxResult> received = new ArrayList<>();
+        adapter.subscribeAddress(WATCHED_ADDRESS, received::add);
+
+        Log first = transferLog(101L, "0xtoken-a", "0xsender-a", WATCHED_ADDRESS, BigInteger.valueOf(10));
+        Log second = transferLog(101L, "0xtoken-b", "0xsender-b", WATCHED_ADDRESS, BigInteger.valueOf(20));
+        EthLog logResponse = mock(EthLog.class);
+        when(logResponse.getLogs()).thenReturn(List.of(
+                (EthLog.LogResult<?>) () -> first, (EthLog.LogResult<?>) () -> second));
+        Request<?, EthLog> logRequest = requestReturning(logResponse);
+        when(web3j.ethGetLogs(any(EthFilter.class))).thenReturn((Request) logRequest);
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 101L);
+
+        taskCaptor.getValue().run();
+
+        assertThat(received).hasSize(2);
+        assertThat(received.get(0).tokenContractAddress()).isEqualTo("0xtoken-a");
+        assertThat(received.get(0).amount().longValueExact()).isEqualTo(10L);
+        assertThat(received.get(1).tokenContractAddress()).isEqualTo("0xtoken-b");
+        assertThat(received.get(1).amount().longValueExact()).isEqualTo(20L);
     }
 
     @Test

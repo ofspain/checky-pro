@@ -11,6 +11,7 @@ import org.web3j.protocol.http.HttpService;
 
 import java.lang.reflect.Field;
 import java.util.List;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,6 +55,12 @@ class EthereumAdapterConfigTest {
         Field clientField = HttpService.class.getDeclaredField("httpClient");
         clientField.setAccessible(true);
         return (OkHttpClient) clientField.get(httpService);
+    }
+
+    private static ScheduledExecutorService schedulerOf(EthereumAdapter adapter) throws Exception {
+        Field schedulerField = EthereumAdapter.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        return (ScheduledExecutorService) schedulerField.get(adapter);
     }
 
     @Test
@@ -157,6 +164,57 @@ class EthereumAdapterConfigTest {
                     assertThat(adapters).hasSize(2);
                     assertThat(adapters).allSatisfy(adapter ->
                             assertThat(adapter.chain().name()).isEqualTo("ETHEREUM"));
+                });
+    }
+
+    @Test
+    void preDestroyClosesEveryAdapterOnContextShutdown() {
+        // Phase 11 Gap 1: the existing closeShutsDownWeb3jAndScheduler test (EthereumAdapterTest)
+        // only proves EthereumAdapter.close() itself works - this proves the Spring wiring actually
+        // calls it, for every adapter a multi-provider setup builds, when the context shuts down.
+        // ScheduledExecutorService.isShutdown() is real and observable without mocking.
+        contextRunner.withPropertyValues(
+                        "themistra.crypto.providers.chains[0].chain=ETHEREUM",
+                        "themistra.crypto.providers.chains[0].providers[0].name=fake-eth-a",
+                        "themistra.crypto.providers.chains[0].providers[0].url=http://localhost:9901/fake-eth-a",
+                        "themistra.crypto.providers.chains[0].providers[0].timeout-seconds=5",
+                        "themistra.crypto.providers.chains[0].providers[0].api-key-secret-name=UNSET_A",
+                        "themistra.crypto.providers.chains[0].providers[1].name=fake-eth-b",
+                        "themistra.crypto.providers.chains[0].providers[1].url=http://localhost:9902/fake-eth-b",
+                        "themistra.crypto.providers.chains[0].providers[1].timeout-seconds=5",
+                        "themistra.crypto.providers.chains[0].providers[1].api-key-secret-name=UNSET_B",
+                        "themistra.crypto.providers.quorum-threshold=1")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    List<EthereumAdapter> adapters = context.getBean("ethereumAdapters", List.class);
+                    assertThat(adapters).hasSize(2);
+                    ScheduledExecutorService schedulerA = schedulerOf(adapters.get(0));
+                    ScheduledExecutorService schedulerB = schedulerOf(adapters.get(1));
+                    assertThat(schedulerA.isShutdown()).isFalse();
+                    assertThat(schedulerB.isShutdown()).isFalse();
+
+                    context.close();
+
+                    assertThat(schedulerA.isShutdown()).isTrue();
+                    assertThat(schedulerB.isShutdown()).isTrue();
+                });
+    }
+
+    @Test
+    void buildsNoAdaptersWhenNoEthereumChainIsConfigured() {
+        // Phase 11 Gap 12: only a TRON provider configured - the ETHEREUM filter predicate must
+        // return an empty list, not throw or return unexpected adapters.
+        contextRunner.withPropertyValues(
+                        "themistra.crypto.providers.chains[0].chain=TRON",
+                        "themistra.crypto.providers.chains[0].providers[0].name=fake-tron-a",
+                        "themistra.crypto.providers.chains[0].providers[0].url=http://localhost:9903/fake-tron-a",
+                        "themistra.crypto.providers.chains[0].providers[0].timeout-seconds=5",
+                        "themistra.crypto.providers.chains[0].providers[0].api-key-secret-name=UNSET_C",
+                        "themistra.crypto.providers.quorum-threshold=1")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    List<EthereumAdapter> adapters = context.getBean("ethereumAdapters", List.class);
+                    assertThat(adapters).isEmpty();
                 });
     }
 }

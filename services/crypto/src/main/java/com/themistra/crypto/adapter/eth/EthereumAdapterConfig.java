@@ -78,6 +78,17 @@ public class EthereumAdapterConfig {
      *       "fail startup on missing/invalid config" principle actually applies to for this value —
      *       a missing credential for a URL that structurally requires one.</li>
      * </ul>
+     *
+     * <p><b>No URL-encoding of the substituted value (Phase 11 Gap 9).</b> The resolved credential is
+     * substituted with a literal {@link String#replace}, not percent-encoded. If a real provider ever
+     * issues a key containing characters that are not URL-safe in whatever position the
+     * {@code {apiKey}} placeholder occupies (path segment vs. query value have different reserved-
+     * character sets), the resulting URL could be malformed or misinterpreted. Left unencoded
+     * deliberately for now rather than guessing at an encoding scheme — the actual provider(s) this
+     * fixture will point at in production are still unresolved (package.md §11 Q1), and a wrong
+     * assumption here (e.g. blindly applying {@code URLEncoder}, which is form/query-encoding, not
+     * safe for a path segment) could break a real key that today needs no encoding at all. Revisit
+     * once Q1 is resolved and the real key format is known.</p>
      */
     private String resolveUrl(ProviderProperties.ProviderEntry entry, Environment environment) {
         String url = entry.url();
