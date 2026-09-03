@@ -23,6 +23,13 @@ import java.util.UUID;
  *
  * <p><b>Partition key.</b> {@code aggregateId = "{chain}:{provider}"} keeps one provider's health
  * events on one Kafka partition, the same role {@code watchId} plays for {@code chain.tx.*} events.</p>
+ *
+ * <p><b>{@code eventType} (Phase 9, Kimi Phase 8 Issue 8).</b> Pinned to the literal string {@code
+ * "chain.provider.degraded"} - deliberately identical to the topic name, matching the one existing
+ * convention for this {@code OutboxPublisher.publish} parameter ({@code OutboxPublisherTest}'s own
+ * {@code "chain.tx.seen"} example). When task 23 (Contracts) authors
+ * {@code provider-degraded.v1.schema.json}, this value and the {@link Payload} shape below are the
+ * concrete implementation to formalize.</p>
  */
 @Component
 public class ProviderDegradedPublisher {
@@ -34,10 +41,22 @@ public class ProviderDegradedPublisher {
     }
 
     public void publish(String chain, String provider, DegradationReason reason, Instant occurredAt) {
+        // Phase 9 (Kimi Phase 8 Issue 5): a bare ':' separator would let two distinct (chain,
+        // provider) pairs collide in aggregateId/the idempotency key if either value ever contained
+        // one - rejected fast here, at the one place the concatenation actually happens.
+        requireNoColon(chain, "chain");
+        requireNoColon(provider, "provider");
+
         String aggregateId = chain + ":" + provider;
         String idempotencyKey = chain + ":" + provider + ":degraded:" + occurredAt + ":" + UUID.randomUUID();
         outboxPublisher.publish("provider", aggregateId, "chain.provider.degraded", idempotencyKey,
                 new Payload(chain, provider, reason, occurredAt));
+    }
+
+    private static void requireNoColon(String value, String fieldName) {
+        if (value.indexOf(':') >= 0) {
+            throw new IllegalArgumentException(fieldName + " must not contain ':' - got: " + value);
+        }
     }
 
     /** The event payload shape (Phase 3 Kimi Issue 9) - a concrete implementation for task 23

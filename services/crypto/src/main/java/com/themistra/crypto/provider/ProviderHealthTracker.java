@@ -37,6 +37,23 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>{@code "unhealthy"}/{@code "lagging"} (R5) are direct, caller-supplied signals via {@link
  * #recordUnhealthy} - this task provides the tracking primitive; detecting either condition from
  * adapter/watcher internals belongs to whichever future task first has a concrete signal to report.</p>
+ *
+ * <p><b>Two concurrency races are accepted, disclosed launch-scope risks, not fixed here (Phase 9,
+ * Kimi Phase 8 Issues 1 and 2):</b> (1) two concurrent calls for a `(chain, provider)` pair with no
+ * existing row can both attempt an INSERT, the second violating {@code provider_health}'s own {@code
+ * UNIQUE (chain, provider)} constraint - a correct retry would need to run in a fresh transaction
+ * (Postgres poisons the current one on a constraint violation), which is a larger restructuring than
+ * this task's own narrow scope; (2) `ProviderHealth` carries no {@code @Version} column, so two
+ * concurrent read-modify-write cycles for the same row can silently lose an update under {@code READ
+ * COMMITTED} isolation - the correct fix (optimistic locking) requires a schema change beyond the
+ * frozen brief's grant-only `V4` migration. Both are real; neither is solved by this task.</p>
+ *
+ * <p><b>The disagreement counter is also not transactional (Phase 9, Kimi Phase 8 Issue 3):</b> {@code
+ * disagreementCounts} is a plain in-memory structure, incremented before the surrounding {@code
+ * @Transactional} method is guaranteed to succeed. If {@code repository.save}/{@code publisher.publish}
+ * subsequently throws and the transaction rolls back, the DB state correctly reverts but the counter
+ * increment is not undone - self-corrects on the next call (which will still be at or above threshold),
+ * but the counter and the persisted state can transiently disagree.</p>
  */
 @Component
 public class ProviderHealthTracker {

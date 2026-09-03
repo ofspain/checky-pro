@@ -8,6 +8,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * Per-provider health state (R5) - maps {@code chain.provider_health} exactly as shipped by T02
@@ -55,8 +56,15 @@ public class ProviderHealth {
         // JPA only
     }
 
-    /** New provider health row, healthy by default (matching the column's own {@code DEFAULT TRUE}). */
+    /** New provider health row, healthy by default (matching the column's own {@code DEFAULT TRUE}).
+     * {@code now} is transient - every current caller ({@link ProviderHealthTracker#fetchOrCreate})
+     * immediately calls a mutator afterward, which overwrites {@code updatedAt} with a fresh instant
+     * (Phase 9, Kimi Phase 8 Issue 6) - this parameter only satisfies {@code updated_at NOT NULL}
+     * between construction and that guaranteed-to-follow call. */
     public static ProviderHealth create(String chain, String provider, Instant now) {
+        Objects.requireNonNull(chain, "chain");
+        Objects.requireNonNull(provider, "provider");
+        Objects.requireNonNull(now, "now");
         ProviderHealth health = new ProviderHealth();
         health.chain = chain;
         health.provider = provider;
