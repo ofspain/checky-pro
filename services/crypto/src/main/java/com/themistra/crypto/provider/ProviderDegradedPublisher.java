@@ -30,6 +30,14 @@ import java.util.UUID;
  * {@code "chain.tx.seen"} example). When task 23 (Contracts) authors
  * {@code provider-degraded.v1.schema.json}, this value and the {@link Payload} shape below are the
  * concrete implementation to formalize.</p>
+ *
+ * <p><b>Null-safety (Phase 11, Kimi Issue 12).</b> {@code publish} trusts its caller for non-null
+ * {@code chain}/{@code provider}/{@code reason}/{@code occurredAt} - it does not itself
+ * {@code Objects.requireNonNull} them before building {@code aggregateId}/the idempotency key, so a
+ * {@code null} {@code chain}/{@code provider} would silently produce a string containing the literal
+ * text {@code "null"} rather than a clear exception. The only current caller,
+ * {@link ProviderHealthTracker}, already guards all three at its own public entry points before ever
+ * reaching here (mirrors {@link ProviderHealth#create}'s identical trusted-caller disclosure).</p>
  */
 @Component
 public class ProviderDegradedPublisher {

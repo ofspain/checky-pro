@@ -1,5 +1,7 @@
 package com.themistra.crypto.provider;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.themistra.crypto.events.OutboxPublisher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -8,6 +10,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -64,8 +67,33 @@ class ProviderDegradedPublisherTest {
                 .publish(any(), any(), any(), keyCaptor.capture(), any());
         java.util.List<String> keys = keyCaptor.getAllValues();
         assertThat(keys.get(0)).isNotEqualTo(keys.get(1));
-        assertThat(keys.get(0)).startsWith("ETHEREUM:alchemy:degraded:" + OCCURRED_AT);
-        assertThat(keys.get(1)).startsWith("ETHEREUM:alchemy:degraded:" + OCCURRED_AT);
+        // Phase 11 Gap 8: exact format, not just a prefix check - "{chain}:{provider}:degraded:
+        // {occurredAt}:{UUID}", exactly one colon between each component, UUID last.
+        String uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+        String expectedPattern = "^ETHEREUM:alchemy:degraded:" + Pattern.quote(OCCURRED_AT.toString())
+                + ":" + uuidPattern + "$";
+        assertThat(keys.get(0)).matches(expectedPattern);
+        assertThat(keys.get(1)).matches(expectedPattern);
+    }
+
+    @Test
+    void payloadSerializesToTheDocumentedJsonShapeWithIsoInstantAndEnumName() throws Exception {
+        // Phase 11 Gap 5: a bare `new ObjectMapper()` (OutboxPublisherTest's own established
+        // pattern) THROWS on java.time.Instant - this task is the first to put one through this
+        // path. Even `findAndRegisterModules()` alone serializes Instant as a numeric epoch-seconds
+        // value, not ISO-8601, unless WRITE_DATES_AS_TIMESTAMPS is explicitly disabled - which is
+        // what Spring Boot's own auto-configured ObjectMapper bean does by default in production.
+        // This mapper configuration is chosen specifically to match that real, production shape.
+        ObjectMapper mapper = new ObjectMapper()
+                .findAndRegisterModules()
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+
+        String json = mapper.writeValueAsString(
+                new ProviderDegradedPublisher.Payload("ETHEREUM", "alchemy",
+                        DegradationReason.REPEATED_DISAGREEMENT, OCCURRED_AT));
+
+        assertThat(json).isEqualTo("{\"chain\":\"ETHEREUM\",\"provider\":\"alchemy\","
+                + "\"reason\":\"REPEATED_DISAGREEMENT\",\"occurredAt\":\"2026-09-03T12:00:00Z\"}");
     }
 
     @Test

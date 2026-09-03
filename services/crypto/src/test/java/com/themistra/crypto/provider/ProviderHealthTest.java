@@ -83,6 +83,18 @@ class ProviderHealthTest {
     }
 
     @Test
+    void hasNoVersionFieldYetLostUpdatesUnderConcurrentAccessAreAnAcceptedRisk() {
+        // Phase 11 Gap 3 (Kimi Phase 8 Issue 2): no @Version/optimistic-locking column exists today -
+        // a documented, accepted launch-scope risk (ProviderHealthTracker's class Javadoc). This is a
+        // tripwire, not a defense: if a future change adds @Version, this test should be revisited
+        // alongside a deliberate review of whether the lost-update risk was actually addressed.
+        boolean hasVersionField = java.util.Arrays.stream(ProviderHealth.class.getDeclaredFields())
+                .anyMatch(f -> f.isAnnotationPresent(jakarta.persistence.Version.class));
+
+        assertThat(hasVersionField).isFalse();
+    }
+
+    @Test
     void hasOnlyTheThreeNamedMutatorsBeyondGetters() {
         // AC1/entity-shape: every declared public, non-static method must be a zero-arg getter or
         // one of the three named mutators - never a raw setter.

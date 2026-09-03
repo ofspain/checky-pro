@@ -116,6 +116,19 @@ class ProviderHealthRepositoryIntegrationTest {
     }
 
     @Test
+    void aSecondRowForTheSameChainAndProviderViolatesTheUniqueConstraint() {
+        // Phase 11 Gap 6: proves UNIQUE (chain, provider) directly, at the DB layer - the upsert
+        // semantics ProviderHealthTracker relies on depend on this constraint actually existing.
+        String provider = uniqueProvider();
+        repository.save(ProviderHealth.create("ETHEREUM", provider, Instant.now()));
+
+        assertThatThrownBy(() -> {
+            repository.save(ProviderHealth.create("ETHEREUM", provider, Instant.now()));
+            repository.flush();
+        }).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
     void deleteStillFailsAtTheDatabaseLevel() {
         // V4 grants INSERT, SELECT, UPDATE only - no DELETE.
         ProviderHealth saved = repository.save(ProviderHealth.create("ETHEREUM", uniqueProvider(), Instant.now()));

@@ -7,9 +7,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -172,5 +174,58 @@ class ProviderHealthTrackerTest {
         assertThat(store.get("ETHEREUM:quicknode").healthy()).isTrue();
         verify(publisher, times(1)).publish(eq("ETHEREUM"), eq("alchemy"), any(), any());
         verify(publisher, never()).publish(eq("ETHEREUM"), eq("quicknode"), any(), any());
+    }
+
+    @Test
+    void distinctChainsTrackTheSameProviderNameIndependently() {
+        // Phase 11 Gap 10: the inverse of the above - same provider name, different chains.
+        tracker.recordUnhealthy("ETHEREUM", "alchemy", DegradationReason.UNHEALTHY);
+
+        tracker.recordUnhealthy("TRON", "alchemy", DegradationReason.LAGGING);
+
+        assertThat(store.get("ETHEREUM:alchemy").healthy()).isFalse();
+        assertThat(store.get("TRON:alchemy").healthy()).isFalse();
+        verify(publisher).publish("ETHEREUM", "alchemy", DegradationReason.UNHEALTHY, NOW);
+        verify(publisher).publish("TRON", "alchemy", DegradationReason.LAGGING, NOW);
+    }
+
+    @Test
+    void recordUnhealthyWithRepeatedDisagreementReasonPassedDirectlyTransitionsAndEmits() {
+        // Phase 11 Gap 11: REPEATED_DISAGREEMENT can be passed directly to recordUnhealthy, not
+        // only reached indirectly via the disagreement-counter threshold.
+        tracker.recordUnhealthy("ETHEREUM", "alchemy", DegradationReason.REPEATED_DISAGREEMENT);
+
+        verify(publisher).publish("ETHEREUM", "alchemy", DegradationReason.REPEATED_DISAGREEMENT, NOW);
+        assertThat(store.get("ETHEREUM:alchemy").healthy()).isFalse();
+    }
+
+    @Test
+    void trackerWiresLastOkAtAndLastDisagreementAtThroughToThePersistedRowEndToEnd() {
+        // Phase 11 Gap 9: ProviderHealthTest already proves the mutators in isolation; this proves
+        // the tracker actually wires them through the full recordHealthy/recordDisagreement call path.
+        tracker.recordHealthy("ETHEREUM", "alchemy");
+        assertThat(store.get("ETHEREUM:alchemy").lastOkAt()).isEqualTo(NOW);
+        assertThat(store.get("ETHEREUM:alchemy").lastDisagreementAt()).isNull();
+
+        tracker.recordDisagreement("ETHEREUM", "alchemy");
+        assertThat(store.get("ETHEREUM:alchemy").lastDisagreementAt()).isEqualTo(NOW);
+        // lastOkAt is a historical marker, never cleared by a disagreement signal.
+        assertThat(store.get("ETHEREUM:alchemy").lastOkAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void allThreePublicMethodsAreTransactional() {
+        // Phase 11 Gap 4: regression guard for the documented outbox-atomicity invariant (class
+        // Javadoc) - a future refactor removing @Transactional would break save+publish atomicity
+        // without failing any other existing test.
+        for (String methodName : new String[] {"recordHealthy", "recordUnhealthy", "recordDisagreement"}) {
+            Method method = Arrays.stream(ProviderHealthTracker.class.getDeclaredMethods())
+                    .filter(m -> m.getName().equals(methodName))
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(method.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class))
+                    .as("%s must be @Transactional", methodName)
+                    .isTrue();
+        }
     }
 }
