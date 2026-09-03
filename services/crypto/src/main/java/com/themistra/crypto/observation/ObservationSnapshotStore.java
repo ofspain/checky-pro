@@ -10,6 +10,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -34,8 +35,15 @@ public class ObservationSnapshotStore {
 
     public Optional<String> store(String chain, String txHash, String provider, FactType factType,
                                    String rawResponseJson, Instant observedAt) {
-        String key = buildKey(chain, txHash, provider, factType, observedAt);
-        PutObjectRequest request = buildRequest(key, chain, txHash, provider, factType);
+        Objects.requireNonNull(chain, "chain");
+        Objects.requireNonNull(txHash, "txHash");
+        Objects.requireNonNull(provider, "provider");
+        Objects.requireNonNull(factType, "factType");
+        Objects.requireNonNull(rawResponseJson, "rawResponseJson");
+        Objects.requireNonNull(observedAt, "observedAt");
+
+        String key = buildKey(chain, txHash);
+        PutObjectRequest request = buildRequest(key, chain, txHash, provider, factType, observedAt);
         try {
             s3Client.putObject(request, RequestBody.fromString(rawResponseJson));
             return Optional.of(key);
@@ -46,14 +54,20 @@ public class ObservationSnapshotStore {
         }
     }
 
-    private String buildKey(String chain, String txHash, String provider, FactType factType,
-                             Instant observedAt) {
-        return properties.prefix() + chain + "/" + txHash + "/" + factType.name().toLowerCase()
-                + "/" + provider + "-" + observedAt + "-" + UUID.randomUUID() + ".json";
+    /**
+     * Phase 9 (Kimi/self-review Issue 1): bounded independently of {@code chain}/{@code txHash}'s own
+     * declared widths, so this key can never itself exceed {@code observations.s3_snapshot_key
+     * VARCHAR(256)} regardless of input length - a successful S3 write followed by a Postgres insert
+     * failing on its own snapshot-key column would be exactly backwards. {@code provider}/{@code
+     * factType}/{@code observedAt} carry no uniqueness burden here (the UUID alone guarantees it) and
+     * live in the object's metadata instead ({@link #buildRequest}), not the key.
+     */
+    private String buildKey(String chain, String txHash) {
+        return properties.prefix() + chain + "/" + txHash + "/" + UUID.randomUUID() + ".json";
     }
 
     private PutObjectRequest buildRequest(String key, String chain, String txHash, String provider,
-                                           FactType factType) {
+                                           FactType factType, Instant observedAt) {
         return PutObjectRequest.builder()
                 .bucket(properties.bucket())
                 .key(key)
@@ -62,7 +76,8 @@ public class ObservationSnapshotStore {
                         "chain", chain,
                         "txHash", txHash,
                         "provider", provider,
-                        "factType", factType.name()))
+                        "factType", factType.name(),
+                        "observedAt", observedAt.toString()))
                 .build();
     }
 }
