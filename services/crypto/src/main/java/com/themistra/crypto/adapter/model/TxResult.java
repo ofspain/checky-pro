@@ -8,6 +8,11 @@ import java.math.BigDecimal;
  * {@code finality} which {@link FinalityStatus} covers separately). Quorum (task 9) compares
  * instances of this record returned by independent {@code ChainAdapter}s for the same {@code txHash}.
  *
+ * <p>{@code exists=false} is a normal, successful answer (a provider that has not observed this
+ * transaction yet), never represented by throwing — see {@code ChainAdapter}'s own class Javadoc for
+ * the full failure-vs-negative-answer contract. When {@code exists=false}, the remaining fields carry
+ * no meaningful data.</p>
+ *
  * <p>{@code amount} is base units, {@link BigDecimal}, never floating point (agents.md). This type
  * is an in-process value object only — it is never itself JSON-serialized in this service's design:
  * the observation log persists each provider's *raw* response verbatim (L3), never a normalized

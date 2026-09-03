@@ -12,6 +12,13 @@ package com.themistra.crypto.adapter.model;
  * owns *how* its chain's adapter obtains that number; this type only carries the result.
  * {@code currentBlockNumber} (the chain's head) is retained as informative context, not required by
  * the finality check itself.</p>
+ *
+ * <p><b>Launch-scope shape (Phase 9 Finding).</b> This single-block-number shape fits Ethereum and
+ * Tron only — the two launch chains (package.md §2). BASE/ARB ("L2 confirmed AND batch settled on
+ * L1") and Solana ("finalized" commitment level) describe multi-fact finality concepts a single
+ * {@code long} cannot represent; per package.md §2, the adapter interface "must not preclude" those
+ * chains but they are explicitly "not built here." A future task adding either chain family may need
+ * a new field or a richer type — not a concern this task's own scope resolves.</p>
  */
 public record FinalityStatus(
         long txBlockNumber,
