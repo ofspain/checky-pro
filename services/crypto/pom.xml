@@ -80,6 +80,9 @@
          attest module's KmsSigner (ADR-0004, L11). -->
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>kms</artifactId></dependency>
 
+    <!-- Observation log S3 WORM snapshot (T08, L3/R4) -->
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>s3</artifactId></dependency>
+
     <!-- Observability -->
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>
     <dependency><groupId>io.micrometer</groupId><artifactId>micrometer-registry-prometheus</artifactId><scope>runtime</scope></dependency>
@@ -95,6 +98,9 @@
     <dependency><groupId>org.testcontainers</groupId><artifactId>postgresql</artifactId><scope>test</scope></dependency>
     <dependency><groupId>org.testcontainers</groupId><artifactId>kafka</artifactId><scope>test</scope></dependency>
     <dependency><groupId>org.testcontainers</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
+    <!-- T08: real S3-API round-trip for ObservationSnapshotStore - treated as core persistence
+         infra (like Postgres/Kafka above), not an external RPC provider to fake. -->
+    <dependency><groupId>org.testcontainers</groupId><artifactId>localstack</artifactId><scope>test</scope></dependency>
 
     <!-- Testing stage: module-boundary enforcement (L15) + async/scheduled assertions
          (watcher/reorg/quorum timing) -->
