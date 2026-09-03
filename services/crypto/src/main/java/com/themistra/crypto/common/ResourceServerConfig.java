@@ -62,12 +62,18 @@ public class ResourceServerConfig {
         return http.build();
     }
 
-    /** RFC 9457 body for 401s (agents.md Security rule) — Spring Security's default is HTML/plain text. */
+    /**
+     * RFC 9457 body for 401s (agents.md Security rule) — Spring Security's default is HTML/plain
+     * text. {@code WWW-Authenticate: Bearer} is set per RFC 6750 §3 (Phase 9 Finding) — some HTTP
+     * clients/edge proxies expect it on a Bearer-scheme 401 regardless of the body format.
+     */
     @Bean
     public AuthenticationEntryPoint problemJsonAuthenticationEntryPoint(ObjectMapper objectMapper) {
-        return (request, response, authException) -> writeProblemJson(
-                response, objectMapper, HttpStatus.UNAUTHORIZED,
-                "Unauthorized", "A valid service-to-service token is required.");
+        return (request, response, authException) -> {
+            response.setHeader("WWW-Authenticate", "Bearer");
+            writeProblemJson(response, objectMapper, HttpStatus.UNAUTHORIZED,
+                    "Unauthorized", "A valid service-to-service token is required.");
+        };
     }
 
     /** RFC 9457 body for 403s (agents.md Security rule) — Spring Security's default is HTML/plain text. */

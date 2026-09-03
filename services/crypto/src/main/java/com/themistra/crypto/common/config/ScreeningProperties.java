@@ -10,6 +10,9 @@ import org.springframework.validation.annotation.Validated;
  * shape. {@code enabled=false} is the valid {@code local}-profile shape (fake providers only, per
  * agents.md); when {@code enabled=true}, {@code baseUrl} and {@code apiKeySecretName} become
  * required, enforced below rather than via {@code @NotBlank} since they are conditionally required.
+ * The reverse direction is guarded too (Phase 9 Finding): a {@code base-url} configured with
+ * {@code enabled} left {@code false} (or unset, which binds {@code false}) fails fast rather than
+ * silently no-op'ing screening — the boolean has no other way to catch a forgotten flag.
  */
 @ConfigurationProperties(prefix = "themistra.crypto.screening")
 @Validated
@@ -30,6 +33,11 @@ public record ScreeningProperties(
         if (enabled && (apiKeySecretName == null || apiKeySecretName.isBlank())) {
             throw new IllegalStateException(
                     "themistra.crypto.screening.api-key-secret-name is required when themistra.crypto.screening.enabled=true");
+        }
+        if (!enabled && baseUrl != null && !baseUrl.isBlank()) {
+            throw new IllegalStateException(
+                    "themistra.crypto.screening.base-url is set but themistra.crypto.screening.enabled=false"
+                            + " - set enabled=true, or remove base-url for a genuinely disabled local profile");
         }
     }
 }
