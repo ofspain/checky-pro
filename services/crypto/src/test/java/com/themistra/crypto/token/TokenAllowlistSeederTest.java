@@ -40,8 +40,13 @@ class TokenAllowlistSeederTest {
 
     @Test
     void seedsEveryConfiguredEntryThatDoesNotAlreadyExist() {
-        TokenAllowlistProperties properties = new TokenAllowlistProperties(
-                List.of(entry("ETHEREUM", "0xa", 1), entry("TRON", "Tb", 1)));
+        // Phase 11 Gap 5: distinct symbol/decimals/signature per entry so a mapping/factory bug that
+        // swapped fields between entries would actually be caught, not just contractAddress/createdAt.
+        TokenAllowlistProperties.Entry ethereumEntry =
+                new TokenAllowlistProperties.Entry("ETHEREUM", "0xa", "USDT", 6, 1, "sig-a");
+        TokenAllowlistProperties.Entry tronEntry =
+                new TokenAllowlistProperties.Entry("TRON", "Tb", "USDC", 18, 2, "sig-b");
+        TokenAllowlistProperties properties = new TokenAllowlistProperties(List.of(ethereumEntry, tronEntry));
         when(repository.findByChainAndContractAddressAndVersion(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(Optional.empty());
         TokenAllowlistSeeder seeder = new TokenAllowlistSeeder(repository, properties, fixedClock);
@@ -50,9 +55,24 @@ class TokenAllowlistSeederTest {
 
         ArgumentCaptor<TokenAllowlist> captor = ArgumentCaptor.forClass(TokenAllowlist.class);
         verify(repository, times(2)).save(captor.capture());
-        assertThat(captor.getAllValues()).extracting(TokenAllowlist::contractAddress)
-                .containsExactlyInAnyOrder("0xa", "Tb");
-        assertThat(captor.getAllValues()).allSatisfy(saved -> assertThat(saved.createdAt()).isEqualTo(NOW));
+        TokenAllowlist savedEthereum = captor.getAllValues().stream()
+                .filter(t -> t.chain().equals("ETHEREUM")).findFirst().orElseThrow();
+        TokenAllowlist savedTron = captor.getAllValues().stream()
+                .filter(t -> t.chain().equals("TRON")).findFirst().orElseThrow();
+
+        assertThat(savedEthereum.contractAddress()).isEqualTo("0xa");
+        assertThat(savedEthereum.symbol()).isEqualTo("USDT");
+        assertThat(savedEthereum.decimals()).isEqualTo((short) 6);
+        assertThat(savedEthereum.version()).isEqualTo(1);
+        assertThat(savedEthereum.signature()).isEqualTo("sig-a");
+        assertThat(savedEthereum.createdAt()).isEqualTo(NOW);
+
+        assertThat(savedTron.contractAddress()).isEqualTo("Tb");
+        assertThat(savedTron.symbol()).isEqualTo("USDC");
+        assertThat(savedTron.decimals()).isEqualTo((short) 18);
+        assertThat(savedTron.version()).isEqualTo(2);
+        assertThat(savedTron.signature()).isEqualTo("sig-b");
+        assertThat(savedTron.createdAt()).isEqualTo(NOW);
     }
 
     @Test

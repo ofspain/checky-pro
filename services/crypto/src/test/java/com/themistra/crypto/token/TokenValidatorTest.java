@@ -18,6 +18,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** The named tests from package.md §8 (`shouldIdentifyTokenByContractAddressNotSymbol`,
@@ -79,6 +81,19 @@ class TokenValidatorTest {
         Optional<TokenAllowlist> result = validator.validate("TRON", "TFakeAddress");
 
         assertThat(result).isEmpty();
+    }
+
+    @Test
+    void passesTheContractAddressThroughToTheRepositoryVerbatimNoCaseFolding() {
+        // Phase 11 Gap 4: proves no case-transformation happens in TokenValidator itself before the
+        // exact-match DB comparison - a differently-cased address is a different string, not folded
+        // to match. Amendment #4 pins EVM seed addresses to lowercase; validate() must not "help" by
+        // normalizing a caller's differently-cased input.
+        when(repository.findCurrentVersionEntry(any(), any())).thenReturn(Optional.empty());
+
+        validator.validate("ETHEREUM", "0x1111111111111111111111111111111111111A");
+
+        verify(repository).findCurrentVersionEntry(eq("ETHEREUM"), eq("0x1111111111111111111111111111111111111A"));
     }
 
     @Test

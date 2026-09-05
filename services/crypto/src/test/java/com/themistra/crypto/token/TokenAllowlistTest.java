@@ -60,6 +60,15 @@ class TokenAllowlistTest {
     }
 
     @Test
+    void createAcceptsZeroDecimals() {
+        // Phase 11 Gap 6: 0 is a valid real-world value (some tokens have no decimals) and the lower
+        // bound of the range check - a future refactor mistaking @Min(0) for @Positive would reject it.
+        TokenAllowlist entry = TokenAllowlist.create("ETHEREUM", "0xabc", "NODECIMALS", 0, 1, "sig", CREATED_AT);
+
+        assertThat(entry.decimals()).isEqualTo((short) 0);
+    }
+
+    @Test
     void createAcceptsTheBoundaryDecimalsValueOfThirty() {
         TokenAllowlist entry = TokenAllowlist.create("ETHEREUM", "0xabc", "USDT", 30, 1, "sig", CREATED_AT);
 

@@ -101,6 +101,42 @@ class TokenAllowlistPropertiesTest {
     }
 
     @Test
+    void failsWhenContractAddressIsBlank() {
+        contextRunner.withPropertyValues(
+                PREFIX + ".chain=ETHEREUM",
+                PREFIX + ".contract-address=",
+                PREFIX + ".symbol=USDT",
+                PREFIX + ".decimals=6",
+                PREFIX + ".version=1",
+                PREFIX + ".signature=sig"
+        ).run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void failsWhenSymbolIsBlank() {
+        contextRunner.withPropertyValues(
+                PREFIX + ".chain=ETHEREUM",
+                PREFIX + ".contract-address=0xabc",
+                PREFIX + ".symbol=",
+                PREFIX + ".decimals=6",
+                PREFIX + ".version=1",
+                PREFIX + ".signature=sig"
+        ).run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void failsWhenSignatureIsBlank() {
+        contextRunner.withPropertyValues(
+                PREFIX + ".chain=ETHEREUM",
+                PREFIX + ".contract-address=0xabc",
+                PREFIX + ".symbol=USDT",
+                PREFIX + ".decimals=6",
+                PREFIX + ".version=1",
+                PREFIX + ".signature="
+        ).run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
     void failsOnADuplicateChainContractAddressVersionTuple() {
         contextRunner.withPropertyValues(
                 PREFIX + ".chain=ETHEREUM",
