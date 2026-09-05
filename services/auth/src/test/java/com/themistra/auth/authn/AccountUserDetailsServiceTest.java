@@ -11,6 +11,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -24,15 +27,21 @@ class AccountUserDetailsServiceTest {
     private static final UUID ACCOUNT_UUID = UUID.randomUUID();
     private static final String EMAIL = "merchant@example.com";
     private static final String HASH = "{bcrypt}hash";
+    private static final Instant NOW = Instant.parse("2026-07-13T00:00:00Z");
 
     @Mock
     private AccountService accountService;
+
+    @Mock
+    private LockoutService lockoutService;
+
+    private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
 
     private AccountUserDetailsService service;
 
     @BeforeEach
     void setUp() {
-        service = new AccountUserDetailsService(accountService);
+        service = new AccountUserDetailsService(accountService, lockoutService, clock);
     }
 
     private void accountWithStatus(AccountStatus status) {
@@ -57,21 +66,42 @@ class AccountUserDetailsServiceTest {
     void pendingVerificationMapsToDisabled() {
         accountWithStatus(AccountStatus.PENDING_VERIFICATION);
 
-        assertThat(service.loadUserByUsername(EMAIL).isEnabled()).isFalse();
+        UserDetails details = service.loadUserByUsername(EMAIL);
+        assertThat(details.isEnabled()).isFalse();
+        // Phase 11 Gap 7: the whole point of T13's fix is separating accountLocked from raw
+        // status - a non-LOCKED account must never be rejected via the locked gate.
+        assertThat(details.isAccountNonLocked()).isTrue();
     }
 
     @Test
     void suspendedMapsToDisabled() {
         accountWithStatus(AccountStatus.SUSPENDED);
 
-        assertThat(service.loadUserByUsername(EMAIL).isEnabled()).isFalse();
+        UserDetails details = service.loadUserByUsername(EMAIL);
+        assertThat(details.isEnabled()).isFalse();
+        assertThat(details.isAccountNonLocked()).isTrue();
     }
 
     @Test
-    void lockedMapsToAccountLocked() {
+    void stillLockedMapsToAccountLocked() {
+        // AC6 (regression guard): a genuinely-still-locked account remains rejected, unchanged
+        // from before T13.
         accountWithStatus(AccountStatus.LOCKED);
+        when(lockoutService.isCurrentlyLocked(ACCOUNT_UUID, NOW)).thenReturn(true);
 
         assertThat(service.loadUserByUsername(EMAIL).isAccountNonLocked()).isFalse();
+    }
+
+    @Test
+    void expiredLockDoesNotMapToAccountLocked() {
+        // AC5, the core fix: Account.status is still LOCKED (nothing has flipped it back yet),
+        // but the lockout interval has already elapsed - Spring's pre-authentication gate must
+        // not reject the attempt, or R18's "allow the next authentication attempt" could never
+        // be satisfied through the real login flow.
+        accountWithStatus(AccountStatus.LOCKED);
+        when(lockoutService.isCurrentlyLocked(ACCOUNT_UUID, NOW)).thenReturn(false);
+
+        assertThat(service.loadUserByUsername(EMAIL).isAccountNonLocked()).isTrue();
     }
 
     @Test

@@ -15,6 +15,28 @@
   <name>auth-service</name>
   <description>Themistra Authentication Service — OIDC/OAuth2 issuer (Spring Authorization Server)</description>
 
+  <!-- Testcontainers 1.21.3 (Spring Boot 3.5.4's managed version) hardcoded a request for Docker
+       API 1.32, which newer Docker Desktop builds reject (minimum supported is 1.40) - confirmed
+       fixed by this patch bump alone (see docker-testcontainers-handshake-issue for the full
+       diagnosis); no bigger Testcontainers 2.x jump needed. -->
+  <properties>
+    <testcontainers.version>1.21.4</testcontainers.version>
+  </properties>
+
+  <!-- ADR-0003/D-025: the one narrow, named exception to D-010's "no AWS SDK in this service"
+       rule, confined to mfa.MfaSeedEncryption's KMS GenerateDataKey/Decrypt calls. -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>2.50.2</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <!-- Web + validation -->
     <dependency>
@@ -35,6 +57,11 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-oauth2-resource-server</artifactId>
+    </dependency>
+
 
     <!-- Persistence: JPA + Flyway DDL-only migrations (D-005) -->
     <dependency>
@@ -61,6 +88,13 @@
       <artifactId>spring-kafka</artifactId>
     </dependency>
 
+    <!-- MFA (T16): KMS envelope encryption for TOTP seeds, confined to mfa.MfaSeedEncryption
+         (ADR-0003/D-025, a narrow named exception to D-010) -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>kms</artifactId>
+    </dependency>
+
     <!-- Observability -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -70,6 +104,25 @@
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-registry-prometheus</artifactId>
       <scope>runtime</scope>
+    </dependency>
+
+    <!-- Scheduled cleanup job (T30, R40) - multi-replica mutual exclusion -->
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-spring</artifactId>
+      <version>7.7.0</version>
+    </dependency>
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-provider-jdbc-template</artifactId>
+      <version>7.7.0</version>
+    </dependency>
+
+    <!-- Rate limiting (T31, R41) -->
+    <dependency>
+      <groupId>com.bucket4j</groupId>
+      <artifactId>bucket4j_jdk17-core</artifactId>
+      <version>8.14.0</version>
     </dependency>
 
     <!-- Test -->
@@ -117,6 +170,13 @@
       <version>4.2.2</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <!-- T33: parses contracts/api/auth.yaml for AuthOpenApiContractTest; version managed by
+           Spring Boot's own dependency BOM, matching the resolved Jackson version everywhere else -->
+      <groupId>com.fasterxml.jackson.dataformat</groupId>
+      <artifactId>jackson-dataformat-yaml</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -125,6 +185,19 @@
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+      <!-- Local-dev only: runs solely via explicit `mvn flyway:migrate`. No <executions> binding,
+           so it never fires during `package`/`verify`/CI or the production Docker build. -->
+      <plugin>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-maven-plugin</artifactId>
+        <version>11.7.2</version>
+        <configuration>
+          <url>jdbc:postgresql://localhost:5432/checky</url>
+          <user>checky</user>
+          <password>checky-local-only</password>
+          <schemas>auth</schemas>
+        </configuration>
       </plugin>
     </plugins>
   </build>

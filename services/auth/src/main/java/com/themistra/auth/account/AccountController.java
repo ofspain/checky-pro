@@ -1,32 +1,48 @@
 package com.themistra.auth.account;
 
 import com.themistra.auth.account.dto.AccountResponse;
+import com.themistra.auth.account.dto.ChangePasswordRequest;
+import com.themistra.auth.account.dto.PasswordResetConfirmRequest;
+import com.themistra.auth.account.dto.PasswordResetRequest;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.account.dto.RegistrationAcknowledgement;
+import com.themistra.auth.account.dto.ResendVerificationRequest;
+import com.themistra.auth.account.dto.VerifyEmailRequest;
+import com.themistra.auth.token.SessionService;
+import com.themistra.auth.token.dto.SessionResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
- * Self-service account endpoints. {@code POST /accounts} is the only public route this service
- * exposes on this path (PublicEndpoints.METHOD_SCOPED) — everything else here requires a token.
+ * Self-service account endpoints. Five public routes on this path
+ * (PublicEndpoints.METHOD_SCOPED): {@code POST /accounts} (registration), {@code POST
+ * /accounts/verify-email} and {@code POST /accounts/password-reset} (token possession is the
+ * credential), {@code POST /accounts/resend-verification} and
+ * {@code POST /accounts/password-reset-request} (email-identified, enumeration-safe). Every
+ * other {@code /accounts/**} endpoint here requires an authenticated token.
  */
 @RestController
 @RequestMapping("/accounts")
 public class AccountController {
 
     private final AccountService accountService;
+    private final SessionService sessionService;
 
-    public AccountController(AccountService accountService) {
+    public AccountController(AccountService accountService, SessionService sessionService) {
         this.accountService = accountService;
+        this.sessionService = sessionService;
     }
 
     /**
@@ -54,5 +70,103 @@ public class AccountController {
     public AccountResponse me(Authentication authentication) {
         UUID accountUuid = UUID.fromString(authentication.getName());
         return accountService.getByUuid(accountUuid);
+    }
+
+    /**
+     * Public — token possession is the credential (R4). Success and failure are allowed to
+     * differ (204 vs. 400); only failure reasons must be uniform among themselves (R5), which
+     * {@link AccountExceptionHandler}'s single mapping for
+     * {@link AccountService.VerificationTokenRejectedException} guarantees. No local catch here,
+     * unlike {@link #register} — this endpoint's two outcomes are meant to be distinguishable.
+     */
+    @PostMapping("/verify-email")
+    public ResponseEntity<Void> verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
+        accountService.activateFromVerificationToken(request.token());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Public, email-identified (R6, as modified at the Phase 0 human-approval gate). Always
+     * returns the same acknowledgement — {@link AccountService#resendVerificationIfPending}
+     * never throws for a non-match, so there is nothing here to distinguish outcomes on.
+     */
+    @PostMapping("/resend-verification")
+    public RegistrationAcknowledgement resendVerification(
+            @Valid @RequestBody ResendVerificationRequest request) {
+        accountService.resendVerificationIfPending(request.email());
+        return RegistrationAcknowledgement.standard();
+    }
+
+    /**
+     * Public, email-identified (R12/R13) — mirrors {@link #resendVerification}'s exact shape,
+     * including its default {@code 200} status (Phase 3/4 Finding 5, human-confirmed: matches
+     * this architecturally closer sibling, not registration's {@code 202}).
+     * {@link AccountService#requestPasswordReset} never throws for a non-match.
+     */
+    @PostMapping("/password-reset-request")
+    public RegistrationAcknowledgement passwordResetRequest(
+            @Valid @RequestBody PasswordResetRequest request) {
+        accountService.requestPasswordReset(request.email());
+        return RegistrationAcknowledgement.forPasswordReset();
+    }
+
+    /**
+     * Public — token possession is the credential (R14). Mirrors {@link #verifyEmail}'s exact
+     * shape: {@code 204} on success, no local catch, the uniform rejection propagates for
+     * {@link AccountExceptionHandler} to translate (R15).
+     */
+    @PostMapping("/password-reset")
+    public ResponseEntity<Void> passwordReset(@Valid @RequestBody PasswordResetConfirmRequest request) {
+        accountService.resetPassword(request.token(), request.newPassword());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Authenticated (R11) - not in {@link com.themistra.auth.common.PublicEndpoints}. Derives the
+     * caller from {@code Authentication} like {@link #me}, never a path/body-supplied identifier.
+     * {@code 204} on success; a wrong current password or a policy-violating new password both
+     * propagate uncaught for {@link AccountExceptionHandler} to translate.
+     */
+    @PostMapping("/me/password")
+    public ResponseEntity<Void> changePassword(
+            Authentication authentication, @Valid @RequestBody ChangePasswordRequest request) {
+        UUID accountUuid = UUID.fromString(authentication.getName());
+        accountService.changePassword(accountUuid, request.currentPassword(), request.newPassword());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Authenticated (R36) - the caller's own active sessions only. An empty list for a caller
+     * with no active sessions is a normal {@code 200}, not an error.
+     */
+    @GetMapping("/me/sessions")
+    public List<SessionResponse> listSessions(Authentication authentication) {
+        UUID accountUuid = UUID.fromString(authentication.getName());
+        return sessionService.list(accountUuid);
+    }
+
+    /**
+     * Authenticated (R37) - revokes one session the caller owns and removes its live SAS
+     * authorization. An unowned or nonexistent {@code familyId} propagates
+     * {@code SessionNotFoundException} uncaught for {@code SessionExceptionHandler} to translate
+     * to a uniform 404; an already-revoked-but-owned family still returns {@code 204} (idempotent).
+     */
+    @DeleteMapping("/me/sessions/{familyId}")
+    public ResponseEntity<Void> revokeSession(Authentication authentication, @PathVariable UUID familyId) {
+        UUID accountUuid = UUID.fromString(authentication.getName());
+        sessionService.revokeOne(accountUuid, familyId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Authenticated (R38) - revokes every active session the caller owns, best-effort per
+     * session, and removes each corresponding live SAS authorization. Always {@code 204},
+     * including when the caller has no active sessions.
+     */
+    @DeleteMapping("/me/sessions")
+    public ResponseEntity<Void> revokeAllSessions(Authentication authentication) {
+        UUID accountUuid = UUID.fromString(authentication.getName());
+        sessionService.revokeAll(accountUuid);
+        return ResponseEntity.noContent().build();
     }
 }

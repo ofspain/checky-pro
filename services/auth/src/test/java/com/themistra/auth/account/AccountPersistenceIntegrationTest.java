@@ -40,6 +40,9 @@ class AccountPersistenceIntegrationTest {
     private AccountService accountService;
 
     @Autowired
+    private AccountRepository accountRepository;
+
+    @Autowired
     private KafkaContainer kafka;
 
     private Consumer<String, String> testConsumer;
@@ -80,6 +83,23 @@ class AccountPersistenceIntegrationTest {
         assertThatThrownBy(() ->
                 accountService.register(new RegisterAccountRequest(email, "another-password-value")))
                 .isInstanceOf(DuplicateEmailException.class);
+    }
+
+    @Test // T22 side-fix regression guard: Account.email's JdbcTypeCode changed from SqlTypes.OTHER
+          // to SqlTypes.VARCHAR to fix a real existsByEmail parameter-binding bug (Hibernate bound
+          // the String parameter as VARBINARY instead of text). AccountService itself always
+          // normalizes (lowercases) email before touching the repository, so a test going through
+          // AccountService can't actually prove citext's DB-level case-insensitivity still works —
+          // it would pass either way. Calling AccountRepository directly, bypassing normalization,
+          // is what actually exercises the citext column's own comparison semantics.
+    void repositoryExistsByEmailAndFindByEmailAreCaseInsensitiveAgainstTheRealCitextColumn() {
+        String original = "Mixed-Case-" + UUID.randomUUID() + "@Example.COM";
+        accountRepository.saveAndFlush(Account.register(original, "irrelevant-hash"));
+
+        assertThat(accountRepository.findByEmail(original.toLowerCase())).isPresent();
+        assertThat(accountRepository.findByEmail(original.toUpperCase())).isPresent();
+        assertThat(accountRepository.existsByEmail(original.toLowerCase())).isTrue();
+        assertThat(accountRepository.existsByEmail(original.toUpperCase())).isTrue();
     }
 
     @Test

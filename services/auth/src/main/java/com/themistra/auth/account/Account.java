@@ -10,6 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcType;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -30,7 +31,13 @@ public class Account {
     @Column(name = "account_uuid", nullable = false, unique = true, updatable = false)
     private UUID accountUuid;
 
-    @Column(name = "email", nullable = false, unique = true)
+    /** {@code citext} (case-insensitive text, agents.md). {@link CitextJdbcType} — not the more
+     * obvious {@code @JdbcTypeCode(SqlTypes.OTHER)} — reports type code OTHER (so Hibernate's
+     * schema validation still accepts it against the real {@code citext} column) while binding
+     * parameters correctly as text; see that class's Javadoc for why {@code SqlTypes.OTHER} alone
+     * silently breaks both query correctness and citext's case-insensitivity. */
+    @JdbcType(CitextJdbcType.class)
+    @Column(name = "email", nullable = false, unique = true, columnDefinition = "citext")
     private String email;
 
     @Column(name = "email_verified", nullable = false)
@@ -106,8 +113,15 @@ public class Account {
         this.passwordHash = null;
     }
 
+    /**
+     * Only an {@code ACTIVE} account may change its password (T08, R11) — narrower than the
+     * previous {@code DELETED}-only guard. Provably backward-compatible with T07's
+     * {@code resetPassword}: that caller always reaches this method with {@code status == ACTIVE}
+     * already (it calls {@link #unlock()} first when {@code LOCKED}, and its own eligibility
+     * pre-check already excludes every other non-{@code ACTIVE} status before ever getting here).
+     */
     public void changePasswordHash(String newPasswordHash) {
-        if (status == AccountStatus.DELETED) {
+        if (status != AccountStatus.ACTIVE) {
             throw new InvalidAccountStateException(accountUuid, status, "change password");
         }
         this.passwordHash = newPasswordHash;

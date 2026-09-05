@@ -46,7 +46,10 @@ public class AuditEvent {
     @Column(name = "ip", length = 45)
     private String ip;
 
-    @Column(name = "user_agent_hash", length = 64)
+    /** CHAR(64), not VARCHAR - JdbcTypeCode.CHAR matches how Postgres reports this column's type
+     * (bpchar) so Hibernate's schema validation accepts it. */
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "user_agent_hash", length = 64, columnDefinition = "char(64)")
     private String userAgentHash;
 
     @Column(name = "trace_id", length = 64)

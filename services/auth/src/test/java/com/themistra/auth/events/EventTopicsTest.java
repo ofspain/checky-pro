@@ -13,6 +13,11 @@ class EventTopicsTest {
     }
 
     @Test
+    void shouldRouteEmailRequestedEventsToAuthEmailRequestedTopic() {
+        assertThat(EventTopics.forAggregateType("verification-token")).isEqualTo("auth.email.requested");
+    }
+
+    @Test
     void unmappedAggregateTypeFailsLoudRatherThanGuessing() {
         assertThatThrownBy(() -> EventTopics.forAggregateType("unmapped-thing"))
                 .isInstanceOf(IllegalStateException.class)

@@ -1,0 +1,177 @@
+package com.themistra.auth.mfa;
+
+import org.junit.jupiter.api.Test;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.time.Instant;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Unit tests for {@link TotpVerifier} — L6 (RFC 6238: HMAC-SHA1, 6 digits, 30s step, current step
+ * plus one adjacent step in each direction). Plain JUnit, no Spring context.
+ *
+ * <p>{@link #referenceGenerateCode} is a separate, independently-written HOTP/TOTP implementation
+ * (not sharing code with {@link TotpVerifier}'s own private {@code generateCode}/{@code
+ * hmacSha1}), used for the boundary/tolerance-window tests — the same "don't test the production
+ * code against itself" discipline {@code TotpGeneratorTest} uses for Base32. The core algorithm
+ * itself is additionally verified against RFC 6238 Appendix B's published SHA1 test vectors
+ * (external ground truth, not derived from either implementation).</p>
+ */
+class TotpVerifierTest {
+
+    /** RFC 6238 Appendix B's standard 20-byte ASCII test secret. */
+    private static final byte[] RFC_SECRET = "12345678901234567890".getBytes(StandardCharsets.US_ASCII);
+
+    private final TotpVerifier verifier = new TotpVerifier();
+
+    @Test // L6 — RFC 6238 Appendix B known-answer test, truncated from the RFC's 8-digit example
+          // to L6's 6 digits (an 8-digit truncation's low 6 digits equal a 6-digit truncation's
+          // result, since both take the same binary code mod a power of ten)
+    void verifyAcceptsKnownRfc6238TestVectors() {
+        assertThat(verifier.verify(RFC_SECRET, "287082", Instant.ofEpochSecond(59))).isTrue();
+        assertThat(verifier.verify(RFC_SECRET, "081804", Instant.ofEpochSecond(1111111109))).isTrue();
+        assertThat(verifier.verify(RFC_SECRET, "050471", Instant.ofEpochSecond(1111111111))).isTrue();
+        assertThat(verifier.verify(RFC_SECRET, "005924", Instant.ofEpochSecond(1234567890))).isTrue();
+        assertThat(verifier.verify(RFC_SECRET, "279037", Instant.ofEpochSecond(2000000000))).isTrue();
+    }
+
+    @Test // a known-good code for one moment must not verify at an unrelated moment
+    void verifyRejectsKnownVectorAtWrongTime() {
+        assertThat(verifier.verify(RFC_SECRET, "287082", Instant.ofEpochSecond(1111111109))).isFalse();
+    }
+
+    @Test // L6 — 90s tolerance window: current step
+    void verifyAcceptsCodeForCurrentStep() {
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+
+        assertThat(verifier.verify(RFC_SECRET, referenceGenerateCode(RFC_SECRET, stepFor(now)), now)).isTrue();
+    }
+
+    @Test // L6 — 90s tolerance window: one step before (clock-skew allowance)
+    void verifyAcceptsCodeForOneStepBefore() {
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+
+        assertThat(verifier.verify(RFC_SECRET, referenceGenerateCode(RFC_SECRET, stepFor(now) - 1), now)).isTrue();
+    }
+
+    @Test // L6 — 90s tolerance window: one step after (clock-skew allowance)
+    void verifyAcceptsCodeForOneStepAfter() {
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+
+        assertThat(verifier.verify(RFC_SECRET, referenceGenerateCode(RFC_SECRET, stepFor(now) + 1), now)).isTrue();
+    }
+
+    @Test // L6 boundary — two steps before must be rejected, not just "eventually tolerated"
+    void verifyRejectsCodeTwoStepsBefore() {
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+
+        assertThat(verifier.verify(RFC_SECRET, referenceGenerateCode(RFC_SECRET, stepFor(now) - 2), now)).isFalse();
+    }
+
+    @Test // L6 boundary — two steps after must be rejected
+    void verifyRejectsCodeTwoStepsAfter() {
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+
+        assertThat(verifier.verify(RFC_SECRET, referenceGenerateCode(RFC_SECRET, stepFor(now) + 2), now)).isFalse();
+    }
+
+    @Test
+    void verifyRejectsWrongCode() {
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+        String correct = referenceGenerateCode(RFC_SECRET, stepFor(now));
+        String wrong = correct.equals("000000") ? "000001" : "000000";
+
+        assertThat(verifier.verify(RFC_SECRET, wrong, now)).isFalse();
+    }
+
+    @Test // a code correctly generated for a different secret must not verify against this one
+    void verifyRejectsCodeGeneratedWithADifferentSecret() {
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+        byte[] otherSecret = "09876543210987654321".getBytes(StandardCharsets.US_ASCII);
+
+        assertThat(verifier.verify(RFC_SECRET, referenceGenerateCode(otherSecret, stepFor(now)), now)).isFalse();
+    }
+
+    @Test // Phase 11 gap 7: codes are always exactly 6 digits, zero-padded — proves the comparison
+          // isn't broken by digit-dropping for a raw binary code small enough to need leading
+          // zeros. Uses a fixed, precomputed (secret, step) pair known to produce "026920" rather
+          // than a search loop, so the test is transparently deterministic rather than depending
+          // on an unstated assumption that some code in a scanned window happens to need padding.
+    void verifyHandlesCodesRequiringLeadingZeroPadding() {
+        Instant time = Instant.ofEpochSecond(30 * 30); // step 30
+
+        assertThat(verifier.verify(RFC_SECRET, "026920", time)).isTrue();
+    }
+
+    @Test // T20: verifyAndReturnStep must agree with verify() on known-answer vectors, exposing
+          // which step matched instead of just whether one did
+    void verifyAndReturnStepReturnsTheMatchedStepForKnownVectors() {
+        assertThat(verifier.verifyAndReturnStep(RFC_SECRET, "287082", Instant.ofEpochSecond(59)))
+                .hasValue(1L); // floorDiv(59, 30) = 1
+        assertThat(verifier.verifyAndReturnStep(RFC_SECRET, "005924", Instant.ofEpochSecond(1234567890)))
+                .hasValue(Math.floorDiv(1234567890L, 30));
+    }
+
+    @Test
+    void verifyAndReturnStepReturnsEmptyForNoMatch() {
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+        String correct = referenceGenerateCode(RFC_SECRET, stepFor(now));
+        String wrong = correct.equals("000000") ? "000001" : "000000";
+
+        assertThat(verifier.verifyAndReturnStep(RFC_SECRET, wrong, now)).isEmpty();
+    }
+
+    @Test // T20 Phase 8 finding #3's context: a code can match an ADJACENT (past) step even though
+          // "now" already falls in a later step's window — verifyAndReturnStep must report the
+          // step the code actually matched (S), not the step "now" falls in (S+1). This is the
+          // exact semantic MfaService's replay guard depends on getting right.
+    void verifyAndReturnStepReportsTheMatchedStepNotTheCurrentOne() {
+        Instant stepStart = Instant.parse("2026-01-01T00:00:00Z");
+        long step = stepFor(stepStart);
+        String codeForStep = referenceGenerateCode(RFC_SECRET, step);
+        // "now" is late in the *next* step's window (29s in) - still within the +1 tolerance step
+        // of the code's own step, but no longer the step "now" itself falls in.
+        Instant nowInNextStep = stepStart.plusSeconds(30 + 29);
+
+        assertThat(verifier.verifyAndReturnStep(RFC_SECRET, codeForStep, nowInNextStep)).hasValue(step);
+    }
+
+    @Test
+    void stepStartReturnsTheEpochAlignedInstantForAStep() {
+        assertThat(verifier.stepStart(0L)).isEqualTo(Instant.EPOCH);
+        assertThat(verifier.stepStart(1000L)).isEqualTo(Instant.ofEpochSecond(30_000L));
+    }
+
+    private static long stepFor(Instant instant) {
+        return Math.floorDiv(instant.getEpochSecond(), 30);
+    }
+
+    /** Independent RFC 4226/6238 HOTP/TOTP implementation — deliberately separate code from
+     * {@link TotpVerifier}'s own private methods, so a bug there can't cancel out against an
+     * identical bug here. */
+    private static String referenceGenerateCode(byte[] secret, long timeCounter) {
+        byte[] counterBytes = new byte[8];
+        long counter = timeCounter;
+        for (int i = 7; i >= 0; i--) {
+            counterBytes[i] = (byte) (counter & 0xFF);
+            counter >>= 8;
+        }
+        try {
+            Mac mac = Mac.getInstance("HmacSHA1");
+            mac.init(new SecretKeySpec(secret, "HmacSHA1"));
+            byte[] hash = mac.doFinal(counterBytes);
+            int offset = hash[hash.length - 1] & 0x0F;
+            int binary = ((hash[offset] & 0x7F) << 24)
+                    | ((hash[offset + 1] & 0xFF) << 16)
+                    | ((hash[offset + 2] & 0xFF) << 8)
+                    | (hash[offset + 3] & 0xFF);
+            return String.format("%06d", binary % 1_000_000);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}

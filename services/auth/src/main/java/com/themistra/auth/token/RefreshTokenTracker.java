@@ -67,6 +67,50 @@ public class RefreshTokenTracker {
     }
 
     /**
+     * Revokes every currently-unrevoked family for a principal (T07, password reset) — the first
+     * caller of {@link RefreshTokenFamilyRepository#findByPrincipalNameAndRevokedAtIsNull} outside
+     * this class. Families are JPA-managed within this transaction, so {@code revoke(...)}'s
+     * mutation is flushed by dirty-checking at commit, the same way {@link #trackRotation} already
+     * relies on for {@code rotateTo(...)} — no explicit save call needed.
+     */
+    @Transactional
+    public void revokeAllForPrincipal(String principalName, String reason) {
+        Instant now = clock.instant();
+        familyRepository.findByPrincipalNameAndRevokedAtIsNull(principalName)
+                .forEach(family -> family.revoke(reason, now));
+    }
+
+    /**
+     * Revokes the single family for this authorization (T29, R39 — SAS {@code /oauth2/revoke}
+     * integration), if one exists and isn't already revoked. Returns {@code true} only when a
+     * revoke actually happened, so the caller (the audit-owning
+     * {@link ReuseDetectingAuthorizationService}) knows whether to record an event — "not found"
+     * and "already revoked" both report {@code false}, matching every other revoke path's
+     * idempotency in this codebase.
+     */
+    @Transactional
+    public boolean revokeForAuthorization(String authorizationId, String reason) {
+        return familyRepository.findByAuthorizationId(authorizationId)
+                .filter(family -> !family.isRevoked())
+                .map(family -> {
+                    family.revoke(reason, clock.instant());
+                    familyRepository.save(family);
+                    return true;
+                })
+                .orElse(false);
+    }
+
+    /** Cleanup job (T30, R40) - hard-deletes families revoked before the retention cutoff. The
+     * database's own {@code ON DELETE CASCADE} on {@code refresh_token_archive.family_id} (V2)
+     * removes each deleted family's archive rows automatically; active (never-revoked) families
+     * are never touched regardless of age (Phase 2 OQ1 - their archive rows are exactly what
+     * reuse detection still needs while they're alive). Returns the number of rows deleted. */
+    @Transactional
+    public int deleteRevokedFamiliesOlderThan(Instant cutoff) {
+        return familyRepository.deleteRevokedBefore(cutoff);
+    }
+
+    /**
      * The reuse check. Call before trusting a presented refresh token's hash:
      * - hash matches a family's CURRENT hash → legitimate, valid presentation.
      * - hash matches an ARCHIVED (superseded) hash → replay: family is revoked and the

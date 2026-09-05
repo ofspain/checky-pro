@@ -1,0 +1,171 @@
+# auth · T18 — Phase 5: Implementation Plan
+
+Consumes `artifacts/04-frozen-task-brief.md` (FROZEN). Plan only — no code in this artifact.
+
+---
+
+## Files to Create
+
+- `services/auth/src/main/java/com/themistra/auth/mfa/MfaService.java`
+- `services/auth/src/main/java/com/themistra/auth/mfa/TotpVerifier.java`
+- `services/auth/src/main/java/com/themistra/auth/mfa/MfaAlreadyEnrolledException.java`
+- `services/auth/src/main/java/com/themistra/auth/mfa/MfaNotEnrolledException.java`
+- `services/auth/src/main/java/com/themistra/auth/mfa/InvalidTotpCodeException.java`
+- `services/auth/src/main/java/com/themistra/auth/mfa/InvalidRecoveryCodeException.java`
+- `services/auth/src/main/java/com/themistra/auth/mfa/MfaCurrentPasswordMismatchException.java`
+- `services/auth/src/test/java/com/themistra/auth/mfa/TotpVerifierTest.java`
+- `services/auth/src/test/java/com/themistra/auth/mfa/MfaServiceTest.java`
+- `services/auth/src/test/java/com/themistra/auth/mfa/MfaServicePersistenceIntegrationTest.java`
+
+All ten trace to the frozen brief's Files-to-Create list plus its Required Tests section.
+
+## Files to Modify
+
+- `services/auth/src/main/java/com/themistra/auth/mfa/RecoveryCodeRepository.java` — add
+  `deleteByAccountId(Long)`.
+
+## Public Methods (signatures)
+
+**`TotpVerifier`** (`@Component`, no state):
+```java
+public boolean verify(byte[] secret, String submittedCode, Instant now)
+```
+RFC 6238: HMAC-SHA1 over the 8-byte big-endian time counter (`now.getEpochSecond() / 30`),
+dynamic truncation (RFC 4226 §5.3), mod 10^6, zero-padded to 6 digits. Checks counter-1, counter,
+counter+1 (90s tolerance) — returns `true` on any match, constant-time string comparison against
+each candidate to avoid a timing oracle (matches the general security posture, though TOTP codes
+aren't as timing-sensitive as password hashes; cheap to do regardless).
+
+**`MfaService`** (`@Component`, `@Transactional` per public method):
+```java
+public MfaService(TotpGenerator totpGenerator, MfaSeedEncryption mfaSeedEncryption,
+                   TotpVerifier totpVerifier, MfaEnrollmentRepository mfaEnrollmentRepository,
+                   RecoveryCodeRepository recoveryCodeRepository, AccountService accountService,
+                   PasswordEncoder passwordEncoder, AuditService auditService, Clock clock)
+
+public BeginEnrollResult beginEnroll(UUID accountUuid)
+public ConfirmResult confirm(UUID accountUuid, String submittedCode)
+public void disable(UUID accountUuid, String currentPassword, String submittedCode)
+public void verifyRecoveryCode(UUID accountUuid, String rawCode)
+
+public record BeginEnrollResult(byte[] secret, String provisioningUri) {
+    @Override public String toString() { return "BeginEnrollResult[REDACTED]"; }
+}
+public record ConfirmResult(List<String> recoveryCodes) {
+    @Override public String toString() { return "ConfirmResult[REDACTED]"; }
+}
+```
+
+**Exceptions** — each a standalone `RuntimeException` subclass, no fields carrying secret
+material, message text safe to log:
+```java
+public class MfaAlreadyEnrolledException extends RuntimeException
+public class MfaNotEnrolledException extends RuntimeException
+public class InvalidTotpCodeException extends RuntimeException
+public class InvalidRecoveryCodeException extends RuntimeException
+public class MfaCurrentPasswordMismatchException extends RuntimeException
+```
+
+**`RecoveryCodeRepository`** (existing interface, one addition):
+```java
+void deleteByAccountId(Long accountId);
+```
+
+## Private Methods
+
+**`TotpVerifier`**:
+```java
+private static int generateCode(byte[] secret, long timeCounter)  // HMAC-SHA1 + dynamic truncation
+private static byte[] hmacSha1(byte[] key, byte[] message)
+```
+
+**`MfaService`**:
+```java
+private com.themistra.auth.account.dto.AccountResponse requireActiveAccount(UUID accountUuid)
+    // getByUuid (throws AccountNotFoundException) + status check (throws InvalidAccountStateException)
+private String generateRawRecoveryCode()   // 32 random bytes, Base64 URL-safe, unpadded
+private void recordMfaFailed(UUID accountUuid)
+    // AuditService.record("mfa.failed", FAILURE, accountUuid, accountUuid, null, null, null, null)
+```
+
+## Entities Used
+
+`MfaEnrollment`, `RecoveryCode` — both existing (T17), unmodified. No `Account` import (L12) —
+only `AccountResponse`/`AccountStatus`/`AccountNotFoundException`/`InvalidAccountStateException`,
+all public `account`-package classes.
+
+## Repositories Used
+
+`MfaEnrollmentRepository` (existing, unmodified), `RecoveryCodeRepository` (existing + one new
+method).
+
+## Services Used
+
+`TotpGenerator`, `MfaSeedEncryption` (T16), `AccountService` (existing public methods:
+`getByUuid`, `findLoginView`), `AuditService` (existing `record(...)`), `PasswordEncoder` (Spring
+Security bean, already used by `AccountService`), `Clock` (existing `SecurityBeansConfig` bean).
+
+## Unit / Integration Tests Required
+
+**`TotpVerifierTest`** (plain JUnit, no Spring context):
+- A code generated by a reference/independent RFC 6238 computation (not `TotpVerifier`'s own
+  code, to avoid a tautological test) verifies successfully at the exact time step.
+- Verifies successfully one step before and one step after (90s tolerance), fails two steps away.
+- Wrong code (any other 6-digit value) fails.
+
+**`MfaServiceTest`** (plain JUnit, Mockito-mocked repositories/services — mirrors
+`LockoutServiceTest`'s shape):
+- `beginEnroll`: rejects non-`ACTIVE` account; rejects when a confirmed enrollment exists
+  (`MfaAlreadyEnrolledException`); deletes-and-recreates when an unconfirmed one exists (verifies
+  `deleteByAccountIdAndType` is called before the new `save`); persists a new unconfirmed
+  enrollment when none exists; label passed to `buildProvisioningUri` is the account UUID string,
+  not the email.
+- `confirm`: rejects non-`ACTIVE`; rejects when no unconfirmed enrollment exists
+  (`MfaNotEnrolledException`); wrong code → `mfa.failed` audit + `InvalidTotpCodeException`, no
+  mutation; correct code → `enrollment.confirm(...)` called, exactly 10 `RecoveryCode` rows saved,
+  10 raw codes returned, each hash matches `Hashing.sha256(rawCode)`.
+- `disable`: rejects non-`ACTIVE`; wrong password → `mfa.disable_failed` audit +
+  `MfaCurrentPasswordMismatchException`, nothing deleted; no confirmed enrollment →
+  `MfaNotEnrolledException`; wrong TOTP code → `mfa.failed` audit + `InvalidTotpCodeException`,
+  nothing deleted; success → enrollment deleted, `deleteByAccountId` called, `mfa.disabled`
+  (`SUCCESS`) audit recorded.
+- `verifyRecoveryCode`: unknown hash → `mfa.failed` + `InvalidRecoveryCodeException`; found but
+  `markUsed` returns `0` (already used) → same failure path; found and `markUsed` returns `1` →
+  returns normally, no exception.
+- `BeginEnrollResult`/`ConfirmResult`: `toString()` never contains the secret/URI/codes (a direct
+  string-content assertion, not just "doesn't throw").
+
+**`MfaServicePersistenceIntegrationTest`** (Testcontainers-Postgres, mirrors T17's
+`MfaPersistenceIntegrationTest`) — proves the whole chain against a real schema and a real
+`AccountService`:
+- Full happy path: register+activate an account, `beginEnroll`, `confirm` with a code computed
+  via the same independent reference TOTP implementation `TotpVerifierTest` uses, assert 10
+  recovery codes returned and 10 rows persisted with matching hashes.
+- `disable` happy path: confirmed enrollment + correct password + correct code → enrollment gone,
+  all recovery codes gone, `mfa.disabled` row in `auth_audit`.
+- Non-`ACTIVE` account (e.g. still `PENDING_VERIFICATION`) rejected on all three flows.
+- Begin-enroll retry: create an unconfirmed enrollment, call `beginEnroll` again, assert the old
+  secret's hash no longer decrypts/matches anything reachable (i.e. genuinely a new row, not the
+  same secret re-returned).
+- **Known risk, inherited from T17, not re-litigated here**: this test combines `Account` and
+  `mfa` entities in one persistence unit — exactly the combination T17's own
+  `MfaPersistenceIntegrationTest` is currently blocked on (see
+  [[docker-testcontainers-handshake-issue]]). Check whether that's still blocked before assuming
+  either way; if still blocked, this suite ships written-but-unverified, same disposition as T17's.
+
+## Execution Order
+
+1. Five exception classes — no dependencies, needed before anything that throws them compiles.
+2. `TotpVerifier.java` — no dependency on `MfaService`; standalone, testable first.
+3. `TotpVerifierTest.java` — validate step 2 before building the more complex service on top of it.
+4. `RecoveryCodeRepository.java` — add `deleteByAccountId`; depends on nothing new.
+5. `MfaService.java` — depends on steps 1-4 plus existing T16/T17 classes and `AccountService`.
+6. `MfaServiceTest.java` — validate step 5 with mocks.
+7. `MfaServicePersistenceIntegrationTest.java` — validate the whole chain against real Postgres,
+   depends on everything above.
+
+No schema/migration step — no schema change (frozen brief confirms this).
+
+## Open Questions
+
+None. All Phase 3 findings were resolved at Phase 4; nothing new surfaced while planning.

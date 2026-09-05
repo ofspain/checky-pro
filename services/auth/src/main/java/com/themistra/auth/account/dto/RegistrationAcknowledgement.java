@@ -12,4 +12,14 @@ public record RegistrationAcknowledgement(String message) {
         return new RegistrationAcknowledgement(
                 "If this email is available, check your inbox to verify your account.");
     }
+
+    /**
+     * Password-reset-request's uniform acknowledgement (R12) — deliberately not {@link #standard}:
+     * that message's "...verify your account" wording is specific to email verification and would
+     * be factually wrong here.
+     */
+    public static RegistrationAcknowledgement forPasswordReset() {
+        return new RegistrationAcknowledgement(
+                "If this email is associated with an account, check your inbox for password reset instructions.");
+    }
 }
