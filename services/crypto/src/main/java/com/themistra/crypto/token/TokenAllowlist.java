@@ -21,11 +21,14 @@ import java.util.Objects;
  * <p><b>{@code symbol} is display-only, never identity (R13, L7).</b> {@link TokenValidator} never
  * consults it when resolving a token; it exists purely so a caller can show something human-readable.</p>
  *
- * <p>{@code signature} maps the schema's only {@code TEXT} column via {@code @JdbcTypeCode(SqlTypes.LONGVARCHAR)}
- * - the same annotation family {@code OutboxEvent.payload} already uses for {@code SqlTypes.JSON} -
- * chosen explicitly rather than relying on Hibernate's implicit {@code VARCHAR}/{@code TEXT}
- * compatibility under {@code spring.jpa.hibernate.ddl-auto=validate}, since no other entity in this
- * codebase has mapped a plain {@code TEXT} column yet.</p>
+ * <p>{@code signature} maps the schema's only {@code TEXT} column via {@code @JdbcTypeCode(SqlTypes.LONG32VARCHAR)}
+ * - the same annotation family {@code OutboxEvent.payload} already uses for {@code SqlTypes.JSON}.
+ * **Phase 9 (Kimi Phase 8 Issue 11): confirmed via direct bytecode inspection of Hibernate
+ * 6.6.22.Final's own {@code PostgreSQLDialect.columnType(int)} that {@code SqlTypes.LONGVARCHAR} (-1)
+ * is NOT one of its explicitly-mapped codes and falls through to the generic base-{@code Dialect}
+ * default (not {@code "text"}), while {@code SqlTypes.LONG32VARCHAR} (4001) is explicitly mapped to
+ * {@code "text"}** - the Phase 6 draft's original choice of {@code LONGVARCHAR} was simply wrong, not
+ * merely unverified.</p>
  *
  * <p>Production code seeds rows only via {@link TokenAllowlistSeeder}, driven by config
  * ({@code TokenAllowlistProperties}) - no Flyway DML migration exists for this table (Phase 3 Kimi
@@ -57,7 +60,7 @@ public class TokenAllowlist {
     @Column(nullable = false)
     private int version;
 
-    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
+    @JdbcTypeCode(SqlTypes.LONG32VARCHAR)
     @Column(nullable = false)
     private String signature;
 
@@ -88,10 +91,15 @@ public class TokenAllowlist {
         return entry;
     }
 
+    /** Phase 9 (Kimi Phase 8 Issue 10): bounded to 30, not {@code Short.MAX_VALUE} - real
+     * ERC-20/TRC-20 token decimals are virtually always 0-18 (rarely up to ~24); a value like 600
+     * would otherwise pass a short-overflow-only check as a plausible-looking but implausible entry. */
+    private static final int MAX_DECIMALS = 30;
+
     private static short toShort(int value, String fieldName) {
-        if (value < 0 || value > Short.MAX_VALUE) {
+        if (value < 0 || value > MAX_DECIMALS) {
             throw new IllegalArgumentException(
-                    fieldName + " must be between 0 and " + Short.MAX_VALUE + ", got " + value);
+                    fieldName + " must be between 0 and " + MAX_DECIMALS + ", got " + value);
         }
         return (short) value;
     }
