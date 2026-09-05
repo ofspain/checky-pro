@@ -70,6 +70,37 @@ class AddressValidatorTest {
     }
 
     @Test
+    void rejectsAnEvmAddressWithAVisuallyConfusableNonHexCharacter() {
+        // Phase 11 Gap 6: O, I, l are common human transcription errors and are outside the hex
+        // alphabet - more realistic than an arbitrary non-hex character like G.
+        String withO = CHECKSUMMED.substring(0, CHECKSUMMED.length() - 1) + "O";
+        String withCapitalI = CHECKSUMMED.substring(0, CHECKSUMMED.length() - 1) + "I";
+        String withLowercaseL = CHECKSUMMED.substring(0, CHECKSUMMED.length() - 1) + "l";
+        assertThat(validator.isValidEvmAddress(withO)).isFalse();
+        assertThat(validator.isValidEvmAddress(withCapitalI)).isFalse();
+        assertThat(validator.isValidEvmAddress(withLowercaseL)).isFalse();
+    }
+
+    @Test
+    void rejectsAnEvmAddressThatIsTooLong() {
+        // Phase 11 Gap 2: a regression that accidentally relaxed the regex's upper bound (e.g. to
+        // {40,}) would not be caught by the too-short test alone.
+        assertThat(validator.isValidEvmAddress(CHECKSUMMED + "0")).isFalse();
+    }
+
+    @Test
+    void rejectsAnEvmAddressMissingTheZeroXPrefix() {
+        // Phase 11 Gap 3: AC2 explicitly names a missing 0x prefix as a structurally malformed case.
+        assertThat(validator.isValidEvmAddress(CHECKSUMMED.substring(2))).isFalse();
+    }
+
+    @Test
+    void rejectsAnEmptyEvmAddress() {
+        // Phase 11 Gap 4: symmetry with the Tron empty-string test.
+        assertThat(validator.isValidEvmAddress("")).isFalse();
+    }
+
+    @Test
     void rejectsANullEvmAddress() {
         assertThat(validator.isValidEvmAddress(null)).isFalse();
     }
@@ -90,6 +121,9 @@ class AddressValidatorTest {
     private static final String ILLEGAL_CHARACTER_TRON = "0A4Y62o6YC2Zsck9rZVGTvqW1AQ7X9zTnj";
     private static final String WRONG_CHECKSUM_TRON = "TA4Y62o6YC2Zsck9rZVGTvqW1AQ7X9zTnA";
     private static final String WRONG_PREFIX_TRON = "16L5yRNPTuciSgXGHqYwn9N6NeoKqopAu";
+    // Phase 11 Gap 1: Base58Check-valid, correct 0x41 prefix, but decodes to 20 bytes, not 21 - the
+    // wrong-length branch of AC7, distinct from the wrong-prefix-byte branch above.
+    private static final String WRONG_DECODED_LENGTH_TRON = "6vi8VnGRpPtZNSKPQ1ZgkiCSbvndcvgHH";
 
     @Test
     void shouldValidateBase58ChecksumForTronAddresses() {
@@ -115,8 +149,20 @@ class AddressValidatorTest {
     }
 
     @Test
+    void rejectsABase58CheckValidStringWithTheWrongDecodedLength() {
+        assertThat(validator.isValidTronAddress(WRONG_DECODED_LENGTH_TRON)).isFalse();
+    }
+
+    @Test
     void rejectsAnOversizedTronAddress() {
         assertThat(validator.isValidTronAddress("A".repeat(65))).isFalse();
+    }
+
+    @Test
+    void rejectsATronAddressAtTheMaximumLength() {
+        // Phase 11 Gap 5: the exact boundary (64 characters, all valid Base58 alphabet) - a fencepost
+        // error (< vs <=) in the length check would only be caught here, not by the 65-character case.
+        assertThat(validator.isValidTronAddress("A".repeat(64))).isFalse();
     }
 
     @Test
@@ -146,5 +192,12 @@ class AddressValidatorTest {
     @Test
     void rejectsATronAddressJustBelowTheMinimumLength() {
         assertThat(validator.isValidTronAddress("A".repeat(24))).isFalse();
+    }
+
+    @Test
+    void rejectsATronAddressAtTheMinimumLength() {
+        // Phase 11 Gap 5: the exact boundary (25 characters) - not a valid address, but must not
+        // throw, and a fencepost error in the length check would only be caught here.
+        assertThat(validator.isValidTronAddress("A".repeat(25))).isFalse();
     }
 }
