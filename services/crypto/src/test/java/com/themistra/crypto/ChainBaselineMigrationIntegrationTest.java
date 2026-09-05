@@ -38,9 +38,13 @@ class ChainBaselineMigrationIntegrationTest {
     private static final List<String> GRANTED_TABLES = List.of("observations", "attestations", "quorum_decisions");
     // outbox moved out of this list in T04 (V3__crypto_app_outbox_grant.sql grants
     // INSERT/SELECT/UPDATE) - its own access is verified separately by
-    // OutboxGrantMigrationIntegrationTest, including that DELETE is still denied.
-    private static final List<String> UNGRANTED_TABLES = List.of("watches", "provider_health", "chain_cursors",
-            "token_allowlist", "screening_results", "shedlock");
+    // OutboxGrantMigrationIntegrationTest, including that DELETE is still denied. provider_health
+    // (T10, V4__crypto_app_provider_health_grant.sql: INSERT/SELECT/UPDATE) and token_allowlist (T11,
+    // V5__crypto_app_token_allowlist_grant.sql: INSERT/SELECT) are likewise verified by their own
+    // dedicated integration tests, not folded into this class's tx_hash-keyed GRANTED_TABLES helper,
+    // since neither table has a tx_hash column.
+    private static final List<String> UNGRANTED_TABLES = List.of("watches", "chain_cursors",
+            "screening_results", "shedlock");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -116,7 +120,8 @@ class ChainBaselineMigrationIntegrationTest {
     @Test
     void allMigrationsAreRecordedAsSuccessfulInFlywayHistory() throws SQLException {
         // Flyway also inserts a synthetic, unversioned "schema creation" row before the versioned
-        // migrations; only the versioned rows (V1, V2, and T04's V3) are this assertion's concern.
+        // migrations; only the versioned rows (V1-V2 from T02, V3 from T04, V4 from T10, V5 from
+        // T11) are this assertion's concern.
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
@@ -127,7 +132,7 @@ class ChainBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5");
         }
     }
 
