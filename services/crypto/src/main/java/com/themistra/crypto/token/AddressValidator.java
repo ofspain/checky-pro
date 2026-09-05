@@ -45,6 +45,14 @@ public class AddressValidator {
      * string, not a tight spec-derived value. */
     private static final int MAX_TRON_ADDRESS_LENGTH = 64;
 
+    /** Phase 9 (self-review Finding 1 / Kimi Phase 8 Issues 1 and 3): real Tron addresses are 34
+     * characters; anything under 25 can never decode to a valid 21-byte payload plus 4-byte checksum
+     * and is rejected before ever reaching {@code Base58Check} - this also sidesteps a confirmed bug
+     * in that library, where an input decoding to fewer than 4 raw bytes (empirically, any string
+     * under 5 characters) throws {@code NegativeArraySizeException} rather than the
+     * {@code IllegalArgumentException} every other invalid input produces. */
+    private static final int MIN_TRON_ADDRESS_LENGTH = 25;
+
     public boolean isValidEvmAddress(String address) {
         if (address == null || !EVM_ADDRESS_PATTERN.matcher(address).matches()) {
             return false;
@@ -55,13 +63,21 @@ public class AddressValidator {
     }
 
     public boolean isValidTronAddress(String address) {
-        if (address == null || address.length() > MAX_TRON_ADDRESS_LENGTH) {
+        if (address == null || address.length() < MIN_TRON_ADDRESS_LENGTH
+                || address.length() > MAX_TRON_ADDRESS_LENGTH) {
             return false;
         }
         try {
             byte[] decoded = Base58Check.base58ToBytes(address);
             return decoded.length == TRON_DECODED_LENGTH && decoded[0] == TRON_MAINNET_PREFIX;
-        } catch (IllegalArgumentException e) {
+        } catch (RuntimeException e) {
+            // Phase 9 (self-review Finding 1 / Kimi Phase 8 Issue 1): broadened from
+            // IllegalArgumentException - Base58Check itself throws that for an illegal character or a
+            // checksum mismatch, but the MIN_TRON_ADDRESS_LENGTH guard above is what actually prevents
+            // its own confirmed NegativeArraySizeException bug for very short input from ever being
+            // reached; this catch stays broad as defense-in-depth against any other unenumerated
+            // exception shape this third-party library might throw for input this review didn't
+            // specifically test.
             return false;
         }
     }
