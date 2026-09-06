@@ -55,6 +55,24 @@ public class AddressPoisoningDetector {
      * characters, e.g. "...abcd"). */
     private static final int SUFFIX_MATCH_LENGTH = 4;
 
+    /**
+     * Phase 9 (self-review Finding 2 / Kimi Phase 8 Issue 2): condensed, caller-facing restatement of
+     * this class's own contracts, since a caller inspecting only this method's signature (e.g. via an
+     * IDE hover tooltip) would otherwise miss them.
+     *
+     * @param candidateAddress the address to check; {@code null} returns {@link Optional#empty()}
+     * @param previouslySeenAddresses the counterparty history to compare against; {@code null}, empty,
+     *     or containing {@code null} elements all return {@link Optional#empty()} for those entries
+     *     rather than throwing. Comparison is case-sensitive with no address-format normalization or
+     *     validation - callers must normalize casing and validate structure (e.g. via {@link
+     *     AddressValidator}) themselves first if either matters for their use case. If more than one
+     *     entry resembles the candidate, the one returned is arbitrary - treat the result as a boolean
+     *     "poisoning suspected" signal, not a ranked closest match. This method trusts its generic type
+     *     parameter; passing a raw {@code Collection} containing non-{@code String} elements is a
+     *     caller error (a standard Java generics-erasure limitation, not specific to this method) and
+     *     is not guarded against.
+     * @return the specific previously-seen address the candidate resembles-but-differs-from, or empty
+     */
     public Optional<String> detectPoisoning(String candidateAddress, Collection<String> previouslySeenAddresses) {
         if (candidateAddress == null || previouslySeenAddresses == null) {
             return Optional.empty();
