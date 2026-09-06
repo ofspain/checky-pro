@@ -9,8 +9,14 @@ context: |
   TypeScript for frontend, AWS CDK infra, and narrowly-scoped chain-adapter
   sidecars only. A third language requires an ADR.
 
-  MY OWNERSHIP (CODEOWNERS @ofspain): services/crypto/, contracts/, infra/stacks/,
-  SECURITY-THREAT-MODEL.md. Default all work to services/crypto unless told otherwise.
+  MY WORK AREA: services/crypto/ (plus the contracts/ it publishes). Default all work
+  there unless told otherwise.
+
+  REVIEW GATE: services/crypto/, contracts/, infra/stacks/ and SECURITY-THREAT-MODEL.md
+  are CODEOWNERS-protected by @ofspain, the repo owner — not by me. Everything I write
+  in those paths needs their review to merge, so planning artifacts are review material
+  for another engineer, not private notes. ARCHITECTURE.md is authored by them and is
+  NOT owner-protected; propose changes to it, never edit it silently.
 
   CRYPTO SERVICE (services/crypto — the only component that talks to blockchains):
   Java 21, Spring Boot, virtual threads, web3j (EVM), Tron gRPC.
@@ -40,7 +46,7 @@ context: |
   Correctness of record is the product. Prefer boring and auditable over clever.
 
 rules:
-  spec:
+  specs:
     - Write requirements in EARS form (WHEN/IF ... THEN the system SHALL ...),
       matching the existing convention in spec/auth-service/requirements.md.
     - Every requirement must be independently testable.
