@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crypto service — quorum explorer</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #16181d; --muted: #5b6472; --line: #dfe3ea;
+    --card: #f7f8fa; --ok: #146b3a; --ok-bg: #e8f4ec;
+    --warn: #8a5a00; --warn-bg: #fdf3e3; --bad: #a01b2b; --bad-bg: #fbeaec;
+    --accent: #2f5fb7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --fg: #e8eaee; --muted: #99a1ae; --line: #2a2f37;
+      --card: #1c1f25; --ok: #6ed49b; --ok-bg: #16301f;
+      --warn: #e8b567; --warn-bg: #33270f; --bad: #f08a97; --bad-bg: #351a1e;
+      --accent: #7aa2e3;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px 64px;
+    font: 15px/1.6 "Helvetica Neue", Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 21px; font-weight: 500; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13.5px; margin: 0 0 24px; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  input[type=text] {
+    flex: 1 1 420px; min-width: 0; padding: 10px 12px; font: inherit; font-size: 13.5px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  button {
+    padding: 10px 16px; font: inherit; font-size: 14px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg);
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .55; cursor: default; }
+  .hint { color: var(--muted); font-size: 12.5px; margin: 0 0 20px; }
+  .err { color: var(--bad); font-size: 13px; margin: 8px 0 0; }
+  .verdict { border-radius: 8px; padding: 14px 16px; margin: 20px 0 8px; border: 1px solid; }
+  .verdict h2 { margin: 0 0 4px; font-size: 16px; font-weight: 500; }
+  .verdict p { margin: 0; font-size: 13.5px; }
+  .AGREED { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+  .DISAGREED { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
+  .ABSENT { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 500; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 500; }
+  .tag.SAW { background: var(--ok-bg); color: var(--ok); }
+  .tag.ABSENT { background: var(--warn-bg); color: var(--warn); }
+  .tag.FAILED { background: var(--bad-bg); color: var(--bad); }
+  .fact { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-top: 16px; }
+  .fact dl { display: grid; grid-template-columns: 120px 1fr; gap: 6px 14px; margin: 0; font-size: 13px; }
+  .fact dt { color: var(--muted); }
+  .fact dd { margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+  .meta { color: var(--muted); font-size: 12.5px; margin-top: 14px; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Quorum explorer</h1>
+  <p class="sub">Reads one transaction through every configured provider and shows what each said. Local development only.</p>
+
+  <div class="bar">
+    <input type="text" id="tx" placeholder="0x… transaction hash" spellcheck="false" autocomplete="off">
+    <button id="verify" class="primary">Verify</button>
+    <button id="sample">Find one</button>
+  </div>
+  <p class="hint" id="config">loading configuration…</p>
+  <p class="err" id="error" hidden></p>
+
+  <div id="result"></div>
+
+  <footer>
+    Nothing here registers a watch, stores a row, or publishes an event. It calls the quorum layer
+    and reports the answers.
+  </footer>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let chainId = null;
+
+function showError(message) {
+  $('error').textContent = message;
+  $('error').hidden = false;
+}
+function clearError() { $('error').hidden = true; }
+
+function busy(on) {
+  $('verify').disabled = on;
+  $('sample').disabled = on;
+}
+
+async function loadConfig() {
+  try {
+    const res = await fetch('/dev/api/config');
+    const cfg = await res.json();
+    const chains = Object.keys(cfg.chains || {});
+    if (!chains.length) {
+      $('config').textContent = 'No chains configured — set ETHEREUM_RPC_A/B/C and restart.';
+      busy(true);
+      return;
+    }
+    chainId = chains[0];
+    const providers = cfg.chains[chainId];
+    $('config').textContent =
+      `${chainId} · ${providers.length} providers (${providers.join(', ')}) · ${cfg.threshold} must agree`;
+  } catch (e) {
+    $('config').textContent = 'Could not read configuration.';
+    showError(String(e));
+  }
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function humanAmount(amount, decimals) {
+  try {
+    const v = BigInt(amount);
+    const d = BigInt(10) ** BigInt(decimals);
+    const whole = v / d;
+    const frac = (v % d).toString().padStart(decimals, '0').replace(/0+$/, '');
+    return frac ? `${whole}.${frac}` : `${whole}`;
+  } catch { return amount; }
+}
+
+function renderFact(fact) {
+  return `<div class="fact"><dl>
+    <dt>amount</dt><dd>${esc(fact.amount)} base units — ${esc(humanAmount(fact.amount, fact.decimals))} at ${fact.decimals} decimals</dd>
+    <dt>token</dt><dd>${esc(fact.token)}</dd>
+    <dt>from</dt><dd>${esc(fact.from)}</dd>
+    <dt>to</dt><dd>${esc(fact.to)}</dd>
+    <dt>block</dt><dd>${esc(fact.blockNumber)} · ${esc(fact.blockHash)}</dd>
+  </dl></div>`;
+}
+
+function render(data) {
+  const headline = {
+    AGREED: 'Quorum reached',
+    DISAGREED: 'No fact established',
+    ABSENT: 'Not on chain'
+  }[data.outcome];
+  const detail = data.outcome === 'AGREED'
+    ? `${data.threshold} of ${data.providerCount} providers agreed on the same transfer.`
+    : esc(data.reason || '');
+
+  const rows = data.answers.map(a => {
+    let said = '—';
+    if (a.state === 'SAW' && a.observation) {
+      said = `${esc(humanAmount(a.observation.amount, a.observation.decimals))} at block ${a.observation.blockNumber}`;
+    } else if (a.state === 'ABSENT') {
+      said = 'does not see this transaction';
+    } else if (a.failure) {
+      said = esc(a.failure).slice(0, 160);
+    }
+    return `<tr>
+      <td class="mono">${esc(a.provider)}</td>
+      <td><span class="tag ${a.state}">${a.state}</span></td>
+      <td>${said}</td>
+    </tr>`;
+  }).join('');
+
+  $('result').innerHTML = `
+    <div class="verdict ${data.outcome}">
+      <h2>${headline}</h2><p>${detail}</p>
+    </div>
+    ${data.fact ? renderFact(data.fact) : ''}
+    <table>
+      <thead><tr><th>Provider</th><th>State</th><th>What it said</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="meta">Queried ${data.providerCount} providers concurrently in ${data.elapsedMs} ms.
+    A failed provider is not a vote; agreement on absence is.</p>`;
+}
+
+async function verify() {
+  const txHash = $('tx').value.trim();
+  if (!txHash) { showError('Paste a transaction hash, or use “Find one”.'); return; }
+  clearError();
+  busy(true);
+  $('result').innerHTML = '<p class="hint">asking every provider…</p>';
+  try {
+    const res = await fetch(`/dev/api/verify?chainId=${encodeURIComponent(chainId)}&txHash=${encodeURIComponent(txHash)}`);
+    if (!res.ok) throw new Error(await res.text());
+    render(await res.json());
+  } catch (e) {
+    $('result').innerHTML = '';
+    showError(String(e).slice(0, 300));
+  } finally { busy(false); }
+}
+
+async function findSample() {
+  clearError();
+  busy(true);
+  $('result').innerHTML = '<p class="hint">scanning recent blocks for a token transfer…</p>';
+  try {
+    const res = await fetch(`/dev/api/sample?chainId=${encodeURIComponent(chainId)}`);
+    if (!res.ok) throw new Error(await res.text());
+    const s = await res.json();
+    $('tx').value = s.txHash;
+    $('result').innerHTML = '';
+    await verify();
+  } catch (e) {
+    $('result').innerHTML = '';
+    showError(String(e).slice(0, 300));
+  } finally { busy(false); }
+}
+
+$('verify').addEventListener('click', verify);
+$('sample').addEventListener('click', findSample);
+$('tx').addEventListener('keydown', e => { if (e.key === 'Enter') verify(); });
+loadConfig();
+</script>
+</body>
+</html>
