@@ -248,10 +248,15 @@ function renderWatches(data) {
     const detail = event
       ? `found <span class="mono">${esc(event.txHash.slice(0, 18))}…</span> at block ${event.blockNumber}`
       : 'waiting for the watcher…';
+    // Base units are what the system compares; the readable figure is a courtesy beside it.
+    // Without decimals from a provider we show base units alone rather than guess a scale.
+    const readable = w.decimals === undefined
+      ? '<span class="hint">base units</span>'
+      : `${esc(humanAmount(w.amount, w.decimals))}${w.symbol ? ' ' + esc(w.symbol) : ''}`;
     return `<tr>
       <td class="mono">${esc(w.watchId.slice(0, 8))}</td>
       <td><span class="pill ${w.status}">${w.status}</span></td>
-      <td class="mono">${esc(w.amount)}</td>
+      <td>${readable}<br><span class="mono hint">${esc(w.amount)}</span></td>
       <td>${detail}</td>
     </tr>`;
   }).join('');

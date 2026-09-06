@@ -3,6 +3,7 @@ package com.themistra.crypto.dev;
 import com.themistra.crypto.chain.ChainAdapter;
 import com.themistra.crypto.chain.ChainAdapterRegistry;
 import com.themistra.crypto.chain.ChainId;
+import com.themistra.crypto.chain.TokenInfo;
 import com.themistra.crypto.chain.TxObservation;
 import com.themistra.crypto.watch.PaymentVerifiedEvent;
 import com.themistra.crypto.watch.Watch;
@@ -21,6 +22,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -101,7 +103,7 @@ public class DevWatchController {
         List<Map<String, Object>> watches = watchRepository.findAll().stream()
                 .sorted(Comparator.comparing(Watch::getCreatedAt).reversed())
                 .limit(20)
-                .map(DevWatchController::describe)
+                .map(this::describe)
                 .toList();
 
         List<Map<String, Object>> published = events.recent().stream()
@@ -114,14 +116,39 @@ public class DevWatchController {
         return body;
     }
 
-    private static Map<String, Object> describe(Watch watch) {
+    private Map<String, Object> describe(Watch watch) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("watchId", watch.getWatchUuid().toString());
         map.put("status", watch.getStatus().name());
         map.put("recipient", watch.getRecipientAddress());
+        // Base units stay authoritative. The decimals travel beside them so a human can read the
+        // figure, and are never folded into it: §6.3 keeps money exact on the wire.
         map.put("amount", watch.getExpectedAmount().toString());
+        tokenInfo(watch).ifPresent(info -> {
+            map.put("decimals", info.decimals());
+            map.put("symbol", info.displaySymbol());
+        });
         map.put("createdAt", watch.getCreatedAt().toString());
         return map;
+    }
+
+    /**
+     * Token decimals and symbol, if a provider will say. Cached per contract in the adapter, so
+     * this costs one call per token rather than one per watch.
+     *
+     * <p>Absent rather than guessed when no provider answers: showing an amount at the wrong
+     * decimals is worse than showing base units, because it looks right.
+     */
+    private Optional<TokenInfo> tokenInfo(Watch watch) {
+        try {
+            return registry.adaptersFor(ChainId.parse(watch.getChainId())).stream()
+                    .map(adapter -> adapter.getTokenInfo(watch.getTokenAddress()))
+                    .filter(Optional::isPresent)
+                    .map(Optional::get)
+                    .findFirst();
+        } catch (Exception e) {
+            return Optional.empty();
+        }
     }
 
     private static Map<String, Object> describe(PaymentVerifiedEvent event) {
