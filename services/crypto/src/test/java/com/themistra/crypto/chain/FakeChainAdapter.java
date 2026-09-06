@@ -98,4 +98,16 @@ public final class FakeChainAdapter implements ChainAdapter {
         }
         return answer.map(observation -> FinalityStatus.pending(3));
     }
+
+    /** Discovery is exercised through WatcherServiceTest's own stubs, not this fake. */
+    @Override
+    public java.util.List<String> findIncomingTransfers(String recipient, String tokenAddress,
+                                                        long fromBlock, long toBlock) {
+        return java.util.List.of();
+    }
+
+    @Override
+    public long currentBlockNumber() {
+        return 0L;
+    }
 }

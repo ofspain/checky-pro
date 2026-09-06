@@ -118,6 +118,18 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <systemPropertyVariables>
+            <!-- docker-java negotiates Docker API 1.32 by default. Docker Engine 29.x sets
+                 MinAPIVersion=1.40 and rejects anything older with an HTTP 400 whose body is an
+                 empty Info object - which Testcontainers reports as "Could not find a valid
+                 Docker environment", sending you hunting for a socket problem that is not there.
+                 Pinning a supported version is the actual fix. 1.44 ships with Docker 25+, so it
+                 is old enough for CI runners and new enough for the local Engine.
+                 It must be a system property: docker-java does not read DOCKER_API_VERSION. -->
+            <api.version>1.44</api.version>
+          </systemPropertyVariables>
+        </configuration>
         <executions>
           <execution>
             <goals>

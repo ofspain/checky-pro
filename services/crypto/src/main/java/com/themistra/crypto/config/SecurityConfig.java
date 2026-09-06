@@ -7,6 +7,8 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.jwt.JwtDecoders;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenAuthenticationEntryPoint;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
@@ -56,31 +58,27 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/internal/**").hasAuthority(scope)
                         .requestMatchers("/internal/**").hasAuthority(scope)
                         .anyRequest().authenticated())
+                // An anonymous request must answer 401, not 403. Spring installs a bearer entry
+                // point only when a JWT decoder exists, so without this an issuer-less deployment
+                // would answer 403 to everyone and collapse the very distinction the spec exists
+                // to keep: "no credentials" and "credentials without the scope" must stay apart,
+                // or a client whose scope was never provisioned is undiagnosable.
+                .exceptionHandling(handling -> handling
+                        .authenticationEntryPoint(new BearerTokenAuthenticationEntryPoint()))
                 // Bearer-authenticated and stateless: there is no session for CSRF to protect.
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
+        // The decoder is built here rather than as a conditional @Bean: @ConditionalOnProperty
+        // matches on a property being *present*, and an environment default of "" is present but
+        // empty, so the bean was constructed with an empty issuer and startup failed. Building it
+        // inside this branch ties its existence to the only condition that actually matters.
         if (properties.hasIssuer()) {
-            http.oauth2ResourceServer(rs -> rs.jwt(jwt ->
-                    jwt.jwtAuthenticationConverter(scopeAuthorities())));
+            http.oauth2ResourceServer(rs -> rs.jwt(jwt -> jwt
+                    .decoder(JwtDecoders.fromIssuerLocation(properties.getIssuerUri()))
+                    .jwtAuthenticationConverter(scopeAuthorities())));
         }
         return http.build();
-    }
-
-    /**
-     * The decoder, built only when an issuer exists.
-     *
-     * <p>Constructed here rather than through {@code spring.security.oauth2.resourceserver.*}
-     * auto-configuration because that property cannot be conditionally absent: left blank it
-     * fails, and left unset it cannot be supplied by an environment variable with a default.
-     * Keeping one source of truth avoids a deployment where the two disagree.
-     */
-    @Bean
-    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
-            prefix = "themistra.crypto.security", name = "issuer-uri", matchIfMissing = false)
-    org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder(SecurityProperties properties) {
-        return org.springframework.security.oauth2.jwt.JwtDecoders
-                .fromIssuerLocation(properties.getIssuerUri());
     }
 
     /**

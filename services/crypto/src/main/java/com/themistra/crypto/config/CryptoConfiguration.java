@@ -6,6 +6,7 @@ import com.themistra.crypto.quorum.QuorumReader;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 import java.time.Clock;
 
@@ -18,6 +19,7 @@ import java.time.Clock;
  * and out of anyone's attention, attest on a single provider's word.
  */
 @Configuration
+@EnableScheduling
 @EnableConfigurationProperties({QuorumProperties.class, ChainProviderProperties.class})
 public class CryptoConfiguration {
 
