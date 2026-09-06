@@ -1,5 +1,6 @@
 package com.themistra.crypto.config;
 
+import com.themistra.crypto.chain.ChainAdapterRegistry;
 import com.themistra.crypto.quorum.QuorumPolicy;
 import com.themistra.crypto.quorum.QuorumReader;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -9,14 +10,15 @@ import org.springframework.context.annotation.Configuration;
 import java.time.Clock;
 
 /**
- * Wires the quorum read layer.
+ * Wires the quorum read layer and the configured chain providers.
  *
- * <p>The policy is constructed at startup so an invalid threshold — anything below 2, or above the
- * configured provider count — refuses to boot. A service that cannot satisfy §6.1 should fail
- * loudly at deploy time, not quietly attest to a single provider's word later.
+ * <p>Both the quorum policy and the provider registry are constructed at startup, so a deployment
+ * that could not satisfy ARCHITECTURE §6.1 — a threshold below two, or a chain with fewer
+ * providers than that threshold — refuses to boot. A service that starts anyway would, under load
+ * and out of anyone's attention, attest on a single provider's word.
  */
 @Configuration
-@EnableConfigurationProperties(QuorumProperties.class)
+@EnableConfigurationProperties({QuorumProperties.class, ChainProviderProperties.class})
 public class CryptoConfiguration {
 
     @Bean
@@ -32,5 +34,10 @@ public class CryptoConfiguration {
     @Bean
     QuorumReader quorumReader(QuorumPolicy policy, Clock clock) {
         return new QuorumReader(policy, clock);
+    }
+
+    @Bean
+    ChainAdapterRegistry chainAdapterRegistry(ChainProviderProperties properties, QuorumPolicy policy) {
+        return ChainAdapterFactory.build(properties, policy);
     }
 }
