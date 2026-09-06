@@ -1,0 +1,50 @@
+schema: spec-driven
+
+context: |
+  Themistra — blockchain payment verification, evolving toward an evidence/trust
+  layer for digital commerce. Polyglot monorepo, Maven (Java) + pnpm workspaces (TS).
+
+  LANGUAGE POLICY (docs/service-languages.html, Approved 2026-07-11):
+  Exactly two application languages. Java 21 for every backend service.
+  TypeScript for frontend, AWS CDK infra, and narrowly-scoped chain-adapter
+  sidecars only. A third language requires an ADR.
+
+  MY OWNERSHIP (CODEOWNERS @ofspain): services/crypto/, contracts/, infra/stacks/,
+  SECURITY-THREAT-MODEL.md. Default all work to services/crypto unless told otherwise.
+
+  CRYPTO SERVICE (services/crypto — the only component that talks to blockchains):
+  Java 21, Spring Boot, virtual threads, web3j (EVM), Tron gRPC.
+  - Adapter layer: per-chain, common interface.
+  - Watcher layer: long-running subscriptions/polling.
+  - Every fact requires 2-of-3 quorum across independent RPC providers.
+  - Per-chain finality policy; reorgs emit chain.tx.reorged.
+  - Internal POST /attest is the SOLE path to kms:Sign on the attestation key.
+  - Owns the `chain` Postgres schema (watches, provider health, raw observation log).
+  - Publishes: chain.tx.seen|confirmed|finalized|reorged, chain.provider.degraded.
+  - services/crypto/sidecars/ — TypeScript, one dir per chain with inadequate Java
+    tooling. Observe and translate ONLY: no quorum authority, no key access,
+    no business state. Java core treats sidecar output as one more provider answer.
+
+  DOWNSTREAM CONSUMER: services/payment consumes chain.tx.* to drive its verification
+  state machine (CREATED → WATCHING → SEEN → CONFIRMING → FINALIZED → ATTESTED,
+  reorg-reversible). Event contract changes are breaking changes for another team.
+
+  CONVENTIONS — services/auth is the only built service; follow its patterns:
+  - Shared libs: libs/java/outbox (ALL event publishing goes through the outbox),
+    libs/java/kafka-core (transport), libs/java/security-core.
+  - Flyway migrations, JPA, Testcontainers integration tests, ArchUnit boundary rules.
+  - Event schemas live in contracts/events/<domain>/<name>.v<N>.schema.json.
+  - Build: mvn -pl services/crypto
+
+  ALWAYS CONSULT: ARCHITECTURE.md, SECURITY-THREAT-MODEL.md, docs/adr/.
+  Correctness of record is the product. Prefer boring and auditable over clever.
+
+rules:
+  spec:
+    - Write requirements in EARS form (WHEN/IF ... THEN the system SHALL ...),
+      matching the existing convention in spec/auth-service/requirements.md.
+    - Every requirement must be independently testable.
+  proposal:
+    - Always include a "Non-goals" section.
+    - Call out explicitly whether the change alters a published event contract
+      or the attestation/kms:Sign path.
