@@ -8,6 +8,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.jwt.JwtDecoders;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenAuthenticationEntryPoint;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
@@ -57,6 +58,13 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/internal/**").hasAuthority(scope)
                         .requestMatchers("/internal/**").hasAuthority(scope)
                         .anyRequest().authenticated())
+                // An anonymous request must answer 401, not 403. Spring installs a bearer entry
+                // point only when a JWT decoder exists, so without this an issuer-less deployment
+                // would answer 403 to everyone and collapse the very distinction the spec exists
+                // to keep: "no credentials" and "credentials without the scope" must stay apart,
+                // or a client whose scope was never provisioned is undiagnosable.
+                .exceptionHandling(handling -> handling
+                        .authenticationEntryPoint(new BearerTokenAuthenticationEntryPoint()))
                 // Bearer-authenticated and stateless: there is no session for CSRF to protect.
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
