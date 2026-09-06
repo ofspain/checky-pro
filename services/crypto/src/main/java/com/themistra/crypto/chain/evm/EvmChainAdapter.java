@@ -7,6 +7,7 @@ import com.themistra.crypto.chain.TokenInfo;
 import com.themistra.crypto.chain.TxObservation;
 import org.web3j.crypto.Keys;
 import org.web3j.protocol.Web3j;
+import org.web3j.protocol.core.DefaultBlockParameter;
 import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.methods.request.Transaction;
 import org.web3j.protocol.core.methods.response.EthBlock;
@@ -16,6 +17,11 @@ import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.util.Map;
+import org.web3j.protocol.core.methods.request.EthFilter;
+import org.web3j.protocol.core.methods.response.EthLog;
+import org.web3j.protocol.core.methods.response.Log;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -61,6 +67,61 @@ public class EvmChainAdapter implements ChainAdapter {
     @Override
     public ChainId chainId() {
         return chainId;
+    }
+
+    /**
+     * Candidate transaction hashes for incoming transfers, via {@code eth_getLogs}.
+     *
+     * <p>Filters server-side on the token contract, the {@code Transfer} signature, and the
+     * recipient in the third topic. One call covers a whole block range, so the cost is per range
+     * rather than per block — which is what makes watching many invoices affordable.
+     *
+     * <p>Returns hashes, not observations. Each is one provider's claim and goes through quorum
+     * before it is believed; a provider that invented a hash would simply fail to be corroborated.
+     */
+    @Override
+    public List<String> findIncomingTransfers(String recipient, String tokenAddress,
+                                              long fromBlock, long toBlock) {
+        EthFilter filter = new EthFilter(
+                DefaultBlockParameter.valueOf(BigInteger.valueOf(fromBlock)),
+                DefaultBlockParameter.valueOf(BigInteger.valueOf(toBlock)),
+                tokenAddress);
+        // topic0 = Transfer(address,address,uint256); topic2 = recipient, left-padded to 32 bytes
+        filter.addSingleTopic(Erc20TransferDecoder.TRANSFER_SIGNATURE);
+        filter.addOptionalTopics((String) null);          // sender: any
+        filter.addSingleTopic(padTopic(recipient));
+
+        try {
+            EthLog response = web3j.ethGetLogs(filter).send();
+            if (response.hasError()) {
+                throw new ProviderUnavailableException(providerLabel,
+                        "rejected the log query: " + response.getError().getMessage(), null);
+            }
+            List<String> hashes = new ArrayList<>();
+            for (EthLog.LogResult<?> entry : response.getLogs()) {
+                if (entry.get() instanceof Log logEntry && logEntry.getTransactionHash() != null) {
+                    hashes.add(logEntry.getTransactionHash());
+                }
+            }
+            return List.copyOf(hashes);
+        } catch (IOException e) {
+            throw new ProviderUnavailableException(providerLabel, "log query failed", e);
+        }
+    }
+
+    @Override
+    public long currentBlockNumber() {
+        try {
+            return web3j.ethBlockNumber().send().getBlockNumber().longValueExact();
+        } catch (IOException e) {
+            throw new ProviderUnavailableException(providerLabel, "head query failed", e);
+        }
+    }
+
+    /** An address as a 32-byte log topic: 12 zero bytes then the 20 address bytes. */
+    private static String padTopic(String address) {
+        String hex = address.startsWith("0x") ? address.substring(2) : address;
+        return "0x" + "0".repeat(64 - hex.length()) + hex.toLowerCase();
     }
 
     /**

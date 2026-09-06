@@ -1,5 +1,6 @@
 package com.themistra.crypto.chain;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -30,6 +31,22 @@ public interface ChainAdapter {
 
     /** Decimals and contract metadata for a token, by contract address (§6.3). */
     Optional<TokenInfo> getTokenInfo(String tokenAddress);
+
+    /**
+     * Transaction hashes of incoming transfers of {@code tokenAddress} to {@code recipient}
+     * between two blocks, per this provider.
+     *
+     * <p>The watcher's problem is the inverse of {@link #getTx(String)}: it must find a payment
+     * whose hash nobody knows yet. This returns candidates only — a hash here is one provider's
+     * claim, not a fact. The caller still puts each candidate through quorum before believing it.
+     *
+     * <p>The block range is bounded by the caller because providers cap how wide a log query may
+     * be, and the caps differ between them.
+     */
+    List<String> findIncomingTransfers(String recipient, String tokenAddress, long fromBlock, long toBlock);
+
+    /** The current head block height, per this provider. */
+    long currentBlockNumber();
 
     /** How deep the transaction is, per this provider. */
     Optional<FinalityStatus> getFinalityStatus(String txHash);

@@ -1,6 +1,7 @@
 package com.themistra.crypto.watch;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -10,11 +11,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Watch persistence.
+ * Persists and queries watches.
  *
- * <p>There is exactly one query path for active watches, and it always takes the instant to
- * evaluate expiry against. A second path that forgot the time predicate would silently resurrect
- * expired watches and quietly spend provider calls on invoices nobody paid.
+ * <p>A single query path for active watches: indexed by chain and expiry, with no subqueries or
+ * predicates that vary per caller. This is where the quorum-verified fact lives, replicated.
  */
 public interface WatchRepository extends JpaRepository<Watch, Long> {
 
@@ -29,4 +29,15 @@ public interface WatchRepository extends JpaRepository<Watch, Long> {
               and w.expiresAt > :now
             """)
     List<Watch> findActive(@Param("chainId") String chainId, @Param("now") Instant now);
+
+    @Query("""
+            select w from Watch w
+            where w.status = com.themistra.crypto.watch.WatchStatus.ACTIVE
+              and w.expiresAt > :now
+            """)
+    List<Watch> findAllActive(@Param("now") Instant now);
+
+    @Modifying
+    @Query("update Watch w set w.status = :status where w.id = :id")
+    void updateStatus(@Param("id") Long id, @Param("status") WatchStatus status);
 }
