@@ -75,6 +75,11 @@ public class WatcherService {
         for (Watch watch : active) {
             try {
                 checkWatch(watch);
+            } catch (org.springframework.dao.DataAccessException e) {
+                // Not a provider hiccup. Logging this at warn once hid a bug that republished the
+                // same payment every cycle, so it is an error and it carries the stack.
+                log.error("Watch {} failed against the database; it will be retried and may "
+                        + "re-publish until this is fixed", watch.getWatchUuid(), e);
             } catch (Exception e) {
                 // One watch's provider trouble must not stop the others being checked.
                 log.warn("Watch {} could not be checked this cycle: {}",
@@ -137,6 +142,16 @@ public class WatcherService {
             return false;
         }
 
+        // Settle first, publish second. The reverse order looks harmless and is not: if the
+        // write fails after the event is out, the next cycle finds the same payment and publishes
+        // it again, forever. This ordering trades that for the rarer, smaller failure of a
+        // settled watch whose event was lost.
+        //
+        // Neither is correct at scale. The right answer is a transactional outbox — event and
+        // status written together, drained by a separate publisher — which is what the event
+        // publishing change will need anyway. Until then, at-most-once beats unbounded repeats.
+        watchRepository.updateStatus(watch.getId(), WatchStatus.SATISFIED);
+
         publisher.publish(new PaymentVerifiedEvent(
                 watch.getWatchUuid(),
                 fact.txHash(),
@@ -146,7 +161,6 @@ public class WatcherService {
                 watch.getChainId(),
                 Instant.now(clock)));
 
-        watchRepository.updateStatus(watch.getId(), WatchStatus.SATISFIED);
         log.info("Watch {} satisfied by {} at block {}",
                 watch.getWatchUuid(), fact.txHash(), fact.blockNumber());
         return true;

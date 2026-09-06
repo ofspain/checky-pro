@@ -4,6 +4,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -37,7 +38,12 @@ public interface WatchRepository extends JpaRepository<Watch, Long> {
             """)
     List<Watch> findAllActive(@Param("now") Instant now);
 
-    @Modifying
+    /**
+     * A modifying query needs a transaction of its own: without one it throws, and a caller
+     * that swallows the exception will re-find and re-publish the same payment every cycle.
+     */
+    @Modifying(clearAutomatically = true)
+    @Transactional
     @Query("update Watch w set w.status = :status where w.id = :id")
     void updateStatus(@Param("id") Long id, @Param("status") WatchStatus status);
 }

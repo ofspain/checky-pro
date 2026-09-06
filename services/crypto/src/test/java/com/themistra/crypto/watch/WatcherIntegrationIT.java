@@ -7,7 +7,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -70,12 +69,10 @@ class WatcherIntegrationIT {
 
     @Test
     @DisplayName("a satisfied watch stops being watched")
-    @Transactional
     void satisfiedWatchStopsBeingWatched() {
         Watch registered = register(reference(), Duration.ofHours(1));
 
         watchRepository.updateStatus(registered.getId(), WatchStatus.SATISFIED);
-        watchRepository.flush();
 
         assertThat(watchRepository.findAllActive(Instant.now()))
                 .noneSatisfy(w -> assertThat(w.getWatchUuid()).isEqualTo(registered.getWatchUuid()));
@@ -105,6 +102,24 @@ class WatcherIntegrationIT {
                 .map(Watch::getWatchUuid).toList();
 
         assertThat(active).contains(first.getWatchUuid(), second.getWatchUuid());
+    }
+
+    @Test
+    @DisplayName("settling a watch actually commits, so the same payment is not found twice")
+    void settlingCommits() {
+        // The bug this protects against: updateStatus is a modifying query, and without a
+        // transaction it throws. A watcher that swallows that exception re-finds and re-publishes
+        // the same payment on every cycle - which is what happened, nine times, before this test.
+        Watch registered = register(reference(), Duration.ofHours(1));
+
+        watchRepository.updateStatus(registered.getId(), WatchStatus.SATISFIED);
+
+        // Read through a fresh query rather than the persistence context, so a value that was
+        // never written cannot be served from memory and look like success.
+        assertThat(watchRepository.findByWatchUuid(registered.getWatchUuid()).orElseThrow().getStatus())
+                .isEqualTo(WatchStatus.SATISFIED);
+        assertThat(watchRepository.findAllActive(Instant.now()))
+                .noneSatisfy(w -> assertThat(w.getWatchUuid()).isEqualTo(registered.getWatchUuid()));
     }
 
     private Watch register(String reference, Duration until) {

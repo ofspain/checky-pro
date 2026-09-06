@@ -61,6 +61,15 @@
   .fact dt { color: var(--muted); }
   .fact dd { margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
   .meta { color: var(--muted); font-size: 12.5px; margin-top: 14px; }
+  .panel { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line); }
+  .panel h2 { font-size: 17px; font-weight: 500; margin: 0 0 4px; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 11px; font-size: 11.5px; font-weight: 500; }
+  .pill.ACTIVE { background: var(--warn-bg); color: var(--warn); }
+  .pill.SATISFIED { background: var(--ok-bg); color: var(--ok); }
+  .pill.EXPIRED, .pill.CANCELLED { background: var(--card); color: var(--muted); }
+  .live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok);
+          margin-right: 6px; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
   footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; }
 </style>
 </head>
@@ -78,6 +87,20 @@
   <p class="err" id="error" hidden></p>
 
   <div id="result"></div>
+
+  <section class="panel">
+    <h2>Watch a payment</h2>
+    <p class="sub">Registers a watch for a transfer that just happened, then leaves it alone. The
+    watcher has to find it on its own — nothing here tells it the transaction hash.</p>
+
+    <div class="bar">
+      <button id="demo" class="primary">Register a watch</button>
+      <span class="hint" id="watcher-state" style="align-self:center;margin:0"></span>
+    </div>
+    <p class="err" id="watch-error" hidden></p>
+
+    <div id="watch-result"></div>
+  </section>
 
   <footer>
     Nothing here registers a watch, stores a row, or publishes an event. It calls the quorum layer
@@ -215,6 +238,77 @@ async function findSample() {
     showError(String(e).slice(0, 300));
   } finally { busy(false); }
 }
+
+let pollTimer = null;
+let awaitingWatchId = null;
+
+function renderWatches(data) {
+  const rows = data.watches.map(w => {
+    const event = data.events.find(e => e.watchId === w.watchId);
+    const detail = event
+      ? `found <span class="mono">${esc(event.txHash.slice(0, 18))}…</span> at block ${event.blockNumber}`
+      : 'waiting for the watcher…';
+    return `<tr>
+      <td class="mono">${esc(w.watchId.slice(0, 8))}</td>
+      <td><span class="pill ${w.status}">${w.status}</span></td>
+      <td class="mono">${esc(w.amount)}</td>
+      <td>${detail}</td>
+    </tr>`;
+  }).join('');
+
+  $('watch-result').innerHTML = rows
+    ? `<table><thead><tr><th>Watch</th><th>Status</th><th>Amount</th><th>Outcome</th></tr></thead>
+       <tbody>${rows}</tbody></table>`
+    : '<p class="hint">No watches yet.</p>';
+}
+
+async function pollWatches() {
+  try {
+    const res = await fetch('/dev/api/watches');
+    if (!res.ok) return;
+    const data = await res.json();
+    renderWatches(data);
+
+    if (awaitingWatchId) {
+      const settled = data.events.some(e => e.watchId === awaitingWatchId);
+      if (settled) {
+        $('watcher-state').innerHTML = 'payment verified by quorum';
+        awaitingWatchId = null;
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    }
+  } catch (e) { /* the next tick will try again */ }
+}
+
+async function registerDemoWatch() {
+  clearError();
+  $('watch-error').hidden = true;
+  $('demo').disabled = true;
+  $('watcher-state').innerHTML = 'finding a recent transfer…';
+  try {
+    const res = await fetch(`/dev/api/watch/demo?chainId=${encodeURIComponent(chainId)}`, { method: 'POST' });
+    if (!res.ok) throw new Error(await res.text());
+    const w = await res.json();
+    awaitingWatchId = w.watchId;
+    $('watcher-state').innerHTML =
+      `<span class="live"></span>watching for ${esc(humanAmount(w.amount, w.decimals))} to ` +
+      `<span class="mono">${esc(w.recipient.slice(0, 10))}…</span>`;
+
+    await pollWatches();
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollWatches, 2000);
+  } catch (e) {
+    $('watcher-state').textContent = '';
+    $('watch-error').textContent = String(e).slice(0, 300);
+    $('watch-error').hidden = false;
+  } finally {
+    $('demo').disabled = false;
+  }
+}
+
+$('demo').addEventListener('click', registerDemoWatch);
+pollWatches();
 
 $('verify').addEventListener('click', verify);
 $('sample').addEventListener('click', findSample);
