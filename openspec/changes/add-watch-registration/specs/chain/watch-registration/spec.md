@@ -125,3 +125,22 @@ procedures, or triggers implementing behaviour.
 - **WHEN** the service starts
 - **THEN** migrations have been applied and the object mapping is validated against the schema
   rather than generating it
+
+### Requirement: Registration requires an authorised caller
+Registering, retrieving, or cancelling a watch SHALL require an authenticated caller holding the
+scope for watch registration. A well-formed request from an unauthorised caller SHALL change
+nothing.
+
+#### Scenario: An unauthenticated caller
+- **IF** a caller presents no credentials
+- **THEN** the request is rejected and no watch is stored
+
+#### Scenario: A valid token without the required scope
+- **IF** a caller presents a valid token lacking the scope
+- **THEN** the request is rejected as forbidden, distinctly from being unauthenticated, so a
+  client whose scope was never provisioned is diagnosable
+
+#### Scenario: Probing for a watch without credentials
+- **WHEN** an unauthenticated caller requests a watch identifier
+- **THEN** the response is identical whether or not that watch exists, so the endpoint cannot be
+  used to discover live invoices

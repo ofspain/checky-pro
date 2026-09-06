@@ -50,6 +50,9 @@ class WatchRegistrationIT {
     /** One configured chain, so registration has something to validate against. */
     @DynamicPropertySource
     static void chains(DynamicPropertyRegistry registry) {
+        // No issuer here: this test exercises registration behaviour, not who may call it.
+        // WatchApiSecurityIT covers authorisation.
+        registry.add("themistra.crypto.security.require-issuer", () -> false);
         registry.add("themistra.crypto.chains[0].id", () -> ETHEREUM);
         registry.add("themistra.crypto.chains[0].providers[0].label", () -> "evm-provider-a");
         registry.add("themistra.crypto.chains[0].providers[0].endpoint", () -> "http://localhost:1/unused");
