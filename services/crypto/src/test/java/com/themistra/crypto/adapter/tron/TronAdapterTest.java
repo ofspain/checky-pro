@@ -1,5 +1,6 @@
 package com.themistra.crypto.adapter.tron;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.themistra.crypto.adapter.ObservationSink;
@@ -78,7 +79,8 @@ class TronAdapterTest {
 
     @BeforeEach
     void setUp() {
-        adapter = new TronAdapter(apiWrapper, "test-provider", scheduler, Duration.ofSeconds(3));
+        adapter = new TronAdapter(apiWrapper, "test-provider", scheduler, Duration.ofSeconds(3),
+                new ObjectMapper());
     }
 
     // ---------- fixture helpers ----------
@@ -527,7 +529,7 @@ class TronAdapterTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         when(apiWrapper.getTransactionInfoByBlockNum(101L)).thenReturn(infoListOf());
         stubCurrentBlock(101L);
@@ -551,7 +553,7 @@ class TronAdapterTest {
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(WATCHED_ADDRESS, received::add);
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> received.add(result));
 
         TransactionInfo.Log matched = transferLog(CONTRACT_BODY, SENDER_BODY, WATCHED_BODY, 10L);
         // A second, unrelated token contract's Transfer to the same recipient - proves no
@@ -576,7 +578,7 @@ class TronAdapterTest {
         when(scheduler.scheduleWithFixedDelay(any(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
 
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         verify(apiWrapper).getNowBlock(NodeType.FULL_NODE);
     }
@@ -589,7 +591,7 @@ class TronAdapterTest {
         when(scheduler.scheduleWithFixedDelay(any(), anyLong(), anyLong(), any()))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
 
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         long expectedMillis = Duration.ofSeconds(3).toMillis();
         verify(scheduler).scheduleWithFixedDelay(
@@ -605,7 +607,7 @@ class TronAdapterTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         // No re-stub of the current block - the chain head hasn't moved since the cursor was seeded.
         taskCaptor.getValue().run();
@@ -623,7 +625,7 @@ class TronAdapterTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         when(apiWrapper.getTransactionInfoByBlockNum(101L)).thenReturn(infoListOf());
         stubCurrentBlock(101L);
@@ -646,7 +648,7 @@ class TronAdapterTest {
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(WATCHED_ADDRESS, received::add);
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> received.add(result));
 
         TransactionInfo.Log log = transferLog(CONTRACT_BODY, SENDER_BODY, WATCHED_BODY, 10L);
         for (long block = 101L; block <= 110L; block++) {
@@ -671,7 +673,7 @@ class TronAdapterTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
-        adapter.subscribeAddress("not-a-valid-base58-address", result -> { });
+        adapter.subscribeAddress("not-a-valid-base58-address", (provider, result, rawJson) -> { });
 
         stubCurrentBlock(101L);
 
@@ -688,7 +690,7 @@ class TronAdapterTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         TransactionInfo.Log log = transferLog(CONTRACT_BODY, SENDER_BODY, WATCHED_BODY, 10L);
         TransactionInfo infoWithNoId = TransactionInfo.newBuilder().setBlockNumber(101L).addLog(log).build();
@@ -706,7 +708,7 @@ class TronAdapterTest {
         when(scheduler.scheduleWithFixedDelay(any(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) future);
 
-        Subscription subscription = adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        Subscription subscription = adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
         subscription.cancel();
 
         verify(future).cancel(false);
@@ -720,7 +722,7 @@ class TronAdapterTest {
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(WATCHED_ADDRESS, received::add);
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> received.add(result));
 
         TransactionInfo.Log log = transferLog(CONTRACT_BODY, SENDER_BODY, WATCHED_BODY, 42L);
         when(apiWrapper.getTransactionInfoByBlockNum(101L)).thenReturn(infoListOf(minedInfo(101L, log)));
@@ -744,7 +746,7 @@ class TronAdapterTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         for (long block = 101L; block <= 150L; block++) {
             when(apiWrapper.getTransactionInfoByBlockNum(block)).thenReturn(infoListOf());
@@ -766,7 +768,7 @@ class TronAdapterTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         when(apiWrapper.getTransactionInfoByBlockNum(101L))
                 .thenThrow(new IllegalException("provider hiccup"));
@@ -784,7 +786,7 @@ class TronAdapterTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         when(apiWrapper.getTransactionInfoByBlockNum(101L)).thenReturn(null);
         stubCurrentBlock(101L);

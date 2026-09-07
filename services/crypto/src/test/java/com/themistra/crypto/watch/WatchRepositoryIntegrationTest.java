@@ -38,6 +38,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * TokenAllowlistRepositoryIntegrationTest}'s (T11) own narrow-context pattern exactly: the datasource
  * connects as `crypto_app` (not the migration-owning role), so every repository call here already
  * exercises the real grant, not a hypothetical one.
+ *
+ * <p>{@code cryptoAppCanInsertSelectAndUpdateButNotDeleteOnChainCursors} was updated for T16's
+ * {@code V7__crypto_app_watcher_grants.sql}, which added `UPDATE` on `chain_cursors` ({@code Watcher}
+ * advances `last_block` forward) - this test originally asserted `UPDATE` was denied, correct only
+ * until that later migration existed.</p>
  */
 @Testcontainers
 @SpringBootTest(classes = WatchRepositoryIntegrationTest.TestConfig.class,
@@ -163,7 +168,11 @@ class WatchRepositoryIntegrationTest {
     }
 
     @Test
-    void cryptoAppCanInsertAndSelectButNotUpdateOrDeleteOnChainCursors() throws SQLException {
+    void cryptoAppCanInsertSelectAndUpdateButNotDeleteOnChainCursors() throws SQLException {
+        // T16's own V7__crypto_app_watcher_grants.sql added UPDATE on chain_cursors (Watcher advances
+        // last_block forward) - this test originally asserted UPDATE was denied (correct at the time,
+        // T15's own V6 deliberately withheld it); updated here to match the current, real grant rather
+        // than left stale.
         String watchId = UUID.randomUUID().toString();
         try (Connection app = connectAsCryptoApp(); Statement statement = app.createStatement()) {
             statement.execute("INSERT INTO chain.chain_cursors (chain, watch_id, last_block, updated_at) "
@@ -176,10 +185,13 @@ class WatchRepositoryIntegrationTest {
                 assertThat(resultSet.getLong("last_block")).isEqualTo(-1L);
             }
 
-            assertThatThrownBy(() -> statement.execute(
-                    "UPDATE chain.chain_cursors SET last_block = 100 WHERE watch_id = '" + watchId + "'"))
-                    .isInstanceOf(SQLException.class)
-                    .hasMessageContaining("permission denied");
+            statement.execute(
+                    "UPDATE chain.chain_cursors SET last_block = 100 WHERE watch_id = '" + watchId + "'");
+            try (var resultSet = statement.executeQuery(
+                    "SELECT last_block FROM chain.chain_cursors WHERE watch_id = '" + watchId + "'")) {
+                assertThat(resultSet.next()).isTrue();
+                assertThat(resultSet.getLong("last_block")).isEqualTo(100L);
+            }
 
             assertThatThrownBy(() -> statement.execute(
                     "DELETE FROM chain.chain_cursors WHERE watch_id = '" + watchId + "'"))

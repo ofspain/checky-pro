@@ -1,5 +1,7 @@
 package com.themistra.crypto.adapter.eth;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.Chain;
 import com.themistra.crypto.adapter.ChainAdapter;
 import com.themistra.crypto.adapter.ObservationSink;
@@ -33,7 +35,9 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Duration;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -76,18 +80,28 @@ public class EthereumAdapter implements ChainAdapter, AutoCloseable {
     private final String providerName;
     private final ScheduledExecutorService scheduler;
     private final Duration pollInterval;
+    private final ObjectMapper objectMapper;
 
     public EthereumAdapter(Web3j web3j, String providerName, ScheduledExecutorService scheduler,
-                            Duration pollInterval) {
+                            Duration pollInterval, ObjectMapper objectMapper) {
         this.web3j = web3j;
         this.providerName = providerName;
         this.scheduler = scheduler;
         this.pollInterval = pollInterval;
+        this.objectMapper = objectMapper;
     }
 
     @Override
     public Chain chain() {
         return Chain.ETHEREUM;
+    }
+
+    /** Not part of the VERBATIM {@code ChainAdapter} interface (T16) - {@code ProviderSet} captures
+     * this at construction time, while it still holds the concrete adapter type, so that
+     * chain-adapter-implementation-agnostic callers (e.g. {@code Watcher}, L14/AC7) never need to call
+     * this themselves. */
+    public String providerName() {
+        return providerName;
     }
 
     @Override
@@ -194,7 +208,8 @@ public class EthereumAdapter implements ChainAdapter, AutoCloseable {
         List<EthLog.LogResult<?>> logs = fetchLogs(filter);
         for (EthLog.LogResult<?> logResult : logs) {
             Log log = (Log) logResult.get();
-            sink.onObservation(buildTxResultFromLog(log, toBlock));
+            TxResult result = buildTxResultFromLog(log, toBlock);
+            sink.onObservation(providerName, result, toRawJson(log, result));
         }
 
         lastScannedBlock.set(toBlock.longValue());
@@ -208,6 +223,33 @@ public class EthereumAdapter implements ChainAdapter, AutoCloseable {
         int confirmations = computeConfirmations(currentBlock, txBlock);
         return new TxResult(true, log.getTransactionHash(), fromAddress, toAddress, log.getAddress(),
                 amount, confirmations, txBlock.longValue());
+    }
+
+    /** T16 Phase 3 Finding 1: a best-effort JSON capture of this log-derived observation for {@code
+     * ObservationLog} - not the original wire bytes (web3j has already parsed those away by the time
+     * this class sees a {@link Log}), but the fullest-fidelity representation this adapter itself has.
+     * {@code amount} is a decimal string (agents.md), never a JSON number, even in this internal,
+     * non-wire-contract payload - consistent with this codebase's money convention everywhere else. */
+    private String toRawJson(Log log, TxResult result) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("txHash", result.txHash());
+        fields.put("blockNumber", result.blockNumber());
+        fields.put("logIndex", log.getLogIndex());
+        fields.put("fromAddress", result.fromAddress());
+        fields.put("toAddress", result.toAddress());
+        fields.put("tokenContractAddress", result.tokenContractAddress());
+        fields.put("amount", result.amount().toPlainString());
+        fields.put("confirmations", result.confirmations());
+        return writeValueAsString(fields);
+    }
+
+    private String writeValueAsString(Map<String, Object> fields) {
+        try {
+            return objectMapper.writeValueAsString(fields);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(
+                    "Provider " + providerName + " observation could not be serialized to JSON", e);
+        }
     }
 
     /** A transaction included in the current latest block has 1 confirmation, not 0 (frozen brief

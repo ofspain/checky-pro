@@ -74,6 +74,17 @@ public class ChainCursor {
         return cursor;
     }
 
+    /** T16 AC6: forward-only. A call with {@code blockNumber <= lastBlock} is a silent no-op - never
+     * regresses the cursor (that is task 18's exclusive, reorg-walk-back job). Mirrors {@code
+     * ProviderHealth}'s own "no raw setters, named mutators" convention. */
+    public void advanceTo(long blockNumber, Instant now) {
+        if (blockNumber <= lastBlock) {
+            return;
+        }
+        lastBlock = blockNumber;
+        updatedAt = now;
+    }
+
     public Long id() {
         return id;
     }

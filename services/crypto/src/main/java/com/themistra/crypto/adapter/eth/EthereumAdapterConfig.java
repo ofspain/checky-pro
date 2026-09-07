@@ -1,5 +1,6 @@
 package com.themistra.crypto.adapter.eth;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.common.config.ProviderProperties;
 import jakarta.annotation.PreDestroy;
 import okhttp3.OkHttpClient;
@@ -31,11 +32,12 @@ public class EthereumAdapterConfig {
     public List<EthereumAdapter> ethereumAdapters(
             ProviderProperties providerProperties,
             Environment environment,
-            @Value("${themistra.crypto.adapter.ethereum.poll-interval-ms}") long pollIntervalMs) {
+            @Value("${themistra.crypto.adapter.ethereum.poll-interval-ms}") long pollIntervalMs,
+            ObjectMapper objectMapper) {
         List<EthereumAdapter> adapters = providerProperties.chains().stream()
                 .filter(chainProviders -> "ETHEREUM".equals(chainProviders.chain()))
                 .flatMap(chainProviders -> chainProviders.providers().stream())
-                .map(entry -> buildAdapter(entry, environment, pollIntervalMs))
+                .map(entry -> buildAdapter(entry, environment, pollIntervalMs, objectMapper))
                 .toList();
         createdAdapters.addAll(adapters);
         return adapters;
@@ -47,7 +49,8 @@ public class EthereumAdapterConfig {
     }
 
     private EthereumAdapter buildAdapter(
-            ProviderProperties.ProviderEntry entry, Environment environment, long pollIntervalMs) {
+            ProviderProperties.ProviderEntry entry, Environment environment, long pollIntervalMs,
+            ObjectMapper objectMapper) {
         String resolvedUrl = resolveUrl(entry, environment);
 
         OkHttpClient httpClient = new OkHttpClient.Builder()
@@ -61,7 +64,8 @@ public class EthereumAdapterConfig {
         ScheduledExecutorService scheduler =
                 Executors.newScheduledThreadPool(1, Thread.ofVirtual().factory());
 
-        return new EthereumAdapter(web3j, entry.name(), scheduler, Duration.ofMillis(pollIntervalMs));
+        return new EthereumAdapter(web3j, entry.name(), scheduler, Duration.ofMillis(pollIntervalMs),
+                objectMapper);
     }
 
     /**

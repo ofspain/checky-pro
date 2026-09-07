@@ -1,10 +1,12 @@
 package com.themistra.crypto.adapter.tron;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.common.config.ProviderProperties;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedConstruction;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.mock.env.MockEnvironment;
 import org.tron.trident.core.ApiWrapper;
@@ -60,7 +62,7 @@ class TronAdapterConfigTest {
                 entry("fake-tron-a", "localhost:9903", 5, "TRON_KEY"));
 
         try (MockedConstruction<ApiWrapperBuilder> mocked = mockBuilderConstruction()) {
-            new TronAdapterConfig().tronAdapters(properties, environment, 3000L);
+            new TronAdapterConfig().tronAdapters(properties, environment, 3000L, new ObjectMapper());
 
             ApiWrapperBuilder builder = mocked.constructed().get(0);
             verify(builder).withApiKey("super-secret-123");
@@ -77,7 +79,7 @@ class TronAdapterConfigTest {
                 entry("fake-tron-a", "localhost:9903", 5, "UNSET_SECRET"));
 
         try (MockedConstruction<ApiWrapperBuilder> mocked = mockBuilderConstruction()) {
-            new TronAdapterConfig().tronAdapters(properties, environment, 3000L);
+            new TronAdapterConfig().tronAdapters(properties, environment, 3000L, new ObjectMapper());
 
             ApiWrapperBuilder builder = mocked.constructed().get(0);
             verify(builder, never()).withApiKey(any());
@@ -93,7 +95,7 @@ class TronAdapterConfigTest {
                 entry("fake-tron-a", "localhost:9903", 7, "UNSET_SECRET"));
 
         try (MockedConstruction<ApiWrapperBuilder> mocked = mockBuilderConstruction()) {
-            new TronAdapterConfig().tronAdapters(properties, environment, 3000L);
+            new TronAdapterConfig().tronAdapters(properties, environment, 3000L, new ObjectMapper());
 
             ApiWrapperBuilder builder = mocked.constructed().get(0);
             verify(builder).withTimeout(TimeUnit.SECONDS.toMillis(7));
@@ -109,7 +111,7 @@ class TronAdapterConfigTest {
                 entry("fake-tron-a", "localhost:9903", 5, "UNSET_SECRET"));
 
         try (MockedConstruction<ApiWrapperBuilder> mocked = mockBuilderConstruction()) {
-            new TronAdapterConfig().tronAdapters(properties, environment, 3000L);
+            new TronAdapterConfig().tronAdapters(properties, environment, 3000L, new ObjectMapper());
 
             ApiWrapperBuilder builder = mocked.constructed().get(0);
             verify(builder).withGrpcEndpointSolidity("localhost:9903");
@@ -130,7 +132,7 @@ class TronAdapterConfigTest {
                 1);
 
         try (MockedConstruction<ApiWrapperBuilder> mocked = mockBuilderConstruction()) {
-            List<TronAdapter> adapters = new TronAdapterConfig().tronAdapters(properties, environment, 3000L);
+            List<TronAdapter> adapters = new TronAdapterConfig().tronAdapters(properties, environment, 3000L, new ObjectMapper());
 
             assertThat(adapters).hasSize(2);
             assertThat(adapters).allSatisfy(adapter -> assertThat(adapter.chain().name()).isEqualTo("TRON"));
@@ -145,7 +147,7 @@ class TronAdapterConfigTest {
                 entry("fake-eth-a", "http://localhost:9901/fake-eth-a", 5, "UNSET_A"));
 
         try (MockedConstruction<ApiWrapperBuilder> mocked = mockBuilderConstruction()) {
-            List<TronAdapter> adapters = new TronAdapterConfig().tronAdapters(properties, environment, 3000L);
+            List<TronAdapter> adapters = new TronAdapterConfig().tronAdapters(properties, environment, 3000L, new ObjectMapper());
 
             assertThat(adapters).isEmpty();
         }
@@ -160,7 +162,7 @@ class TronAdapterConfigTest {
 
         TronAdapterConfig config = new TronAdapterConfig();
         try (MockedConstruction<ApiWrapperBuilder> mocked = mockBuilderConstruction()) {
-            List<TronAdapter> adapters = config.tronAdapters(properties, environment, 3000L);
+            List<TronAdapter> adapters = config.tronAdapters(properties, environment, 3000L, new ObjectMapper());
 
             ScheduledExecutorService schedulerA = schedulerOf(adapters.get(0));
             ScheduledExecutorService schedulerB = schedulerOf(adapters.get(1));
@@ -177,6 +179,11 @@ class TronAdapterConfigTest {
     @Configuration
     @EnableConfigurationProperties(ProviderProperties.class)
     static class TestConfig {
+
+        @Bean
+        ObjectMapper objectMapper() {
+            return new ObjectMapper();
+        }
     }
 
     @Test

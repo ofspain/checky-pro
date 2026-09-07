@@ -26,13 +26,25 @@ import java.util.Map;
 public class FakeChainAdapter implements ChainAdapter {
 
     private final Chain chain;
+    private final String providerName;
     private final Map<String, TxResult> scriptedTx = new HashMap<>();
     private final Map<String, TokenInfo> scriptedTokenInfo = new HashMap<>();
     private final Map<String, FinalityStatus> scriptedFinalityStatus = new HashMap<>();
     private final List<ActiveSubscription> activeSubscriptions = new ArrayList<>();
 
+    /** Defaults {@code providerName} to {@code "fake-provider"} - T16's own {@code ObservationSink}
+     * signature change (provider identity + raw JSON, Phase 3 Finding 1) would otherwise force every
+     * pre-T16 test constructing a bare {@code new FakeChainAdapter(Chain)} to change; this overload
+     * keeps every such call site compiling unchanged. Tests that script multiple distinct providers for
+     * the same chain (T16's own quorum-fan-out tests) use {@link #FakeChainAdapter(Chain, String)}
+     * instead. */
     public FakeChainAdapter(Chain chain) {
+        this(chain, "fake-provider");
+    }
+
+    public FakeChainAdapter(Chain chain, String providerName) {
         this.chain = chain;
+        this.providerName = providerName;
     }
 
     public FakeChainAdapter scriptTx(String txHash, TxResult result) {
@@ -101,7 +113,7 @@ public class FakeChainAdapter implements ChainAdapter {
             boolean matches = subscription.address().equals(result.fromAddress())
                     || subscription.address().equals(result.toAddress());
             if (matches) {
-                subscription.sink().onObservation(result);
+                subscription.sink().onObservation(providerName, result, "{}");
             }
         }
     }

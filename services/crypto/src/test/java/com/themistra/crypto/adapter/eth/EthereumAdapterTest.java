@@ -1,5 +1,6 @@
 package com.themistra.crypto.adapter.eth;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.ObservationSink;
 import com.themistra.crypto.adapter.model.FinalityStatus;
 import com.themistra.crypto.adapter.model.Subscription;
@@ -66,7 +67,8 @@ class EthereumAdapterTest {
 
     @BeforeEach
     void setUp() {
-        adapter = new EthereumAdapter(web3j, "test-provider", scheduler, Duration.ofSeconds(15));
+        adapter = new EthereumAdapter(web3j, "test-provider", scheduler, Duration.ofSeconds(15),
+                new ObjectMapper());
     }
 
     // ---------- helpers ----------
@@ -398,7 +400,7 @@ class EthereumAdapterTest {
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
 
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(WATCHED_ADDRESS, received::add);
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> received.add(result));
 
         EthLog emptyLogResponse = mock(EthLog.class);
         when(emptyLogResponse.getLogs()).thenReturn(List.of());
@@ -420,7 +422,7 @@ class EthereumAdapterTest {
         when(scheduler.scheduleWithFixedDelay(any(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
 
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         // The only way to observe the cursor without a poll running is indirectly: fetchLatestBlockNumber
         // must have been called once during subscribeAddress itself (to seed the cursor), which this
@@ -438,7 +440,7 @@ class EthereumAdapterTest {
         when(scheduler.scheduleWithFixedDelay(any(), anyLong(), anyLong(), any()))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
 
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         long expectedMillis = Duration.ofSeconds(15).toMillis();
         verify(scheduler).scheduleWithFixedDelay(
@@ -454,7 +456,7 @@ class EthereumAdapterTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         EthLog emptyLogResponse = mock(EthLog.class);
         when(emptyLogResponse.getLogs()).thenReturn(List.of());
@@ -484,7 +486,7 @@ class EthereumAdapterTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
-        adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
 
         // No LATEST re-stub - the chain head hasn't moved since the cursor was seeded at 100.
         taskCaptor.getValue().run();
@@ -503,7 +505,7 @@ class EthereumAdapterTest {
         when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(WATCHED_ADDRESS, received::add);
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> received.add(result));
 
         Log first = transferLog(101L, "0xtoken-a", "0xsender-a", WATCHED_ADDRESS, BigInteger.valueOf(10));
         Log second = transferLog(101L, "0xtoken-b", "0xsender-b", WATCHED_ADDRESS, BigInteger.valueOf(20));
@@ -531,7 +533,7 @@ class EthereumAdapterTest {
         when(scheduler.scheduleWithFixedDelay(any(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
                 .thenReturn((ScheduledFuture) future);
 
-        Subscription subscription = adapter.subscribeAddress(WATCHED_ADDRESS, result -> { });
+        Subscription subscription = adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
         subscription.cancel();
 
         verify(future).cancel(false);
@@ -548,7 +550,7 @@ class EthereumAdapterTest {
                 .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
 
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(WATCHED_ADDRESS, received::add);
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> received.add(result));
 
         Log log = transferLog(101L, CONTRACT, "0xsender", WATCHED_ADDRESS, BigInteger.valueOf(42));
         EthLog logResponse = mock(EthLog.class);

@@ -1,5 +1,6 @@
 package com.themistra.crypto.adapter.tron;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.common.config.ProviderProperties;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,11 +29,12 @@ public class TronAdapterConfig {
     public List<TronAdapter> tronAdapters(
             ProviderProperties providerProperties,
             Environment environment,
-            @Value("${themistra.crypto.adapter.tron.poll-interval-ms}") long pollIntervalMs) {
+            @Value("${themistra.crypto.adapter.tron.poll-interval-ms}") long pollIntervalMs,
+            ObjectMapper objectMapper) {
         List<TronAdapter> adapters = providerProperties.chains().stream()
                 .filter(chainProviders -> "TRON".equals(chainProviders.chain()))
                 .flatMap(chainProviders -> chainProviders.providers().stream())
-                .map(entry -> buildAdapter(entry, environment, pollIntervalMs))
+                .map(entry -> buildAdapter(entry, environment, pollIntervalMs, objectMapper))
                 .toList();
         createdAdapters.addAll(adapters);
         return adapters;
@@ -44,7 +46,8 @@ public class TronAdapterConfig {
     }
 
     private TronAdapter buildAdapter(
-            ProviderProperties.ProviderEntry entry, Environment environment, long pollIntervalMs) {
+            ProviderProperties.ProviderEntry entry, Environment environment, long pollIntervalMs,
+            ObjectMapper objectMapper) {
         // Amendment #12: ProviderEntry has one url field but ApiWrapperBuilder wants a separate
         // solidity-node endpoint - the provisional plan (still open for a real deployment) is to
         // point both at the same address. The 1-arg constructor + withGrpcEndpointSolidity avoids
@@ -68,6 +71,7 @@ public class TronAdapterConfig {
         ScheduledExecutorService scheduler =
                 Executors.newScheduledThreadPool(1, Thread.ofVirtual().factory());
 
-        return new TronAdapter(apiWrapper, entry.name(), scheduler, Duration.ofMillis(pollIntervalMs));
+        return new TronAdapter(apiWrapper, entry.name(), scheduler, Duration.ofMillis(pollIntervalMs),
+                objectMapper);
     }
 }

@@ -40,11 +40,13 @@ class ChainBaselineMigrationIntegrationTest {
     // INSERT/SELECT/UPDATE) - its own access is verified separately by
     // OutboxGrantMigrationIntegrationTest, including that DELETE is still denied. provider_health
     // (T10, V4__crypto_app_provider_health_grant.sql: INSERT/SELECT/UPDATE), token_allowlist (T11,
-    // V5__crypto_app_token_allowlist_grant.sql: INSERT/SELECT), and watches/chain_cursors (T15,
+    // V5__crypto_app_token_allowlist_grant.sql: INSERT/SELECT), watches/chain_cursors (T15,
     // V6__crypto_app_watches_grant.sql: INSERT/SELECT/UPDATE on watches, INSERT/SELECT on
-    // chain_cursors) are likewise verified by their own dedicated integration tests, not folded into
-    // this class's tx_hash-keyed GRANTED_TABLES helper, since none of those tables has a tx_hash column.
-    private static final List<String> UNGRANTED_TABLES = List.of("screening_results", "shedlock");
+    // chain_cursors), and chain_cursors' own added UPDATE grant plus shedlock's full DML (T16,
+    // V7__crypto_app_watcher_grants.sql) are likewise verified by their own dedicated integration
+    // tests, not folded into this class's tx_hash-keyed GRANTED_TABLES helper, since none of those
+    // tables has a tx_hash column.
+    private static final List<String> UNGRANTED_TABLES = List.of("screening_results");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -121,7 +123,7 @@ class ChainBaselineMigrationIntegrationTest {
     void allMigrationsAreRecordedAsSuccessfulInFlywayHistory() throws SQLException {
         // Flyway also inserts a synthetic, unversioned "schema creation" row before the versioned
         // migrations; only the versioned rows (V1-V2 from T02, V3 from T04, V4 from T10, V5 from
-        // T11, V6 from T15) are this assertion's concern.
+        // T11, V6 from T15, V7 from T16) are this assertion's concern.
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
@@ -132,7 +134,7 @@ class ChainBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7");
         }
     }
 

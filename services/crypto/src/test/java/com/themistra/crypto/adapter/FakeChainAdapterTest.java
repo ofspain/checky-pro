@@ -75,7 +75,7 @@ class FakeChainAdapterTest {
         adapter.scriptTx(TX_HASH, original);
 
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(FROM, received::add);
+        adapter.subscribeAddress(FROM, (provider, result, rawJson) -> received.add(result));
 
         TxResult reorged = tx(true, 1, 99L);
         adapter.simulateReorg(TX_HASH, reorged);
@@ -91,7 +91,7 @@ class FakeChainAdapterTest {
         adapter.scriptTx(TX_HASH, tx(true, 3, 100L));
 
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(TO, received::add);
+        adapter.subscribeAddress(TO, (provider, result, rawJson) -> received.add(result));
 
         TxResult reorged = tx(true, 1, 99L);
         adapter.simulateReorg(TX_HASH, reorged);
@@ -107,8 +107,8 @@ class FakeChainAdapterTest {
 
         List<TxResult> receivedByFirst = new ArrayList<>();
         List<TxResult> receivedBySecond = new ArrayList<>();
-        adapter.subscribeAddress(FROM, receivedByFirst::add);
-        adapter.subscribeAddress(FROM, receivedBySecond::add);
+        adapter.subscribeAddress(FROM, (provider, result, rawJson) -> receivedByFirst.add(result));
+        adapter.subscribeAddress(FROM, (provider, result, rawJson) -> receivedBySecond.add(result));
 
         TxResult reorged = tx(true, 1, 99L);
         adapter.simulateReorg(TX_HASH, reorged);
@@ -125,7 +125,7 @@ class FakeChainAdapterTest {
         adapter.scriptTx(TX_HASH, tx(true, 3, 100L));
 
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(FROM, received::add);
+        adapter.subscribeAddress(FROM, (provider, result, rawJson) -> received.add(result));
 
         TxResult invalidated = tx(false, 0, 0L);
         adapter.simulateReorg(TX_HASH, invalidated);
@@ -141,7 +141,7 @@ class FakeChainAdapterTest {
         FakeChainAdapter adapter = new FakeChainAdapter(Chain.ETHEREUM);
 
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(FROM, received::add);
+        adapter.subscribeAddress(FROM, (provider, result, rawJson) -> received.add(result));
 
         adapter.scriptTx(TX_HASH, tx(true, 3, 100L));
 
@@ -154,7 +154,7 @@ class FakeChainAdapterTest {
         adapter.scriptTx(TX_HASH, tx(true, 3, 100L));
 
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress("0xsome-other-address", received::add);
+        adapter.subscribeAddress("0xsome-other-address", (provider, result, rawJson) -> received.add(result));
 
         adapter.simulateReorg(TX_HASH, tx(true, 1, 99L));
 
@@ -194,7 +194,7 @@ class FakeChainAdapterTest {
         adapter.scriptTx(TX_HASH, tx(true, 3, 100L));
 
         List<TxResult> received = new ArrayList<>();
-        adapter.subscribeAddress(FROM, received::add);
+        adapter.subscribeAddress(FROM, (provider, result, rawJson) -> received.add(result));
 
         assertThat(received).isEmpty();
     }
@@ -205,7 +205,7 @@ class FakeChainAdapterTest {
         adapter.scriptTx(TX_HASH, tx(true, 3, 100L));
 
         List<TxResult> received = new ArrayList<>();
-        Subscription subscription = adapter.subscribeAddress(FROM, received::add);
+        Subscription subscription = adapter.subscribeAddress(FROM, (provider, result, rawJson) -> received.add(result));
         subscription.cancel();
 
         adapter.simulateReorg(TX_HASH, tx(true, 1, 99L));
@@ -221,7 +221,7 @@ class FakeChainAdapterTest {
         adapter.scriptTx(TX_HASH, tx(true, 3, 100L));
 
         List<TxResult> received = new ArrayList<>();
-        Subscription subscription = adapter.subscribeAddress(FROM, received::add);
+        Subscription subscription = adapter.subscribeAddress(FROM, (provider, result, rawJson) -> received.add(result));
 
         assertThatCode(() -> {
             subscription.cancel();

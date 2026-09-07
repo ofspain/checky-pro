@@ -1,6 +1,8 @@
 package com.themistra.crypto.provider;
 
 import com.themistra.crypto.common.config.ProviderHealthProperties;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -62,14 +64,16 @@ public class ProviderHealthTracker {
     private final ProviderDegradedPublisher publisher;
     private final Clock clock;
     private final ProviderHealthProperties properties;
+    private final MeterRegistry meterRegistry;
     private final ConcurrentMap<ProviderKey, AtomicInteger> disagreementCounts = new ConcurrentHashMap<>();
 
     public ProviderHealthTracker(ProviderHealthRepository repository, ProviderDegradedPublisher publisher,
-                                  Clock clock, ProviderHealthProperties properties) {
+                                  Clock clock, ProviderHealthProperties properties, MeterRegistry meterRegistry) {
         this.repository = repository;
         this.publisher = publisher;
         this.clock = clock;
         this.properties = properties;
+        this.meterRegistry = meterRegistry;
     }
 
     @Transactional
@@ -99,6 +103,14 @@ public class ProviderHealthTracker {
     public void recordDisagreement(String chain, String provider) {
         Objects.requireNonNull(chain, "chain");
         Objects.requireNonNull(provider, "provider");
+
+        // T16 Phase 3 Finding 7: agents.md names "provider-disagreement rate" a paged metric - this is
+        // the first (and, per L1/L2, only correct) place a disagreement is ever recorded.
+        Counter.builder("crypto.provider.disagreements")
+                .tag("chain", chain)
+                .tag("provider", provider)
+                .register(meterRegistry)
+                .increment();
 
         ProviderHealth health = fetchOrCreate(chain, provider);
         Instant now = clock.instant();

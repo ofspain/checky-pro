@@ -1,10 +1,12 @@
 package com.themistra.crypto.adapter.eth;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.common.config.ProviderProperties;
 import okhttp3.OkHttpClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.http.HttpService;
@@ -28,6 +30,11 @@ class EthereumAdapterConfigTest {
     @Configuration
     @EnableConfigurationProperties(ProviderProperties.class)
     static class TestConfig {
+
+        @Bean
+        ObjectMapper objectMapper() {
+            return new ObjectMapper();
+        }
     }
 
     private static final String[] POLL_INTERVAL = {

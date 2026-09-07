@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -14,6 +15,11 @@ interface WatchRepository extends JpaRepository<Watch, Long> {
     Optional<Watch> findByWatchId(UUID watchId);
 
     boolean existsByWatchId(UUID watchId);
+
+    /** T16: the set of watches {@code WatcherRegistry} distributes across shards. Every other status
+     * ({@code UNREGISTERED}/{@code EXPIRED}) is excluded - the watcher only ever drives an active
+     * watch's address. */
+    List<Watch> findByStatus(WatchStatus status);
 
     /** The sole {@code DELETE}-time mutation (R19, Phase 3 Finding 4) - a single atomic conditional
      * {@code UPDATE}, not a load-then-save. Returns the number of rows updated (0 or 1); callers treat

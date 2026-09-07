@@ -1,5 +1,7 @@
 package com.themistra.crypto.adapter.tron;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.themistra.crypto.adapter.Chain;
@@ -28,7 +30,9 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -96,18 +100,26 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
     private final String providerName;
     private final ScheduledExecutorService scheduler;
     private final Duration pollInterval;
+    private final ObjectMapper objectMapper;
 
     public TronAdapter(ApiWrapper apiWrapper, String providerName, ScheduledExecutorService scheduler,
-                        Duration pollInterval) {
+                        Duration pollInterval, ObjectMapper objectMapper) {
         this.apiWrapper = apiWrapper;
         this.providerName = providerName;
         this.scheduler = scheduler;
         this.pollInterval = pollInterval;
+        this.objectMapper = objectMapper;
     }
 
     @Override
     public Chain chain() {
         return Chain.TRON;
+    }
+
+    /** Not part of the VERBATIM {@code ChainAdapter} interface (T16) - mirrors {@code
+     * EthereumAdapter.providerName()}'s own rationale exactly. */
+    public String providerName() {
+        return providerName;
     }
 
     @Override
@@ -248,9 +260,10 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
                 for (TransactionInfo.Log log : info.getLogList()) {
                     if (isMatchingTransferLog(log, recipientTopic)) {
                         int confirmations = computeConfirmations(headBlock, info.getBlockNumber());
-                        sink.onObservation(buildTxResultFromLog(
+                        TxResult result = buildTxResultFromLog(
                                 ByteArray.toHexString(info.getId().toByteArray()), log, confirmations,
-                                info.getBlockNumber()));
+                                info.getBlockNumber());
+                        sink.onObservation(providerName, result, toRawJson(log, result));
                     }
                 }
             }
@@ -273,6 +286,33 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
         BigDecimal amount = new BigDecimal(new BigInteger(1, log.getData().toByteArray()));
         return new TxResult(true, txHash, fromAddress, toAddress, tokenContractAddress, amount,
                 confirmations, txBlock);
+    }
+
+    /** T16 Phase 3 Finding 1: mirrors {@code EthereumAdapter.toRawJson}'s own rationale exactly - a
+     * best-effort JSON capture of what this adapter itself parsed, not the original wire bytes (trident
+     * has already parsed those into protobuf types by the time this class sees a
+     * {@code TransactionInfo.Log}). {@code amount} is a decimal string (agents.md), never a JSON
+     * number. */
+    private String toRawJson(TransactionInfo.Log log, TxResult result) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("txHash", result.txHash());
+        fields.put("blockNumber", result.blockNumber());
+        fields.put("logAddress", hex(log.getAddress()));
+        fields.put("fromAddress", result.fromAddress());
+        fields.put("toAddress", result.toAddress());
+        fields.put("tokenContractAddress", result.tokenContractAddress());
+        fields.put("amount", result.amount().toPlainString());
+        fields.put("confirmations", result.confirmations());
+        return writeValueAsString(fields);
+    }
+
+    private String writeValueAsString(Map<String, Object> fields) {
+        try {
+            return objectMapper.writeValueAsString(fields);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(
+                    "Provider " + providerName + " observation could not be serialized to JSON", e);
+        }
     }
 
     private TxResult buildNativeTransferResult(String txHash, Transaction tx, int confirmations,

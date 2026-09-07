@@ -1,6 +1,7 @@
 package com.themistra.crypto.provider;
 
 import com.themistra.crypto.common.config.ProviderHealthProperties;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,7 +48,8 @@ class ProviderHealthTrackerTest {
 
     @BeforeEach
     void setUp() {
-        tracker = new ProviderHealthTracker(repository, publisher, fixedClock, properties);
+        tracker = new ProviderHealthTracker(repository, publisher, fixedClock, properties,
+                new SimpleMeterRegistry());
         // lenient(): the null-guard tests below throw before ever reaching the repository, so these
         // stubs are legitimately unused in those specific test methods.
         lenient().when(repository.findByChainAndProvider(any(), any())).thenAnswer(invocation -> {

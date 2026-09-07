@@ -7,6 +7,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -14,26 +15,41 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** AC8 (L15, module boundaries) - mirrors {@code TokenModuleBoundaryTest} (T11) / {@code
  * FinalityModuleBoundaryTest} (T14)'s exact source-scan style: a plain static file scan over
- * {@code import} lines, not ArchUnit. {@code watch/}'s one legitimate cross-module dependency is
- * {@code token.AddressValidator} (T15 Phase 3/4 Finding 1) - a stateless predicate, not an entity - so
- * that single import is allow-listed rather than {@code token} being forbidden outright. */
+ * {@code import} lines, not ArchUnit. {@code watch/} legitimately depends on several other modules'
+ * stateless services/value types (T16 gave it real callers into {@code observation}/{@code
+ * provider}/{@code quorum}/{@code adapter} for the first time) - each such package gets an exact
+ * allow-list of the imports actually used, rather than being forbidden outright or left unchecked;
+ * {@code finality} and {@code events} remain fully forbidden - {@code watch/} has no legitimate need
+ * for either. */
 class WatchModuleBoundaryTest {
 
     private static final List<String> FULLY_FORBIDDEN_IMPORT_PREFIXES = List.of(
-            "com.themistra.crypto.observation",
-            "com.themistra.crypto.provider",
-            "com.themistra.crypto.quorum",
             "com.themistra.crypto.finality",
-            "com.themistra.crypto.events",
-            "com.themistra.crypto.adapter");
+            "com.themistra.crypto.events");
 
-    private static final String TOKEN_IMPORT_PREFIX = "com.themistra.crypto.token";
-
-    private static final Set<String> ALLOWED_TOKEN_IMPORTS = Set.of(
-            "import com.themistra.crypto.token.AddressValidator;");
+    /** Package prefix -> the exact import lines permitted from it. Anything else from a listed prefix
+     * (in particular, any of that package's own JPA entities) fails; a prefix not listed here at all is
+     * unconstrained by this map (still subject to {@link #FULLY_FORBIDDEN_IMPORT_PREFIXES} above). */
+    private static final Map<String, Set<String>> ALLOWED_IMPORTS_BY_PREFIX = Map.of(
+            "com.themistra.crypto.token", Set.of(
+                    "import com.themistra.crypto.token.AddressValidator;"),
+            "com.themistra.crypto.adapter", Set.of(
+                    "import com.themistra.crypto.adapter.Chain;",
+                    "import com.themistra.crypto.adapter.ProviderSet;",
+                    "import com.themistra.crypto.adapter.model.Subscription;",
+                    "import com.themistra.crypto.adapter.model.TxResult;"),
+            "com.themistra.crypto.observation", Set.of(
+                    "import com.themistra.crypto.observation.FactType;",
+                    "import com.themistra.crypto.observation.ObservationLog;"),
+            "com.themistra.crypto.provider", Set.of(
+                    "import com.themistra.crypto.provider.DegradationReason;",
+                    "import com.themistra.crypto.provider.ProviderHealthTracker;"),
+            "com.themistra.crypto.quorum", Set.of(
+                    "import com.themistra.crypto.quorum.ProviderAnswer;",
+                    "import com.themistra.crypto.quorum.QuorumDecisionService;"));
 
     @Test
-    void noMainSourceFileInWatchImportsBeyondItsAllowedTokenTypeOrAnyForbiddenPackage() {
+    void noMainSourceFileInWatchImportsBeyondItsAllowedTypesOrAnyForbiddenPackage() {
         Path watchMainSourceDir = Path.of("src/main/java/com/themistra/crypto/watch");
         assertThat(watchMainSourceDir).isDirectory();
 
@@ -52,11 +68,13 @@ class WatchModuleBoundaryTest {
                                 .as("%s must not import from %s (L15)", javaFile, forbidden)
                                 .doesNotContain(forbidden);
                     }
-                    if (importLine.contains(TOKEN_IMPORT_PREFIX)) {
-                        assertThat(ALLOWED_TOKEN_IMPORTS)
-                                .as("%s imports %s from token, which is not the one allowed type "
-                                        + "(AddressValidator) (L15)", javaFile, importLine)
-                                .contains(importLine);
+                    for (Map.Entry<String, Set<String>> entry : ALLOWED_IMPORTS_BY_PREFIX.entrySet()) {
+                        if (importLine.contains(entry.getKey())) {
+                            assertThat(entry.getValue())
+                                    .as("%s imports %s, which is not one of the allow-listed types "
+                                            + "from %s (L15)", javaFile, importLine, entry.getKey())
+                                    .contains(importLine);
+                        }
                     }
                 }
             }
