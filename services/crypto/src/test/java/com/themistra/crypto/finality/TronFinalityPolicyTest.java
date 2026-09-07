@@ -36,6 +36,16 @@ class TronFinalityPolicyTest {
     }
 
     @Test
+    void isNotFinalWhenTxBlockIsWellAboveTheSolidifiedBlock() {
+        // Phase 11 (Kimi Issue 3): a non-boundary negative case - the boundary test alone doesn't rule
+        // out the policy accidentally returning true for any status where the tx block is simply newer
+        // than the solidified block.
+        FinalityStatus status = new FinalityStatus(1_000L, 1_050L, 100L);
+
+        assertThat(policy.isFinal(status)).isFalse();
+    }
+
+    @Test
     void isFinalAtTheGenesisBoundaryWhenBothBlockNumbersAreZero() {
         // Phase 9 (Kimi Issue 3): a transaction mined in the chain's first block is a realistic value,
         // not just a theoretical edge.

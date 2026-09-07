@@ -35,6 +35,16 @@ class EthereumFinalityPolicyTest {
     }
 
     @Test
+    void isNotFinalWhenTxBlockIsWellAboveTheFinalizedCheckpoint() {
+        // Phase 11 (Kimi Issue 3): a non-boundary negative case - the boundary test alone doesn't rule
+        // out the policy accidentally returning true for any status where the tx block is simply newer
+        // than the checkpoint.
+        FinalityStatus status = new FinalityStatus(1_000L, 1_050L, 100L);
+
+        assertThat(policy.isFinal(status)).isFalse();
+    }
+
+    @Test
     void isFinalAtTheGenesisBoundaryWhenBothBlockNumbersAreZero() {
         // Phase 9 (Kimi Issue 3): a transaction mined in the chain's first block is a realistic value,
         // not just a theoretical edge.
@@ -77,9 +87,15 @@ class EthereumFinalityPolicyTest {
         // accepted as documentation-only) - neither policy performs a chain self-check, so the same
         // status fed to either policy produces the identical raw comparison result. This locks the
         // documented "no self-validation" contract in executable form.
-        FinalityStatus status = new FinalityStatus(500L, 900L, 500L);
+        //
+        // Phase 11 (Kimi Issue 4): the original version of this test only exercised the `true` path -
+        // a `finalStatus`/`notFinalStatus` pair now covers both branches, so a subtle divergence in
+        // the `false` case would not slip past unnoticed.
+        FinalityStatus finalStatus = new FinalityStatus(500L, 900L, 500L);
+        FinalityStatus notFinalStatus = new FinalityStatus(600L, 900L, 500L);
         TronFinalityPolicy tronPolicy = new TronFinalityPolicy();
 
-        assertThat(policy.isFinal(status)).isEqualTo(tronPolicy.isFinal(status));
+        assertThat(policy.isFinal(finalStatus)).isEqualTo(tronPolicy.isFinal(finalStatus));
+        assertThat(policy.isFinal(notFinalStatus)).isEqualTo(tronPolicy.isFinal(notFinalStatus));
     }
 }
