@@ -16,8 +16,14 @@ class AddressPoisoningDetectorTest {
 
     @Test
     void shouldFlagAddressPoisoningOnPrefixSuffixSimilarity() {
-        String candidate = "ABCDEF0000";
-        String previous = "ABCDEF9999";
+        // Phase 11 (Kimi): the previous vector only exercised a prefix match, despite the test's own
+        // name implying both directions. Kimi's own suggested replacement vector ("ABCDEF00GH" vs.
+        // "ABCDEF99GH") was checked by hand and does NOT actually share a 4-character suffix (only the
+        // last 2 characters match) - verified rather than taken on faith, per this pipeline's own
+        // library/vector-verification discipline. This vector genuinely shares both the 6-character
+        // prefix and the 4-character suffix while differing in the middle (not an exact match).
+        String candidate = "ABCDEFXXWXYZ";
+        String previous = "ABCDEFYYWXYZ";
 
         assertThat(detector.detectPoisoning(candidate, List.of(previous))).contains(previous);
     }
@@ -149,5 +155,90 @@ class AddressPoisoningDetectorTest {
         String previous = "0xAB2222222222222222222222222222222222222B";
 
         assertThat(detector.detectPoisoning(candidate, List.of(previous))).isEmpty();
+    }
+
+    @Test
+    void flagsWhenOnlyOneAddressInHistoryMatches() {
+        // Phase 11 (Kimi): a mixed history - one unrelated entry, one matching entry - confirms the
+        // loop continues past a non-match instead of returning empty (or the wrong entry) too early.
+        String candidate = "ABCDEF0000";
+        List<String> history = List.of("999999XXXX", "ABCDEF9999");
+
+        assertThat(detector.detectPoisoning(candidate, history)).contains("ABCDEF9999");
+    }
+
+    @Test
+    void flagsWhenCandidateIsExactlyTheSuffixLengthAndMatchesTheSuffixOfAPreviousAddress() {
+        // Phase 11 (Kimi): boundary where candidate.length() - SUFFIX_MATCH_LENGTH == 0, confirming
+        // the suffix comparison still works at the minimum possible candidate length.
+        String candidate = "WXYZ";
+        String previous = "ABCDEFWXYZ";
+
+        assertThat(detector.detectPoisoning(candidate, List.of(previous))).contains(previous);
+    }
+
+    @Test
+    void flagsViaSuffixWhenPreviousAddressIsTooShortForPrefixMatch() {
+        // Phase 11 (Kimi): a previous address (length 7) too short for a 6-character prefix match to
+        // mean anything meaningful, but long enough for the 4-character suffix check to legitimately
+        // match against a longer candidate.
+        String candidate = "ABCDEFWXYZ";
+        String previous = "ABCWXYZ";
+
+        assertThat(detector.detectPoisoning(candidate, List.of(previous))).contains(previous);
+    }
+
+    @Test
+    void flagsAnEvmShapedAddressWithASuffixMatch() {
+        // Phase 11 (Kimi): complements doesNotFlagTwoEvmAddressesSharingOnlyTheZeroXPrefixAndTwoHexDigits
+        // - a realistic EVM-shaped suffix match, documenting the chain-agnostic algorithm works
+        // identically on realistic-length inputs in the suffix direction too.
+        String candidate = "0x1111111111111111111111111111111111ABCD";
+        String previous = "0x2222222222222222222222222222222222ABCD";
+
+        assertThat(detector.detectPoisoning(candidate, List.of(previous))).contains(previous);
+    }
+
+    @Test
+    void flagsAPrefixMatchRegardlessOfLengthDifference() {
+        // Phase 11 (Kimi): the algorithm is string-length-agnostic - a longer candidate can still
+        // prefix-match a shorter previously-seen address.
+        String candidate = "ABCDEF00000000";
+        String previous = "ABCDEF9999";
+
+        assertThat(detector.detectPoisoning(candidate, List.of(previous))).contains(previous);
+    }
+
+    @Test
+    void flagsASuffixMatchRegardlessOfLengthDifference() {
+        // Phase 11 (Kimi): the suffix-direction counterpart of the above - a longer candidate can still
+        // suffix-match a shorter previously-seen address.
+        String candidate = "0000000000WXYZ";
+        String previous = "9999WXYZ";
+
+        assertThat(detector.detectPoisoning(candidate, List.of(previous))).contains(previous);
+    }
+
+    @Test
+    void flagsALookAlikeEvenWhenAnotherHistoryEntryIsAnExactMatch() {
+        // Phase 11 (Kimi Issue 7): Kimi's own suggested assertion for this scenario was "isEmpty()" -
+        // verified by tracing the implementation instead of taken on faith (per this pipeline's own
+        // verify-don't-assume discipline) and found to be WRONG. The exact-match `continue` in
+        // detectPoisoning only skips the entry it exactly matches; it does not exempt the candidate from
+        // being compared against OTHER, unrelated entries in the same history. So a candidate that
+        // exactly matches one entry ("ABCDEF0000") but genuinely resembles a different entry
+        // ("ABCDEF1111") is correctly flagged via that second entry - this locks in that (correct)
+        // per-entry precedence, not a global "any exact match anywhere suppresses all flags" rule.
+        String candidate = "ABCDEF0000";
+        List<String> history = List.of("ABCDEF0000", "ABCDEF1111");
+
+        assertThat(detector.detectPoisoning(candidate, history)).contains("ABCDEF1111");
+    }
+
+    @Test
+    void returnsEmptyWhenBothParametersAreNull() {
+        // Phase 11 (Kimi): trivial boundary confirming the leading `||` null-check short-circuits
+        // regardless of which (or how many) of the two parameters are null.
+        assertThat(detector.detectPoisoning(null, null)).isEmpty();
     }
 }
