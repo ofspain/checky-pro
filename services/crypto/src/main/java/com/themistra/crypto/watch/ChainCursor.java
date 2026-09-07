@@ -39,7 +39,7 @@ public class ChainCursor {
     @Column(nullable = false, length = 32)
     private String chain;
 
-    @Column(name = "watch_id")
+    @Column(name = "watch_id", nullable = false)
     private UUID watchId;
 
     @Column(name = "last_block", nullable = false)

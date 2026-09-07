@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * domain-specific advice needs this to reliably outrank any global fallback handler. */
 @RestControllerAdvice
 @Order(Ordered.HIGHEST_PRECEDENCE)
-class WatchExceptionHandler {
+public class WatchExceptionHandler {
 
     @ExceptionHandler(WatchNotFoundException.class)
     ProblemDetail onNotFound(WatchNotFoundException e) {

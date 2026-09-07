@@ -27,6 +27,15 @@ import java.util.UUID;
  * not a load-then-save entity mutation (Phase 3 Kimi Finding 4 - race-safe by construction: two
  * concurrent {@code DELETE}s can never both "win" and double-set {@code unregisteredAt}, since at most
  * one {@code UPDATE ... WHERE status = 'REGISTERED'} can match a given row).</p>
+ *
+ * <p><b>Stored addresses are not case-normalized (T15 Phase 8 Finding 7).</b> {@code address} and
+ * {@code tokenContractAddress} are persisted exactly as validated - {@link
+ * com.themistra.crypto.token.AddressValidator#isValidEvmAddress} requires (and therefore preserves) a
+ * correctly checksummed, mixed-case EVM address. {@code TokenAllowlist} (T11) stores and matches EVM
+ * contract addresses as lowercase, case-sensitive exact strings with no folding. A future consumer that
+ * looks up this watch's {@code tokenContractAddress} against the allowlist (not built by this task) must
+ * account for that mismatch itself - e.g. lowercase before lookup - or it will incorrectly see
+ * {@code UNKNOWN_TOKEN} for a checksummed address that is genuinely on the allowlist.</p>
  */
 @Entity
 @Table(name = "watches", schema = "chain")

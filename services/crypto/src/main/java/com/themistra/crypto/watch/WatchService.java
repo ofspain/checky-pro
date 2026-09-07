@@ -17,8 +17,10 @@ public class WatchService {
 
     /** Positive, scale-0 integer only (Phase 3 Finding 2) - matches {@code expected_amount NUMERIC(78,
      * 0)}. No leading zero (so "0" itself, and any zero-value amount, is rejected by requiring the
-     * first digit to be 1-9), no decimal point, no exponent - "1.5"/"1e18"/"-0" are all rejected. */
-    private static final Pattern EXPECTED_AMOUNT_PATTERN = Pattern.compile("^[1-9][0-9]*$");
+     * first digit to be 1-9), no decimal point, no exponent - "1.5"/"1e18"/"-0" are all rejected.
+     * Capped at 78 digits total (Phase 7/8 - self-review Finding 1 / Kimi Finding 2): the column's own
+     * precision, so an oversized value is rejected here with 400 rather than reaching the database. */
+    private static final Pattern EXPECTED_AMOUNT_PATTERN = Pattern.compile("^[1-9][0-9]{0,77}$");
 
     private static final String ETHEREUM = "ETHEREUM";
 

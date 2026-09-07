@@ -21,7 +21,7 @@ interface WatchRepository extends JpaRepository<Watch, Long> {
      * decided separately, by {@link #existsByWatchId} in {@link WatchService#unregister}, before this
      * method ever runs. Race-safe by construction: two concurrent calls for the same {@code watchId}
      * can never both match {@code status = 'REGISTERED'} and double-set {@code unregisteredAt}. */
-    @Modifying
+    @Modifying(clearAutomatically = true)
     @Query("UPDATE Watch w SET w.status = com.themistra.crypto.watch.WatchStatus.UNREGISTERED, "
             + "w.unregisteredAt = :now WHERE w.watchId = :watchId "
             + "AND w.status = com.themistra.crypto.watch.WatchStatus.REGISTERED")
