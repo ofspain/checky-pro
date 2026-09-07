@@ -25,13 +25,27 @@ import com.themistra.crypto.adapter.model.FinalityStatus;
  * policy (or vice versa) is not detected here; the caller must route consistently.</p>
  *
  * <p><b>Trust boundary.</b> {@link #isFinal} does not re-validate {@link FinalityStatus}'s internal
- * consistency (e.g. that {@code finalizedBlockNumber} does not exceed {@code currentBlockNumber}) -
- * both real adapters already throw before ever constructing an inconsistent {@link FinalityStatus}, so
- * every value reaching this interface is already trusted, adapter-produced data.</p>
+ * consistency - it is trusted, adapter-produced data. Both real adapters guard the one invariant that
+ * actually matters for this comparison, {@code finalizedBlockNumber <= currentBlockNumber}, before
+ * ever returning. They are not symmetric beyond that: {@code TronAdapter} additionally guards
+ * {@code txBlockNumber <= currentBlockNumber}, while {@code EthereumAdapter} does not (Phase 8
+ * finding) - but even in that unguarded case, {@code txBlockNumber > currentBlockNumber >=
+ * finalizedBlockNumber} still forces the correct {@code isFinal() == false} answer, so this asymmetry
+ * cannot produce a wrong finality decision, only a `FinalityStatus` this interface never needed to
+ * reject in the first place.</p>
  */
 public interface FinalityPolicy {
 
+    /** Which chain this policy decides finality for - an identifier for a future dispatcher, not a
+     * self-check against {@link FinalityStatus} (see class Javadoc's caller-routing note). */
     Chain chain();
 
+    /**
+     * @param status the chain head snapshot to evaluate; always a prior, successful {@code
+     *     ChainAdapter.getFinalityStatus(txHash)} result - never null (see class Javadoc)
+     * @return {@code true} once {@code status.txBlockNumber() <= status.finalizedBlockNumber()} -
+     *     i.e. the transaction's own block is at or behind this chain's finalized/solidified block
+     * @throws NullPointerException if {@code status} is null
+     */
     boolean isFinal(FinalityStatus status);
 }
