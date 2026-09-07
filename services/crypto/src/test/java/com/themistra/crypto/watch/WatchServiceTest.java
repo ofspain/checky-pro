@@ -23,6 +23,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** {@link AddressValidator} is used as its real, pure implementation (not mocked) - it has no external
@@ -72,6 +73,10 @@ class WatchServiceTest {
         assertThat(cursor.chain()).isEqualTo("ETHEREUM");
         assertThat(cursor.lastBlock()).isEqualTo(-1L);
         assertThat(cursor.lastFinalizedBlock()).isNull();
+        // Phase 11 (Kimi Issue 6): both rows come from the same clock.instant() call in
+        // WatchService.register - a future refactor that called it twice could silently desynchronize
+        // them, especially with a real (non-fixed) Clock.
+        assertThat(cursor.updatedAt()).isEqualTo(watch.createdAt());
     }
 
     @Test
@@ -104,6 +109,42 @@ class WatchServiceTest {
 
         assertThatExceptionOfType(InvalidWatchRequestException.class)
                 .isThrownBy(() -> service.register(request));
+    }
+
+    @Test
+    void registerDoesNotPersistAnythingWhenExpectedAmountValidationFails() {
+        // Phase 11 (Kimi Issue 1): AC5 requires "no rows written" on validation failure - representative
+        // coverage that this is actually true at the persistence-interaction level, not just that an
+        // exception is thrown.
+        RegisterWatchRequest request = new RegisterWatchRequest(UUID.randomUUID(), "ETHEREUM",
+                VALID_EVM_ADDRESS, VALID_EVM_ADDRESS, "1.5", FUTURE);
+
+        assertThatExceptionOfType(InvalidWatchRequestException.class)
+                .isThrownBy(() -> service.register(request));
+
+        verifyNoInteractions(watchRepository, chainCursorRepository);
+    }
+
+    @Test
+    void registerDoesNotPersistAnythingWhenExpiresAtValidationFails() {
+        RegisterWatchRequest request = new RegisterWatchRequest(UUID.randomUUID(), "ETHEREUM",
+                VALID_EVM_ADDRESS, VALID_EVM_ADDRESS, "1000000", NOW.minusSeconds(1));
+
+        assertThatExceptionOfType(InvalidWatchRequestException.class)
+                .isThrownBy(() -> service.register(request));
+
+        verifyNoInteractions(watchRepository, chainCursorRepository);
+    }
+
+    @Test
+    void registerDoesNotPersistAnythingWhenAddressValidationFails() {
+        RegisterWatchRequest request = new RegisterWatchRequest(UUID.randomUUID(), "ETHEREUM",
+                "0xnotanaddress", VALID_EVM_ADDRESS, "1000000", FUTURE);
+
+        assertThatExceptionOfType(InvalidWatchRequestException.class)
+                .isThrownBy(() -> service.register(request));
+
+        verifyNoInteractions(watchRepository, chainCursorRepository);
     }
 
     @Test
@@ -196,6 +237,19 @@ class WatchServiceTest {
     void registerRejectsAStructurallyInvalidTronAddress() {
         RegisterWatchRequest request = new RegisterWatchRequest(UUID.randomUUID(), "TRON",
                 "not-a-tron-address", VALID_TRON_ADDRESS, "1000000", FUTURE);
+
+        assertThatExceptionOfType(InvalidWatchRequestException.class)
+                .isThrownBy(() -> service.register(request));
+    }
+
+    @Test
+    void registerRejectsAnInvalidTronTokenContractAddress() {
+        // Phase 11 (Kimi Issue 8): the Tron-side counterpart of
+        // registerRejectsAStructurallyInvalidTokenContractAddress (EVM) - confirms the chain-specific
+        // dispatch to AddressValidator.isValidTronAddress applies to tokenContractAddress too, not just
+        // address.
+        RegisterWatchRequest request = new RegisterWatchRequest(UUID.randomUUID(), "TRON",
+                VALID_TRON_ADDRESS, "not-a-tron-address", "1000000", FUTURE);
 
         assertThatExceptionOfType(InvalidWatchRequestException.class)
                 .isThrownBy(() -> service.register(request));

@@ -145,6 +145,15 @@ class WatchRepositoryIntegrationTest {
             statement.execute("UPDATE chain.watches SET status = 'UNREGISTERED' WHERE watch_id = '"
                     + watchId + "'");
 
+            // Phase 11 (Kimi Issue 2): an explicit raw SELECT as crypto_app - the repository-level
+            // reads elsewhere in this class happen through Spring Data, which would mask a migration
+            // that accidentally omitted SELECT.
+            try (var resultSet = statement.executeQuery(
+                    "SELECT status FROM chain.watches WHERE watch_id = '" + watchId + "'")) {
+                assertThat(resultSet.next()).isTrue();
+                assertThat(resultSet.getString("status")).isEqualTo("UNREGISTERED");
+            }
+
             assertThatThrownBy(() -> statement.execute("DELETE FROM chain.watches WHERE watch_id = '"
                     + watchId + "'"))
                     .isInstanceOf(SQLException.class)
@@ -159,6 +168,13 @@ class WatchRepositoryIntegrationTest {
         try (Connection app = connectAsCryptoApp(); Statement statement = app.createStatement()) {
             statement.execute("INSERT INTO chain.chain_cursors (chain, watch_id, last_block, updated_at) "
                     + "VALUES ('ETHEREUM', '" + watchId + "', -1, now())");
+
+            // Phase 11 (Kimi Issue 2): explicit raw SELECT as crypto_app.
+            try (var resultSet = statement.executeQuery(
+                    "SELECT last_block FROM chain.chain_cursors WHERE watch_id = '" + watchId + "'")) {
+                assertThat(resultSet.next()).isTrue();
+                assertThat(resultSet.getLong("last_block")).isEqualTo(-1L);
+            }
 
             assertThatThrownBy(() -> statement.execute(
                     "UPDATE chain.chain_cursors SET last_block = 100 WHERE watch_id = '" + watchId + "'"))

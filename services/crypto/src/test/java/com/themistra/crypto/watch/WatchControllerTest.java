@@ -84,7 +84,9 @@ class WatchControllerTest {
         mockMvc.perform(post("/internal/v1/watches")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.title").value("Validation failed"));
     }
 
     @Test
@@ -96,7 +98,9 @@ class WatchControllerTest {
         mockMvc.perform(post("/internal/v1/watches")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.title").value("Validation failed"));
     }
 
     @Test
@@ -124,6 +128,44 @@ class WatchControllerTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.title").value("Invalid watch registration request"))
                 .andExpect(jsonPath("$.detail").value("address is not a valid ETHEREUM address"));
+    }
+
+    @Test
+    void postWithAnInvalidTokenContractAddressReturnsProblemJsonBadRequest() throws Exception {
+        // Phase 11 (Kimi Issue 5): the tokenContractAddress-specific counterpart of the test above -
+        // confirms the controller-to-handler wiring surfaces this field's own distinct message too, not
+        // just address's.
+        when(watchService.register(any())).thenThrow(
+                new InvalidWatchRequestException("tokenContractAddress is not a valid ETHEREUM address"));
+
+        RegisterWatchRequest request = new RegisterWatchRequest(UUID.randomUUID(), "ETHEREUM",
+                VALID_EVM_ADDRESS, VALID_EVM_ADDRESS, "1000000", Instant.now().plus(1, ChronoUnit.DAYS));
+
+        mockMvc.perform(post("/internal/v1/watches")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.title").value("Invalid watch registration request"))
+                .andExpect(jsonPath("$.detail").value("tokenContractAddress is not a valid ETHEREUM address"));
+    }
+
+    @Test
+    void postWithAnUnparseableExpiresAtReturnsProblemJsonMalformedBody() throws Exception {
+        // Phase 11 (Kimi Issue 4): a well-formed JSON body whose expiresAt Jackson cannot parse as an
+        // Instant reaches ApiExceptionHandler.onUnreadableBody via a different path
+        // (HttpMessageNotReadableException wrapping a JsonMappingException) than syntactically invalid
+        // JSON - both must produce the same shape.
+        String body = "{\"invoiceUuid\":\"" + UUID.randomUUID() + "\",\"chain\":\"ETHEREUM\","
+                + "\"address\":\"" + VALID_EVM_ADDRESS + "\",\"tokenContractAddress\":\"" + VALID_EVM_ADDRESS
+                + "\",\"expectedAmount\":\"1000000\",\"expiresAt\":\"not-an-instant\"}";
+
+        mockMvc.perform(post("/internal/v1/watches")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.title").value("Malformed request body"));
     }
 
     @Test
