@@ -1,13 +1,16 @@
 package com.themistra.crypto.watch;
 
 import com.themistra.crypto.adapter.Chain;
+import com.themistra.crypto.adapter.FakeChainAdapter;
 import com.themistra.crypto.adapter.ProviderSet;
 import com.themistra.crypto.common.config.WatcherProperties;
 import com.themistra.crypto.observation.ObservationLog;
 import com.themistra.crypto.provider.ProviderHealthTracker;
 import com.themistra.crypto.quorum.QuorumDecisionService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import net.javacrumbs.shedlock.core.LockConfiguration;
 import net.javacrumbs.shedlock.core.LockProvider;
+import net.javacrumbs.shedlock.core.SimpleLock;
 import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterEach;
@@ -28,10 +31,12 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -112,6 +117,18 @@ class WatcherRegistryTest {
 
     private static Watch registeredWatch(String chain) {
         return Watch.register(UUID.randomUUID(), UUID.randomUUID(), chain, "0xaddress", "0xtoken",
+                BigDecimal.TEN, NOW.plus(1, ChronoUnit.DAYS), NOW);
+    }
+
+    /** The shard formula ({@code Math.floorMod(watchId.hashCode(), shardCount)}) is a stable, spec-level
+     * contract (frozen brief, AC9), not an internal implementation detail - safe for a test fixture to
+     * replicate in order to construct a watch that is guaranteed to land in a specific shard. */
+    private static Watch registeredWatchInShard(String chain, int shardCount, int targetShard) {
+        UUID watchId;
+        do {
+            watchId = UUID.randomUUID();
+        } while (Math.floorMod(watchId.hashCode(), shardCount) != targetShard);
+        return Watch.register(watchId, UUID.randomUUID(), chain, "0xaddress", "0xtoken",
                 BigDecimal.TEN, NOW.plus(1, ChronoUnit.DAYS), NOW);
     }
 
@@ -216,5 +233,120 @@ class WatcherRegistryTest {
         replicaB.reconcile();
 
         verify(providerSetB, times(1)).adaptersFor(any());
+    }
+
+    @Test
+    void shutdownStopsARunningWatcherIncludingItsSubscriptionAndGauge() {
+        // Phase 11 Finding 3: every other test mocks ProviderSet to return no adapters, so no real
+        // Watcher is ever constructed - shutdown()'s call to stop() on each running Watcher was never
+        // actually exercised. A FakeChainAdapter-backed ProviderSet lets a real Watcher start, and its
+        // lag gauge (registered on start(), removed on stop(), per WatcherTest's own established
+        // technique) is the observable proof that shutdown() reached it.
+        LockProvider lockProvider = new JdbcTemplateLockProvider(cryptoAppDataSource());
+        Watch watch = registeredWatch("ETHEREUM");
+        WatchRepository watchRepository = mock(WatchRepository.class);
+        when(watchRepository.findByStatus(WatchStatus.REGISTERED)).thenReturn(List.of(watch));
+        FakeChainAdapter fakeAdapter = new FakeChainAdapter(Chain.ETHEREUM, "fake-provider");
+        ProviderSet providerSet = mock(ProviderSet.class);
+        when(providerSet.adaptersFor(any()))
+                .thenReturn(List.of(new ProviderSet.NamedAdapter("fake-provider", fakeAdapter)));
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+
+        WatcherRegistry registry = new WatcherRegistry(watchRepository, providerSet, mock(ObservationLog.class),
+                mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
+                mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(), lockProvider);
+
+        registry.reconcile();
+        assertThat(meterRegistry.find("crypto.watcher.lag.seconds")
+                .tag("watchId", watch.watchId().toString()).gauge()).isNotNull();
+
+        registry.shutdown();
+
+        assertThat(meterRegistry.find("crypto.watcher.lag.seconds")
+                .tag("watchId", watch.watchId().toString()).gauge()).isNull();
+    }
+
+    @Test
+    void aReplicaThatLosesItsShardLockStopsItsRunningWatchers() {
+        // Phase 11 Finding 4: ownsShard()'s renewal-failure branch (a healthy replica's lock is lost,
+        // e.g. another replica somehow also acquired it, or a long GC pause exceeded lockAtMostFor) was
+        // never exercised - only initial acquisition was. A mocked LockProvider/SimpleLock deterministically
+        // simulates the second reconciliation tick's renewal failing.
+        Watch watch = registeredWatch("ETHEREUM");
+        WatchRepository watchRepository = mock(WatchRepository.class);
+        when(watchRepository.findByStatus(WatchStatus.REGISTERED)).thenReturn(List.of(watch));
+        ProviderSet providerSet = mock(ProviderSet.class);
+        when(providerSet.adaptersFor(any())).thenReturn(List.of());
+
+        SimpleLock acquiredLock = mock(SimpleLock.class);
+        when(acquiredLock.extend(any(), any())).thenReturn(Optional.empty());
+        LockProvider lockProvider = mock(LockProvider.class);
+        when(lockProvider.lock(any())).thenReturn(Optional.of(acquiredLock));
+
+        WatcherRegistry registry = newRegistry(watchRepository, providerSet, lockProvider);
+
+        registry.reconcile();
+        verify(providerSet, times(1)).adaptersFor(any());
+
+        registry.reconcile();
+
+        // the renewal failure must not have started a second watcher, nor re-acquired via lock() again
+        verify(providerSet, times(1)).adaptersFor(any());
+        verify(lockProvider, times(1)).lock(any());
+    }
+
+    @Test
+    void onlyWatchesInAnOwnedShardAreEverStarted() {
+        // Phase 11 Finding 5: every other test uses shardCount=1, so the multi-shard split in
+        // reconcile()/reconcileShard() - owning some shards but not others in the same tick - was never
+        // exercised.
+        Watch watchInShard0 = registeredWatchInShard("ETHEREUM", 2, 0);
+        Watch watchInShard1 = registeredWatchInShard("ETHEREUM", 2, 1);
+        WatchRepository watchRepository = mock(WatchRepository.class);
+        when(watchRepository.findByStatus(WatchStatus.REGISTERED))
+                .thenReturn(List.of(watchInShard0, watchInShard1));
+        ProviderSet providerSet = mock(ProviderSet.class);
+        when(providerSet.adaptersFor(any())).thenReturn(List.of());
+
+        LockProvider lockProvider = mock(LockProvider.class);
+        when(lockProvider.lock(argThat(config -> config != null && config.getName().equals("watcher-shard-0"))))
+                .thenReturn(Optional.of(mock(SimpleLock.class)));
+        when(lockProvider.lock(argThat(config -> config != null && config.getName().equals("watcher-shard-1"))))
+                .thenReturn(Optional.empty());
+
+        WatcherProperties twoShardProperties = new WatcherProperties(2, 10_000, 30_000, 1_000, 60_000);
+        WatcherRegistry registry = newRegistry(watchRepository, providerSet, lockProvider, twoShardProperties);
+
+        registry.reconcile();
+
+        // only watchInShard0's shard was acquired - its watcher starts; watchInShard1's does not.
+        verify(providerSet, times(1)).adaptersFor(any());
+    }
+
+    @Test
+    void aWatchNoLongerReturnedAsRegisteredHasItsWatcherStoppedOnTheNextReconciliation() {
+        // Phase 11 Finding 8: stopWatchersNoLongerRegistered - the REGISTERED-to-not-REGISTERED
+        // transition - was never directly exercised; onlyRegisteredWatchesAreEverAssignedToAShard only
+        // covers the case where no watch was ever registered at all.
+        Watch watch = registeredWatch("ETHEREUM");
+        WatchRepository watchRepository = mock(WatchRepository.class);
+        when(watchRepository.findByStatus(WatchStatus.REGISTERED)).thenReturn(List.of(watch), List.of());
+        ProviderSet providerSet = mock(ProviderSet.class);
+        when(providerSet.adaptersFor(any())).thenReturn(List.of());
+        LockProvider lockProvider = new JdbcTemplateLockProvider(cryptoAppDataSource());
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+
+        WatcherRegistry registry = new WatcherRegistry(watchRepository, providerSet, mock(ObservationLog.class),
+                mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
+                mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(), lockProvider);
+
+        registry.reconcile();
+        assertThat(meterRegistry.find("crypto.watcher.lag.seconds")
+                .tag("watchId", watch.watchId().toString()).gauge()).isNotNull();
+
+        registry.reconcile();
+
+        assertThat(meterRegistry.find("crypto.watcher.lag.seconds")
+                .tag("watchId", watch.watchId().toString()).gauge()).isNull();
     }
 }

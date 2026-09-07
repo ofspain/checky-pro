@@ -34,4 +34,29 @@ class ChainCursorTest {
     void placeholderRejectsANullWatchId() {
         assertThatNullPointerException().isThrownBy(() -> ChainCursor.placeholder("ETHEREUM", null, NOW));
     }
+
+    @Test
+    void advanceToMovesLastBlockForwardWhenGivenAHigherBlockNumber() {
+        // Phase 11 Finding 7: no test anywhere previously exercised advanceTo directly.
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+        Instant later = NOW.plusSeconds(60);
+
+        cursor.advanceTo(500L, later);
+
+        assertThat(cursor.lastBlock()).isEqualTo(500L);
+        assertThat(cursor.updatedAt()).isEqualTo(later);
+    }
+
+    @Test
+    void advanceToIsANoOpWhenGivenABlockNumberAtOrBelowTheCurrentLastBlock() {
+        // AC6: lastBlock only ever increases.
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+        cursor.advanceTo(1000L, NOW.plusSeconds(60));
+
+        cursor.advanceTo(500L, NOW.plusSeconds(120));
+        assertThat(cursor.lastBlock()).isEqualTo(1000L);
+
+        cursor.advanceTo(1000L, NOW.plusSeconds(180));
+        assertThat(cursor.lastBlock()).isEqualTo(1000L);
+    }
 }

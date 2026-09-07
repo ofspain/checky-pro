@@ -69,6 +69,26 @@ in-module by inspection.
   `ObservationRepositoryIntegrationTest`, three DB-permission-vs-Hibernate-exception-wrapping mismatches,
   one `TokenAllowlistRepositoryIntegrationTest` pre-existing gap). 505 + 24 = 529. Zero regressions.
 
+## Phase 11 (Kimi Test Review) additions
+
+Per this pipeline's own Phase 11 convention, no separate resolution artifact is written — accepted
+findings are folded directly into the test suite. Kimi raised 9 findings; 8 were verified genuine gaps
+and fixed with new tests below, 1 was verified already covered (rejected).
+
+| Finding | Disposition | Test added |
+|---|---|---|
+| 1. `Watcher.stop()`'s sweep-scheduler shutdown unasserted | **ACCEPTED** | `WatcherTest.stopShutsDownItsOwnPrivateSweepScheduler` (reflection on the private `sweepScheduler` field — no test-only production API added). |
+| 2. Generic `RuntimeException` catch-all in `handleObservation` unexercised | **ACCEPTED, corrected** | `WatcherTest.aFailureLoggingOneProvidersObservationDoesNotPreventTheOtherTwoFromReachingQuorum`. Kimi's proposed assertion ("quorum still fires from the same delivery") was wrong per source: `handleObservation`'s try block aborts at the first line, so the failing delivery's answer is never recorded, not just its logging — corrected to assert the failing provider's answer is lost and quorum only fires after a simulated adapter retry re-delivers it. |
+| 3. `WatcherRegistry.shutdown()` never exercised against a real running `Watcher` | **ACCEPTED** | `WatcherRegistryTest.shutdownStopsARunningWatcherIncludingItsSubscriptionAndGauge` (`FakeChainAdapter`-backed `ProviderSet`, gauge-removal as the observable proof, mirroring `WatcherTest`'s own technique). |
+| 4. Shard-lock renewal-failure path unexercised | **ACCEPTED** | `WatcherRegistryTest.aReplicaThatLosesItsShardLockStopsItsRunningWatchers` (mocked `LockProvider`/`SimpleLock`, `extend()` returns empty on the second tick). |
+| 5. All registry tests use `shardCount=1` | **ACCEPTED** | `WatcherRegistryTest.onlyWatchesInAnOwnedShardAreEverStarted` (`shardCount=2`, one watch per shard, only the owned shard's watch starts). |
+| 6. No test exercises the `chain_cursors` `UPDATE` grant | **REJECTED — already covered** | Verified by reading `WatchRepositoryIntegrationTest.java` directly: `cryptoAppCanInsertSelectAndUpdateButNotDeleteOnChainCursors` (already added during this task's own Phase 9 ripple-fix pass, per its own comment referencing `V7__crypto_app_watcher_grants.sql`) already asserts INSERT/SELECT/UPDATE succeed and DELETE fails as `crypto_app`. Kimi's claim that this file "only asserted INSERT, SELECT" was stale/incorrect. |
+| 7. No cursor forward-only regression test | **ACCEPTED, relocated** | Added directly to `ChainCursorTest` (`advanceToMovesLastBlockForwardWhenGivenAHigherBlockNumber`, `advanceToIsANoOpWhenGivenABlockNumberAtOrBelowTheCurrentLastBlock`) rather than `WatcherTest` — verified `ChainCursorTest` had zero coverage of `advanceTo` at all (a bigger gap than Kimi's framing), so the unit-level home is more correct than an integration-style addition to `WatcherTest`. |
+| 8. `REGISTERED`→not-`REGISTERED` transition unexercised | **ACCEPTED** | `WatcherRegistryTest.aWatchNoLongerReturnedAsRegisteredHasItsWatcherStoppedOnTheNextReconciliation` (gauge-removal technique, same as Finding 3). |
+| 9. Duplicate observation delivery from the same provider unexercised | **ACCEPTED** | `WatcherTest.duplicateObservationsFromTheSameProviderDoNotPrematurelyCompleteACorrelation` — verified `TxCorrelation.answers` is a `Map` keyed by provider name (a duplicate delivery overwrites its own entry, never inflates the count) before writing the assertion. |
+
+**Verification run (Phase 11):** `mvn -pl services/crypto test -Dtest=WatcherTest,ChainCursorTest,WatcherRegistryTest,ProviderSetTest` — 36/36 pass (19+5+4+8). Full module regression: 538 tests, same 6 pre-existing unrelated failures, zero regressions (529 + 9 new = 538).
+
 ## Fixes applied while writing `WatcherRegistryTest` (test-only, no production code changed)
 
 Three real ShedLock/Testcontainers integration issues were found and fixed entirely within the test file:

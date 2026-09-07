@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
+import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
@@ -23,6 +24,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ScheduledExecutorService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -329,6 +331,72 @@ class WatcherTest {
         assertThat(meterRegistry.find("crypto.watcher.lag.seconds")
                 .tag("watchId", watch.watchId().toString())
                 .gauge()).isNotNull();
+    }
+
+    @Test
+    void stopShutsDownItsOwnPrivateSweepScheduler() throws Exception {
+        // Phase 11 Finding 1: removesItsOwnLagGaugeOnStop only proves the gauge is deregistered, not
+        // that the sweep task/scheduler stop() is supposed to clean up are actually shut down. The
+        // scheduler is private with no accessor, so its post-stop state is read via reflection rather
+        // than adding test-only production API surface.
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+
+        Field schedulerField = Watcher.class.getDeclaredField("sweepScheduler");
+        schedulerField.setAccessible(true);
+        ScheduledExecutorService sweepScheduler = (ScheduledExecutorService) schedulerField.get(watcher);
+        assertThat(sweepScheduler.isShutdown()).isFalse();
+
+        watcher.stop();
+
+        assertThat(sweepScheduler.isShutdown()).isTrue();
+    }
+
+    @Test
+    void aFailureLoggingOneProvidersObservationDoesNotPreventTheOtherTwoFromReachingQuorum() {
+        // Phase 8 Finding 4 / Phase 11 Finding 2: EthereumAdapter.pollOnce has no catch-all of its
+        // own (verified by reading its source at Phase 8), so an exception thrown while processing an
+        // observation must never propagate out of the sink callback - it would otherwise permanently
+        // cancel that provider's polling subscription. The failing delivery's own answer is lost
+        // (handleObservation's try block aborts at the first line), but the adapter naturally retries
+        // on its next poll tick (T06/T07's own established behavior) - simulated here by re-delivering
+        // the same observation afterward.
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult agreed = tx(true, 100L, BigDecimal.TEN, 3);
+        when(observationLog.record(eq("ETHEREUM"), eq(TX_HASH), eq("provider-a"), eq(FactType.EXISTENCE), anyString()))
+                .thenThrow(new IllegalStateException("transient log failure"))
+                .thenReturn(null);
+
+        assertThatCode(() -> deliver(providerA, agreed)).doesNotThrowAnyException();
+        verifyNoInteractions(quorumDecisionService);
+
+        deliver(providerA, agreed);
+        deliver(providerB, agreed);
+        deliver(providerC, agreed);
+
+        verify(quorumDecisionService).evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.EXISTENCE), anyList());
+    }
+
+    @Test
+    void duplicateObservationsFromTheSameProviderDoNotPrematurelyCompleteACorrelation() {
+        // Phase 11 Finding 9: TxCorrelation.answers is a Map keyed by provider name, so a redundant
+        // re-delivery from the same provider (e.g. overlapping poll ranges) overwrites its own entry
+        // rather than counting as a second distinct answer - it must never let a correlation with only
+        // 2 real providers reach the exactly-3 threshold.
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult agreed = tx(true, 100L, BigDecimal.TEN, 3);
+
+        deliver(providerA, agreed);
+        deliver(providerA, agreed);
+        verifyNoInteractions(quorumDecisionService);
+
+        deliver(providerB, agreed);
+        deliver(providerC, agreed);
+
+        verify(quorumDecisionService).evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.EXISTENCE), anyList());
+        verify(observationLog, times(4)).record(eq("ETHEREUM"), eq(TX_HASH), anyString(), eq(FactType.EXISTENCE), anyString());
     }
 
     /** A settable {@link Clock} - {@code Clock.fixed} never advances, but the lagging-provider tests
