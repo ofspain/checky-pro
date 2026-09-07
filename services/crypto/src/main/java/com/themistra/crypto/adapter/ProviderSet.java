@@ -26,21 +26,43 @@ import java.util.Map;
  * own {@code providerName()} accessor directly. This class is the one place that legitimately holds
  * both the concrete types (to call their {@code providerName()}) and the abstract {@link ChainAdapter}
  * view every other caller uses - captured once, here, at construction time.</p>
+ *
+ * <p><b>Exactly 3 providers per chain (T16 Phase 8 Finding 7).</b> {@code QuorumEvaluator} hard-requires
+ * exactly 3 non-null answers per fact (verified directly against its source) - a chain configured with
+ * any other provider count could never reach a quorum decision at all, and would fail completely
+ * silently (the correlation in {@code Watcher} simply never completes, with no error anywhere).
+ * Validated here, not in the general-purpose {@code ProviderProperties} - that class is consumed by
+ * {@code EthereumAdapterConfig}/{@code TronAdapterConfig} too, for concerns (credential resolution,
+ * timeout wiring, adapter construction) that have nothing to do with quorum arithmetic and legitimately
+ * use other provider counts in their own tests; this constraint belongs to {@code ProviderSet}, the
+ * actual, sole consumer that needs it, not the shared config type every other adapter concern also
+ * binds through.</p>
  */
 @Component
 public class ProviderSet {
+
+    private static final int REQUIRED_PROVIDER_COUNT = 3;
 
     private final Map<Chain, List<NamedAdapter>> adaptersByChain;
 
     public ProviderSet(List<EthereumAdapter> ethereumAdapters, List<TronAdapter> tronAdapters) {
         Map<Chain, List<NamedAdapter>> byChain = new EnumMap<>(Chain.class);
-        byChain.put(Chain.ETHEREUM, ethereumAdapters.stream()
-                .map(adapter -> new NamedAdapter(adapter.providerName(), adapter))
-                .toList());
-        byChain.put(Chain.TRON, tronAdapters.stream()
-                .map(adapter -> new NamedAdapter(adapter.providerName(), adapter))
-                .toList());
+        byChain.put(Chain.ETHEREUM, toNamedAdapters(Chain.ETHEREUM, ethereumAdapters, EthereumAdapter::providerName));
+        byChain.put(Chain.TRON, toNamedAdapters(Chain.TRON, tronAdapters, TronAdapter::providerName));
         this.adaptersByChain = Map.copyOf(byChain);
+    }
+
+    private static <T extends ChainAdapter> List<NamedAdapter> toNamedAdapters(
+            Chain chain, List<T> adapters, java.util.function.Function<T, String> providerNameOf) {
+        if (adapters.size() != REQUIRED_PROVIDER_COUNT) {
+            throw new IllegalStateException(
+                    "themistra.crypto.providers must configure exactly " + REQUIRED_PROVIDER_COUNT
+                            + " providers for chain " + chain + " (QuorumEvaluator's own 2-of-3 design"
+                            + " hard-requires exactly 3 answers, T16) - found " + adapters.size());
+        }
+        return adapters.stream()
+                .map(adapter -> new NamedAdapter(providerNameOf.apply(adapter), adapter))
+                .toList();
     }
 
     /** Never {@code null} - an unconfigured chain returns an empty list, not an absent key. */

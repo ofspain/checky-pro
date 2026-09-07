@@ -7,6 +7,7 @@ import com.themistra.crypto.observation.ObservationLog;
 import com.themistra.crypto.provider.ProviderHealthTracker;
 import com.themistra.crypto.quorum.QuorumDecisionService;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PreDestroy;
 import net.javacrumbs.shedlock.core.LockConfiguration;
 import net.javacrumbs.shedlock.core.LockProvider;
 import net.javacrumbs.shedlock.core.SimpleLock;
@@ -23,8 +24,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.stream.Collectors;
 
 /**
@@ -59,7 +58,6 @@ public class WatcherRegistry {
     private final MeterRegistry meterRegistry;
     private final Clock clock;
     private final LockProvider lockProvider;
-    private final ScheduledExecutorService sweepScheduler;
 
     private final Map<Integer, SimpleLock> heldShardLocks = new ConcurrentHashMap<>();
     private final Map<UUID, Watcher> runningWatchers = new ConcurrentHashMap<>();
@@ -79,7 +77,24 @@ public class WatcherRegistry {
         this.meterRegistry = meterRegistry;
         this.clock = clock;
         this.lockProvider = lockProvider;
-        this.sweepScheduler = Executors.newScheduledThreadPool(1, Thread.ofVirtual().factory());
+    }
+
+    /** T16 Phase 8 Finding 6: stops every running {@code Watcher} (cancelling its subscriptions and
+     * shutting down its own private scheduler, per {@link Watcher#stop}) on application shutdown.
+     * Verified directly (Phase 6) that {@code Thread.ofVirtual().factory()}-backed threads are daemon
+     * by default, so this is not needed to prevent the JVM hanging on exit - it is needed so a planned
+     * shutdown stops watchers cleanly (no writes racing a closing connection pool) and releases this
+     * replica's shard locks immediately, rather than making another replica wait out {@code
+     * lockAtMostFor} before taking over. */
+    @PreDestroy
+    public void shutdown() {
+        for (UUID watchId : List.copyOf(runningWatchers.keySet())) {
+            stopWatcher(watchId);
+        }
+        for (SimpleLock lock : heldShardLocks.values()) {
+            lock.unlock();
+        }
+        heldShardLocks.clear();
     }
 
     @Scheduled(fixedDelayString = "${themistra.crypto.watcher.reconciliation-interval-ms}")
@@ -126,8 +141,7 @@ public class WatcherRegistry {
             runningWatchers.computeIfAbsent(watch.watchId(), id -> {
                 Watcher watcher = new Watcher(watch, providerSet.adaptersFor(Chain.valueOf(watch.chain())),
                         observationLog, quorumDecisionService, providerHealthTracker,
-                        chainCursorRepository, properties.correlationWindowMs(), meterRegistry, clock,
-                        sweepScheduler);
+                        chainCursorRepository, properties.correlationWindowMs(), meterRegistry, clock);
                 watcher.start();
                 return watcher;
             });
