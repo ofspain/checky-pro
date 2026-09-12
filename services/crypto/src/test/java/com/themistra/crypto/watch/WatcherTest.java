@@ -15,6 +15,7 @@ import com.themistra.crypto.quorum.ProviderAnswer;
 import com.themistra.crypto.quorum.QuorumDecision;
 import com.themistra.crypto.quorum.QuorumDecisionService;
 import com.themistra.crypto.quorum.QuorumOutcome;
+import com.themistra.crypto.reorg.ReorgDetector;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -78,6 +79,7 @@ class WatcherTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final TxLifecyclePublisher txLifecyclePublisher = mock(TxLifecyclePublisher.class);
     private final FinalityPolicy finalityPolicy = mock(FinalityPolicy.class);
+    private final ReorgDetector reorgDetector = mock(ReorgDetector.class);
 
     /** Real background thread, well beyond any of these tests' own lifetime (tests run in
      * milliseconds) - never fires during a test unless a test explicitly calls {@code
@@ -98,7 +100,7 @@ class WatcherTest {
     private Watcher newWatcher(long correlationWindowMs) {
         return new Watcher(watch, adapters, observationLog, quorumDecisionService, providerHealthTracker,
                 chainCursorRepository, correlationWindowMs, meterRegistry, clock, objectMapper,
-                txLifecyclePublisher, List.of(finalityPolicy), FINALITY_POLL_INTERVAL_MS);
+                txLifecyclePublisher, List.of(finalityPolicy), FINALITY_POLL_INTERVAL_MS, reorgDetector);
     }
 
     private static TxResult tx(boolean exists, long blockNumber, BigDecimal amount, int confirmations) {
@@ -803,10 +805,12 @@ class WatcherTest {
         watcher.pollFinality();
         verify(txLifecyclePublisher, never()).finalized(any(), any());
 
-        // no longer pending: a second tick must not touch any provider again.
-        // (1 recordHealthy from the original EXISTENCE-agreeing delivery + 1 from the one finality poll.)
+        // no longer pending: a second tick's pollFinalityFor loop must not touch any provider again -
+        // checkForReorg (T18) still runs every tick regardless, since the cursor's txHash is untouched.
+        // (1 from the original EXISTENCE-agreeing delivery + 2 from tick 1 [checkForReorg +
+        // pollFinalityFor] + 1 from tick 2 [checkForReorg only, pendingFinality is now empty] = 4.)
         watcher.pollFinality();
-        verify(providerHealthTracker, times(2)).recordHealthy("ETHEREUM", "provider-a");
+        verify(providerHealthTracker, times(4)).recordHealthy("ETHEREUM", "provider-a");
     }
 
     @Test
@@ -929,9 +933,10 @@ class WatcherTest {
                 .evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.FINALITY), anyList());
         verify(txLifecyclePublisher, never()).finalized(any(), any());
         // still pending: a third tick still queries every provider rather than having given up.
-        // (1 recordHealthy from the original EXISTENCE-agreeing delivery + 3 from the finality polls.)
+        // (1 from the original EXISTENCE-agreeing delivery + 2 per tick [checkForReorg (T18) +
+        // pollFinalityFor] across 3 ticks = 1 + 6 = 7.)
         watcher.pollFinality();
-        verify(providerHealthTracker, times(4)).recordHealthy("ETHEREUM", "provider-a");
+        verify(providerHealthTracker, times(7)).recordHealthy("ETHEREUM", "provider-a");
     }
 
     @Test
@@ -978,7 +983,7 @@ class WatcherTest {
 
         assertThatThrownBy(() -> new Watcher(watch, adapters, observationLog, quorumDecisionService,
                 providerHealthTracker, chainCursorRepository, 60_000, meterRegistry, clock, objectMapper,
-                txLifecyclePublisher, List.of(tronOnlyPolicy), FINALITY_POLL_INTERVAL_MS))
+                txLifecyclePublisher, List.of(tronOnlyPolicy), FINALITY_POLL_INTERVAL_MS, reorgDetector))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ETHEREUM");
     }

@@ -21,9 +21,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * pick the right {@code FinalityPolicy} for a watch's chain, and {@code events}, needed by the new
  * {@code TxLifecyclePublisher} to reach the sole sanctioned publishing path - mirrors {@code
  * ProviderDegradedPublisher}'s (T10, {@code provider/}) identical, already-established need to import
- * {@code events.OutboxPublisher}) - each such package gets an exact allow-list of the imports actually
- * used, rather than being forbidden outright or left unchecked. No prefix is left fully forbidden any
- * more; every dependency {@code watch/} now has is an intentional, allow-listed one. */
+ * {@code events.OutboxPublisher}; T18 adds {@code reorg}, needed to reach {@code ReorgDetector}) - each
+ * such package gets an exact allow-list of the imports actually used, rather than being forbidden
+ * outright or left unchecked. No prefix is left fully forbidden any more; every dependency
+ * {@code watch/} now has is an intentional, allow-listed one. */
 class WatchModuleBoundaryTest {
 
     private static final List<String> FULLY_FORBIDDEN_IMPORT_PREFIXES = List.of();
@@ -54,7 +55,9 @@ class WatchModuleBoundaryTest {
             "com.themistra.crypto.finality", Set.of(
                     "import com.themistra.crypto.finality.FinalityPolicy;"),
             "com.themistra.crypto.events", Set.of(
-                    "import com.themistra.crypto.events.OutboxPublisher;"));
+                    "import com.themistra.crypto.events.OutboxPublisher;"),
+            "com.themistra.crypto.reorg", Set.of(
+                    "import com.themistra.crypto.reorg.ReorgDetector;"));
 
     @Test
     void noMainSourceFileInWatchImportsBeyondItsAllowedTypesOrAnyForbiddenPackage() {

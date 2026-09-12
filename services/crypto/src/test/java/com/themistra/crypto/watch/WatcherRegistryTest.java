@@ -9,6 +9,7 @@ import com.themistra.crypto.finality.FinalityPolicy;
 import com.themistra.crypto.observation.ObservationLog;
 import com.themistra.crypto.provider.ProviderHealthTracker;
 import com.themistra.crypto.quorum.QuorumDecisionService;
+import com.themistra.crypto.reorg.ReorgDetector;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import net.javacrumbs.shedlock.core.LockConfiguration;
 import net.javacrumbs.shedlock.core.LockProvider;
@@ -152,7 +153,7 @@ class WatcherRegistryTest {
                 mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
                 mock(ChainCursorRepository.class), watcherProperties, new SimpleMeterRegistry(),
                 Clock.systemUTC(), lockProvider, new ObjectMapper(), mock(TxLifecyclePublisher.class),
-                List.of(ethereumFinalityPolicy()));
+                List.of(ethereumFinalityPolicy()), mock(ReorgDetector.class));
     }
 
     /** T17 Phase 9 (self-review Finding 2 / Kimi Finding 4): {@code Watcher} now fails fast in its
@@ -266,7 +267,8 @@ class WatcherRegistryTest {
         WatcherRegistry registry = new WatcherRegistry(watchRepository, providerSet, mock(ObservationLog.class),
                 mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
                 mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(), lockProvider,
-                new ObjectMapper(), mock(TxLifecyclePublisher.class), List.of(ethereumFinalityPolicy()));
+                new ObjectMapper(), mock(TxLifecyclePublisher.class), List.of(ethereumFinalityPolicy()),
+                mock(ReorgDetector.class));
 
         registry.reconcile();
         assertThat(meterRegistry.find("crypto.watcher.lag.seconds")
@@ -351,7 +353,8 @@ class WatcherRegistryTest {
         WatcherRegistry registry = new WatcherRegistry(watchRepository, providerSet, mock(ObservationLog.class),
                 mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
                 mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(), lockProvider,
-                new ObjectMapper(), mock(TxLifecyclePublisher.class), List.of(ethereumFinalityPolicy()));
+                new ObjectMapper(), mock(TxLifecyclePublisher.class), List.of(ethereumFinalityPolicy()),
+                mock(ReorgDetector.class));
 
         registry.reconcile();
         assertThat(meterRegistry.find("crypto.watcher.lag.seconds")

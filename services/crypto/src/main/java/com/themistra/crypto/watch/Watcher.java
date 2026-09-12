@@ -16,6 +16,7 @@ import com.themistra.crypto.quorum.ProviderAnswer;
 import com.themistra.crypto.quorum.QuorumDecision;
 import com.themistra.crypto.quorum.QuorumDecisionService;
 import com.themistra.crypto.quorum.QuorumOutcome;
+import com.themistra.crypto.reorg.ReorgDetector;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -84,6 +85,7 @@ class Watcher {
     private final TxLifecyclePublisher txLifecyclePublisher;
     private final FinalityPolicy finalityPolicy;
     private final long finalityPollIntervalMs;
+    private final ReorgDetector reorgDetector;
 
     private final Map<String, TxCorrelation> correlations = new ConcurrentHashMap<>();
     private final Set<String> evaluatedFacts = ConcurrentHashMap.newKeySet();
@@ -99,7 +101,7 @@ class Watcher {
             QuorumDecisionService quorumDecisionService, ProviderHealthTracker providerHealthTracker,
             ChainCursorRepository chainCursorRepository, long correlationWindowMs, MeterRegistry meterRegistry,
             Clock clock, ObjectMapper objectMapper, TxLifecyclePublisher txLifecyclePublisher,
-            List<FinalityPolicy> finalityPolicies, long finalityPollIntervalMs) {
+            List<FinalityPolicy> finalityPolicies, long finalityPollIntervalMs, ReorgDetector reorgDetector) {
         this.watch = watch;
         this.adapters = List.copyOf(adapters);
         this.observationLog = observationLog;
@@ -126,6 +128,7 @@ class Watcher {
                     "No FinalityPolicy configured for chain " + chain + " (watchId=" + watch.watchId() + ")");
         }
         this.finalityPollIntervalMs = finalityPollIntervalMs;
+        this.reorgDetector = reorgDetector;
     }
 
     UUID watchId() {
@@ -434,9 +437,68 @@ class Watcher {
      * #handleSeenIfAgreed} once {@code EXISTENCE} agrees {@code true}; removed here once {@code
      * FINALITY} reaches any decided outcome). */
     void pollFinality() {
+        checkForReorg();
         for (String txHash : List.copyOf(pendingFinality)) {
             pollFinalityFor(txHash);
         }
+    }
+
+    /** R11/L6: runs on every tick, independent of {@link #pendingFinality} membership - keyed off
+     * {@link ChainCursor#txHash()} directly, so a reorg discovered even after {@code FINALITY} already
+     * agreed {@code true} (and the {@code txHash} was removed from {@code pendingFinality}) is still
+     * caught (T18 Phase 3 Finding #9). Uses {@code ChainAdapter.getTx} - a synchronous pull, unaffected
+     * by whatever forward-only scan position each adapter's own polling loop has reached (T18 Phase 3
+     * Finding #3: {@code EthereumAdapter}/{@code TronAdapter} never re-deliver an already-scanned
+     * transaction via {@code subscribeAddress}, verified by reading both directly - the original,
+     * push-based detection design this method replaces could never have fired in production). */
+    private void checkForReorg() {
+        Optional<ChainCursor> cursorOpt = chainCursorRepository.findByWatchId(watch.watchId());
+        if (cursorOpt.isEmpty() || cursorOpt.get().txHash() == null) {
+            return; // nothing seen yet, or already invalidated by a prior reorg
+        }
+        ChainCursor cursor = cursorOpt.get();
+        String txHash = cursor.txHash();
+
+        Map<String, Boolean> existsAnswers = new LinkedHashMap<>();
+        for (ProviderSet.NamedAdapter namedAdapter : adapters) {
+            try {
+                TxResult result = namedAdapter.adapter().getTx(txHash);
+                existsAnswers.put(namedAdapter.providerName(), result.exists());
+                providerHealthTracker.recordHealthy(watch.chain(), namedAdapter.providerName());
+            } catch (RuntimeException e) {
+                log.debug("Reorg re-check failed for provider={} chain={} txHash={} - marking lagging "
+                        + "for this tick", namedAdapter.providerName(), watch.chain(), txHash, e);
+                providerHealthTracker.recordUnhealthy(watch.chain(), namedAdapter.providerName(),
+                        DegradationReason.LAGGING);
+            }
+        }
+
+        if (existsAnswers.size() != 3) {
+            // T18 Finding #11: never declare a reorg (or its absence) with fewer than 3 real answers -
+            // mirrors evaluateFact's/pollFinalityFor's own exactly-3 discipline (T16/T17).
+            return;
+        }
+
+        boolean stillExists = majorityValue(existsAnswers.values());
+        if (stillExists) {
+            return; // no reorg - a late, harmless re-confirmation
+        }
+
+        // REORG DETECTED: the fresh 2-of-3 (or 3-of-3) majority now says this transaction does not
+        // exist. This is L1's own quorum rule computed locally rather than persisted via
+        // QuorumDecisionService (which could only ever throw here - EXISTENCE was already decided
+        // AGREED true when this transaction was first seen, T18 Phase 3 Finding #1: not a bypass of
+        // quorum discipline, the same 2-of-3 computation, just not re-persisted).
+        List<ProviderAnswer<Boolean>> providerAnswers = existsAnswers.entrySet().stream()
+                .map(entry -> new ProviderAnswer<>(entry.getKey(), entry.getValue()))
+                .toList();
+        recordDisagreementsIfAny(txHash, providerAnswers);
+
+        cursor.invalidate(clock.instant());
+        chainCursorRepository.save(cursor);
+        pendingFinality.remove(txHash);
+        reorgDetector.reorg(watch.watchId(), watch.invoiceUuid(), watch.chain(), txHash,
+                watch.tokenContractAddress());
     }
 
     private void pollFinalityFor(String txHash) {

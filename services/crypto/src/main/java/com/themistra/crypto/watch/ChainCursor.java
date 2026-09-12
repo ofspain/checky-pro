@@ -129,6 +129,22 @@ public class ChainCursor {
         updatedAt = now;
     }
 
+    /** T18 AC2/L6: the sole way this cursor's forward-derived state is ever set backward - a full reset
+     * to the pre-observation state, not a partial rewind to a specific block number (no {@code
+     * ChainAdapter} method can report "the block this reorg reverted to", T18 Phase 3 Finding #3/#8).
+     * Acceptable in full because a cursor tracks at most one transaction ever (T17's own write-once
+     * {@link #recordSeenTransaction}); a future task relaxing that limitation would need to replace this
+     * with a targeted, per-transaction rewind instead of resetting the whole cursor. */
+    public void invalidate(Instant now) {
+        lastBlock = UNSTARTED_SENTINEL;
+        lastFinalizedBlock = null;
+        txHash = null;
+        amount = null;
+        fromAddress = null;
+        toAddress = null;
+        updatedAt = now;
+    }
+
     public Long id() {
         return id;
     }
