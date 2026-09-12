@@ -1,8 +1,10 @@
 package com.themistra.crypto.watch;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.Chain;
 import com.themistra.crypto.adapter.ProviderSet;
 import com.themistra.crypto.common.config.WatcherProperties;
+import com.themistra.crypto.finality.FinalityPolicy;
 import com.themistra.crypto.observation.ObservationLog;
 import com.themistra.crypto.provider.ProviderHealthTracker;
 import com.themistra.crypto.quorum.QuorumDecisionService;
@@ -58,6 +60,9 @@ public class WatcherRegistry {
     private final MeterRegistry meterRegistry;
     private final Clock clock;
     private final LockProvider lockProvider;
+    private final ObjectMapper objectMapper;
+    private final TxLifecyclePublisher txLifecyclePublisher;
+    private final List<FinalityPolicy> finalityPolicies;
 
     private final Map<Integer, SimpleLock> heldShardLocks = new ConcurrentHashMap<>();
     private final Map<UUID, Watcher> runningWatchers = new ConcurrentHashMap<>();
@@ -66,7 +71,8 @@ public class WatcherRegistry {
             ObservationLog observationLog, QuorumDecisionService quorumDecisionService,
             ProviderHealthTracker providerHealthTracker, ChainCursorRepository chainCursorRepository,
             WatcherProperties properties, MeterRegistry meterRegistry, Clock clock,
-            LockProvider lockProvider) {
+            LockProvider lockProvider, ObjectMapper objectMapper, TxLifecyclePublisher txLifecyclePublisher,
+            List<FinalityPolicy> finalityPolicies) {
         this.watchRepository = watchRepository;
         this.providerSet = providerSet;
         this.observationLog = observationLog;
@@ -77,6 +83,9 @@ public class WatcherRegistry {
         this.meterRegistry = meterRegistry;
         this.clock = clock;
         this.lockProvider = lockProvider;
+        this.objectMapper = objectMapper;
+        this.txLifecyclePublisher = txLifecyclePublisher;
+        this.finalityPolicies = List.copyOf(finalityPolicies);
     }
 
     /** T16 Phase 8 Finding 6: stops every running {@code Watcher} (cancelling its subscriptions and
@@ -141,7 +150,9 @@ public class WatcherRegistry {
             runningWatchers.computeIfAbsent(watch.watchId(), id -> {
                 Watcher watcher = new Watcher(watch, providerSet.adaptersFor(Chain.valueOf(watch.chain())),
                         observationLog, quorumDecisionService, providerHealthTracker,
-                        chainCursorRepository, properties.correlationWindowMs(), meterRegistry, clock);
+                        chainCursorRepository, properties.correlationWindowMs(), meterRegistry, clock,
+                        objectMapper, txLifecyclePublisher, finalityPolicies,
+                        properties.finalityPollIntervalMs());
                 watcher.start();
                 return watcher;
             });

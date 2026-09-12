@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -21,9 +22,11 @@ import java.util.UUID;
  * method independent of an existing transaction hash, so no real initial value is obtainable here.
  * {@code -1} is chosen over {@code 0} specifically because block {@code 0} is a real genesis block
  * number on both launch chains and so could be mistaken for a genuine cursor position; block numbers
- * are never negative in reality, so {@code -1} cannot be confused with one. Task 16's watcher is
- * expected to overwrite both this field and {@link #lastFinalizedBlock} with real values the first time
- * it processes this watch - this row's own values are never read as chain fact by this task.</p>
+ * are never negative in reality, so {@code -1} cannot be confused with one. {@code lastBlock} is
+ * advanced by task 16's {@code Watcher}; {@link #lastFinalizedBlock} and the transaction snapshot
+ * fields ({@link #txHash}, {@link #amount}, {@link #fromAddress}, {@link #toAddress}) are populated by
+ * task 17's finality-poll and seen-transaction handling respectively - this row's own values are never
+ * read as chain fact by this task.</p>
  */
 @Entity
 @Table(name = "chain_cursors", schema = "chain")
@@ -47,6 +50,18 @@ public class ChainCursor {
 
     @Column(name = "last_finalized_block")
     private Long lastFinalizedBlock;
+
+    @Column(name = "tx_hash", length = 128)
+    private String txHash;
+
+    @Column(name = "amount", precision = 78, scale = 0)
+    private BigDecimal amount;
+
+    @Column(name = "from_address", length = 128)
+    private String fromAddress;
+
+    @Column(name = "to_address", length = 128)
+    private String toAddress;
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
@@ -85,6 +100,35 @@ public class ChainCursor {
         updatedAt = now;
     }
 
+    /** T17 AC1 (write-once): captures the transaction this watch has seen, once, at the moment
+     * {@code EXISTENCE} first quorum-agrees {@code true} for it - the durable source for the {@code
+     * chain.tx.finalized} payload's {@code amount}/{@code fromAddress}/{@code toAddress} fields, since
+     * {@code Watcher}'s own in-memory correlation for this transaction is pruned immediately after
+     * that decision (T16). A no-op if this cursor already has a {@code txHash} recorded - a watch that
+     * legitimately observes a second, distinct transaction after its first keeps only the first
+     * snapshot (a disclosed, accepted limitation of this task's own scope, not a defect). */
+    public void recordSeenTransaction(String txHash, BigDecimal amount, String fromAddress,
+                                       String toAddress, Instant now) {
+        if (this.txHash != null) {
+            return;
+        }
+        this.txHash = Objects.requireNonNull(txHash, "txHash");
+        this.amount = amount;
+        this.fromAddress = fromAddress;
+        this.toAddress = toAddress;
+        this.updatedAt = now;
+    }
+
+    /** T17 AC8: forward-only, mirrors {@link #advanceTo} exactly - set only once {@code FINALITY}
+     * quorum-agrees {@code true} for this watch's seen transaction. */
+    public void advanceFinalizedTo(long finalizedBlockNumber, Instant now) {
+        if (lastFinalizedBlock != null && finalizedBlockNumber <= lastFinalizedBlock) {
+            return;
+        }
+        lastFinalizedBlock = finalizedBlockNumber;
+        updatedAt = now;
+    }
+
     public Long id() {
         return id;
     }
@@ -103,6 +147,22 @@ public class ChainCursor {
 
     public Long lastFinalizedBlock() {
         return lastFinalizedBlock;
+    }
+
+    public String txHash() {
+        return txHash;
+    }
+
+    public BigDecimal amount() {
+        return amount;
+    }
+
+    public String fromAddress() {
+        return fromAddress;
+    }
+
+    public String toAddress() {
+        return toAddress;
     }
 
     public Instant updatedAt() {

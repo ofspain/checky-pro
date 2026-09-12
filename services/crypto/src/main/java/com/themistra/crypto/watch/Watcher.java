@@ -1,22 +1,31 @@
 package com.themistra.crypto.watch;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.themistra.crypto.adapter.Chain;
 import com.themistra.crypto.adapter.ProviderSet;
+import com.themistra.crypto.adapter.model.FinalityStatus;
 import com.themistra.crypto.adapter.model.Subscription;
 import com.themistra.crypto.adapter.model.TxResult;
+import com.themistra.crypto.finality.FinalityPolicy;
 import com.themistra.crypto.observation.FactType;
 import com.themistra.crypto.observation.ObservationLog;
 import com.themistra.crypto.provider.DegradationReason;
 import com.themistra.crypto.provider.ProviderHealthTracker;
 import com.themistra.crypto.quorum.ProviderAnswer;
+import com.themistra.crypto.quorum.QuorumDecision;
 import com.themistra.crypto.quorum.QuorumDecisionService;
+import com.themistra.crypto.quorum.QuorumOutcome;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +39,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * One instance per actively-watched {@link Watch} (T16). Subscribes to every {@link
@@ -69,19 +79,26 @@ class Watcher {
     private final MeterRegistry meterRegistry;
     private final Clock clock;
     private final ScheduledExecutorService sweepScheduler;
+    private final ObjectMapper objectMapper;
+    private final TxLifecyclePublisher txLifecyclePublisher;
+    private final FinalityPolicy finalityPolicy;
+    private final long finalityPollIntervalMs;
 
     private final Map<String, TxCorrelation> correlations = new ConcurrentHashMap<>();
     private final Set<String> evaluatedFacts = ConcurrentHashMap.newKeySet();
+    private final Set<String> pendingFinality = ConcurrentHashMap.newKeySet();
     private final List<Subscription> subscriptions = new CopyOnWriteArrayList<>();
     private final AtomicReference<Instant> lastObservationAt = new AtomicReference<>();
     private volatile boolean running = false;
     private volatile Gauge lagGauge;
     private volatile ScheduledFuture<?> sweepFuture;
+    private volatile ScheduledFuture<?> finalityPollFuture;
 
     Watcher(Watch watch, List<ProviderSet.NamedAdapter> adapters, ObservationLog observationLog,
             QuorumDecisionService quorumDecisionService, ProviderHealthTracker providerHealthTracker,
             ChainCursorRepository chainCursorRepository, long correlationWindowMs, MeterRegistry meterRegistry,
-            Clock clock) {
+            Clock clock, ObjectMapper objectMapper, TxLifecyclePublisher txLifecyclePublisher,
+            List<FinalityPolicy> finalityPolicies, long finalityPollIntervalMs) {
         this.watch = watch;
         this.adapters = List.copyOf(adapters);
         this.observationLog = observationLog;
@@ -92,6 +109,12 @@ class Watcher {
         this.meterRegistry = meterRegistry;
         this.clock = clock;
         this.sweepScheduler = Executors.newScheduledThreadPool(1, Thread.ofVirtual().factory());
+        this.objectMapper = objectMapper;
+        this.txLifecyclePublisher = txLifecyclePublisher;
+        this.finalityPolicy = finalityPolicies.stream()
+                .collect(Collectors.toMap(FinalityPolicy::chain, Function.identity()))
+                .get(Chain.valueOf(watch.chain()));
+        this.finalityPollIntervalMs = finalityPollIntervalMs;
     }
 
     UUID watchId() {
@@ -117,6 +140,9 @@ class Watcher {
         }
         sweepFuture = sweepScheduler.scheduleWithFixedDelay(this::sweepStaleCorrelations,
                 correlationWindowMs, correlationWindowMs, TimeUnit.MILLISECONDS);
+        // T17: shares this Watcher's own scheduler rather than a second thread pool (frozen brief).
+        finalityPollFuture = sweepScheduler.scheduleWithFixedDelay(this::pollFinality,
+                finalityPollIntervalMs, finalityPollIntervalMs, TimeUnit.MILLISECONDS);
     }
 
     void stop() {
@@ -124,6 +150,9 @@ class Watcher {
         subscriptions.forEach(Subscription::cancel);
         if (sweepFuture != null) {
             sweepFuture.cancel(false);
+        }
+        if (finalityPollFuture != null) {
+            finalityPollFuture.cancel(false);
         }
         sweepScheduler.shutdownNow();
         if (lagGauge != null) {
@@ -179,11 +208,18 @@ class Watcher {
             return; // still waiting on at least one configured provider
         }
 
-        evaluateFact(result.txHash(), FactType.EXISTENCE, correlation.answers(), TxResult::exists, false);
+        QuorumDecision existenceDecision = evaluateFact(result.txHash(), FactType.EXISTENCE,
+                correlation.answers(), TxResult::exists, false);
         evaluateFact(result.txHash(), FactType.AMOUNT, correlation.answers(), TxResult::amount, true);
         evaluateFact(result.txHash(), FactType.TOKEN, correlation.answers(), TxResult::tokenContractAddress, true);
-        evaluateFact(result.txHash(), FactType.CONFIRMATIONS, correlation.answers(),
-                TxResult::confirmations, true);
+        QuorumDecision confirmationsDecision = evaluateFact(result.txHash(), FactType.CONFIRMATIONS,
+                correlation.answers(), TxResult::confirmations, true);
+
+        // T17 R8/R9: must run before the correlation is pruned below - handleSeenIfAgreed/
+        // handleConfirmedIfAgreed read the still-populated correlation.answers() to source the
+        // durable ChainCursor snapshot and the agreed confirmation count.
+        handleSeenIfAgreed(result.txHash(), existenceDecision, correlation.answers());
+        handleConfirmedIfAgreed(result.txHash(), confirmationsDecision, correlation.answers());
 
         // T16 Phase 8 Finding 2: once every configured provider has answered, no further answer can
         // ever arrive for this transaction - whether or not every fact above actually reached a
@@ -196,11 +232,18 @@ class Watcher {
         }
     }
 
-    private <T extends Comparable<T>> void evaluateFact(String txHash, FactType factType,
+    /** @return the persisted {@link QuorumDecision}, or {@code null} if this call did not decide
+     *     anything - either this fact was already evaluated for this tx (in-memory guard, T16), fewer
+     *     than 3 providers actually bear on it, or a duplicate-decision {@link IllegalStateException}
+     *     was caught (T16 Phase 3 Finding 5). T17 adds the return value so callers can react to a
+     *     freshly-made {@code AGREED} decision (R8/R9) - {@code QuorumDecision} itself carries no
+     *     agreed *value*, only the outcome and counts, so {@code answers} must still be consulted by
+     *     the caller for the actual value. */
+    private <T extends Comparable<T>> QuorumDecision evaluateFact(String txHash, FactType factType,
             Map<String, TxResult> answers, Function<TxResult, T> extractor, boolean requireExists) {
         String evaluationKey = txHash + ":" + factType;
         if (!evaluatedFacts.add(evaluationKey)) {
-            return; // already evaluated this fact for this tx (in-memory guard)
+            return null; // already evaluated this fact for this tx (in-memory guard)
         }
 
         List<ProviderAnswer<T>> providerAnswers = new ArrayList<>();
@@ -219,18 +262,61 @@ class Watcher {
             // (not un-marked) because the caller is about to prune this txHash's correlation entirely
             // regardless (every configured provider has already answered - no further answer is ever
             // coming), so there is nothing left to wait for.
-            return;
+            return null;
         }
 
         try {
-            quorumDecisionService.evaluate(watch.chain(), txHash, factType, providerAnswers);
+            QuorumDecision decision = quorumDecisionService.evaluate(watch.chain(), txHash, factType,
+                    providerAnswers);
             recordDisagreementsIfAny(txHash, providerAnswers);
+            return decision;
         } catch (IllegalStateException e) {
             // T16 Phase 3 Finding 5: a duplicate decision already exists (e.g. the in-memory
             // evaluatedFacts guard was lost on restart) - benign, not propagated.
             log.debug("Quorum decision already exists for chain={} txHash={} factType={} - ignoring",
                     watch.chain(), txHash, factType);
+            return null;
         }
+    }
+
+    /** R8: no event unless {@code EXISTENCE} was just, freshly decided {@code AGREED} in this call.
+     * An {@code AGREED false} outcome (T17 Finding #10) is permanent for this {@code txHash} - the
+     * pre-existing, unmodified T16 exactly-once-per-fact design means {@code EXISTENCE} can never be
+     * re-decided, so no lifecycle event is ever emitted for it either. */
+    private void handleSeenIfAgreed(String txHash, QuorumDecision existenceDecision,
+                                     Map<String, TxResult> answers) {
+        if (existenceDecision == null || existenceDecision.outcome() != QuorumOutcome.AGREED) {
+            return;
+        }
+        boolean agreedExists = majorityValue(answers.values().stream().map(TxResult::exists).toList());
+        if (!agreedExists) {
+            return;
+        }
+        TxResult representative = answers.values().stream()
+                .filter(TxResult::exists)
+                .findFirst()
+                .orElseThrow();
+        chainCursorRepository.findByWatchId(watch.watchId()).ifPresent(cursor -> {
+            cursor.recordSeenTransaction(txHash, representative.amount(), representative.fromAddress(),
+                    representative.toAddress(), clock.instant());
+            chainCursorRepository.save(cursor);
+        });
+        pendingFinality.add(txHash);
+        txLifecyclePublisher.seen(watch, txHash);
+    }
+
+    /** R9 (one-shot, T17 frozen brief): no event unless {@code CONFIRMATIONS} was just, freshly
+     * decided {@code AGREED} in this call. */
+    private void handleConfirmedIfAgreed(String txHash, QuorumDecision confirmationsDecision,
+                                          Map<String, TxResult> answers) {
+        if (confirmationsDecision == null || confirmationsDecision.outcome() != QuorumOutcome.AGREED) {
+            return;
+        }
+        int agreedConfirmations = majorityValue(answers.values().stream()
+                .filter(TxResult::exists)
+                .map(TxResult::confirmations)
+                .toList());
+        txLifecyclePublisher.confirmed(watch, txHash, agreedConfirmations);
     }
 
     /** Only attributes disagreement when a genuine majority exists (Phase 7/8 Finding 3: {@code
@@ -242,14 +328,11 @@ class Watcher {
      * not once per disagreeing fact - the consecutive-disagreement counter's own meaning is "how many
      * transactions has this provider disagreed on", not "how many fields". */
     private <T extends Comparable<T>> void recordDisagreementsIfAny(String txHash, List<ProviderAnswer<T>> answers) {
+        T majorityValue = majorityValue(answers.stream().map(ProviderAnswer::value).toList());
         Map<T, Integer> counts = new LinkedHashMap<>();
         for (ProviderAnswer<T> answer : answers) {
             counts.merge(answer.value(), 1, Integer::sum);
         }
-        T majorityValue = counts.entrySet().stream()
-                .max(Map.Entry.comparingByValue())
-                .map(Map.Entry::getKey)
-                .orElseThrow();
         int majorityCount = counts.get(majorityValue);
         if (majorityCount == answers.size() || majorityCount < 2) {
             return; // unanimous, or a genuine 3-way split with no true majority - nothing to flag
@@ -261,6 +344,21 @@ class Watcher {
                 providerHealthTracker.recordDisagreement(watch.chain(), answer.provider());
             }
         }
+    }
+
+    /** The plurality value among {@code values} - ties broken by insertion order (T16's original
+     * inline logic, extracted in T17 so {@link #handleSeenIfAgreed}/{@link #handleConfirmedIfAgreed}
+     * can compute the same "what did the group actually agree on" answer {@link QuorumDecision} itself
+     * does not carry (it stores only the outcome and counts, never the value). */
+    private static <T> T majorityValue(Collection<T> values) {
+        Map<T, Integer> counts = new LinkedHashMap<>();
+        for (T value : values) {
+            counts.merge(value, 1, Integer::sum);
+        }
+        return counts.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .orElseThrow();
     }
 
     /** T16 AC6: forward-only, and only after the observation/quorum/health writes for this tick have
@@ -292,6 +390,91 @@ class Watcher {
                             DegradationReason.LAGGING);
                 }
             }
+        }
+    }
+
+    /** R10: package-private for direct test invocation, mirrors {@link #sweepStaleCorrelations}'s own
+     * testability convention. Polls every {@code txHash} currently pending finality (added by {@link
+     * #handleSeenIfAgreed} once {@code EXISTENCE} agrees {@code true}; removed here once {@code
+     * FINALITY} reaches any decided outcome). */
+    void pollFinality() {
+        for (String txHash : List.copyOf(pendingFinality)) {
+            pollFinalityFor(txHash);
+        }
+    }
+
+    private void pollFinalityFor(String txHash) {
+        Map<String, Boolean> answers = new LinkedHashMap<>();
+        Map<String, FinalityStatus> statuses = new LinkedHashMap<>();
+        for (ProviderSet.NamedAdapter namedAdapter : adapters) {
+            try {
+                FinalityStatus status = namedAdapter.adapter().getFinalityStatus(txHash);
+                // T17 Finding #3 (L3): logged verbatim before this fact is ever quorum-evaluated,
+                // identical ordering to every other fact type.
+                observationLog.record(watch.chain(), txHash, namedAdapter.providerName(),
+                        FactType.FINALITY, toRawJson(status));
+                answers.put(namedAdapter.providerName(), finalityPolicy.isFinal(status));
+                statuses.put(namedAdapter.providerName(), status);
+                providerHealthTracker.recordHealthy(watch.chain(), namedAdapter.providerName());
+            } catch (RuntimeException e) {
+                log.debug("Finality poll failed for provider={} chain={} txHash={} - marking lagging "
+                        + "for this tick", namedAdapter.providerName(), watch.chain(), txHash, e);
+                providerHealthTracker.recordUnhealthy(watch.chain(), namedAdapter.providerName(),
+                        DegradationReason.LAGGING);
+            }
+        }
+
+        if (answers.size() != 3) {
+            // T17 Finding #6: skip this tick entirely rather than evaluate with fewer than 3 real
+            // answers - mirrors evaluateFact's own exactly-3 discipline (T16).
+            return;
+        }
+
+        List<ProviderAnswer<Boolean>> providerAnswers = answers.entrySet().stream()
+                .map(entry -> new ProviderAnswer<>(entry.getKey(), entry.getValue()))
+                .toList();
+
+        QuorumDecision decision;
+        try {
+            decision = quorumDecisionService.evaluate(watch.chain(), txHash, FactType.FINALITY, providerAnswers);
+            recordDisagreementsIfAny(txHash, providerAnswers);
+        } catch (IllegalStateException e) {
+            log.debug("Quorum decision already exists for chain={} txHash={} factType=FINALITY - "
+                    + "ignoring and no longer polling", watch.chain(), txHash, e);
+            pendingFinality.remove(txHash);
+            return;
+        }
+
+        if (decision.outcome() != QuorumOutcome.AGREED) {
+            return; // HELD - stays pending; a future poll tick may yet reach agreement
+        }
+
+        boolean agreedFinal = majorityValue(providerAnswers.stream().map(ProviderAnswer::value).toList());
+        pendingFinality.remove(txHash);
+        if (!agreedFinal) {
+            return; // AGREED false is permanent for this fact (T16's exactly-once design) - stop polling
+        }
+
+        long finalizedBlockNumber = majorityValue(statuses.values().stream()
+                .map(FinalityStatus::finalizedBlockNumber)
+                .toList());
+
+        chainCursorRepository.findByWatchId(watch.watchId()).ifPresent(cursor -> {
+            cursor.advanceFinalizedTo(finalizedBlockNumber, clock.instant());
+            chainCursorRepository.save(cursor);
+            txLifecyclePublisher.finalized(watch, cursor);
+        });
+    }
+
+    private String toRawJson(FinalityStatus status) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("txBlockNumber", status.txBlockNumber());
+        fields.put("currentBlockNumber", status.currentBlockNumber());
+        fields.put("finalizedBlockNumber", status.finalizedBlockNumber());
+        try {
+            return objectMapper.writeValueAsString(fields);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("FinalityStatus could not be serialized to JSON", e);
         }
     }
 

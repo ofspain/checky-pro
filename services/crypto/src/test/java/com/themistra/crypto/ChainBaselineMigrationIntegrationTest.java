@@ -123,7 +123,7 @@ class ChainBaselineMigrationIntegrationTest {
     void allMigrationsAreRecordedAsSuccessfulInFlywayHistory() throws SQLException {
         // Flyway also inserts a synthetic, unversioned "schema creation" row before the versioned
         // migrations; only the versioned rows (V1-V2 from T02, V3 from T04, V4 from T10, V5 from
-        // T11, V6 from T15, V7 from T16) are this assertion's concern.
+        // T11, V6 from T15, V7 from T16, V8 from T17) are this assertion's concern.
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
@@ -134,7 +134,7 @@ class ChainBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
         }
     }
 

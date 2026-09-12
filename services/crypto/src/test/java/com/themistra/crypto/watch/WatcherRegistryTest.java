@@ -1,9 +1,11 @@
 package com.themistra.crypto.watch;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.Chain;
 import com.themistra.crypto.adapter.FakeChainAdapter;
 import com.themistra.crypto.adapter.ProviderSet;
 import com.themistra.crypto.common.config.WatcherProperties;
+import com.themistra.crypto.finality.FinalityPolicy;
 import com.themistra.crypto.observation.ObservationLog;
 import com.themistra.crypto.provider.ProviderHealthTracker;
 import com.themistra.crypto.quorum.QuorumDecisionService;
@@ -102,7 +104,7 @@ class WatcherRegistryTest {
     }
 
     private static WatcherProperties properties() {
-        return new WatcherProperties(1, 10_000, 30_000, 1_000, 60_000);
+        return new WatcherProperties(1, 10_000, 30_000, 1_000, 60_000, 3_600_000);
     }
 
     /** {@code lockAtLeastFor} is a genuine minimum hold duration - ShedLock honors it even across an
@@ -112,7 +114,7 @@ class WatcherRegistryTest {
      * need to wait out that floor for real), so that test alone uses a negligible one to isolate {@code
      * shutdown()}'s own release behavior from the (separately correct, untested-here) floor guarantee. */
     private static WatcherProperties propertiesWithNegligibleLockAtLeastFor() {
-        return new WatcherProperties(1, 10_000, 30_000, 1, 60_000);
+        return new WatcherProperties(1, 10_000, 30_000, 1, 60_000, 3_600_000);
     }
 
     private static Watch registeredWatch(String chain) {
@@ -149,7 +151,8 @@ class WatcherRegistryTest {
         return new WatcherRegistry(watchRepository, providerSet, mock(ObservationLog.class),
                 mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
                 mock(ChainCursorRepository.class), watcherProperties, new SimpleMeterRegistry(),
-                Clock.systemUTC(), lockProvider);
+                Clock.systemUTC(), lockProvider, new ObjectMapper(), mock(TxLifecyclePublisher.class),
+                List.of());
     }
 
     @Test
@@ -254,7 +257,8 @@ class WatcherRegistryTest {
 
         WatcherRegistry registry = new WatcherRegistry(watchRepository, providerSet, mock(ObservationLog.class),
                 mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
-                mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(), lockProvider);
+                mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(), lockProvider,
+                new ObjectMapper(), mock(TxLifecyclePublisher.class), List.of());
 
         registry.reconcile();
         assertThat(meterRegistry.find("crypto.watcher.lag.seconds")
@@ -314,7 +318,7 @@ class WatcherRegistryTest {
         when(lockProvider.lock(argThat(config -> config != null && config.getName().equals("watcher-shard-1"))))
                 .thenReturn(Optional.empty());
 
-        WatcherProperties twoShardProperties = new WatcherProperties(2, 10_000, 30_000, 1_000, 60_000);
+        WatcherProperties twoShardProperties = new WatcherProperties(2, 10_000, 30_000, 1_000, 60_000, 3_600_000);
         WatcherRegistry registry = newRegistry(watchRepository, providerSet, lockProvider, twoShardProperties);
 
         registry.reconcile();
@@ -338,7 +342,8 @@ class WatcherRegistryTest {
 
         WatcherRegistry registry = new WatcherRegistry(watchRepository, providerSet, mock(ObservationLog.class),
                 mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
-                mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(), lockProvider);
+                mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(), lockProvider,
+                new ObjectMapper(), mock(TxLifecyclePublisher.class), List.of());
 
         registry.reconcile();
         assertThat(meterRegistry.find("crypto.watcher.lag.seconds")

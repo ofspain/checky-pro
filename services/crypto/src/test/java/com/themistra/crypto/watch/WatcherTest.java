@@ -1,9 +1,11 @@
 package com.themistra.crypto.watch;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.Chain;
 import com.themistra.crypto.adapter.FakeChainAdapter;
 import com.themistra.crypto.adapter.ProviderSet;
 import com.themistra.crypto.adapter.model.TxResult;
+import com.themistra.crypto.finality.FinalityPolicy;
 import com.themistra.crypto.observation.FactType;
 import com.themistra.crypto.observation.ObservationLog;
 import com.themistra.crypto.provider.DegradationReason;
@@ -64,6 +66,15 @@ class WatcherTest {
     private final ChainCursorRepository chainCursorRepository = mock(ChainCursorRepository.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final MutableClock clock = new MutableClock(NOW);
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final TxLifecyclePublisher txLifecyclePublisher = mock(TxLifecyclePublisher.class);
+    private final FinalityPolicy finalityPolicy = mock(FinalityPolicy.class);
+
+    /** Real background thread, well beyond any of these tests' own lifetime (tests run in
+     * milliseconds) - never fires during a test unless a test explicitly calls {@code
+     * watcher.pollFinality()} itself (mirrors {@code sweepStaleCorrelations}'s own testability
+     * convention: package-private, directly invokable rather than waiting on the real scheduler). */
+    private static final long FINALITY_POLL_INTERVAL_MS = 3_600_000L;
 
     private Watch watch;
 
@@ -72,11 +83,13 @@ class WatcherTest {
         watch = Watch.register(UUID.randomUUID(), UUID.randomUUID(), "ETHEREUM", ADDRESS, TOKEN,
                 BigDecimal.valueOf(1_000_000L), NOW.plus(1, ChronoUnit.DAYS), NOW);
         when(chainCursorRepository.findByWatchId(any())).thenReturn(java.util.Optional.empty());
+        when(finalityPolicy.chain()).thenReturn(Chain.ETHEREUM);
     }
 
     private Watcher newWatcher(long correlationWindowMs) {
         return new Watcher(watch, adapters, observationLog, quorumDecisionService, providerHealthTracker,
-                chainCursorRepository, correlationWindowMs, meterRegistry, clock);
+                chainCursorRepository, correlationWindowMs, meterRegistry, clock, objectMapper,
+                txLifecyclePublisher, List.of(finalityPolicy), FINALITY_POLL_INTERVAL_MS);
     }
 
     private static TxResult tx(boolean exists, long blockNumber, BigDecimal amount, int confirmations) {

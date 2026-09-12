@@ -18,6 +18,7 @@ public record WatcherProperties(
         @Min(1) long reconciliationIntervalMs,
         @Min(1) long correlationWindowMs,
         @Min(1) long lockAtLeastForMs,
-        @Min(1) long lockAtMostForMs
+        @Min(1) long lockAtMostForMs,
+        @Min(1) long finalityPollIntervalMs
 ) {
 }

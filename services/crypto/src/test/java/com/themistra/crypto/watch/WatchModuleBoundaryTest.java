@@ -13,19 +13,20 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** AC8 (L15, module boundaries) - mirrors {@code TokenModuleBoundaryTest} (T11) / {@code
+/** AC8/AC9 (L15, module boundaries) - mirrors {@code TokenModuleBoundaryTest} (T11) / {@code
  * FinalityModuleBoundaryTest} (T14)'s exact source-scan style: a plain static file scan over
  * {@code import} lines, not ArchUnit. {@code watch/} legitimately depends on several other modules'
  * stateless services/value types (T16 gave it real callers into {@code observation}/{@code
- * provider}/{@code quorum}/{@code adapter} for the first time) - each such package gets an exact
- * allow-list of the imports actually used, rather than being forbidden outright or left unchecked;
- * {@code finality} and {@code events} remain fully forbidden - {@code watch/} has no legitimate need
- * for either. */
+ * provider}/{@code quorum}/{@code adapter} for the first time; T17 adds {@code finality}, needed to
+ * pick the right {@code FinalityPolicy} for a watch's chain, and {@code events}, needed by the new
+ * {@code TxLifecyclePublisher} to reach the sole sanctioned publishing path - mirrors {@code
+ * ProviderDegradedPublisher}'s (T10, {@code provider/}) identical, already-established need to import
+ * {@code events.OutboxPublisher}) - each such package gets an exact allow-list of the imports actually
+ * used, rather than being forbidden outright or left unchecked. No prefix is left fully forbidden any
+ * more; every dependency {@code watch/} now has is an intentional, allow-listed one. */
 class WatchModuleBoundaryTest {
 
-    private static final List<String> FULLY_FORBIDDEN_IMPORT_PREFIXES = List.of(
-            "com.themistra.crypto.finality",
-            "com.themistra.crypto.events");
+    private static final List<String> FULLY_FORBIDDEN_IMPORT_PREFIXES = List.of();
 
     /** Package prefix -> the exact import lines permitted from it. Anything else from a listed prefix
      * (in particular, any of that package's own JPA entities) fails; a prefix not listed here at all is
@@ -36,6 +37,7 @@ class WatchModuleBoundaryTest {
             "com.themistra.crypto.adapter", Set.of(
                     "import com.themistra.crypto.adapter.Chain;",
                     "import com.themistra.crypto.adapter.ProviderSet;",
+                    "import com.themistra.crypto.adapter.model.FinalityStatus;",
                     "import com.themistra.crypto.adapter.model.Subscription;",
                     "import com.themistra.crypto.adapter.model.TxResult;"),
             "com.themistra.crypto.observation", Set.of(
@@ -46,7 +48,13 @@ class WatchModuleBoundaryTest {
                     "import com.themistra.crypto.provider.ProviderHealthTracker;"),
             "com.themistra.crypto.quorum", Set.of(
                     "import com.themistra.crypto.quorum.ProviderAnswer;",
-                    "import com.themistra.crypto.quorum.QuorumDecisionService;"));
+                    "import com.themistra.crypto.quorum.QuorumDecision;",
+                    "import com.themistra.crypto.quorum.QuorumDecisionService;",
+                    "import com.themistra.crypto.quorum.QuorumOutcome;"),
+            "com.themistra.crypto.finality", Set.of(
+                    "import com.themistra.crypto.finality.FinalityPolicy;"),
+            "com.themistra.crypto.events", Set.of(
+                    "import com.themistra.crypto.events.OutboxPublisher;"));
 
     @Test
     void noMainSourceFileInWatchImportsBeyondItsAllowedTypesOrAnyForbiddenPackage() {
