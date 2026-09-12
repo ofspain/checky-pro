@@ -11,6 +11,7 @@ import com.themistra.crypto.observation.FactType;
 import com.themistra.crypto.observation.ObservationLog;
 import com.themistra.crypto.provider.DegradationReason;
 import com.themistra.crypto.provider.ProviderHealthTracker;
+import com.themistra.crypto.quorum.ProviderAnswer;
 import com.themistra.crypto.quorum.QuorumDecision;
 import com.themistra.crypto.quorum.QuorumDecisionService;
 import com.themistra.crypto.quorum.QuorumOutcome;
@@ -29,6 +30,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ScheduledExecutorService;
@@ -482,6 +484,43 @@ class WatcherTest {
     }
 
     @Test
+    void doesNotEmitSeenWhenExistenceMajorityIsFalseDespiteAMinorityTrueAnswer() {
+        // Phase 11 Finding 15: the trivial unanimous-false case doesn't exercise the majorityValue
+        // recomputation path handleSeenIfAgreed actually uses.
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.EXISTENCE), anyList()))
+                .thenReturn(agreed(FactType.EXISTENCE));
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+
+        deliver(providerA, tx(false, 0L, null, 0));
+        deliver(providerB, tx(false, 0L, null, 0));
+        deliver(providerC, tx(true, 100L, BigDecimal.TEN, 3));
+
+        verify(txLifecyclePublisher, never()).seen(any(), any(), anyInt());
+    }
+
+    @Test
+    void seenIsEmittedExactlyOnceEvenIfTheAgreeingObservationsAreRedelivered() {
+        // Phase 11 Finding 3: AC1's "exactly once" is proven at the evaluatedFacts-guard level by
+        // T16's own suite, but not, until now, specifically for the seen() publisher call.
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.EXISTENCE), anyList()))
+                .thenReturn(agreed(FactType.EXISTENCE))
+                .thenThrow(new IllegalStateException("a quorum decision already exists"));
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult result = tx(true, 100L, BigDecimal.TEN, 3);
+
+        deliver(providerA, result);
+        deliver(providerB, result);
+        deliver(providerC, result);
+        deliver(providerA, result);
+        deliver(providerB, result);
+        deliver(providerC, result);
+
+        verify(txLifecyclePublisher, times(1)).seen(eq(watch), eq(TX_HASH), eq(3));
+    }
+
+    @Test
     void seenSourcesAmountFromTheQuorumMajorityNotAnArbitraryProvider() {
         // T17 Phase 9 (self-review Finding 1 / Kimi Finding 5): two providers agree on 100, one
         // disagrees with 999 - the snapshot must record the majority value, never the minority one,
@@ -517,8 +556,14 @@ class WatcherTest {
 
         verify(txLifecyclePublisher).seen(eq(watch), eq(TX_HASH), eq(3));
         watcher.pollFinality();
+        // Phase 11 Finding 2: the original assertion (no LAGGING recorded) is also true whenever
+        // pollFinality has nothing pending at all - strengthened with a direct proof that no
+        // provider was ever asked and nothing was logged for FINALITY, i.e. pendingFinality was
+        // truly empty, not merely lucky.
         verify(providerHealthTracker, never())
                 .recordUnhealthy(eq("ETHEREUM"), anyString(), eq(DegradationReason.LAGGING));
+        verify(observationLog, never())
+                .record(anyString(), anyString(), anyString(), eq(FactType.FINALITY), anyString());
     }
 
     // ---------- T17 R9: chain.tx.confirmed (one-shot) ----------
@@ -550,6 +595,56 @@ class WatcherTest {
         deliver(providerC, tx(true, 100L, BigDecimal.TEN, 3));
 
         verify(txLifecyclePublisher, never()).confirmed(any(), any(), anyInt());
+    }
+
+    @Test
+    void doesNotEmitConfirmedWhenExistenceHasAMinorityFalseAnswer() {
+        // Phase 11 Finding 4: with only 2 of 3 providers reporting exists=true, CONFIRMATIONS never
+        // reaches 3 qualifying answers - AC2's "only after EXISTENCE has itself agreed true" made
+        // structural, not just asserted.
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+
+        deliver(providerA, tx(true, 100L, BigDecimal.TEN, 5));
+        deliver(providerB, tx(true, 100L, BigDecimal.TEN, 5));
+        deliver(providerC, tx(false, 0L, null, 0));
+
+        verify(txLifecyclePublisher, never()).confirmed(any(), any(), anyInt());
+    }
+
+    @Test
+    void confirmedUsesTheMajorityConfirmationCountWhenProvidersDisagree() {
+        // Phase 11 Finding 10: the earlier named test used three identical counts.
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.CONFIRMATIONS), anyList()))
+                .thenReturn(agreed(FactType.CONFIRMATIONS));
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+
+        deliver(providerA, tx(true, 100L, BigDecimal.TEN, 42));
+        deliver(providerB, tx(true, 100L, BigDecimal.TEN, 42));
+        deliver(providerC, tx(true, 100L, BigDecimal.TEN, 99));
+
+        verify(txLifecyclePublisher).confirmed(eq(watch), eq(TX_HASH), eq(42));
+    }
+
+    @Test
+    void confirmedIsEmittedExactlyOnceEvenIfTheAgreeingObservationsAreRedelivered() {
+        // Phase 11 Finding 3, for CONFIRMATIONS.
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.CONFIRMATIONS), anyList()))
+                .thenReturn(agreed(FactType.CONFIRMATIONS))
+                .thenThrow(new IllegalStateException("a quorum decision already exists"));
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult result = tx(true, 100L, BigDecimal.TEN, 42);
+
+        deliver(providerA, result);
+        deliver(providerB, result);
+        deliver(providerC, result);
+        deliver(providerA, result);
+        deliver(providerB, result);
+        deliver(providerC, result);
+
+        verify(txLifecyclePublisher, times(1)).confirmed(eq(watch), eq(TX_HASH), eq(42));
     }
 
     // ---------- T17 R10: chain.tx.finalized ----------
@@ -593,6 +688,143 @@ class WatcherTest {
 
         verify(txLifecyclePublisher).finalized(eq(watch), eq(cursor));
         assertThat(cursor.lastFinalizedBlock()).isEqualTo(150L);
+    }
+
+    @Test
+    void finalizedIsNeverPublishedBeforeSeenIsPublished() {
+        // Phase 11 Finding 1 / Phase 9 self-review Finding 4: the ordering fix (seen() called before
+        // pendingFinality.add) is documented but was never actually asserted at the call-order level.
+        ChainCursor cursor = seenCursor();
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult result = tx(true, 100L, BigDecimal.TEN, 3);
+        deliver(providerA, result);
+        deliver(providerB, result);
+        deliver(providerC, result);
+
+        FinalityStatus isFinal = new FinalityStatus(100L, 200L, 150L);
+        providerA.scriptFinalityStatus(TX_HASH, isFinal);
+        providerB.scriptFinalityStatus(TX_HASH, isFinal);
+        providerC.scriptFinalityStatus(TX_HASH, isFinal);
+        when(finalityPolicy.isFinal(isFinal)).thenReturn(true);
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.FINALITY), anyList()))
+                .thenReturn(agreed(FactType.FINALITY));
+
+        watcher.pollFinality();
+
+        InOrder order = inOrder(txLifecyclePublisher);
+        order.verify(txLifecyclePublisher).seen(eq(watch), eq(TX_HASH), eq(3));
+        order.verify(txLifecyclePublisher).finalized(eq(watch), eq(cursor));
+    }
+
+    @Test
+    void finalityReachesAgreementUnderTwoOfThreeMajorityAndFlagsTheDisagreeingProvider() {
+        // Phase 11 Finding 5: the happy-path finality test uses unanimous answers - R10 only
+        // requires 2-of-3 (L1), and R5 requires the disagreeing minority to be flagged.
+        seenCursor();
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult result = tx(true, 100L, BigDecimal.TEN, 3);
+        deliver(providerA, result);
+        deliver(providerB, result);
+        deliver(providerC, result);
+
+        FinalityStatus isFinal = new FinalityStatus(100L, 200L, 150L);
+        FinalityStatus notYetFinal = new FinalityStatus(100L, 200L, 90L);
+        providerA.scriptFinalityStatus(TX_HASH, isFinal);
+        providerB.scriptFinalityStatus(TX_HASH, isFinal);
+        providerC.scriptFinalityStatus(TX_HASH, notYetFinal);
+        when(finalityPolicy.isFinal(isFinal)).thenReturn(true);
+        when(finalityPolicy.isFinal(notYetFinal)).thenReturn(false);
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.FINALITY), anyList()))
+                .thenReturn(agreed(FactType.FINALITY));
+
+        watcher.pollFinality();
+
+        verify(txLifecyclePublisher).finalized(eq(watch), any(ChainCursor.class));
+        verify(providerHealthTracker).recordDisagreement("ETHEREUM", "provider-c");
+    }
+
+    @Test
+    void finalityPollPassesEachProvidersActualIsFinalValueToQuorumEvaluation() {
+        // Phase 11 Finding 6: only anyList() was asserted before - a bug that inverted or hardcoded
+        // the boolean mapping would still have passed.
+        seenCursor();
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult result = tx(true, 100L, BigDecimal.TEN, 3);
+        deliver(providerA, result);
+        deliver(providerB, result);
+        deliver(providerC, result);
+
+        FinalityStatus isFinal = new FinalityStatus(100L, 200L, 150L);
+        FinalityStatus notYetFinal = new FinalityStatus(100L, 200L, 90L);
+        providerA.scriptFinalityStatus(TX_HASH, isFinal);
+        providerB.scriptFinalityStatus(TX_HASH, isFinal);
+        providerC.scriptFinalityStatus(TX_HASH, notYetFinal);
+        when(finalityPolicy.isFinal(isFinal)).thenReturn(true);
+        when(finalityPolicy.isFinal(notYetFinal)).thenReturn(false);
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.FINALITY), anyList()))
+                .thenReturn(agreed(FactType.FINALITY));
+
+        watcher.pollFinality();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ProviderAnswer<Boolean>>> answersCaptor = ArgumentCaptor.forClass(List.class);
+        verify(quorumDecisionService).evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.FINALITY),
+                answersCaptor.capture());
+        Map<String, Boolean> actual = answersCaptor.getValue().stream()
+                .collect(java.util.stream.Collectors.toMap(ProviderAnswer::provider, ProviderAnswer::value));
+        assertThat(actual).containsEntry("provider-a", true)
+                .containsEntry("provider-b", true)
+                .containsEntry("provider-c", false);
+    }
+
+    @Test
+    void finalityPollRemovesFromPendingWhenADecisionAlreadyExists() {
+        // Phase 11 Finding 11: the IllegalStateException catch branch (a decision already exists,
+        // e.g. the in-memory guard was lost on restart) was never exercised.
+        seenCursor();
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult result = tx(true, 100L, BigDecimal.TEN, 3);
+        deliver(providerA, result);
+        deliver(providerB, result);
+        deliver(providerC, result);
+
+        FinalityStatus isFinal = new FinalityStatus(100L, 200L, 150L);
+        providerA.scriptFinalityStatus(TX_HASH, isFinal);
+        providerB.scriptFinalityStatus(TX_HASH, isFinal);
+        providerC.scriptFinalityStatus(TX_HASH, isFinal);
+        when(finalityPolicy.isFinal(isFinal)).thenReturn(true);
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.FINALITY), anyList()))
+                .thenThrow(new IllegalStateException("a quorum decision already exists"));
+
+        watcher.pollFinality();
+        verify(txLifecyclePublisher, never()).finalized(any(), any());
+
+        // no longer pending: a second tick must not touch any provider again.
+        // (1 recordHealthy from the original EXISTENCE-agreeing delivery + 1 from the one finality poll.)
+        watcher.pollFinality();
+        verify(providerHealthTracker, times(2)).recordHealthy("ETHEREUM", "provider-a");
+    }
+
+    @Test
+    void aFreshWatcherInstanceDoesNotResumePollingASeenButNotFinalizedCursor() {
+        // Phase 11 Finding 7 / Phase 9 self-review Finding (accepted, documented-only): pendingFinality
+        // is in-memory only. This is a disclosed, accepted limitation, not a defect this task fixes -
+        // this test locks in the current, intentional behavior so a future change doesn't silently
+        // alter it in either direction without notice.
+        ChainCursor cursorFromBeforeARestart = ChainCursor.placeholder("ETHEREUM", watch.watchId(), NOW);
+        cursorFromBeforeARestart.recordSeenTransaction(TX_HASH, BigDecimal.TEN, "0xfrom", ADDRESS, NOW);
+        when(chainCursorRepository.findByWatchId(watch.watchId()))
+                .thenReturn(Optional.of(cursorFromBeforeARestart));
+        Watcher watcher = newWatcher(60_000); // a brand-new instance, as after a process restart
+
+        watcher.pollFinality();
+
+        verify(observationLog, never())
+                .record(anyString(), anyString(), anyString(), eq(FactType.FINALITY), anyString());
     }
 
     @Test
@@ -733,6 +965,8 @@ class WatcherTest {
 
         verify(txLifecyclePublisher, never()).finalized(any(), any());
         assertThat(cursor.txHash()).isEqualTo("0xdifferent-tx");
+        // Phase 11 Finding 12: withholding the event must not still corrupt the cursor.
+        assertThat(cursor.lastFinalizedBlock()).isNull();
     }
 
     // ---------- T17 Phase 9 (self-review Finding 2 / Kimi Finding 4): fail-fast construction ----------

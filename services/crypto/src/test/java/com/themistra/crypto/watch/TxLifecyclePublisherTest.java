@@ -89,6 +89,23 @@ class TxLifecyclePublisherTest {
         assertThat(payload.txHash()).isEqualTo(TX_HASH);
     }
 
+    @Test
+    void confirmedBuildsTheDocumentedPayloadShape() {
+        // Phase 11 Finding 13: the earlier test only asserted confirmations/chain/txHash.
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+
+        publisher.confirmed(watch, TX_HASH, 42);
+
+        verify(outboxPublisher).publish(any(), any(), any(), any(), payloadCaptor.capture());
+        TxLifecyclePublisher.ConfirmedPayload payload =
+                (TxLifecyclePublisher.ConfirmedPayload) payloadCaptor.getValue();
+        assertThat(payload.idempotencyKey()).isEqualTo("ETHEREUM:" + TX_HASH + ":confirmed");
+        assertThat(payload.watchId()).isEqualTo(watch.watchId());
+        assertThat(payload.invoiceUuid()).isEqualTo(watch.invoiceUuid());
+        assertThat(payload.tokenContractAddress()).isEqualTo("0xtoken");
+        assertThat(payload.occurredAt()).isEqualTo(NOW);
+    }
+
     // ---------- shouldEmitChainTxFinalizedOnlyAtPerChainFinality (R10) ----------
 
     @Test
@@ -108,6 +125,11 @@ class TxLifecyclePublisherTest {
         assertThat(payload.amount()).isEqualTo("12345");
         assertThat(payload.fromAddress()).isEqualTo("0xfrom");
         assertThat(payload.toAddress()).isEqualTo("0xto");
+        // Phase 11 Finding 14.
+        assertThat(payload.idempotencyKey()).isEqualTo("ETHEREUM:" + TX_HASH + ":finalized");
+        assertThat(payload.watchId()).isEqualTo(watch.watchId());
+        assertThat(payload.invoiceUuid()).isEqualTo(watch.invoiceUuid());
+        assertThat(payload.occurredAt()).isEqualTo(NOW);
     }
 
     @Test
@@ -128,10 +150,17 @@ class TxLifecyclePublisherTest {
 
     @Test
     void finalizedToleratesANullAmountOnTheCursor() {
+        // Phase 11 Finding 8: must not silently substitute a default like "0" for a missing amount.
         ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", watch.watchId(), NOW);
         cursor.recordSeenTransaction(TX_HASH, null, null, null, NOW);
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
 
         assertThatCode(() -> publisher.finalized(watch, cursor)).doesNotThrowAnyException();
+
+        verify(outboxPublisher).publish(any(), any(), any(), any(), payloadCaptor.capture());
+        TxLifecyclePublisher.FinalizedPayload payload =
+                (TxLifecyclePublisher.FinalizedPayload) payloadCaptor.getValue();
+        assertThat(payload.amount()).isNull();
     }
 
     // ---------- shouldCarryDeterministicIdempotencyKeyOnEveryEmittedEvent (R12/L5) ----------

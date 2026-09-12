@@ -76,3 +76,29 @@ is the regression test for this specific fix.
   disclosed, unrelated set across the same 4 files (`ObservationRepositoryIntegrationTest`,
   `ProviderHealthRepositoryIntegrationTest`, `QuorumDecisionRepositoryIntegrationTest`,
   `TokenAllowlistRepositoryIntegrationTest`). Zero regressions.
+
+## Phase 11 (Kimi Test Review) additions
+
+Per this pipeline's own Phase 11 convention, no separate resolution artifact is written — accepted
+findings are folded directly into the test suite. Kimi raised 15 findings; 13 were verified genuine gaps
+and fixed with new or extended tests, 2 were rejected.
+
+| Finding | Disposition | Test added/extended |
+|---|---|---|
+| 1. No ordering proof that `seen` precedes `finalized` | **ACCEPTED** | `WatcherTest.finalizedIsNeverPublishedBeforeSeenIsPublished` (`InOrder`). |
+| 2. Missing-cursor test's assertion was weak | **ACCEPTED** | `logsAWarningAndSkipsFinalityPollingWhenNoChainCursorExistsAtSeenTime` extended with a direct `observationLog` never-called-for-FINALITY assertion. |
+| 3. No duplicate-observation suppression test for `seen`/`confirmed` | **ACCEPTED** | `seenIsEmittedExactlyOnceEvenIfTheAgreeingObservationsAreRedelivered`, `confirmedIsEmittedExactlyOnceEvenIfTheAgreeingObservationsAreRedelivered`. |
+| 4. No test for `confirmed` withheld when `EXISTENCE` has a minority `false` | **ACCEPTED** | `doesNotEmitConfirmedWhenExistenceHasAMinorityFalseAnswer`. |
+| 5. No 2-of-3 finality majority + disagreement test | **ACCEPTED** | `finalityReachesAgreementUnderTwoOfThreeMajorityAndFlagsTheDisagreeingProvider`. |
+| 6. No proof of the actual booleans passed to `evaluate` for `FINALITY` | **ACCEPTED** | `finalityPollPassesEachProvidersActualIsFinalValueToQuorumEvaluation` (`ArgumentCaptor`). |
+| 7. No test for restart-recovery of `pendingFinality` | **ACCEPTED, reframed** | Kimi's own suggested test would have asserted behavior contradicting Phase 9's already-accepted, disclosed limitation (in-memory-only, not fixed). Added `aFreshWatcherInstanceDoesNotResumePollingASeenButNotFinalizedCursor` instead — a characterization test locking in the current, intentional behavior so a future change can't silently alter it. |
+| 8. Null-amount test didn't inspect the payload | **ACCEPTED** | `finalizedToleratesANullAmountOnTheCursor` extended to assert `payload.amount()` is `null`. |
+| 9. No test proving the duplicate-key catch is scoped to only that cause | **REJECTED** | Already litigated and settled at Phase 9 (broad catch is intentional and justified there); Kimi's suggested test would assert behavior contrary to that accepted design. No new information changes the Phase 9 reasoning. |
+| 10. No `confirmed` majority-count test with disagreement | **ACCEPTED** | `confirmedUsesTheMajorityConfirmationCountWhenProvidersDisagree`. |
+| 11. No test for the `FINALITY` duplicate-decision catch path | **ACCEPTED** | `finalityPollRemovesFromPendingWhenADecisionAlreadyExists`. |
+| 12. Mismatch-guard test didn't assert `lastFinalizedBlock` stayed unchanged | **ACCEPTED** | `finalizedIsWithheldWhenTheCursorSnapshotBelongsToADifferentTransaction` extended. |
+| 13. No full payload-shape test for `confirmed` | **ACCEPTED** | `TxLifecyclePublisherTest.confirmedBuildsTheDocumentedPayloadShape`. |
+| 14. No full payload-shape test for `finalized` (`invoiceUuid`/`occurredAt`) | **ACCEPTED** | `finalizedPublishesWithTheTxFinalizedAggregateTypeAndTheCursorSnapshot` extended. |
+| 15. No 2-false-1-true `EXISTENCE` majority-recomputation test | **ACCEPTED** | `doesNotEmitSeenWhenExistenceMajorityIsFalseDespiteAMinorityTrueAnswer`. |
+
+**Verification run (Phase 11):** `mvn -pl services/crypto test -Dtest=WatcherTest,WatcherRegistryTest,ChainCursorTest,ProviderSetTest,WatchModuleBoundaryTest,TxLifecyclePublisherTest` — 77/77 pass (43+8+10+4+1+11). Full module regression: same 6 pre-existing unrelated failures, zero regressions.
