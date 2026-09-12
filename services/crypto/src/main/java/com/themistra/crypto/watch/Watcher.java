@@ -29,6 +29,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -111,9 +112,19 @@ class Watcher {
         this.sweepScheduler = Executors.newScheduledThreadPool(1, Thread.ofVirtual().factory());
         this.objectMapper = objectMapper;
         this.txLifecyclePublisher = txLifecyclePublisher;
+        Chain chain = Chain.valueOf(watch.chain());
         this.finalityPolicy = finalityPolicies.stream()
                 .collect(Collectors.toMap(FinalityPolicy::chain, Function.identity()))
-                .get(Chain.valueOf(watch.chain()));
+                .get(chain);
+        // T17 Phase 9 (self-review Finding 2 / Kimi Finding 4): a missing policy must fail loudly at
+        // construction, not surface as an endless, misleading "every provider is lagging" signal (the
+        // NullPointerException it would otherwise throw inside pollFinalityFor's per-provider
+        // try/catch is a RuntimeException, indistinguishable from a real transport failure). Mirrors
+        // ProviderSet's own eager validation (T16 Phase 8 Finding 7).
+        if (this.finalityPolicy == null) {
+            throw new IllegalStateException(
+                    "No FinalityPolicy configured for chain " + chain + " (watchId=" + watch.watchId() + ")");
+        }
         this.finalityPollIntervalMs = finalityPollIntervalMs;
     }
 
@@ -292,17 +303,42 @@ class Watcher {
         if (!agreedExists) {
             return;
         }
-        TxResult representative = answers.values().stream()
-                .filter(TxResult::exists)
+        List<TxResult> existingAnswers = answers.values().stream().filter(TxResult::exists).toList();
+        // T17 Phase 9 (self-review Finding 1 / Kimi Finding 5): amount must be the quorum-majority
+        // value, not an arbitrary agreeing provider's own answer - a Map's iteration order could
+        // otherwise pick a minority, disagreeing provider's amount. fromAddress/toAddress have no
+        // independent quorum fact of their own, so the provider that supplied the majority amount is
+        // used as the representative for them too, rather than an unrelated arbitrary pick.
+        BigDecimal agreedAmount = majorityValue(existingAnswers.stream().map(TxResult::amount).toList());
+        TxResult representative = existingAnswers.stream()
+                .filter(result -> agreedAmount.equals(result.amount()))
                 .findFirst()
                 .orElseThrow();
-        chainCursorRepository.findByWatchId(watch.watchId()).ifPresent(cursor -> {
-            cursor.recordSeenTransaction(txHash, representative.amount(), representative.fromAddress(),
+        int agreedConfirmations = majorityValue(existingAnswers.stream().map(TxResult::confirmations).toList());
+
+        Optional<ChainCursor> cursor = chainCursorRepository.findByWatchId(watch.watchId());
+        if (cursor.isEmpty()) {
+            // T17 Phase 9 (self-review Finding 3 / Kimi Finding 7): this should never happen in
+            // practice (T15 creates the placeholder row at watch registration) - surfaced loudly
+            // rather than silently emitting "seen" with no durable snapshot and no way to ever emit
+            // "finalized" later.
+            log.warn("No ChainCursor found for watchId={} chain={} - chain.tx.seen will be emitted but "
+                    + "the durable snapshot could not be recorded and finality polling cannot start "
+                    + "for txHash={}", watch.watchId(), watch.chain(), txHash);
+        } else {
+            cursor.get().recordSeenTransaction(txHash, agreedAmount, representative.fromAddress(),
                     representative.toAddress(), clock.instant());
-            chainCursorRepository.save(cursor);
-        });
-        pendingFinality.add(txHash);
-        txLifecyclePublisher.seen(watch, txHash);
+            chainCursorRepository.save(cursor.get());
+        }
+
+        // T17 Phase 9 (self-review Finding 4 / Kimi Finding 8): published before pendingFinality.add
+        // so the "seen" outbox row's created_at is guaranteed to precede any possible "finalized" row
+        // for the same transaction - pollFinality runs on a separate thread and could otherwise race
+        // ahead if the add happened first.
+        txLifecyclePublisher.seen(watch, txHash, agreedConfirmations);
+        if (cursor.isPresent()) {
+            pendingFinality.add(txHash);
+        }
     }
 
     /** R9 (one-shot, T17 frozen brief): no event unless {@code CONFIRMATIONS} was just, freshly
@@ -412,7 +448,7 @@ class Watcher {
                 // T17 Finding #3 (L3): logged verbatim before this fact is ever quorum-evaluated,
                 // identical ordering to every other fact type.
                 observationLog.record(watch.chain(), txHash, namedAdapter.providerName(),
-                        FactType.FINALITY, toRawJson(status));
+                        FactType.FINALITY, toRawJson(txHash, status));
                 answers.put(namedAdapter.providerName(), finalityPolicy.isFinal(status));
                 statuses.put(namedAdapter.providerName(), status);
                 providerHealthTracker.recordHealthy(watch.chain(), namedAdapter.providerName());
@@ -428,6 +464,23 @@ class Watcher {
             // T17 Finding #6: skip this tick entirely rather than evaluate with fewer than 3 real
             // answers - mirrors evaluateFact's own exactly-3 discipline (T16).
             return;
+        }
+
+        // T17 Phase 10 (test-driven correctness fix - not caught by self-review or independent
+        // review): QuorumDecisionService.evaluate can only ever succeed ONCE per (chain, txHash,
+        // FINALITY), the same one-shot guarantee that is correct for the other four fact types but
+        // wrong here if applied naively - FINALITY starts false and only becomes true after enough
+        // blocks accumulate, so persisting an early, unanimous "not yet final" reading (the
+        // overwhelmingly likely outcome of the very first qualifying poll tick) would permanently
+        // burn the one-and-only evaluation opportunity and make chain.tx.finalized impossible to
+        // ever emit for that transaction. The majority is therefore checked locally first, at zero
+        // persistence cost, and evaluate() is only ever called once that local majority already
+        // indicates true - the one persisted decision this produces is then always AGREED true (a
+        // Boolean fact can never produce HELD: three booleans always have a 2-of-3 majority for one
+        // value, by the pigeonhole principle), never a premature AGREED false.
+        boolean majorityIndicatesFinal = majorityValue(answers.values());
+        if (!majorityIndicatesFinal) {
+            return; // not yet final by local majority - try again next tick, nothing persisted
         }
 
         List<ProviderAnswer<Boolean>> providerAnswers = answers.entrySet().stream()
@@ -446,28 +499,45 @@ class Watcher {
         }
 
         if (decision.outcome() != QuorumOutcome.AGREED) {
-            return; // HELD - stays pending; a future poll tick may yet reach agreement
+            return; // unreachable for a Boolean fact in practice; kept as defense-in-depth
         }
 
-        boolean agreedFinal = majorityValue(providerAnswers.stream().map(ProviderAnswer::value).toList());
         pendingFinality.remove(txHash);
-        if (!agreedFinal) {
-            return; // AGREED false is permanent for this fact (T16's exactly-once design) - stop polling
-        }
 
         long finalizedBlockNumber = majorityValue(statuses.values().stream()
                 .map(FinalityStatus::finalizedBlockNumber)
                 .toList());
 
-        chainCursorRepository.findByWatchId(watch.watchId()).ifPresent(cursor -> {
-            cursor.advanceFinalizedTo(finalizedBlockNumber, clock.instant());
-            chainCursorRepository.save(cursor);
-            txLifecyclePublisher.finalized(watch, cursor);
-        });
+        Optional<ChainCursor> cursor = chainCursorRepository.findByWatchId(watch.watchId());
+        if (cursor.isEmpty()) {
+            // T17 Phase 9 (self-review Finding 3 / Kimi Finding 7): mirrors handleSeenIfAgreed's own
+            // logging - should never happen in practice, surfaced rather than silently dropped.
+            log.warn("No ChainCursor found for watchId={} chain={} - FINALITY agreed true for "
+                    + "txHash={} but chain.tx.finalized could not be emitted", watch.watchId(),
+                    watch.chain(), txHash);
+            return;
+        }
+        if (!txHash.equals(cursor.get().txHash())) {
+            // T17 Phase 9 (Kimi Finding 1): this watch's cursor snapshot belongs to a *different*
+            // transaction than the one just reaching finality - recordSeenTransaction is write-once
+            // (a disclosed, accepted limitation for a watch that observes more than one distinct
+            // transaction, T17 frozen brief), so publishing here would cite the wrong txHash/amount.
+            // Skipped rather than emitting a misleading event; the mismatched transaction's own
+            // finality was still correctly decided and persisted above, only the event is withheld.
+            log.warn("ChainCursor snapshot for watchId={} belongs to txHash={} but FINALITY just agreed "
+                    + "true for a different txHash={} - chain.tx.finalized withheld for the latter "
+                    + "(this watch has observed more than one transaction, a known, disclosed "
+                    + "limitation of this task's scope)", watch.watchId(), cursor.get().txHash(), txHash);
+            return;
+        }
+        cursor.get().advanceFinalizedTo(finalizedBlockNumber, clock.instant());
+        chainCursorRepository.save(cursor.get());
+        txLifecyclePublisher.finalized(watch, cursor.get());
     }
 
-    private String toRawJson(FinalityStatus status) {
+    private String toRawJson(String txHash, FinalityStatus status) {
         Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("txHash", txHash);
         fields.put("txBlockNumber", status.txBlockNumber());
         fields.put("currentBlockNumber", status.currentBlockNumber());
         fields.put("finalizedBlockNumber", status.finalizedBlockNumber());

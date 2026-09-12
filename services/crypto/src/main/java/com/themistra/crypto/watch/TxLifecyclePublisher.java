@@ -57,12 +57,14 @@ public class TxLifecyclePublisher {
         this.clock = clock;
     }
 
-    /** R8: first quorum-agreed sighting of a transaction. */
-    public void seen(Watch watch, String txHash) {
+    /** R8: first quorum-agreed sighting of a transaction. {@code confirmations} is the majority
+     * confirmation count observed alongside the agreeing {@code EXISTENCE} answers - best-effort, not
+     * itself independently quorum-decided at this point (T17 Phase 9, Kimi Finding 6). */
+    public void seen(Watch watch, String txHash, int confirmations) {
         Instant occurredAt = clock.instant();
         SeenPayload payload = new SeenPayload(idempotencyKey(watch.chain(), txHash, "seen"),
                 watch.watchId(), watch.invoiceUuid(), watch.chain(), txHash,
-                watch.tokenContractAddress(), occurredAt);
+                watch.tokenContractAddress(), confirmations, occurredAt);
         publish("tx-seen", watch, txHash, "seen", "chain.tx.seen", payload);
     }
 
@@ -78,7 +80,13 @@ public class TxLifecyclePublisher {
 
     /** R10: emitted only once {@code FINALITY} quorum-agrees {@code true}. {@code cursor} supplies the
      * durable {@code amount}/{@code fromAddress}/{@code toAddress} snapshot captured at {@link #seen} -
-     * see {@link ChainCursor#recordSeenTransaction}. */
+     * see {@link ChainCursor#recordSeenTransaction}. {@code confirmations} is deliberately not carried
+     * on this event (T17 Phase 9, Kimi Finding 6): unlike {@code amount}/{@code fromAddress}/
+     * {@code toAddress}, no durable source for it exists by the time finality is reached - the
+     * {@code CONFIRMATIONS} quorum decision's own agreed value is not persisted anywhere queryable
+     * (like every {@code QuorumDecision}, it stores only the outcome, never the value), and adding one
+     * would mean a further {@code chain_cursors} column outside this review-resolution phase's
+     * proportionate scope. Optional per the schema (design.md §4c), so omitting it is not a violation. */
     public void finalized(Watch watch, ChainCursor cursor) {
         Instant occurredAt = clock.instant();
         String txHash = cursor.txHash();
@@ -108,7 +116,8 @@ public class TxLifecyclePublisher {
     }
 
     public record SeenPayload(String idempotencyKey, UUID watchId, UUID invoiceUuid, String chain,
-                               String txHash, String tokenContractAddress, Instant occurredAt) {
+                               String txHash, String tokenContractAddress, int confirmations,
+                               Instant occurredAt) {
     }
 
     public record ConfirmedPayload(String idempotencyKey, UUID watchId, UUID invoiceUuid, String chain,

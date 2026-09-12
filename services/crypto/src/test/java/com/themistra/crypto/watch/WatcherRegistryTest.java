@@ -152,7 +152,15 @@ class WatcherRegistryTest {
                 mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
                 mock(ChainCursorRepository.class), watcherProperties, new SimpleMeterRegistry(),
                 Clock.systemUTC(), lockProvider, new ObjectMapper(), mock(TxLifecyclePublisher.class),
-                List.of());
+                List.of(ethereumFinalityPolicy()));
+    }
+
+    /** T17 Phase 9 (self-review Finding 2 / Kimi Finding 4): {@code Watcher} now fails fast in its
+     * constructor if no policy is configured for its chain - every fixture here uses ETHEREUM. */
+    private static FinalityPolicy ethereumFinalityPolicy() {
+        FinalityPolicy policy = mock(FinalityPolicy.class);
+        when(policy.chain()).thenReturn(Chain.ETHEREUM);
+        return policy;
     }
 
     @Test
@@ -258,7 +266,7 @@ class WatcherRegistryTest {
         WatcherRegistry registry = new WatcherRegistry(watchRepository, providerSet, mock(ObservationLog.class),
                 mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
                 mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(), lockProvider,
-                new ObjectMapper(), mock(TxLifecyclePublisher.class), List.of());
+                new ObjectMapper(), mock(TxLifecyclePublisher.class), List.of(ethereumFinalityPolicy()));
 
         registry.reconcile();
         assertThat(meterRegistry.find("crypto.watcher.lag.seconds")
@@ -343,7 +351,7 @@ class WatcherRegistryTest {
         WatcherRegistry registry = new WatcherRegistry(watchRepository, providerSet, mock(ObservationLog.class),
                 mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
                 mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(), lockProvider,
-                new ObjectMapper(), mock(TxLifecyclePublisher.class), List.of());
+                new ObjectMapper(), mock(TxLifecyclePublisher.class), List.of(ethereumFinalityPolicy()));
 
         registry.reconcile();
         assertThat(meterRegistry.find("crypto.watcher.lag.seconds")

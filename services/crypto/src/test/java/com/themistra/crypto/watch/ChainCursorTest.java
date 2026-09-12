@@ -2,6 +2,7 @@ package com.themistra.crypto.watch;
 
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -58,5 +59,71 @@ class ChainCursorTest {
 
         cursor.advanceTo(1000L, NOW.plusSeconds(180));
         assertThat(cursor.lastBlock()).isEqualTo(1000L);
+    }
+
+    // ---------- T17: recordSeenTransaction ----------
+
+    @Test
+    void recordSeenTransactionCapturesTheTxHashAmountAndAddresses() {
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+        Instant seenAt = NOW.plusSeconds(30);
+
+        cursor.recordSeenTransaction("0xabc", BigDecimal.valueOf(500), "0xfrom", "0xto", seenAt);
+
+        assertThat(cursor.txHash()).isEqualTo("0xabc");
+        assertThat(cursor.amount()).isEqualByComparingTo(BigDecimal.valueOf(500));
+        assertThat(cursor.fromAddress()).isEqualTo("0xfrom");
+        assertThat(cursor.toAddress()).isEqualTo("0xto");
+        assertThat(cursor.updatedAt()).isEqualTo(seenAt);
+    }
+
+    @Test
+    void recordSeenTransactionIsWriteOnce() {
+        // T17 frozen brief: a watch that legitimately observes a second, distinct transaction after
+        // its first keeps only the first snapshot - a disclosed, accepted limitation, not a defect.
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+        cursor.recordSeenTransaction("0xfirst", BigDecimal.TEN, "0xfromA", "0xtoA", NOW.plusSeconds(30));
+
+        cursor.recordSeenTransaction("0xsecond", BigDecimal.valueOf(999), "0xfromB", "0xtoB",
+                NOW.plusSeconds(60));
+
+        assertThat(cursor.txHash()).isEqualTo("0xfirst");
+        assertThat(cursor.amount()).isEqualByComparingTo(BigDecimal.TEN);
+        assertThat(cursor.fromAddress()).isEqualTo("0xfromA");
+        assertThat(cursor.toAddress()).isEqualTo("0xtoA");
+    }
+
+    @Test
+    void recordSeenTransactionRejectsANullTxHash() {
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+
+        assertThatNullPointerException().isThrownBy(
+                () -> cursor.recordSeenTransaction(null, BigDecimal.TEN, "0xfrom", "0xto", NOW));
+    }
+
+    // ---------- T17: advanceFinalizedTo ----------
+
+    @Test
+    void advanceFinalizedToSetsTheFinalizedBlockFromTheNullSentinel() {
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+        Instant finalizedAt = NOW.plusSeconds(90);
+
+        cursor.advanceFinalizedTo(777L, finalizedAt);
+
+        assertThat(cursor.lastFinalizedBlock()).isEqualTo(777L);
+        assertThat(cursor.updatedAt()).isEqualTo(finalizedAt);
+    }
+
+    @Test
+    void advanceFinalizedToIsANoOpWhenGivenABlockNumberAtOrBelowTheCurrentValue() {
+        // AC8: lastFinalizedBlock only ever increases.
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+        cursor.advanceFinalizedTo(1000L, NOW.plusSeconds(60));
+
+        cursor.advanceFinalizedTo(500L, NOW.plusSeconds(120));
+        assertThat(cursor.lastFinalizedBlock()).isEqualTo(1000L);
+
+        cursor.advanceFinalizedTo(1000L, NOW.plusSeconds(180));
+        assertThat(cursor.lastFinalizedBlock()).isEqualTo(1000L);
     }
 }
