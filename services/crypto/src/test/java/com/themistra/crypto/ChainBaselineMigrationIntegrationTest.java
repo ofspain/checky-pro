@@ -46,7 +46,12 @@ class ChainBaselineMigrationIntegrationTest {
     // V7__crypto_app_watcher_grants.sql) are likewise verified by their own dedicated integration
     // tests, not folded into this class's tx_hash-keyed GRANTED_TABLES helper, since none of those
     // tables has a tx_hash column.
-    private static final List<String> UNGRANTED_TABLES = List.of("screening_results");
+    // screening_results (T19, V9__crypto_app_screening_results_grant.sql: INSERT/SELECT) is verified
+    // by its own ScreeningResultRepositoryIntegrationTest and was the last V1 baseline table with no
+    // grant at all - UNGRANTED_TABLES is therefore empty as of T19; kept (rather than deleted) so a
+    // future baseline table added without an accompanying grant migration still has somewhere to be
+    // listed and this loop's absence of failures would then be worth noticing.
+    private static final List<String> UNGRANTED_TABLES = List.of();
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -123,7 +128,7 @@ class ChainBaselineMigrationIntegrationTest {
     void allMigrationsAreRecordedAsSuccessfulInFlywayHistory() throws SQLException {
         // Flyway also inserts a synthetic, unversioned "schema creation" row before the versioned
         // migrations; only the versioned rows (V1-V2 from T02, V3 from T04, V4 from T10, V5 from
-        // T11, V6 from T15, V7 from T16, V8 from T17) are this assertion's concern.
+        // T11, V6 from T15, V7 from T16, V8 from T17, V9 from T19) are this assertion's concern.
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
@@ -134,7 +139,7 @@ class ChainBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9");
         }
     }
 
