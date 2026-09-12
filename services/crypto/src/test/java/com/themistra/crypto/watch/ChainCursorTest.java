@@ -126,4 +126,53 @@ class ChainCursorTest {
         cursor.advanceFinalizedTo(1000L, NOW.plusSeconds(180));
         assertThat(cursor.lastFinalizedBlock()).isEqualTo(1000L);
     }
+
+    // ---------- T18: invalidate ----------
+
+    @Test
+    void invalidateResetsEveryForwardDerivedFieldFromAFullyPopulatedState() {
+        // L6: "No forward-derived state survives a reorg that invalidates it."
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+        cursor.advanceTo(500L, NOW.plusSeconds(30));
+        cursor.recordSeenTransaction("0xabc", BigDecimal.TEN, "0xfrom", "0xto", NOW.plusSeconds(60));
+        cursor.advanceFinalizedTo(450L, NOW.plusSeconds(90));
+        Instant invalidatedAt = NOW.plusSeconds(120);
+
+        cursor.invalidate(invalidatedAt);
+
+        assertThat(cursor.lastBlock()).isEqualTo(-1L);
+        assertThat(cursor.lastFinalizedBlock()).isNull();
+        assertThat(cursor.txHash()).isNull();
+        assertThat(cursor.amount()).isNull();
+        assertThat(cursor.fromAddress()).isNull();
+        assertThat(cursor.toAddress()).isNull();
+        assertThat(cursor.updatedAt()).isEqualTo(invalidatedAt);
+    }
+
+    @Test
+    void invalidateOnAFreshPlaceholderIsANoOpBeyondUpdatingTheTimestamp() {
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+        Instant invalidatedAt = NOW.plusSeconds(30);
+
+        cursor.invalidate(invalidatedAt);
+
+        assertThat(cursor.lastBlock()).isEqualTo(-1L);
+        assertThat(cursor.lastFinalizedBlock()).isNull();
+        assertThat(cursor.txHash()).isNull();
+        assertThat(cursor.updatedAt()).isEqualTo(invalidatedAt);
+    }
+
+    @Test
+    void aTransactionCanBeRecordedAgainAfterInvalidate() {
+        // Write-once (recordSeenTransaction) applies only until the cursor is invalidated - invalidate
+        // is the sole way to make room for a genuinely new transaction on this watch.
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+        cursor.recordSeenTransaction("0xfirst", BigDecimal.ONE, "0xfromA", "0xtoA", NOW.plusSeconds(30));
+        cursor.invalidate(NOW.plusSeconds(60));
+
+        cursor.recordSeenTransaction("0xsecond", BigDecimal.TEN, "0xfromB", "0xtoB", NOW.plusSeconds(90));
+
+        assertThat(cursor.txHash()).isEqualTo("0xsecond");
+        assertThat(cursor.amount()).isEqualByComparingTo(BigDecimal.TEN);
+    }
 }

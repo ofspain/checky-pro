@@ -44,6 +44,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -986,6 +987,265 @@ class WatcherTest {
                 txLifecyclePublisher, List.of(tronOnlyPolicy), FINALITY_POLL_INTERVAL_MS, reorgDetector))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ETHEREUM");
+    }
+
+    // ---------- T18 R11/L6: chain.tx.reorged ----------
+
+    /** Directly populates a placeholder cursor's snapshot, bypassing the natural observation-delivery
+     * flow - the tests below are about {@code checkForReorg}'s own logic, not re-proving T17's own
+     * already-exhaustively-tested "how a transaction becomes seen" machinery. */
+    private ChainCursor seenCursorFor(String txHash, BigDecimal amount) {
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", watch.watchId(), NOW);
+        cursor.recordSeenTransaction(txHash, amount, "0xfrom", ADDRESS, NOW);
+        when(chainCursorRepository.findByWatchId(watch.watchId())).thenReturn(Optional.of(cursor));
+        return cursor;
+    }
+
+    @Test
+    void shouldEmitChainTxReorgedAndWalkCursorBackwardOnReorg() {
+        ChainCursor cursor = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        providerC.scriptTx(TX_HASH, reorgedOut);
+
+        watcher.pollFinality();
+
+        verify(reorgDetector).reorg(watch.watchId(), watch.invoiceUuid(), watch.chain(), TX_HASH,
+                watch.tokenContractAddress());
+        assertThat(cursor.txHash()).isNull();
+        assertThat(cursor.lastBlock()).isEqualTo(-1L);
+        assertThat(cursor.lastFinalizedBlock()).isNull();
+        assertThat(cursor.amount()).isNull();
+    }
+
+    @Test
+    void reorgDiscoveredAfterSeenAloneTriggersReorged() {
+        // AC3: no CONFIRMATIONS/FINALITY decided yet for this transaction.
+        ChainCursor cursor = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        providerC.scriptTx(TX_HASH, reorgedOut);
+
+        watcher.pollFinality();
+
+        verify(reorgDetector).reorg(watch.watchId(), watch.invoiceUuid(), watch.chain(), TX_HASH,
+                watch.tokenContractAddress());
+        assertThat(cursor.txHash()).isNull();
+    }
+
+    @Test
+    void reorgDiscoveredAfterConfirmedTriggersReorged() {
+        // AC3: chain.tx.confirmed already emitted before the reorg is discovered.
+        seenCursorFor(TX_HASH, BigDecimal.TEN);
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.CONFIRMATIONS), anyList()))
+                .thenReturn(agreed(FactType.CONFIRMATIONS));
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult result = tx(true, 100L, BigDecimal.TEN, 3);
+        deliver(providerA, result);
+        deliver(providerB, result);
+        deliver(providerC, result);
+        verify(txLifecyclePublisher).confirmed(eq(watch), eq(TX_HASH), eq(3));
+
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        providerC.scriptTx(TX_HASH, reorgedOut);
+
+        watcher.pollFinality();
+
+        verify(reorgDetector).reorg(watch.watchId(), watch.invoiceUuid(), watch.chain(), TX_HASH,
+                watch.tokenContractAddress());
+    }
+
+    @Test
+    void reorgDiscoveredAfterFinalizedTriggersReorgedEvenThoughFinalityWasAlreadyDecided() throws Exception {
+        // AC3: checkForReorg keys off ChainCursor.txHash(), not pendingFinality membership, so it
+        // keeps running even after FINALITY already agreed true and the txHash left pendingFinality.
+        ChainCursor cursor = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        // seenCursorFor bypasses the natural handleSeenIfAgreed flow (this test is about checkForReorg,
+        // not re-proving how a transaction becomes pending-finality, already covered elsewhere) - seed
+        // pendingFinality directly via reflection so pollFinalityFor actually runs this tick.
+        Field pendingFinalityField = Watcher.class.getDeclaredField("pendingFinality");
+        pendingFinalityField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.Set<String> pendingFinality = (java.util.Set<String>) pendingFinalityField.get(watcher);
+        pendingFinality.add(TX_HASH);
+        TxResult existsResult = tx(true, 100L, BigDecimal.TEN, 3);
+        providerA.scriptTx(TX_HASH, existsResult);
+        providerB.scriptTx(TX_HASH, existsResult);
+        providerC.scriptTx(TX_HASH, existsResult);
+
+        FinalityStatus isFinal = new FinalityStatus(100L, 200L, 150L);
+        providerA.scriptFinalityStatus(TX_HASH, isFinal);
+        providerB.scriptFinalityStatus(TX_HASH, isFinal);
+        providerC.scriptFinalityStatus(TX_HASH, isFinal);
+        when(finalityPolicy.isFinal(isFinal)).thenReturn(true);
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.FINALITY), anyList()))
+                .thenReturn(agreed(FactType.FINALITY));
+
+        watcher.pollFinality(); // reaches finalized; checkForReorg's own getTx still sees exists=true
+        verify(txLifecyclePublisher).finalized(eq(watch), eq(cursor));
+
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        providerC.scriptTx(TX_HASH, reorgedOut);
+
+        watcher.pollFinality();
+
+        verify(reorgDetector).reorg(watch.watchId(), watch.invoiceUuid(), watch.chain(), TX_HASH,
+                watch.tokenContractAddress());
+        assertThat(cursor.txHash()).isNull();
+    }
+
+    @Test
+    void aFreshMajorityStillExistsTrueDoesNotTriggerReorgOrAlterTheCursor() {
+        ChainCursor cursor = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult stillExists = tx(true, 100L, BigDecimal.TEN, 3);
+        providerA.scriptTx(TX_HASH, stillExists);
+        providerB.scriptTx(TX_HASH, stillExists);
+        providerC.scriptTx(TX_HASH, stillExists);
+
+        watcher.pollFinality();
+
+        verify(reorgDetector, never()).reorg(any(), any(), any(), any(), any());
+        assertThat(cursor.txHash()).isEqualTo(TX_HASH);
+    }
+
+    @Test
+    void checkForReorgDeclaresNothingWithFewerThanThreeRealAnswers() {
+        ChainCursor cursor = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        // provider-c intentionally left unscripted for TX_HASH - getTx throws, excluded this tick.
+
+        watcher.pollFinality();
+
+        verify(reorgDetector, never()).reorg(any(), any(), any(), any(), any());
+        verify(providerHealthTracker).recordUnhealthy("ETHEREUM", "provider-c", DegradationReason.LAGGING);
+        assertThat(cursor.txHash()).isEqualTo(TX_HASH);
+    }
+
+    @Test
+    void checkForReorgFlagsTheDissentingMinorityProviderStillReportingExistsTrue() {
+        ChainCursor cursor = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        TxResult stillExists = tx(true, 100L, BigDecimal.TEN, 3);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        providerC.scriptTx(TX_HASH, stillExists);
+
+        watcher.pollFinality();
+
+        verify(reorgDetector).reorg(watch.watchId(), watch.invoiceUuid(), watch.chain(), TX_HASH,
+                watch.tokenContractAddress());
+        verify(providerHealthTracker).recordDisagreement("ETHEREUM", "provider-c");
+        assertThat(cursor.txHash()).isNull();
+    }
+
+    @Test
+    void checkForReorgIsANoOpOnTheTickAfterTheCursorIsAlreadyInvalidated() {
+        seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        providerC.scriptTx(TX_HASH, reorgedOut);
+
+        watcher.pollFinality();
+        verify(providerHealthTracker, times(1)).recordHealthy("ETHEREUM", "provider-a");
+        verify(reorgDetector, times(1)).reorg(any(), any(), any(), any(), any());
+
+        watcher.pollFinality(); // cursor.txHash() is now null - checkForReorg returns immediately
+
+        verify(providerHealthTracker, times(1)).recordHealthy("ETHEREUM", "provider-a"); // unchanged
+        verify(reorgDetector, times(1)).reorg(any(), any(), any(), any(), any()); // unchanged
+    }
+
+    @Test
+    void checkForReorgLogsTheRawResponseVerbatimBeforePublishingTheReorgEvent() {
+        // T18 Phase 9 (self-review Finding 1 / Kimi Finding 1, L3).
+        seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        providerC.scriptTx(TX_HASH, reorgedOut);
+
+        watcher.pollFinality();
+
+        InOrder order = inOrder(observationLog, reorgDetector);
+        order.verify(observationLog, times(3)).record(eq("ETHEREUM"), eq(TX_HASH), anyString(),
+                eq(FactType.EXISTENCE), anyString());
+        order.verify(reorgDetector).reorg(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void anExceptionFromReorgDetectorDoesNotPropagateAndTheNextTickSelfHeals() {
+        // T18 Phase 9 (self-review Finding 2/3 / Kimi Finding 2/3): publish-before-invalidate means a
+        // failed publish leaves the cursor untouched, so the very next tick naturally retries; the
+        // per-call exception guard in pollFinality means the failure itself never propagates.
+        ChainCursor cursor = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        doThrow(new IllegalStateException("transient outbox failure"))
+                .doNothing()
+                .when(reorgDetector).reorg(any(), any(), any(), any(), any());
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        providerC.scriptTx(TX_HASH, reorgedOut);
+
+        assertThatCode(watcher::pollFinality).doesNotThrowAnyException();
+        assertThat(cursor.txHash()).isEqualTo(TX_HASH); // NOT invalidated - the throw happened first
+
+        assertThatCode(watcher::pollFinality).doesNotThrowAnyException();
+
+        assertThat(cursor.txHash()).isNull(); // the retry succeeded and invalidated the cursor
+        verify(reorgDetector, times(2)).reorg(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void checkForReorgAbortsIfTheCursorMovedOnToADifferentTransactionBeforeActing() {
+        // T18 Phase 9 (self-review Finding 4 / Kimi Finding 4/10): simulates handleSeenIfAgreed (a
+        // different thread) having already moved the cursor on to a different transaction between
+        // checkForReorg's initial read and its fresh re-check immediately before acting.
+        ChainCursor staleCursor = ChainCursor.placeholder("ETHEREUM", watch.watchId(), NOW);
+        staleCursor.recordSeenTransaction(TX_HASH, BigDecimal.TEN, "0xfrom", ADDRESS, NOW);
+        ChainCursor movedOnCursor = ChainCursor.placeholder("ETHEREUM", watch.watchId(), NOW);
+        movedOnCursor.recordSeenTransaction("0xdifferent-tx", BigDecimal.ONE, "0xother", "0xother2", NOW);
+        when(chainCursorRepository.findByWatchId(watch.watchId()))
+                .thenReturn(Optional.of(staleCursor))
+                .thenReturn(Optional.of(movedOnCursor));
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        providerC.scriptTx(TX_HASH, reorgedOut);
+
+        watcher.pollFinality();
+
+        verify(reorgDetector, never()).reorg(any(), any(), any(), any(), any());
+        assertThat(movedOnCursor.txHash()).isEqualTo("0xdifferent-tx");
     }
 
     /** A settable {@link Clock} - {@code Clock.fixed} never advances, but the lagging-provider tests

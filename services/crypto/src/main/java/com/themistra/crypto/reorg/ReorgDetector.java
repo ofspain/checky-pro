@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -51,8 +52,18 @@ public class ReorgDetector {
         this.clock = clock;
     }
 
-    /** R11: a previously observed transaction invalidated by a reorg. */
+    /** R11: a previously observed transaction invalidated by a reorg.
+     *
+     * @throws NullPointerException if any argument is {@code null} (T18 Phase 9, Kimi Finding #9) -
+     *     fails loudly here rather than producing a silently-corrupt idempotency key/payload (e.g.
+     *     {@code "ETHEREUM:null:reorged"}) that {@link OutboxPublisher}'s own validation might not
+     *     name as clearly. Mirrors {@code ChainCursor.placeholder}'s identical defensive style. */
     public void reorg(UUID watchId, UUID invoiceUuid, String chain, String txHash, String tokenContractAddress) {
+        Objects.requireNonNull(watchId, "watchId");
+        Objects.requireNonNull(invoiceUuid, "invoiceUuid");
+        Objects.requireNonNull(chain, "chain");
+        Objects.requireNonNull(txHash, "txHash");
+        Objects.requireNonNull(tokenContractAddress, "tokenContractAddress");
         Instant occurredAt = clock.instant();
         String idempotencyKey = chain + ":" + txHash + ":reorged";
         ReorgedPayload payload = new ReorgedPayload(idempotencyKey, watchId, invoiceUuid, chain, txHash,

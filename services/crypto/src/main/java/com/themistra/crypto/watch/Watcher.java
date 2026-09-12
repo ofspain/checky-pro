@@ -437,9 +437,23 @@ class Watcher {
      * #handleSeenIfAgreed} once {@code EXISTENCE} agrees {@code true}; removed here once {@code
      * FINALITY} reaches any decided outcome). */
     void pollFinality() {
-        checkForReorg();
+        // T18 Phase 9 (self-review Finding 3 / Kimi Finding 3): each half guarded independently - an
+        // uncaught RuntimeException from either must never permanently cancel this entire scheduled
+        // task (the same class of bug T16 fixed for the adapters' own polling loops), and a failure in
+        // one half must not silence the other.
+        try {
+            checkForReorg();
+        } catch (RuntimeException e) {
+            log.error("checkForReorg failed for watchId={} chain={} - will retry next tick",
+                    watch.watchId(), watch.chain(), e);
+        }
         for (String txHash : List.copyOf(pendingFinality)) {
-            pollFinalityFor(txHash);
+            try {
+                pollFinalityFor(txHash);
+            } catch (RuntimeException e) {
+                log.error("pollFinalityFor failed for watchId={} chain={} txHash={} - will retry next "
+                        + "tick", watch.watchId(), watch.chain(), txHash, e);
+            }
         }
     }
 
@@ -450,7 +464,27 @@ class Watcher {
      * by whatever forward-only scan position each adapter's own polling loop has reached (T18 Phase 3
      * Finding #3: {@code EthereumAdapter}/{@code TronAdapter} never re-deliver an already-scanned
      * transaction via {@code subscribeAddress}, verified by reading both directly - the original,
-     * push-based detection design this method replaces could never have fired in production). */
+     * push-based detection design this method replaces could never have fired in production).
+     *
+     * <p><b>Trust boundary (T18 Phase 9, Kimi Finding #7).</b> {@code getTx(txHash)}'s returned {@code
+     * TxResult.txHash()} is trusted to match the queried {@code txHash} without being cross-checked -
+     * the same trust {@code pollFinalityFor} already places in {@code getFinalityStatus}'s response
+     * (T17), consistent rather than asymmetric between this method and its sibling.</p>
+     *
+     * <p><b>Known, accepted limitations (T18 Phase 9, disclosed, not fixed).</b> (1) A cross-thread
+     * race exists between this method (the scheduler thread) and {@link #handleSeenIfAgreed} (an
+     * adapter observation-callback thread) both reading-mutating-saving the same {@link ChainCursor}
+     * row with no locking - the re-check immediately before acting (below) narrows the window but does
+     * not close it; a {@code @Version} optimistic-locking column would, but that is a schema change
+     * outside this task's proportionate scope (Kimi Findings #4/#8). (2) {@link
+     * #recordDisagreementsIfAny} has no live {@code TxCorrelation} to one-shot-guard against here (the
+     * original correlation was pruned long ago), so a provider could be flagged disagreeing more than
+     * once if a reorg is detected repeatedly before it is successfully persisted (Kimi Finding #5) -
+     * low real-world frequency, affects only a health-tracking counter. (3) The three {@code getTx}
+     * calls below run sequentially on the shared {@code sweepScheduler} thread, same as {@code
+     * pollFinalityFor}'s own {@code getFinalityStatus} calls (T17 Phase 9 Finding #9's identical,
+     * already-accepted disposition) - a slow provider delays both checks for this watch (Kimi Finding
+     * #6).</p> */
     private void checkForReorg() {
         Optional<ChainCursor> cursorOpt = chainCursorRepository.findByWatchId(watch.watchId());
         if (cursorOpt.isEmpty() || cursorOpt.get().txHash() == null) {
@@ -463,6 +497,10 @@ class Watcher {
         for (ProviderSet.NamedAdapter namedAdapter : adapters) {
             try {
                 TxResult result = namedAdapter.adapter().getTx(txHash);
+                // T18 Phase 9 (self-review Finding 1 / Kimi Finding 1, L3): logged verbatim before
+                // this answer is used for anything, identical discipline to every other fact type.
+                observationLog.record(watch.chain(), txHash, namedAdapter.providerName(),
+                        FactType.EXISTENCE, toRawJson(result));
                 existsAnswers.put(namedAdapter.providerName(), result.exists());
                 providerHealthTracker.recordHealthy(watch.chain(), namedAdapter.providerName());
             } catch (RuntimeException e) {
@@ -484,6 +522,16 @@ class Watcher {
             return; // no reorg - a late, harmless re-confirmation
         }
 
+        // T18 Phase 9 (self-review Finding 4 / Kimi Finding 4/10): re-verify the cursor still refers
+        // to this same transaction before acting - handleSeenIfAgreed mutates the same cursor from a
+        // different thread (the adapter's own observation-callback thread), and the getTx loop above
+        // just spent real time on synchronous network calls during which that could have changed.
+        Optional<ChainCursor> freshCursorOpt = chainCursorRepository.findByWatchId(watch.watchId());
+        if (freshCursorOpt.isEmpty() || !txHash.equals(freshCursorOpt.get().txHash())) {
+            return; // stale - something else already moved this watch on; let the next tick catch up
+        }
+        ChainCursor freshCursor = freshCursorOpt.get();
+
         // REORG DETECTED: the fresh 2-of-3 (or 3-of-3) majority now says this transaction does not
         // exist. This is L1's own quorum rule computed locally rather than persisted via
         // QuorumDecisionService (which could only ever throw here - EXISTENCE was already decided
@@ -494,11 +542,33 @@ class Watcher {
                 .toList();
         recordDisagreementsIfAny(txHash, providerAnswers);
 
-        cursor.invalidate(clock.instant());
-        chainCursorRepository.save(cursor);
-        pendingFinality.remove(txHash);
+        // T18 Phase 9 (self-review Finding 2 / Kimi Finding 2): published BEFORE the cursor is
+        // invalidated. ReorgDetector.reorg only catches the expected duplicate-key case; any other
+        // failure here leaves the cursor untouched, so the very next tick naturally retries this exact
+        // check - and if the publish actually already succeeded, the retry's second attempt is a
+        // benign, swallowed duplicate (the deterministic idempotency key), never a lost event.
         reorgDetector.reorg(watch.watchId(), watch.invoiceUuid(), watch.chain(), txHash,
                 watch.tokenContractAddress());
+        freshCursor.invalidate(clock.instant());
+        chainCursorRepository.save(freshCursor);
+        pendingFinality.remove(txHash);
+    }
+
+    private String toRawJson(TxResult result) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("txHash", result.txHash());
+        fields.put("exists", result.exists());
+        fields.put("fromAddress", result.fromAddress());
+        fields.put("toAddress", result.toAddress());
+        fields.put("tokenContractAddress", result.tokenContractAddress());
+        fields.put("amount", result.amount() == null ? null : result.amount().toPlainString());
+        fields.put("confirmations", result.confirmations());
+        fields.put("blockNumber", result.blockNumber());
+        try {
+            return objectMapper.writeValueAsString(fields);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("TxResult could not be serialized to JSON", e);
+        }
     }
 
     private void pollFinalityFor(String txHash) {
