@@ -284,4 +284,25 @@ class WatchServiceTest {
 
         assertThatCode(() -> service.unregister(watchId)).doesNotThrowAnyException();
     }
+
+    // --- findChainCursors (T21) ---
+
+    @Test
+    void findChainCursorsDelegatesDirectlyToTheRepository() {
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", UUID.randomUUID(), NOW);
+        when(chainCursorRepository.findByChainAndTxHash("ETHEREUM", "0xtx"))
+                .thenReturn(java.util.List.of(cursor));
+
+        java.util.List<ChainCursor> result = service.findChainCursors("ETHEREUM", "0xtx");
+
+        assertThat(result).containsExactly(cursor);
+    }
+
+    @Test
+    void findChainCursorsReturnsAnEmptyListWhenNoneMatch() {
+        when(chainCursorRepository.findByChainAndTxHash("ETHEREUM", "0xtx"))
+                .thenReturn(java.util.List.of());
+
+        assertThat(service.findChainCursors("ETHEREUM", "0xtx")).isEmpty();
+    }
 }

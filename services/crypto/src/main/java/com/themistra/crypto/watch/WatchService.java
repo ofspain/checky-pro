@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -84,6 +85,14 @@ public class WatchService {
      * (`RegisterWatchRequest`'s own {@code @Pattern}) before this ever runs - no further chain-value
      * guard is added here (this codebase's own established discipline against unprecedented
      * defense-in-depth for an invariant already enforced upstream, e.g. T14 Phase 3/8/11). */
+    /** T21: this module's public read seam for {@code AttestationService} - {@link
+     * ChainCursorRepository} itself stays package-private (agents.md module-boundary convention).
+     * Returns every matching cursor, not just one; more than one watch can legitimately observe the
+     * same transaction (see {@link ChainCursorRepository#findByChainAndTxHash}'s own Javadoc). */
+    public List<ChainCursor> findChainCursors(String chain, String txHash) {
+        return chainCursorRepository.findByChainAndTxHash(chain, txHash);
+    }
+
     private void validateAddress(String chain, String address) {
         boolean valid = ETHEREUM.equals(chain)
                 ? addressValidator.isValidEvmAddress(address)

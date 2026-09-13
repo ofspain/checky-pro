@@ -336,4 +336,34 @@ class QuorumDecisionServiceTest {
         assertThat(evaluateMethod.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class))
                 .isFalse();
     }
+
+    // --- isAgreed (T21) ---
+
+    @Test
+    void isAgreedReturnsTrueForAnAgreedDecision() {
+        QuorumDecision agreed = QuorumDecision.create("ETHEREUM", "0xabc", FactType.EXISTENCE,
+                QuorumOutcome.AGREED, 3, 3, FIXED_INSTANT);
+        when(repository.findByChainAndTxHashAndFactType("ETHEREUM", "0xabc", FactType.EXISTENCE))
+                .thenReturn(Optional.of(agreed));
+
+        assertThat(service.isAgreed("ETHEREUM", "0xabc", FactType.EXISTENCE)).isTrue();
+    }
+
+    @Test
+    void isAgreedReturnsFalseForAHeldDecision() {
+        QuorumDecision held = QuorumDecision.create("ETHEREUM", "0xabc", FactType.EXISTENCE,
+                QuorumOutcome.HELD, 1, 3, FIXED_INSTANT);
+        when(repository.findByChainAndTxHashAndFactType("ETHEREUM", "0xabc", FactType.EXISTENCE))
+                .thenReturn(Optional.of(held));
+
+        assertThat(service.isAgreed("ETHEREUM", "0xabc", FactType.EXISTENCE)).isFalse();
+    }
+
+    @Test
+    void isAgreedReturnsFalseWhenNoDecisionExistsAtAll() {
+        when(repository.findByChainAndTxHashAndFactType("ETHEREUM", "0xabc", FactType.FINALITY))
+                .thenReturn(Optional.empty());
+
+        assertThat(service.isAgreed("ETHEREUM", "0xabc", FactType.FINALITY)).isFalse();
+    }
 }

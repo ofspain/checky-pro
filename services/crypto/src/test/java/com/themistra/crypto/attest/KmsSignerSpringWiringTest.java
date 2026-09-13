@@ -6,8 +6,8 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain;
 
 import java.time.Clock;
@@ -29,6 +29,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * reason; the omission here was this class's own draft, not something inherited from that precedent.
  * Fixed by adding {@code @Autowired} to the public constructor - re-verified to wire correctly, which
  * this test now locks in permanently.</p>
+ *
+ * <p><b>T21 ripple:</b> {@code TestConfig} originally used {@code @ComponentScan(basePackageClasses =
+ * KmsSigner.class)}, which scans the whole {@code attest} package - harmless when that package held
+ * only {@code KmsSigner}/{@code SignatureResult}, but once T21 added its own test classes with nested
+ * {@code @Configuration}s in the same package (e.g. {@code AttestationRepositoryIntegrationTest
+ * .TestConfig}, which also defines a {@code clock()} bean), the scan swept those up too and collided on
+ * the bean name. Narrowed to {@code @Import(KmsSigner.class)}, which registers exactly that one class -
+ * discovered by actually running the full module regression, not assumed.</p>
  */
 class KmsSignerSpringWiringTest {
 
@@ -80,7 +88,7 @@ class KmsSignerSpringWiringTest {
     }
 
     @Configuration
-    @ComponentScan(basePackageClasses = KmsSigner.class)
+    @Import(KmsSigner.class)
     static class TestConfig {
 
         @Bean

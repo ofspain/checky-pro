@@ -100,4 +100,15 @@ public class QuorumDecisionService {
     private <T> List<T> extractValues(List<ProviderAnswer<T>> answers) {
         return answers.stream().map(ProviderAnswer::value).toList();
     }
+
+    /** T21: the read-side counterpart to {@link #evaluate}, and this module's only public read seam -
+     * {@link QuorumDecisionRepository} itself stays package-private (agents.md module-boundary
+     * convention: a service, never a repository, is the cross-module read/write API). Returns
+     * {@code false} for a fact with no decision at all yet, not just for one decided {@code HELD} -
+     * both are equally "not yet safe to attest on" from a caller's perspective. */
+    public boolean isAgreed(String chain, String txHash, FactType factType) {
+        return repository.findByChainAndTxHashAndFactType(chain, txHash, factType)
+                .map(decision -> decision.outcome() == QuorumOutcome.AGREED)
+                .orElse(false);
+    }
 }

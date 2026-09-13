@@ -201,6 +201,35 @@ class WatchRepositoryIntegrationTest {
         cleanUpChainCursorAsAdmin(watchId);
     }
 
+    @Test
+    void findChainCursorsReturnsEveryCursorSharingTheSameChainAndTxHash() throws SQLException {
+        // T21 Phase 3 Finding #3 (verified against this exact DDL - no unique constraint on
+        // (chain, tx_hash)): two distinct watches can legitimately observe the same transaction.
+        String watchIdA = UUID.randomUUID().toString();
+        String watchIdB = UUID.randomUUID().toString();
+        String sharedTxHash = "0xshared-" + UUID.randomUUID();
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("INSERT INTO chain.chain_cursors "
+                    + "(chain, watch_id, last_block, tx_hash, from_address, updated_at) "
+                    + "VALUES ('ETHEREUM', '" + watchIdA + "', -1, '" + sharedTxHash
+                    + "', '0xfrom-a', now())");
+            statement.execute("INSERT INTO chain.chain_cursors "
+                    + "(chain, watch_id, last_block, tx_hash, from_address, updated_at) "
+                    + "VALUES ('ETHEREUM', '" + watchIdB + "', -1, '" + sharedTxHash
+                    + "', '0xfrom-b', now())");
+        }
+
+        java.util.List<ChainCursor> found = watchService.findChainCursors("ETHEREUM", sharedTxHash);
+
+        assertThat(found).hasSize(2);
+        assertThat(found).extracting(ChainCursor::fromAddress)
+                .containsExactlyInAnyOrder("0xfrom-a", "0xfrom-b");
+
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("DELETE FROM chain.chain_cursors WHERE tx_hash = '" + sharedTxHash + "'");
+        }
+    }
+
     private void cleanUpWatchAsAdmin(String watchId) throws SQLException {
         try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
             statement.execute("DELETE FROM chain.watches WHERE watch_id = '" + watchId + "'");
