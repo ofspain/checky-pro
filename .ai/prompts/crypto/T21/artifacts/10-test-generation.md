@@ -71,4 +71,24 @@ unrelated to this task (disclosed since T18/T19/T20: `ObservationRepositoryInteg
 
 ## Gaps
 
-None identified beyond what Phase 7/8/9 already surfaced and resolved.
+None identified beyond what Phase 7/8/9 already surfaced and resolved (at the time this section was
+first written — see the Phase 11 additions below).
+
+## Phase 11 (Kimi Test Review) additions
+
+Per this pipeline's own Phase 11 convention, no separate resolution artifact is written — accepted
+findings are folded directly into the test suite. Kimi raised 4 gaps, framed as regression-lock
+additions (the implementation already behaved correctly in each case) rather than bug reports; 3 were
+accepted and closed with new tests, 1 was rejected.
+
+| Gap | Disposition | Test added |
+|---|---|---|
+| 1. `isAgreed` was never tested against `QuorumOutcome.UNKNOWN_TOKEN`, only `AGREED`/`HELD`/absent | **ACCEPTED** | `QuorumDecisionServiceTest.isAgreedReturnsFalseForAnUnknownTokenDecision`. |
+| 2. AC9's 400-vs-409 split (malformed `txHash` → `409`, not `400`) was only proven at the service layer, never at the actual HTTP boundary | **ACCEPTED** | `AttestControllerTest.malformedNonBlankTxHashReturns409RefusedNotBadRequest`. |
+| 3. L-T21b (KMS failures surface as `500`, never converted) had only service-level coverage, never proven through `common.ApiExceptionHandler`'s own catch-all at the HTTP boundary | **ACCEPTED** | `AttestControllerTest.kmsFailurePropagatesToAGenericFiveHundredNotSwallowedOrRemapped`. |
+| 4. No test locks the relative precedence between `AttestExceptionHandler` and `WatchExceptionHandler` (both `@Order(HIGHEST_PRECEDENCE)`) | **REJECTED** | Re-raises Phase 8/9's already-rejected Finding #4 — the two handlers cover disjoint exception types today; Spring's resolution order among equal-precedence beans only matters if that changes, which would itself warrant its own review at that time, not a preemptive test now. |
+
+**Verification run (Phase 11):**
+`mvn -pl services/crypto test -Dtest=AttestOutcomeTest,AttestationTest,AttestationRepositoryIntegrationTest,AttestationServiceTest,AttestControllerTest,QuorumDecisionServiceTest,WatchServiceTest,WatchRepositoryIntegrationTest,KmsSignerArchitectureTest,ResourceServerConfigIntegrationTest`
+— 110/110 pass (was 107/107 before this phase's 3 new tests). Full module regression: 704 tests, same 6
+pre-existing unrelated failing tests, zero regressions.

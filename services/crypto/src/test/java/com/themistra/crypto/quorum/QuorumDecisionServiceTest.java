@@ -366,4 +366,17 @@ class QuorumDecisionServiceTest {
 
         assertThat(service.isAgreed("ETHEREUM", "0xabc", FactType.FINALITY)).isFalse();
     }
+
+    @Test
+    void isAgreedReturnsFalseForAnUnknownTokenDecision() {
+        // Phase 11 (Kimi) Gap 1: QuorumOutcome has three real values, not two - a future refactor that
+        // changed isAgreed to "true for any non-HELD decision" would incorrectly gate signing on an
+        // UNKNOWN_TOKEN fact.
+        QuorumDecision unknownToken = QuorumDecision.create("ETHEREUM", "0xabc", FactType.TOKEN,
+                QuorumOutcome.UNKNOWN_TOKEN, 3, 3, FIXED_INSTANT);
+        when(repository.findByChainAndTxHashAndFactType("ETHEREUM", "0xabc", FactType.TOKEN))
+                .thenReturn(Optional.of(unknownToken));
+
+        assertThat(service.isAgreed("ETHEREUM", "0xabc", FactType.TOKEN)).isFalse();
+    }
 }

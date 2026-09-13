@@ -123,4 +123,40 @@ class AttestControllerTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.title").value("Validation failed"));
     }
+
+    @Test
+    void malformedNonBlankTxHashReturns409RefusedNotBadRequest() throws Exception {
+        // Phase 11 (Kimi) Gap 2: AC9's own 400-vs-409 split, proven at the actual HTTP boundary, not
+        // just the service layer - a malformed-but-non-blank txHash passes bean validation (txHash is
+        // only @NotBlank) and reaches AttestationService, which this test stubs to refuse it exactly as
+        // the real service would (no matching quorum decision/cursor would ever be found for it).
+        AttestRequest malformedTxHash = new AttestRequest(DIGEST_HEX, "ETHEREUM", "not-a-hash");
+        when(attestationService.attest(any())).thenThrow(new AttestationRefusedException("ETHEREUM", "not-a-hash"));
+
+        mockMvc.perform(post("/internal/v1/attest")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(malformedTxHash)))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.title").value("Attestation refused"))
+                .andExpect(jsonPath("$.detail").value("Attestation preconditions not met for ETHEREUM:not-a-hash"));
+    }
+
+    @Test
+    void kmsFailurePropagatesToAGenericFiveHundredNotSwallowedOrRemapped() throws Exception {
+        // Phase 11 (Kimi) Gap 3: L-T21b at the actual HTTP boundary - the service test
+        // (aKmsFailurePropagatesUncaughtAndPersistsNoAttestationRow) already proves AttestationService
+        // itself doesn't catch a KMS failure; this proves common.ApiExceptionHandler's own catch-all
+        // still turns it into a generic 500, not a swallowed/remapped response.
+        when(attestationService.attest(any())).thenThrow(new RuntimeException("kms unavailable"));
+
+        mockMvc.perform(post("/internal/v1/attest")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validRequest())))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.title").value("Internal error"))
+                .andExpect(jsonPath("$.detail").value(
+                        "An unexpected error occurred. Reference trace_id when contacting support."));
+    }
 }
