@@ -72,14 +72,14 @@ public class AttestationService {
     public AttestResponse attest(AttestRequest request) {
         String chain = request.chain();
         String txHash = request.txHash();
+        String receiptDigest = request.receiptDigestSha256();
 
-        requireAllFactsAgreed(chain, txHash, request.receiptDigestSha256());
+        requireAllFactsAgreed(chain, txHash, receiptDigest);
 
         List<ChainCursor> cursors = watchService.findChainCursors(chain, txHash);
         Set<String> fromAddresses = distinctFromAddresses(cursors);
         if (fromAddresses.isEmpty()) {
-            persist(chain, txHash, request.receiptDigestSha256(), AttestOutcome.REFUSED, null, null);
-            throw new AttestationRefusedException(chain, txHash);
+            throw refuse(chain, txHash, receiptDigest);
         }
 
         for (String fromAddress : fromAddresses) {
@@ -87,34 +87,41 @@ public class AttestationService {
             try {
                 outcome = screeningClient.screen(chain, fromAddress, txHash);
             } catch (RuntimeException e) {
-                persist(chain, txHash, request.receiptDigestSha256(), AttestOutcome.REFUSED, null, null);
-                throw new AttestationRefusedException(chain, txHash);
+                throw refuse(chain, txHash, receiptDigest);
             }
             if (outcome == ScreeningOutcome.BLOCKED) {
-                persist(chain, txHash, request.receiptDigestSha256(), AttestOutcome.BLOCKED, null, null);
+                persist(chain, txHash, receiptDigest, AttestOutcome.BLOCKED, null, null);
                 return AttestResponse.blocked("counterparty address is sanctioned");
             }
             if (outcome == ScreeningOutcome.ERROR) {
-                persist(chain, txHash, request.receiptDigestSha256(), AttestOutcome.REFUSED, null, null);
-                throw new AttestationRefusedException(chain, txHash);
+                throw refuse(chain, txHash, receiptDigest);
             }
         }
 
-        byte[] digest = HexFormat.of().parseHex(request.receiptDigestSha256());
+        byte[] digest = HexFormat.of().parseHex(receiptDigest);
         SignatureResult result = kmsSigner.sign(digest);
 
-        persist(chain, txHash, request.receiptDigestSha256(), AttestOutcome.SIGNED, result.kmsKeyId(),
-                result.signedAt());
+        persist(chain, txHash, receiptDigest, AttestOutcome.SIGNED, result.kmsKeyId(), result.signedAt());
         return AttestResponse.signed(result.signatureBase64(), result.kmsKeyId(), result.signedAt());
     }
 
     private void requireAllFactsAgreed(String chain, String txHash, String receiptDigest) {
         for (FactType factType : REQUIRED_FACTS) {
             if (!quorumDecisionService.isAgreed(chain, txHash, factType)) {
-                persist(chain, txHash, receiptDigest, AttestOutcome.REFUSED, null, null);
-                throw new AttestationRefusedException(chain, txHash);
+                throw refuse(chain, txHash, receiptDigest);
             }
         }
+    }
+
+    /** Phase 9 (Kimi Phase 8 Finding #3): the single place every gate failure that is not an active
+     * sanctions hit persists a {@link AttestOutcome#REFUSED} row and builds the exception to throw -
+     * previously duplicated at four separate call sites. Returns rather than throws directly so each
+     * call site can write {@code throw refuse(...)}, satisfying Java's definite-assignment analysis at
+     * the one call site inside a {@code try/catch} (the compiler doesn't know this method never
+     * returns normally) without an awkward, unreachable {@code return} statement. */
+    private AttestationRefusedException refuse(String chain, String txHash, String receiptDigest) {
+        persist(chain, txHash, receiptDigest, AttestOutcome.REFUSED, null, null);
+        return new AttestationRefusedException(chain, txHash);
     }
 
     private Set<String> distinctFromAddresses(List<ChainCursor> cursors) {

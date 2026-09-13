@@ -96,6 +96,22 @@ class AttestationRepositoryIntegrationTest {
     }
 
     @Test
+    void savesAndReadsBackABlockedRow() {
+        // Phase 9 (Kimi Phase 8 Finding #5): BLOCKED had no dedicated repository-layer round-trip -
+        // SIGNED and REFUSED were both covered above, but BLOCKED's own converter/DB round-trip was not
+        // directly exercised at this layer.
+        Attestation saved = repository.save(Attestation.create("ETHEREUM", "0xblocked-test",
+                "c".repeat(64), AttestOutcome.BLOCKED, null, null, CREATED_AT));
+
+        Optional<Attestation> reloaded = repository.findById(saved.id());
+
+        assertThat(reloaded).isPresent();
+        assertThat(reloaded.get().outcome()).isEqualTo(AttestOutcome.BLOCKED);
+        assertThat(reloaded.get().kmsKeyId()).isNull();
+        assertThat(reloaded.get().signedAt()).isNull();
+    }
+
+    @Test
     void deleteFailsAtTheDatabaseLevel() {
         Attestation saved = repository.save(Attestation.create("ETHEREUM", "0xdelete-test",
                 "f".repeat(64), AttestOutcome.BLOCKED, null, null, CREATED_AT));

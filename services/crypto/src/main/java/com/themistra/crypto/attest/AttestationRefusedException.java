@@ -12,9 +12,9 @@ package com.themistra.crypto.attest;
  * no code path that could ever construct a more detailed, potentially internal-state-leaking message
  * ({@code agents.md}: "no internal detail" in error responses).</p>
  */
-public class AttestationRefusedException extends RuntimeException {
+class AttestationRefusedException extends RuntimeException {
 
-    public AttestationRefusedException(String chain, String txHash) {
+    AttestationRefusedException(String chain, String txHash) {
         super("Attestation preconditions not met for " + chain + ":" + txHash);
     }
 }
