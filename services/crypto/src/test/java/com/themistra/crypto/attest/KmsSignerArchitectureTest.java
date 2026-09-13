@@ -17,12 +17,16 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
  * chosen).
  *
  * <p><b>Two rules, not one (Finding #2/#9).</b> {@link #onlyKmsSignerMayUseTheKmsSigningSdk} bans *any*
- * dependency on the whole KMS SDK package from every class whose simple name does not start with {@code
- * "KmsSigner"}. A name-prefix exception, not a hardcoded list of exact class names, was chosen after
- * discovering during implementation that more than one legitimate test needs this exception - {@code
- * KmsSignerTest} (mocks {@link software.amazon.awssdk.services.kms.KmsClient} to unit-test {@code
- * KmsSigner}) and {@code KmsSignerLocalStackIntegrationTest} (a real KMS-API round-trip, mirroring
- * {@code ObservationSnapshotStoreLocalStackIntegrationTest}'s established pattern) both need it, and an
+ * dependency on the whole KMS SDK package from every class except one whose simple name starts with
+ * {@code "KmsSigner"} <i>and</i> which resides inside {@code com.themistra.crypto.attest} (Phase 9,
+ * Kimi Phase 8 Finding #1 - the package constraint was added after independent review pointed out that
+ * a name-only exception would let a hypothetically-named class like {@code
+ * com.themistra.crypto.watch.KmsSignerWatcher} dodge the rule despite living outside {@code attest}). A
+ * name-prefix exception, not a hardcoded list of exact class names, was chosen after discovering during
+ * implementation that more than one legitimate test needs this exception - {@code KmsSignerTest} (mocks
+ * {@link software.amazon.awssdk.services.kms.KmsClient} to unit-test {@code KmsSigner}) and {@code
+ * KmsSignerLocalStackIntegrationTest} (a real KMS-API round-trip, mirroring {@code
+ * ObservationSnapshotStoreLocalStackIntegrationTest}'s established pattern) both need it, and an
  * exact-name list would need editing every time a further legitimate {@code KmsSigner}-testing file is
  * added - a name-prefix rule instead keeps working for any future one without being re-opened, while
  * still catching a rogue, unrelated class anywhere in {@code com.themistra.crypto} (main or test) that
@@ -33,8 +37,8 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
  * {@code only_MfaSeedEncryption_may_use_the_aws_sdk} rule, already proven to compile and run under this
  * identical parent POM/ArchUnit version - that service resolves its own analogous test's identical need
  * to mock {@code KmsClient} by excluding tests from the scan entirely ({@code
- * ImportOption.DoNotIncludeTests}); this task instead scans everything and uses a name-based exception,
- * so a rogue test elsewhere is still caught.
+ * ImportOption.DoNotIncludeTests}); this task instead scans everything and uses a name-plus-package
+ * exception, so a rogue test elsewhere is still caught.
  * {@link #noClassOutsideAttestMayReferenceKmsSigner} separately covers the literal "no package outside
  * attest may reference KmsSigner" half of the task statement, which the SDK-dependency ban alone does
  * not (a caller could depend on {@code KmsSigner} without ever depending on the KMS SDK directly).</p>
@@ -45,8 +49,14 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
  * JUnit 5 {@code @ArchTest} engine - a deliberately-introduced violation would not fail {@code mvn
  * test}. The plain {@code @Test} canary below is what actually gates the build.</p>
  */
-@AnalyzeClasses(packages = "com.themistra.crypto")
+@AnalyzeClasses(packages = KmsSignerArchitectureTest.ANALYZED_PACKAGE)
 class KmsSignerArchitectureTest {
+
+    /** Single source of truth for the package scanned by both {@code @AnalyzeClasses} and the canary's
+     * own {@link ClassFileImporter} below - Phase 9 (Kimi Phase 8 Finding #3), mirroring auth's own
+     * {@code ArchitectureTest.ANALYZED_PACKAGE} lesson (Kimi Phase 11 Gap 1 there) so the two can never
+     * silently drift apart. */
+    static final String ANALYZED_PACKAGE = "com.themistra.crypto";
 
     @ArchTest
     static final ArchRule noClassOutsideAttestMayReferenceKmsSigner = noClasses()
@@ -57,17 +67,21 @@ class KmsSignerArchitectureTest {
     @ArchTest
     static final ArchRule onlyKmsSignerMayUseTheKmsSigningSdk = noClasses()
             .that().haveSimpleNameNotStartingWith("KmsSigner")
+            .or().resideOutsideOfPackage("com.themistra.crypto.attest..")
             .should().dependOnClassesThat().resideInAPackage("software.amazon.awssdk.services.kms..")
             .because("ADR-0004/L11: kms:Sign is invoked only from KmsSigner itself - no other class "
                     + "anywhere in com.themistra.crypto may depend on the KMS SDK at all, which "
                     + "necessarily covers building a SignRequest or calling KmsClient.sign(...) "
-                    + "directly. Every class named KmsSigner* (KmsSigner itself, and its own tests) "
-                    + "is the one exception - a name-prefix, not a hardcoded exact-name list");
+                    + "directly. The one exception is a class named KmsSigner* AND residing inside "
+                    + "com.themistra.crypto.attest (KmsSigner itself, and its own tests) - Phase 9 "
+                    + "(Kimi Phase 8 Finding #1): the package constraint closes the loophole where a "
+                    + "class named e.g. KmsSignerWatcher outside attest could otherwise dodge this rule "
+                    + "purely by naming convention");
 
     // Finding #14: no ImportOption.DoNotIncludeTests - both main and test sources are scanned, so a
     // test class outside attest importing the KMS SDK also fails the rule.
     private static final JavaClasses analyzedClasses = new ClassFileImporter()
-            .importPackages("com.themistra.crypto");
+            .importPackages(ANALYZED_PACKAGE);
 
     @Test
     void shouldOnlyAllowAttestPathToInvokeKmsSignIsCheckedDuringStandardBuild() {

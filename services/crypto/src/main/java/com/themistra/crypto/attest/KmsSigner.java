@@ -1,6 +1,7 @@
 package com.themistra.crypto.attest;
 
 import com.themistra.crypto.common.config.KmsProperties;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.SdkBytes;
@@ -66,7 +67,7 @@ import java.util.Objects;
  * KMS key spec for a pre-hashed SHA-256 digest sent as {@link MessageType#DIGEST}.</p>
  */
 @Component
-public class KmsSigner {
+public class KmsSigner implements DisposableBean {
 
     private static final SigningAlgorithmSpec SIGNING_ALGORITHM = SigningAlgorithmSpec.ECDSA_SHA_256;
     private static final Duration API_CALL_TIMEOUT = Duration.ofSeconds(5);
@@ -121,5 +122,13 @@ public class KmsSigner {
                 Base64.getEncoder().encodeToString(response.signature().asByteArray()),
                 response.keyId(),
                 clock.instant());
+    }
+
+    /** Phase 9 (Kimi Phase 8 Finding #4): {@code KmsClient} owns a connection pool and other I/O
+     * resources; {@code services/auth}'s own {@code MfaSeedEncryption} (the precedent this class's
+     * shape mirrors) closes its client on context shutdown for the same reason. */
+    @Override
+    public void destroy() {
+        kmsClient.close();
     }
 }
