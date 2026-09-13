@@ -12,6 +12,10 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /** AC2 (always fail-closed), AC3 (persists exactly one row per call), AC7 (no network I/O - structural:
@@ -76,5 +80,40 @@ class FailClosedScreeningClientTest {
         assertThat(saved.provider()).isEqualTo(FailClosedScreeningClient.PROVIDER_NAME);
         assertThat(saved.rawResponse()).isNull();
         assertThat(saved.screenedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void twoConsecutiveCallsPersistTwoIndependentRowsRatherThanReusingOrOverwritingTheFirst() {
+        // Phase 9 (Kimi Phase 8 Finding #10): AC3 says "every call", not just "a call" - proves the
+        // second invocation doesn't somehow reuse or mutate the first call's already-built entity.
+        client.screen("ETHEREUM", "0xaddr-1", "0xtx-1");
+        client.screen("TRON", "Taddr-2", "0xtx-2");
+
+        ArgumentCaptor<ScreeningResult> captor = ArgumentCaptor.forClass(ScreeningResult.class);
+        verify(screeningResultRepository, times(2)).save(captor.capture());
+        ScreeningResult first = captor.getAllValues().get(0);
+        ScreeningResult second = captor.getAllValues().get(1);
+
+        assertThat(first).isNotSameAs(second);
+        assertThat(first.chain()).isEqualTo("ETHEREUM");
+        assertThat(first.txHash()).isEqualTo("0xtx-1");
+        assertThat(second.chain()).isEqualTo("TRON");
+        assertThat(second.txHash()).isEqualTo("0xtx-2");
+    }
+
+    @Test
+    void rejectsNullChainBeforeLoggingOrPersistingAnything() {
+        // Phase 9 (Kimi Phase 8 Finding #1, matching Self-Review Finding #1): validation now happens
+        // before the log/clock-read side effect, so a null chain never reaches the repository at all.
+        assertThatNullPointerException().isThrownBy(() -> client.screen(null, "0xaddr", "0xtx"));
+
+        verify(screeningResultRepository, never()).save(any());
+    }
+
+    @Test
+    void rejectsNullAddressBeforeLoggingOrPersistingAnything() {
+        assertThatNullPointerException().isThrownBy(() -> client.screen("ETHEREUM", null, "0xtx"));
+
+        verify(screeningResultRepository, never()).save(any());
     }
 }

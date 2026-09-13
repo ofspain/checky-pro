@@ -27,11 +27,13 @@ package com.themistra.crypto.screening;
 public interface ScreeningClient {
 
     /**
-     * @param chain   the chain the counterparty address belongs to
-     * @param address the counterparty address to screen, used as-is (no format validation)
+     * @param chain   the chain the counterparty address belongs to; must not be {@code null}
+     * @param address the counterparty address to screen, used as-is (no format validation); must not be
+     *                {@code null}
      * @param txHash  the transaction this screening attempt is associated with, or {@code null} if the
      *                counterparty is being screened before a specific transaction exists
      * @return the screening outcome; never {@code null}
+     * @throws NullPointerException if {@code chain} or {@code address} is {@code null}
      */
     ScreeningOutcome screen(String chain, String address, String txHash);
 }

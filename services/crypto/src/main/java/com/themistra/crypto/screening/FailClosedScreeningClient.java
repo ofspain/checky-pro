@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * The fail-closed {@link ScreeningClient} stub until a real vendor is chosen (Q2, {@code package.md}
@@ -36,8 +37,10 @@ public class FailClosedScreeningClient implements ScreeningClient {
 
     @Override
     public ScreeningOutcome screen(String chain, String address, String txHash) {
+        Objects.requireNonNull(chain, "chain");
+        Objects.requireNonNull(address, "address");
         log.warn("Screening fail-closed stub active - address was not screened against a real vendor "
-                + "(chain={}, txHash={})", chain, txHash);
+                + "(chain={}, address={}, txHash={})", chain, address, txHash);
         Instant screenedAt = clock.instant();
         ScreeningResult result = ScreeningResult.create(chain, address, txHash, ScreeningOutcome.ERROR,
                 PROVIDER_NAME, null, screenedAt);

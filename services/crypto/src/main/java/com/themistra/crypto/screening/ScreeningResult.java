@@ -15,12 +15,12 @@ import java.util.Objects;
 
 /**
  * One counterparty screening attempt (L12, R21) - maps {@code chain.screening_results} exactly as
- * shipped by T02 (see {@code V1__chain_baseline.sql}). Append-only, matching every other audit-trail
- * table in this service ({@code observations}, {@code attestations}, {@code token_allowlist}): no
- * setters, {@code protected} no-arg constructor, public static {@link #create}. The
- * {@code crypto_app} runtime role's grant on this table is {@code INSERT, SELECT} only
- * ({@code V9__crypto_app_screening_results_grant.sql}) - a re-screen is always a new row, never a
- * revision of a prior one.
+ * shipped by T02 (see {@code V1__chain_baseline.sql}). Append-only, matching every other
+ * {@code INSERT, SELECT}-only table in this service ({@code observations}, {@code attestations},
+ * {@code token_allowlist}): no setters, {@code protected} no-arg constructor, public static
+ * {@link #create}. The {@code crypto_app} runtime role's grant on this table is
+ * {@code INSERT, SELECT} only ({@code V9__crypto_app_screening_results_grant.sql}) - a re-screen is
+ * always a new row, never a revision of a prior one.
  *
  * <p>{@code rawResponse} is a nullable {@code String} containing JSON, mapped the same way {@code
  * Observation.rawResponse} is ({@code @JdbcTypeCode(SqlTypes.JSON)} over a pre-serialized
