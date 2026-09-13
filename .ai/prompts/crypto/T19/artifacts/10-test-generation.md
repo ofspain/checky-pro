@@ -65,4 +65,27 @@ pre-existing, disclosed, unrelated failures in `ObservationRepositoryIntegration
 
 ## Gaps
 
-None identified beyond what Phase 7/8/9 already surfaced and resolved.
+None identified beyond what Phase 7/8/9 already surfaced and resolved (at the time this section was
+first written — see the Phase 11 additions below).
+
+## Phase 11 (Kimi Test Review) additions
+
+Per this pipeline's own Phase 11 convention, no separate resolution artifact is written — accepted
+findings are folded directly into the test suite. Kimi raised 8 gaps; 6 were accepted and closed with
+new/extended tests, 2 were rejected.
+
+| Gap | Disposition | Test added/extended |
+|---|---|---|
+| 1. `ScreeningOutcomeTest` only proves Java enum identity, not the DB-converted string values | **ACCEPTED** | `dbConverterMapsEachValueToTheExactCheckConstraintLiteral` and `dbConverterRoundTripsEveryValue`, exercising `ScreeningOutcome.DbConverter` directly. |
+| 2. No test that an exception from `Repository.save` propagates unwrapped | **ACCEPTED** | `anExceptionFromRepositorySavePropagatesUnwrappedRatherThanBeingCaughtAndTreatedAsError` in `FailClosedScreeningClientTest`, locking in `ScreeningClient`'s own documented L12-T19b contract. |
+| 3. AC8's `warn` log is exercised only incidentally, never asserted (a `ListAppender`/log-capture test) | **REJECTED** | The frozen brief (Phase 4, Finding #8 disposition) already deliberately decided against a dedicated log-capture test — "proportionate to a single log statement with no branching logic to lock in." Nothing about the log statement's shape changed since that human-approved decision; revisiting it now would re-litigate an already-settled call without new information. |
+| 4. `deleteFailsAtTheDatabaseLevel` doesn't characterize the failure (row could still be gone) | **ACCEPTED** | Extended the existing test with `assertThat(repository.findById(saved.id())).isPresent()` after the denied delete. |
+| 5. No DB-level proof that `chk_screening_outcome` itself is in place | **ACCEPTED** | `checkConstraintRejectsAnOutcomeStringOutsideTheThreeAllowedValues`, a raw-JDBC `INSERT` of an invalid outcome string asserted to fail. |
+| 6. Empty-string `chain`/`address` are not covered/rejected | **REJECTED** | Re-raises Phase 8/9's already-rejected Finding #7 (blank-string validation) — no entity in this codebase (`TokenAllowlist`, `Observation`) enforces blank-string checks, only `null`-checks; adding it here would be new, inconsistent scope. Kimi's own summary already ranks this "lower-value/policy-dependent." |
+| 7. `CLEARED` is never round-tripped through the real converter/DB path | **ACCEPTED** | `savesAndReadsBackARowWithClearedOutcome` in `ScreeningResultRepositoryIntegrationTest`. |
+| 8. No test locks in the entity's structural immutability (no setters) | **ACCEPTED** | `exposesNoPublicSetterMethods` and `everyFieldIsPrivate` in `ScreeningResultTest`, reflection-based. |
+
+**Verification run (Phase 11):**
+`mvn -pl services/crypto test -Dtest=ScreeningOutcomeTest,ScreeningResultTest,FailClosedScreeningClientTest,ScreeningModuleBoundaryTest,ScreeningResultRepositoryIntegrationTest`
+— 28/28 pass (was 21/21 before this phase's 7 new tests). Full module regression: 640 tests, same 6
+pre-existing unrelated failing tests, zero regressions.

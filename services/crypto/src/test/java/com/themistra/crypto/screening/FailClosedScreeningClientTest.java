@@ -6,6 +6,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -13,10 +14,12 @@ import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** AC2 (always fail-closed), AC3 (persists exactly one row per call), AC7 (no network I/O - structural:
  * this class has no HTTP/RPC client field to call), AC8 (observability) - frozen brief Phase 4. */
@@ -115,5 +118,17 @@ class FailClosedScreeningClientTest {
         assertThatNullPointerException().isThrownBy(() -> client.screen("ETHEREUM", null, "0xtx"));
 
         verify(screeningResultRepository, never()).save(any());
+    }
+
+    @Test
+    void anExceptionFromRepositorySavePropagatesUnwrappedRatherThanBeingCaughtAndTreatedAsError() {
+        // Phase 11 (Kimi) Gap 2: locks in ScreeningClient's own documented contract (L12-T19b) - a
+        // persistence failure must propagate to the caller, not be swallowed into a returned ERROR.
+        when(screeningResultRepository.save(any(ScreeningResult.class)))
+                .thenThrow(new DataAccessResourceFailureException("db unavailable"));
+
+        assertThatThrownBy(() -> client.screen("ETHEREUM", "0xaddr", "0xtx"))
+                .isInstanceOf(DataAccessResourceFailureException.class)
+                .hasMessage("db unavailable");
     }
 }

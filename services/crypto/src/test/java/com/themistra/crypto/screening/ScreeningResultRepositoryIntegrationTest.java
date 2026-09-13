@@ -104,6 +104,20 @@ class ScreeningResultRepositoryIntegrationTest {
     }
 
     @Test
+    void savesAndReadsBackARowWithClearedOutcome() {
+        // Phase 11 (Kimi) Gap 7: CLEARED is the only outcome that may ever lead to a signature
+        // downstream (L12-T19a) but was never round-tripped through the real converter/DB path -
+        // only BLOCKED and ERROR were, above.
+        ScreeningResult saved = repository.save(ScreeningResult.create("ETHEREUM", "0xcleared", "0xtx",
+                ScreeningOutcome.CLEARED, "chainalysis", null, SCREENED_AT));
+
+        Optional<ScreeningResult> reloaded = repository.findById(saved.id());
+
+        assertThat(reloaded).isPresent();
+        assertThat(reloaded.get().outcome()).isEqualTo(ScreeningOutcome.CLEARED);
+    }
+
+    @Test
     void deleteFailsAtTheDatabaseLevel() {
         // V9 grants INSERT, SELECT only - no DELETE. A Postgres permission-denied error (SQLState
         // 42501) translates via Hibernate/Spring to InvalidDataAccessResourceUsageException, not
@@ -118,6 +132,11 @@ class ScreeningResultRepositoryIntegrationTest {
             repository.delete(saved);
             repository.flush();
         }).isInstanceOf(InvalidDataAccessResourceUsageException.class);
+
+        // Phase 11 (Kimi) Gap 4: characterize the failure mode, not just that some exception is
+        // thrown - the row must genuinely still be there afterward, on a fresh find (the failed
+        // delete/flush left the persistence context in an undefined state for the managed instance).
+        assertThat(repository.findById(saved.id())).isPresent();
     }
 
     @Test
@@ -134,6 +153,23 @@ class ScreeningResultRepositoryIntegrationTest {
                     "UPDATE chain.screening_results SET provider = 'HACKED' WHERE address = '0xupdate-test'"))
                     .isInstanceOf(SQLException.class)
                     .hasMessageContaining("permission denied");
+        }
+    }
+
+    @Test
+    void checkConstraintRejectsAnOutcomeStringOutsideTheThreeAllowedValues() throws SQLException {
+        // Phase 11 (Kimi) Gap 5: the application-level enum/converter make an invalid value hard to
+        // insert through this codebase's own code, but the spec's actual safety net is
+        // chk_screening_outcome itself - a migration drift that weakened/dropped it would not be
+        // caught by any other test in this suite. Raw JDBC, mirroring updateFailsAtTheDatabaseLevel's
+        // own established pattern for reaching outside the entity's own guardrails.
+        try (Connection app = DriverManager.getConnection(POSTGRES.getJdbcUrl(), "crypto_app", CRYPTO_APP_PASSWORD);
+             Statement statement = app.createStatement()) {
+            assertThatThrownBy(() -> statement.execute(
+                    "INSERT INTO chain.screening_results (chain, address, outcome, provider, screened_at) "
+                            + "VALUES ('ETHEREUM', '0xinvalid-outcome', 'INVALID', 'provider', now())"))
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("chk_screening_outcome");
         }
     }
 

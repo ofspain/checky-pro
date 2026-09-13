@@ -2,7 +2,10 @@ package com.themistra.crypto.screening;
 
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.time.Instant;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
@@ -69,5 +72,27 @@ class ScreeningResultTest {
         assertThat(result.provider()).isEqualTo("chainalysis");
         assertThat(result.rawResponse()).isEqualTo("{\"hit\":true}");
         assertThat(result.screenedAt()).isEqualTo(SCREENED_AT);
+    }
+
+    // Phase 11 (Kimi) Gap 8: no existing test asserted the entity's structural immutability directly -
+    // a future refactor adding a setter would not fail any test that only exercises create(...) and
+    // the accessors it already produces correctly.
+    @Test
+    void exposesNoPublicSetterMethods() {
+        boolean hasSetter = Arrays.stream(ScreeningResult.class.getDeclaredMethods())
+                .anyMatch(method -> Modifier.isPublic(method.getModifiers())
+                        && method.getName().startsWith("set"));
+
+        assertThat(hasSetter).as("ScreeningResult must expose no public setter").isFalse();
+    }
+
+    @Test
+    void everyFieldIsPrivate() {
+        boolean hasNonPrivateField = Arrays.stream(ScreeningResult.class.getDeclaredFields())
+                .filter(field -> !field.isSynthetic())
+                .map(Field::getModifiers)
+                .anyMatch(modifiers -> !Modifier.isPrivate(modifiers));
+
+        assertThat(hasNonPrivateField).as("every ScreeningResult field must be private").isFalse();
     }
 }
