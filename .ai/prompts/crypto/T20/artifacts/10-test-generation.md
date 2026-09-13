@@ -47,4 +47,27 @@ unrelated to this task (disclosed since T18/T19: `ObservationRepositoryIntegrati
 
 ## Gaps
 
-None identified beyond what Phase 7/8/9 already surfaced and resolved.
+None identified beyond what Phase 7/8/9 already surfaced and resolved (at the time this section was
+first written — see the Phase 11 additions below).
+
+## Phase 11 (Kimi Test Review) additions
+
+Per this pipeline's own Phase 11 convention, no separate resolution artifact is written — accepted
+findings are folded directly into the test suite. Kimi raised 6 gaps; 5 were accepted and closed with
+new tests (plus one new fixture file), 1 was rejected.
+
+| Gap | Disposition | Test/fixture added |
+|---|---|---|
+| 1. No negative-proof that the ArchUnit rules actually fail on a real violation | **ACCEPTED** | New fixture `archtestfixtures.RogueAttestReferencer` (a standalone top-level package outside `com.themistra.crypto` entirely, so the real canary's package-wide scan can never sweep it up) plus `KmsSignerArchitectureTest.bothRulesActuallyFailAgainstAGenuineViolation`, which imports only that one fixture class (and `KmsSigner`) into an isolated `JavaClasses` set and asserts both rules throw `AssertionError` — verified directly via a standalone diagnostic that `ArchRule.check(...)` throws plain `java.lang.AssertionError`, not an ArchUnit-specific subtype. `services/auth`'s real `MfaSeedEncryption` was considered as a ready-made violation instead of a new fixture, but rejected: `services/crypto` has no dependency on `services/auth` at all, and adding one would itself violate `agents.md`. |
+| 2. `KmsSigner.destroy()` is untested | **ACCEPTED** | `KmsSignerTest.destroyClosesTheKmsClient`. |
+| 3. `SignatureResult`'s package-private visibility is not locked by a test | **ACCEPTED** | `KmsSignerTest.signatureResultIsPackagePrivate`. |
+| 4. No regression test for startup fail-fast when the AWS region is missing | **ACCEPTED** | `KmsSignerSpringWiringTest.kmsSignerBeanFailsFastAtStartupWhenNoAwsRegionIsResolvable` — gated by `Assumptions.assumeTrue(...)` on the *ambient* default region chain (independent of the system property this test itself manages) already resolving nothing, so it never false-passes or flakes on a machine with real AWS credentials/config/IMDS reachable, mirroring the same "skip, never fake-pass" principle already used for the contingent LocalStack test. |
+| 5. Production `resolveKmsClient()` path never exercised against a real endpoint (only the test-seam constructor is) | **REJECTED** | Would require either a test-only endpoint-override seam added to production code (no precedent anywhere in this codebase) or mutating real OS environment variables from a running JVM (no clean portable Java API, no precedent here either). The existing `KmsSignerLocalStackIntegrationTest` (proves `sign()`'s real logic against real infrastructure) and `KmsSignerSpringWiringTest` (proves the public constructor/`resolveKmsClient()` path doesn't throw and produces a working bean when Spring-wired) already jointly cover the meaningful risk. |
+| 6. Exception-propagation test covers only `KmsException` | **ACCEPTED** | `KmsSignerTest.anyKmsClientExceptionPropagatesUnwrapped`, parameterized over `KmsException`, `SdkClientException`, and `IllegalArgumentException` (`junit-jupiter-params` is already used elsewhere in this codebase). |
+
+**Verification run (Phase 11):**
+`mvn -pl services/crypto test -Dtest=KmsSignerTest,KmsSignerArchitectureTest,KmsSignerLocalStackIntegrationTest,KmsSignerSpringWiringTest`
+— 18/18 pass (was 11/11 before this phase's 7 new test executions). Full module regression: 658 tests,
+same 6 pre-existing unrelated failing tests, zero regressions (one transient Testcontainers/Docker
+connection error was observed on a single run and did not reproduce on immediate re-run — unrelated to
+any code in this task).

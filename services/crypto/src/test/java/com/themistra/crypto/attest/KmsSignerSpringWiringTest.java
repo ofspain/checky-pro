@@ -1,13 +1,14 @@
 package com.themistra.crypto.attest;
 
 import com.themistra.crypto.common.config.KmsProperties;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain;
 
 import java.time.Clock;
 
@@ -31,17 +32,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class KmsSignerSpringWiringTest {
 
-    @BeforeAll
-    static void setResolvableRegion() {
-        // KmsSigner.resolveKmsClient() calls the real KmsClient.builder().build(), which resolves a
-        // region eagerly - this test is about constructor selection, not region resolution (already
-        // separately verified), so a resolvable region is provided via system property exactly as the
-        // AWS SDK's own default provider chain supports.
-        System.setProperty("aws.region", "us-east-1");
-    }
-
-    @AfterAll
-    static void clearResolvableRegion() {
+    @AfterEach
+    void clearResolvableRegion() {
         System.clearProperty("aws.region");
     }
 
@@ -50,10 +42,41 @@ class KmsSignerSpringWiringTest {
 
     @Test
     void kmsSignerWiresUpAsASpringComponentWithOnlyPropertiesAndClockBeansPresent() {
+        // KmsSigner.resolveKmsClient() calls the real KmsClient.builder().build(), which resolves a
+        // region eagerly - this test is about constructor selection, not region resolution (covered
+        // separately below), so a resolvable region is provided via system property exactly as the
+        // AWS SDK's own default provider chain supports.
+        System.setProperty("aws.region", "us-east-1");
+
         contextRunner.run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context.getBean(KmsSigner.class)).isNotNull();
         });
+    }
+
+    @Test
+    void kmsSignerBeanFailsFastAtStartupWhenNoAwsRegionIsResolvable() {
+        // Phase 11 (Kimi) Gap 4: locks in the frozen brief's Finding #8 verification (a standalone
+        // probe showed KmsClient.builder().build() throws SdkClientException immediately when no
+        // region can be resolved). Rather than assume this sandbox's own ambient environment has no
+        // region configured anywhere (env var, ~/.aws/config, IMDS), check the real default chain
+        // first and skip - never false-pass or flake - if some ambient source elsewhere on the
+        // machine already resolves one; this test is only meaningful in an environment where none do.
+        Assumptions.assumeTrue(ambientChainHasNoResolvableRegion(),
+                "skipping: this environment's own AWS default region provider chain already "
+                        + "resolves a region from some ambient source (env var, ~/.aws/config, IMDS) "
+                        + "- this test only proves anything in a genuinely region-less environment");
+
+        contextRunner.run(context -> assertThat(context).hasFailed());
+    }
+
+    private static boolean ambientChainHasNoResolvableRegion() {
+        try {
+            new DefaultAwsRegionProviderChain().getRegion();
+            return false;
+        } catch (RuntimeException e) {
+            return true;
+        }
     }
 
     @Configuration

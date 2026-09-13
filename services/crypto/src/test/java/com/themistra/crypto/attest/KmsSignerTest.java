@@ -4,10 +4,13 @@ import com.themistra.crypto.common.config.KmsProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.kms.KmsClient;
 import software.amazon.awssdk.services.kms.model.KmsException;
 import software.amazon.awssdk.services.kms.model.MessageType;
@@ -18,6 +21,7 @@ import software.amazon.awssdk.services.kms.model.SigningAlgorithmSpec;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -26,6 +30,7 @@ import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
@@ -99,6 +104,39 @@ class KmsSignerTest {
         assertThatThrownBy(() -> signer.sign(DIGEST))
                 .isInstanceOf(KmsException.class)
                 .hasMessage("kms unavailable");
+    }
+
+    // Phase 11 (Kimi) Gap 6: the frozen brief says ANY KmsClient.sign(...) exception propagates
+    // uncaught, not just KmsException specifically - a parameterized test makes that contract
+    // explicit against several distinct exception types a future refactor might treat differently.
+    @ParameterizedTest
+    @MethodSource("kmsClientExceptions")
+    void anyKmsClientExceptionPropagatesUnwrapped(RuntimeException exception) {
+        when(kmsClient.sign(any(SignRequest.class))).thenThrow(exception);
+
+        assertThatThrownBy(() -> signer.sign(DIGEST)).isSameAs(exception);
+    }
+
+    static Stream<RuntimeException> kmsClientExceptions() {
+        return Stream.of(
+                (KmsException) KmsException.builder().message("kms unavailable").build(),
+                SdkClientException.create("timeout"),
+                new IllegalArgumentException("bad request"));
+    }
+
+    @Test
+    void destroyClosesTheKmsClient() {
+        signer.destroy();
+
+        verify(kmsClient).close();
+    }
+
+    @Test
+    void signatureResultIsPackagePrivate() {
+        assertThat(Modifier.isPublic(SignatureResult.class.getModifiers()))
+                .as("SignatureResult must stay package-private so nothing outside attest can depend "
+                        + "on it without tripping the boundary rules")
+                .isFalse();
     }
 
     @Test

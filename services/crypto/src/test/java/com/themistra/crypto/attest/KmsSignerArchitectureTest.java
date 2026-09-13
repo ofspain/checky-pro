@@ -1,5 +1,6 @@
 package com.themistra.crypto.attest;
 
+import archtestfixtures.RogueAttestReferencer;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.junit.AnalyzeClasses;
@@ -8,6 +9,7 @@ import com.tngtech.archunit.lang.ArchRule;
 import org.junit.jupiter.api.Test;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The named test {@code shouldOnlyAllowAttestPathToInvokeKmsSign} (R22, L11, ADR-0004). Scoped to
@@ -87,5 +89,33 @@ class KmsSignerArchitectureTest {
     void shouldOnlyAllowAttestPathToInvokeKmsSignIsCheckedDuringStandardBuild() {
         noClassOutsideAttestMayReferenceKmsSigner.check(analyzedClasses);
         onlyKmsSignerMayUseTheKmsSigningSdk.check(analyzedClasses);
+    }
+
+    /** Phase 11 (Kimi Test Review) Gap 1: the assertion above only proves the rules pass on already-
+     * clean code - it says nothing about whether they can ever actually fail. {@link
+     * RogueAttestReferencer} is a real class, deliberately violating both rules, deliberately placed
+     * in a standalone {@code archtestfixtures} package outside {@code com.themistra.crypto} entirely so
+     * it can never be swept up by {@link #analyzedClasses}'s own package-wide scan and never break the
+     * real canary above for anyone else. This test builds its own, separate, narrow {@code JavaClasses}
+     * set naming exactly the two classes the violation involves, and proves both rules genuinely throw
+     * against it. {@code services/auth}'s own {@code MfaSeedEncryption} was considered as a ready-made
+     * real violation instead of a new fixture class, but rejected: {@code services/crypto} has no
+     * dependency on {@code services/auth} at all (confirmed by reading {@code
+     * services/crypto/pom.xml}), and adding one - even test-scoped, even for this - would itself
+     * violate {@code agents.md}'s "Services depend only on libs/ and contracts/ - never on another
+     * service's source." */
+    @Test
+    void bothRulesActuallyFailAgainstAGenuineViolation() {
+        JavaClasses violatingClasses = new ClassFileImporter()
+                .importClasses(RogueAttestReferencer.class, KmsSigner.class);
+
+        // Verified directly (a standalone diagnostic run): ArchRule.check(...) throws plain
+        // java.lang.AssertionError on a violation, not some ArchUnit-specific subtype.
+        assertThatThrownBy(() -> noClassOutsideAttestMayReferenceKmsSigner.check(violatingClasses))
+                .as("a class outside attest depending on KmsSigner must fail this rule")
+                .isInstanceOf(AssertionError.class);
+        assertThatThrownBy(() -> onlyKmsSignerMayUseTheKmsSigningSdk.check(violatingClasses))
+                .as("a non-KmsSigner* class depending on the KMS SDK must fail this rule")
+                .isInstanceOf(AssertionError.class);
     }
 }
