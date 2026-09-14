@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.services.kms.KmsClient;
+import software.amazon.awssdk.services.kms.model.GetPublicKeyRequest;
+import software.amazon.awssdk.services.kms.model.GetPublicKeyResponse;
 import software.amazon.awssdk.services.kms.model.MessageType;
 import software.amazon.awssdk.services.kms.model.SignRequest;
 import software.amazon.awssdk.services.kms.model.SignResponse;
@@ -130,5 +132,55 @@ public class KmsSigner implements DisposableBean {
     @Override
     public void destroy() {
         kmsClient.close();
+    }
+
+    /**
+     * R24/L11: the attestation key's public component, for publishing at the verification-keys
+     * well-known URL (T22). Lives here, not in a separate class, for the same reason {@link #sign}
+     * does - {@link KmsSignerArchitectureTest}'s existing rule permits only a class named
+     * {@code KmsSigner*} residing in {@code attest} to touch the KMS SDK at all.
+     *
+     * <p>Guards (Phase 3 Findings #1/#6) turn two anomalous-but-technically-successful KMS responses
+     * into a named, actionable {@link IllegalStateException} instead of an opaque {@code
+     * NullPointerException}/{@code IndexOutOfBoundsException} - a genuine {@code GetPublicKey} call
+     * failure is not one of these cases and is left to propagate uncaught below, unmodified (AC6,
+     * mirrors {@link #sign}'s own established posture).</p>
+     *
+     * <p>No caching (Phase 2, unchallenged at Phase 3): every call issues a fresh request, so a key
+     * rotation is always reflected immediately.</p>
+     */
+    public PublicKeyInfo publicKeyInfo() {
+        GetPublicKeyRequest request = GetPublicKeyRequest.builder()
+                .keyId(properties.keyId())
+                .build();
+
+        GetPublicKeyResponse response = kmsClient.getPublicKey(request);
+
+        if (response.publicKey() == null) {
+            throw new IllegalStateException(
+                    "KMS returned no public key for keyId=" + properties.keyId());
+        }
+        if (!response.hasSigningAlgorithms() || response.signingAlgorithms().isEmpty()) {
+            throw new IllegalStateException(
+                    "KMS returned no signing algorithms for keyId=" + properties.keyId());
+        }
+
+        String kmsKeyId = response.keyId();
+        String alg = response.signingAlgorithmsAsStrings().get(0);
+        String publicKeyPem = toPem(response.publicKey().asByteArray());
+
+        return new PublicKeyInfo(kmsKeyId, kmsKeyId, alg, publicKeyPem);
+    }
+
+    /** Package-private, not {@code private} (Phase 3 Finding #2): the frozen brief's own mandated
+     * isolated unit test calls this directly, without reflection. */
+    static String toPem(byte[] der) {
+        String base64 = Base64.getEncoder().encodeToString(der);
+        StringBuilder pem = new StringBuilder("-----BEGIN PUBLIC KEY-----\n");
+        for (int i = 0; i < base64.length(); i += 64) {
+            pem.append(base64, i, Math.min(i + 64, base64.length())).append('\n');
+        }
+        pem.append("-----END PUBLIC KEY-----\n");
+        return pem.toString();
     }
 }

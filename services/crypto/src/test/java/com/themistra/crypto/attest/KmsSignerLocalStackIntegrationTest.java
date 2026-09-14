@@ -107,4 +107,42 @@ class KmsSignerLocalStackIntegrationTest {
                         + "for the exact digest that was signed")
                 .isTrue();
     }
+
+    @Test
+    void shouldPublishVerificationKeysAtWellKnownUrl() throws Exception {
+        // Named test (package.md §8), R24 - a real GetPublicKey round-trip through KmsSigner's actual
+        // production code path (test-seam constructor), proving the returned PEM is genuinely valid,
+        // not just well-formed-looking text.
+        KmsSigner signer = new KmsSigner(new KmsProperties(keyId), Clock.systemUTC(), kmsClient);
+
+        PublicKeyInfo info = signer.publicKeyInfo();
+
+        assertThat(info.kmsKeyId()).contains(keyId);
+        assertThat(info.kid()).isEqualTo(info.kmsKeyId());
+        assertThat(info.alg()).isEqualTo("ECDSA_SHA_256");
+        assertThat(info.publicKeyPem()).startsWith("-----BEGIN PUBLIC KEY-----\n")
+                .endsWith("-----END PUBLIC KEY-----\n");
+
+        String base64Body = info.publicKeyPem()
+                .replace("-----BEGIN PUBLIC KEY-----\n", "")
+                .replace("-----END PUBLIC KEY-----\n", "")
+                .replace("\n", "");
+        PublicKey parsedFromPem = KeyFactory.getInstance("EC")
+                .generatePublic(new X509EncodedKeySpec(Base64.getDecoder().decode(base64Body)));
+        assertThat(parsedFromPem).isEqualTo(publicKey);
+    }
+
+    @Test
+    void signAndPublicKeyInfoAgreeOnKmsKeyIdForTheSameKey() {
+        // Phase 3 Finding #5: a verifier looks up a receipt's kmsKeyId in the published key list - the
+        // two paths (sign vs. get-public-key) must report the identical identifier for the same key.
+        KmsSigner signer = new KmsSigner(new KmsProperties(keyId), Clock.systemUTC(), kmsClient);
+        byte[] digest = new byte[32];
+        new Random(7).nextBytes(digest);
+
+        SignatureResult signResult = signer.sign(digest);
+        PublicKeyInfo publicKeyInfo = signer.publicKeyInfo();
+
+        assertThat(signResult.kmsKeyId()).isEqualTo(publicKeyInfo.kmsKeyId());
+    }
 }

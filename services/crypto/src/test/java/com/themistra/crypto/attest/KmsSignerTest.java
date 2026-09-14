@@ -12,6 +12,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.kms.KmsClient;
+import software.amazon.awssdk.services.kms.model.GetPublicKeyRequest;
+import software.amazon.awssdk.services.kms.model.GetPublicKeyResponse;
 import software.amazon.awssdk.services.kms.model.KmsException;
 import software.amazon.awssdk.services.kms.model.MessageType;
 import software.amazon.awssdk.services.kms.model.SignRequest;
@@ -151,6 +153,108 @@ class KmsSignerTest {
         assertThatIllegalArgumentException().isThrownBy(() -> signer.sign(new byte[16]));
 
         verify(kmsClient, never()).sign(any(SignRequest.class));
+    }
+
+    // --- publicKeyInfo (T22) ---
+
+    private static final byte[] FAKE_DER = "fake-der-bytes-not-a-real-key".getBytes();
+
+    @Test
+    void publicKeyInfoCallsKmsWithTheConfiguredKeyId() {
+        when(kmsClient.getPublicKey(any(GetPublicKeyRequest.class))).thenReturn(GetPublicKeyResponse.builder()
+                .keyId(KEY_ID_FROM_KMS)
+                .publicKey(SdkBytes.fromByteArray(FAKE_DER))
+                .signingAlgorithms(SigningAlgorithmSpec.ECDSA_SHA_256)
+                .build());
+
+        signer.publicKeyInfo();
+
+        ArgumentCaptor<GetPublicKeyRequest> captor = ArgumentCaptor.forClass(GetPublicKeyRequest.class);
+        verify(kmsClient).getPublicKey(captor.capture());
+        assertThat(captor.getValue().keyId()).isEqualTo(KEY_ID_CONFIGURED);
+    }
+
+    @Test
+    void publicKeyInfoMapsAResponseIntoTheExpectedFields() {
+        when(kmsClient.getPublicKey(any(GetPublicKeyRequest.class))).thenReturn(GetPublicKeyResponse.builder()
+                .keyId(KEY_ID_FROM_KMS)
+                .publicKey(SdkBytes.fromByteArray(FAKE_DER))
+                .signingAlgorithms(SigningAlgorithmSpec.ECDSA_SHA_256)
+                .build());
+
+        PublicKeyInfo info = signer.publicKeyInfo();
+
+        // Phase 2 (unchallenged at Phase 3): kmsKeyId from the response, kid equals kmsKeyId.
+        assertThat(info.kmsKeyId()).isEqualTo(KEY_ID_FROM_KMS);
+        assertThat(info.kid()).isEqualTo(KEY_ID_FROM_KMS);
+        assertThat(info.alg()).isEqualTo(SigningAlgorithmSpec.ECDSA_SHA_256.toString());
+        assertThat(info.publicKeyPem()).isEqualTo(KmsSigner.toPem(FAKE_DER));
+    }
+
+    @Test
+    void publicKeyInfoThrowsIllegalStateExceptionWhenSigningAlgorithmsIsEmpty() {
+        // Phase 3 Finding #1: a clear, named exception instead of an opaque IndexOutOfBoundsException.
+        when(kmsClient.getPublicKey(any(GetPublicKeyRequest.class))).thenReturn(GetPublicKeyResponse.builder()
+                .keyId(KEY_ID_FROM_KMS)
+                .publicKey(SdkBytes.fromByteArray(FAKE_DER))
+                .build());
+
+        assertThatThrownBy(() -> signer.publicKeyInfo())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(KEY_ID_CONFIGURED);
+    }
+
+    @Test
+    void publicKeyInfoThrowsIllegalStateExceptionWhenPublicKeyIsNull() {
+        // Phase 3 Finding #6: a clear, named exception instead of a raw NullPointerException.
+        when(kmsClient.getPublicKey(any(GetPublicKeyRequest.class))).thenReturn(GetPublicKeyResponse.builder()
+                .keyId(KEY_ID_FROM_KMS)
+                .signingAlgorithms(SigningAlgorithmSpec.ECDSA_SHA_256)
+                .build());
+
+        assertThatThrownBy(() -> signer.publicKeyInfo())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(KEY_ID_CONFIGURED);
+    }
+
+    @Test
+    void publicKeyInfoPropagatesAGetPublicKeyFailureUncaught() {
+        // Frozen brief AC6 (Phase 3 Finding #3): a genuine call failure is not one of the two guarded
+        // cases above and must reach the caller unmodified, mirroring sign(...)'s own posture.
+        RuntimeException failure = SdkClientException.create("kms unreachable");
+        when(kmsClient.getPublicKey(any(GetPublicKeyRequest.class))).thenThrow(failure);
+
+        assertThatThrownBy(() -> signer.publicKeyInfo()).isSameAs(failure);
+    }
+
+    @Test
+    void toPemProducesTheExpectedShapeForFixedInputBytes() {
+        // Phase 3 Finding #2: toPem is package-private specifically so this test can call it directly.
+        byte[] der = {1, 2, 3, 4, 5};
+
+        String pem = KmsSigner.toPem(der);
+
+        assertThat(pem).startsWith("-----BEGIN PUBLIC KEY-----\n");
+        assertThat(pem).endsWith("-----END PUBLIC KEY-----\n");
+        assertThat(pem).contains(Base64.getEncoder().encodeToString(der));
+    }
+
+    @Test
+    void toPemWrapsLongInputAtSixtyFourCharactersPerLine() {
+        byte[] longDer = new byte[100];
+        String base64 = Base64.getEncoder().encodeToString(longDer);
+
+        String pem = KmsSigner.toPem(longDer);
+
+        String[] lines = pem.split("\n");
+        // First and last lines are the PEM header/footer; every body line except possibly the last
+        // must be exactly 64 characters.
+        for (int i = 1; i < lines.length - 2; i++) {
+            assertThat(lines[i]).hasSize(64);
+        }
+        assertThat(pem.replace("-----BEGIN PUBLIC KEY-----\n", "")
+                .replace("-----END PUBLIC KEY-----\n", "")
+                .replace("\n", "")).isEqualTo(base64);
     }
 
     // --- Structural source-scan tests (frozen brief AC3/AC6/AC7) ---
