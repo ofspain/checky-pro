@@ -2,6 +2,8 @@ package com.themistra.crypto.attest;
 
 import com.themistra.crypto.common.ApiExceptionHandler;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -10,6 +12,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.stream.Stream;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -50,14 +54,23 @@ class VerificationKeysControllerTest {
                 .andExpect(jsonPath("$.keys.length()").value(1));
     }
 
-    @Test
-    void aPublicKeyInfoFailurePropagatesToAGenericFiveHundred() throws Exception {
-        // AC6 (frozen brief Phase 4, Finding #3): a GetPublicKey failure is not swallowed or mapped to
-        // a partial/stale response.
-        when(kmsSigner.publicKeyInfo()).thenThrow(new RuntimeException("kms unreachable"));
+    @ParameterizedTest
+    @MethodSource("publicKeyInfoFailures")
+    void aPublicKeyInfoFailurePropagatesToAGenericFiveHundred(RuntimeException failure) throws Exception {
+        // AC6 (frozen brief Phase 4, Finding #3). Phase 9 (Kimi Phase 8 Finding #4): parameterized over
+        // both a generic infrastructure failure and the real IllegalStateException KmsSigner's own
+        // guards produce (Phase 3 Findings #1/#6) - the original test only proved the former, but its
+        // name implied coverage of publicKeyInfo()'s actual failure modes.
+        when(kmsSigner.publicKeyInfo()).thenThrow(failure);
 
         mockMvc.perform(get("/.well-known/themistra-verification-keys"))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.title").value("Internal error"));
+    }
+
+    static Stream<RuntimeException> publicKeyInfoFailures() {
+        return Stream.of(
+                new RuntimeException("kms unreachable"),
+                new IllegalStateException("KMS returned no public key for keyId=alias/attestation-key"));
     }
 }
