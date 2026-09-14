@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -250,6 +251,27 @@ class KmsSignerTest {
         // First and last lines are the PEM header/footer; every body line except possibly the last
         // must be exactly 64 characters.
         for (int i = 1; i < lines.length - 2; i++) {
+            assertThat(lines[i]).hasSize(64);
+        }
+        assertThat(pem.replace("-----BEGIN PUBLIC KEY-----\n", "")
+                .replace("-----END PUBLIC KEY-----\n", "")
+                .replace("\n", "")).isEqualTo(base64);
+    }
+
+    // Phase 11 (Kimi) Gap 2: the 100-byte case above exercises one full 64-char line plus one partial
+    // final line; it never proves the wrap is correct when the base64 length is an exact multiple of
+    // 64, where every body line is full and there is no partial remainder line at all. 48 bytes -> 64
+    // base64 chars (16 groups of 3 bytes, no padding); 96 bytes -> 128 base64 chars (32 groups).
+    @ParameterizedTest
+    @ValueSource(ints = {48, 96})
+    void toPemWrapsExactMultiplesOfSixtyFourCharactersWithNoPartialLine(int derLength) {
+        byte[] der = new byte[derLength];
+        String base64 = Base64.getEncoder().encodeToString(der);
+
+        String pem = KmsSigner.toPem(der);
+
+        String[] lines = pem.split("\n");
+        for (int i = 1; i < lines.length - 1; i++) {
             assertThat(lines[i]).hasSize(64);
         }
         assertThat(pem.replace("-----BEGIN PUBLIC KEY-----\n", "")

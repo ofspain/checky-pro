@@ -15,8 +15,11 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.stream.Stream;
 
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -52,6 +55,40 @@ class VerificationKeysControllerTest {
                 .andExpect(jsonPath("$.keys[0].alg").value("ECDSA_SHA_256"))
                 .andExpect(jsonPath("$.keys[0].publicKeyPem").value(PEM))
                 .andExpect(jsonPath("$.keys.length()").value(1));
+
+        // Phase 11 (Kimi) Gap 1: a future refactor accidentally calling publicKeyInfo() a second time
+        // (e.g. once for logging/metrics, once for the body) would double the KMS GetPublicKey cost and
+        // could produce an inconsistent result if the key rotated between the two calls.
+        verify(kmsSigner, times(1)).publicKeyInfo();
+    }
+
+    @Test
+    void postIsNotAllowedOnTheWellKnownPath() throws Exception {
+        // Phase 11 (Kimi) Gap 3: the endpoint's contract is GET-only - a regression exposing POST could
+        // trigger a non-idempotent KMS call from an unexpected HTTP method.
+        //
+        // Real, pre-existing defect discovered by this test, out of T22's own scope to fix: Spring
+        // throws HttpRequestMethodNotSupportedException here (confirmed via the actual server log), but
+        // common.ApiExceptionHandler's generic @ExceptionHandler(Exception.class) catch-all has no more
+        // specific handler for it, so it is swallowed into a 500 "Internal error" instead of the
+        // correct 405. This is a defect in shared code (common/ApiExceptionHandler.java, explicitly
+        // listed as Files NOT to Modify in this task's own frozen brief), not something T22 introduced
+        // or is scoped to fix - this test locks in the actual current behavior so a future fix to that
+        // shared class is a deliberate, visible change here, not a silent regression.
+        mockMvc.perform(post("/.well-known/themistra-verification-keys"))
+                .andExpect(status().isInternalServerError());
+    }
+
+    @Test
+    void unknownSubPathReturnsAnErrorRatherThanTheSameHandler() throws Exception {
+        // Phase 11 (Kimi) Gap 3: no path variable is declared - a sub-path must not resolve to the same
+        // handler (it doesn't - this assertion alone proves that much regardless of the exact status).
+        //
+        // Same pre-existing, out-of-scope ApiExceptionHandler gap as postIsNotAllowedOnTheWellKnownPath
+        // above: Spring throws NoResourceFoundException (confirmed via the actual server log) for this
+        // unmatched path, which should be a 404, but the shared catch-all turns it into a 500 instead.
+        mockMvc.perform(get("/.well-known/themistra-verification-keys/extra"))
+                .andExpect(status().isInternalServerError());
     }
 
     @ParameterizedTest

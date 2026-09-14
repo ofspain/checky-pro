@@ -50,4 +50,30 @@ unrelated to this task (disclosed since T18/T19/T20/T21). Zero regressions.
 
 ## Gaps
 
-None identified beyond what Phase 7/8/9 already surfaced and resolved.
+None identified beyond what Phase 7/8/9 already surfaced and resolved (at the time this section was
+first written — see the Phase 11 additions below).
+
+## Phase 11 (Kimi Test Review) additions
+
+Per this pipeline's own Phase 11 convention, no separate resolution artifact is written — accepted
+findings are folded directly into the test suite. Kimi raised 3 gaps, all framed as regression-lock
+additions; all 3 were accepted, but implementing Gap 3 surfaced a real, pre-existing, out-of-scope
+defect that changed what the new tests could correctly assert.
+
+| Gap | Disposition | Test added |
+|---|---|---|
+| 1. No assertion that `KmsSigner.publicKeyInfo()` is called exactly once per request | **ACCEPTED** | `verify(kmsSigner, times(1)).publicKeyInfo()` added to `shouldPublishVerificationKeysAtWellKnownUrl`. |
+| 2. `toPemWrapsLongInputAtSixtyFourCharactersPerLine`'s 100-byte input never hits the exact-64-character-multiple boundary | **ACCEPTED** | `KmsSignerTest.toPemWrapsExactMultiplesOfSixtyFourCharactersWithNoPartialLine`, parameterized over 48 and 96 input bytes (encoding to exactly 64 and 128 base64 characters, no padding). |
+| 3. No test locks the endpoint's exact HTTP contract (`POST` → `405`, unknown sub-path → `404`) | **ACCEPTED, with a real discovery** | Implementing this gap's suggested assertions (`405`/`404`) failed — direct log inspection showed Spring throws `HttpRequestMethodNotSupportedException`/`NoResourceFoundException` exactly as expected, but `common.ApiExceptionHandler`'s generic `@ExceptionHandler(Exception.class)` catch-all has no more specific handler for either, so both are swallowed into a `500 "Internal error"` instead of the correct `405`/`404`. This is a genuine, pre-existing defect in shared code, not something T22 introduced, and `common/ApiExceptionHandler.java` is explicitly listed as Files NOT to Modify in this task's own frozen brief — out of scope to fix here. `VerificationKeysControllerTest.postIsNotAllowedOnTheWellKnownPath` and `.unknownSubPathReturnsAnErrorRatherThanTheSameHandler` were written to assert the actual, current `500` behavior instead, with the discovery fully documented inline so a future fix to `ApiExceptionHandler` is a deliberate, visible test change here, not a silent regression. |
+
+**Verification run (Phase 11):**
+`mvn -pl services/crypto test -Dtest=KmsSignerTest,VerificationKeysControllerTest,KmsSignerLocalStackIntegrationTest,KmsSignerArchitectureTest,PublicEndpointsTest,ResourceServerConfigIntegrationTest`
+— 56/56 pass (was 52/52 before this phase's 4 new test executions). Full module regression: 720 tests,
+same 6 pre-existing unrelated failing tests, zero regressions.
+
+**Flagged for the user, not fixed in this task:** `common.ApiExceptionHandler`'s catch-all converts
+*every* unmapped framework exception — including routing-level ones like a wrong HTTP method or an
+unmatched path — into a generic `500`, across every controller in this service, not just this task's
+own endpoint. This predates T22 and was only newly discovered because this is the first test in the
+codebase to exercise a wrong-method/unknown-path case against that shared advice. Worth a dedicated,
+properly-scoped follow-up task if the team wants `405`/`404` to actually reach callers.
