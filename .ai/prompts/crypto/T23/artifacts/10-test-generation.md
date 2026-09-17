@@ -45,4 +45,34 @@ unrelated to this task (disclosed since T18-T22). Zero regressions.
 ## Gaps
 
 None identified beyond what Phase 7/8/9 already surfaced and resolved (at the time this section was
-first written — see the Phase 11 additions below, once Kimi's test review lands).
+first written — see the Phase 11 additions below).
+
+## Phase 11 (Kimi Test Review) additions
+
+Per this pipeline's own Phase 11 convention, no separate resolution artifact is written — accepted
+findings are folded directly into this artifact and the test suite. Kimi raised 8 gaps, all framed as
+regression-lock additions against specific ACs. 7 were accepted; 1 was rejected as a deliberate,
+precedent-matching scope boundary.
+
+Kimi also correctly caught that the AC3 row above (line 31) overstated what the tests asserted *before*
+this phase: the tx-event tests iterated `schema.get("required")` without ever checking that
+`idempotencyKey` itself was in that list, and `ProviderDegradedPayloadContractTest` never asserted
+`idempotencyKey`'s absence. Gap 1 below closes exactly that gap, so the row is now accurate as written.
+
+| Gap | Disposition | Test added |
+|---|---|---|
+| 1. Event-payload tests don't verify `idempotencyKey` requiredness (4 tx events) or its absence (`provider-degraded`) — AC3 | **ACCEPTED** | Added a `requiredFields.contains("idempotencyKey")` assertion to `SeenPayloadContractTest`/`ConfirmedPayloadContractTest`/`FinalizedPayloadContractTest`/`ReorgedPayloadContractTest`; added a `declaredProperties.has("idempotencyKey")` `isFalse()` assertion to `ProviderDegradedPayloadContractTest`. |
+| 2. `additionalProperties: false` never actually checked in any event schema test (the assertion messages claimed to enforce it but only checked field-name coverage) | **ACCEPTED** | Added `schema.get("additionalProperties").asBoolean().isFalse()` to all 5 event payload contract tests. |
+| 3. Event schema property types/formats/enums (`watchId` format, `occurredAt` format, `confirmations` type, etc.) not verified beyond name-presence | **REJECTED — deliberate scope boundary** | This contract-testing technique is explicitly scoped to structural (name) matching, documented in `UserLifecycleEventPayloadContractTest`'s own Javadoc ("a structural check ... rather than adding a JSON-Schema-validation library"), and auth's own precedent test doesn't do exhaustive per-field type/format checking either. None of AC1-AC6 calls for it. Exhaustive type verification for every field of every schema is a larger, separately-scoped effort (a real JSON-Schema validator, or a much larger hand-written assertion table) not warranted by this task's brief. |
+| 4. OpenAPI `security` requirements (bearerAuth scope on internal routes, no-auth on the well-known endpoint) not contract-tested | **ACCEPTED** | Added `everyInternalRouteRequiresBearerAuthWithInternalCryptoWriteScope` and `publicVerificationKeysEndpointHasNoSecurity` to `CryptoInternalOpenApiContractTest`. |
+| 5. `RegisterWatchRequest.chain`/`AttestRequest.chain` enum drift against `Chain.values()` unguarded | **ACCEPTED** | Added `chainEnumsInRequestSchemasCoverEveryChainValue`, mirroring the existing `DegradationReason`/`AttestOutcome` enum-drift-guard technique. |
+| 6. `RegisterWatchResponse.status` type/enum-absence not verified | **ACCEPTED** | Added `registerWatchResponseStatusIsAPlainStringNotAnEnum`. |
+| 7. AC6 (`tx-finalized` verbatim fidelity) enforced only by a one-time manual `diff`, not by any automated test | **ACCEPTED** | Added `FinalizedPayloadContractTest.schemaIsByteForByteEquivalentToDesignMdSection4c` — extracts the fenced JSON block from `design.md` §4c and asserts `JsonNode`-tree equality against the committed schema file (structural, not raw-string, comparison — survives incidental whitespace differences from the markdown fence while still catching any real content drift). |
+| 8. `provider-degraded`'s `reason` enum could silently gain a value `DegradationReason` doesn't have | **ACCEPTED** | Strengthened `everyDegradationReasonValueIsCoveredByTheSchemaEnum` with an additional bidirectional `containsExactlyInAnyOrderElementsOf` assertion. |
+
+**Verification run (Phase 11):**
+`mvn -pl services/crypto test -Dtest=CryptoInternalOpenApiContractTest,SeenPayloadContractTest,ConfirmedPayloadContractTest,FinalizedPayloadContractTest,ReorgedPayloadContractTest,ProviderDegradedPayloadContractTest,MoneyFieldsAreDecimalStringsContractTest`
+— 23/23 pass (was 18/18 before this phase's 5 new test methods: 4 in `CryptoInternalOpenApiContractTest`,
+1 in `FinalizedPayloadContractTest`; the remaining accepted gaps strengthened existing test bodies rather
+than adding new methods). Full module regression (`mvn -pl services/crypto -am test`) pending completion
+at the time of writing — see the next artifact for its result.

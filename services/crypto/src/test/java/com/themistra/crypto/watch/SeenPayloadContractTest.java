@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.stream.StreamSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -43,5 +44,16 @@ class SeenPayloadContractTest {
                 assertThat(declaredProperties.has(field))
                         .as("serialized field '%s' is declared in the schema (additionalProperties: false)", field)
                         .isTrue());
+
+        // Phase 11 (Kimi) Gap 1/2: the two assertions above don't, on their own, prove idempotencyKey
+        // is actually required or that additionalProperties:false is actually declared - a regression
+        // dropping either would still pass them.
+        assertThat(schema.get("additionalProperties").asBoolean())
+                .as("schema declares additionalProperties: false")
+                .isFalse();
+        var requiredFields = StreamSupport.stream(schema.get("required").spliterator(), false)
+                .map(JsonNode::asText)
+                .toList();
+        assertThat(requiredFields).as("idempotencyKey is required (AC3)").contains("idempotencyKey");
     }
 }

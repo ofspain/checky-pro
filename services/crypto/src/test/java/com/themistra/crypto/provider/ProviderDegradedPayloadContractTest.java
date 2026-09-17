@@ -44,6 +44,16 @@ class ProviderDegradedPayloadContractTest {
                 assertThat(declaredProperties.has(field))
                         .as("serialized field '%s' is declared in the schema (additionalProperties: false)", field)
                         .isTrue());
+
+        // Phase 11 (Kimi) Gap 1/2: the two assertions above don't, on their own, prove
+        // additionalProperties:false is actually declared, or that idempotencyKey's deliberate
+        // absence (AC3) is actually enforced rather than incidental.
+        assertThat(schema.get("additionalProperties").asBoolean())
+                .as("schema declares additionalProperties: false")
+                .isFalse();
+        assertThat(declaredProperties.has("idempotencyKey"))
+                .as("idempotencyKey is deliberately absent (AC3) - passed to OutboxPublisher separately, see the schema's own description")
+                .isFalse();
     }
 
     /** Frozen brief AC5: {@link DegradationReason}'s real Java enum must not silently fall behind this
@@ -63,5 +73,15 @@ class ProviderDegradedPayloadContractTest {
                     .as("schema enum covers DegradationReason.%s", reason)
                     .contains(reason.name());
         }
+
+        // Phase 11 (Kimi) Gap 8: the loop above only checks the schema isn't missing any real Java
+        // value - it wouldn't catch the schema *gaining* a value DegradationReason doesn't have,
+        // which would pass this test today while quietly documenting an unimplemented reason.
+        var javaReasonNames = java.util.Arrays.stream(DegradationReason.values())
+                .map(Enum::name)
+                .toList();
+        assertThat(allowedReasons)
+                .as("schema enum contains exactly DegradationReason's values, no more, no fewer")
+                .containsExactlyInAnyOrderElementsOf(javaReasonNames);
     }
 }

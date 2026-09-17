@@ -151,6 +151,81 @@ class CryptoInternalOpenApiContractTest {
         assertThat(allowedOutcomes).containsExactlyInAnyOrder("SIGNED", "BLOCKED");
     }
 
+    /** Phase 11 (Kimi) Gap 4: the three internal routes' {@code security: [bearerAuth:
+     * [internal.crypto:write]]} requirement, and the well-known endpoint's {@code security: []},
+     * were documented but never contract-tested - a regression dropping either would pass every
+     * other test in this class. Not part of the named test's delegation list since AC1 scopes that
+     * test to routes/schemas, not security. */
+    @Test
+    void everyInternalRouteRequiresBearerAuthWithInternalCryptoWriteScope() throws Exception {
+        JsonNode contractYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
+
+        assertThat(contractYaml.get("components").get("securitySchemes").get("bearerAuth").get("type").asText())
+                .isEqualTo("http");
+        assertThat(contractYaml.get("components").get("securitySchemes").get("bearerAuth").get("scheme").asText())
+                .isEqualTo("bearer");
+
+        List<Route> internalRoutes = List.of(
+                new Route("POST", "/internal/v1/watches"),
+                new Route("DELETE", "/internal/v1/watches/{watchId}"),
+                new Route("POST", "/internal/v1/attest"));
+        for (Route route : internalRoutes) {
+            JsonNode operation = contractYaml.get("paths").get(route.path()).get(route.method().toLowerCase(Locale.ROOT));
+            JsonNode security = operation.get("security");
+            assertThat(security).as("%s declares a security requirement", route).isNotNull();
+            JsonNode scopes = security.get(0).get("bearerAuth");
+            assertThat(scopes).as("%s requires bearerAuth", route).isNotNull();
+            assertThat(StreamSupport.stream(scopes.spliterator(), false).map(JsonNode::asText).toList())
+                    .as("%s requires exactly the internal.crypto:write scope", route)
+                    .containsExactly("internal.crypto:write");
+        }
+    }
+
+    @Test
+    void publicVerificationKeysEndpointHasNoSecurity() throws Exception {
+        JsonNode contractYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
+        JsonNode operation = contractYaml.get("paths").get("/.well-known/themistra-verification-keys").get("get");
+        JsonNode security = operation.get("security");
+        assertThat(security).as("verification-keys operation declares a security array").isNotNull();
+        assertThat(security.isEmpty()).as("verification-keys endpoint requires no auth").isTrue();
+    }
+
+    /** Phase 11 (Kimi) Gap 5: {@code RegisterWatchRequest.chain}/{@code AttestRequest.chain} declare
+     * {@code enum: [ETHEREUM, TRON]}, but nothing tied that literal list to
+     * {@link com.themistra.crypto.adapter.Chain#values()} - a new chain added to the Java enum
+     * without a contract update would pass every other test in this class. */
+    @Test
+    void chainEnumsInRequestSchemasCoverEveryChainValue() throws Exception {
+        JsonNode contractYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
+        JsonNode schemas = contractYaml.get("components").get("schemas");
+        var chainNames = java.util.Arrays.stream(com.themistra.crypto.adapter.Chain.values())
+                .map(Enum::name)
+                .toList();
+
+        for (String schemaName : List.of("RegisterWatchRequest", "AttestRequest")) {
+            JsonNode chainEnum = schemas.get(schemaName).get("properties").get("chain").get("enum");
+            var declaredChains = StreamSupport.stream(chainEnum.spliterator(), false)
+                    .map(JsonNode::asText)
+                    .toList();
+            assertThat(declaredChains)
+                    .as("%s.chain enum matches Chain.values() exactly", schemaName)
+                    .containsExactlyInAnyOrderElementsOf(chainNames);
+        }
+    }
+
+    /** Phase 11 (Kimi) Gap 6: {@code everyComponentSchemaMatchesItsRealDtoShape} proves {@code status}
+     * is declared and present, not that it's a plain {@code type: string} rather than an enum -
+     * matching {@code WatchController}'s deliberate choice ({@code watch.status().name()}, not the
+     * internal {@code WatchStatus} enum type itself, per {@code RegisterWatchResponse}'s own Javadoc). */
+    @Test
+    void registerWatchResponseStatusIsAPlainStringNotAnEnum() throws Exception {
+        JsonNode contractYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
+        JsonNode statusSchema = contractYaml.get("components").get("schemas")
+                .get("RegisterWatchResponse").get("properties").get("status");
+        assertThat(statusSchema.get("type").asText()).isEqualTo("string");
+        assertThat(statusSchema.has("enum")).as("status has no enum constraint").isFalse();
+    }
+
     @Test
     void everyOperationResponseReferencesTheExpectedSchema() throws Exception {
         JsonNode contractYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
