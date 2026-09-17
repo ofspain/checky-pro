@@ -74,5 +74,13 @@ this phase: the tx-event tests iterated `schema.get("required")` without ever ch
 `mvn -pl services/crypto test -Dtest=CryptoInternalOpenApiContractTest,SeenPayloadContractTest,ConfirmedPayloadContractTest,FinalizedPayloadContractTest,ReorgedPayloadContractTest,ProviderDegradedPayloadContractTest,MoneyFieldsAreDecimalStringsContractTest`
 — 23/23 pass (was 18/18 before this phase's 5 new test methods: 4 in `CryptoInternalOpenApiContractTest`,
 1 in `FinalizedPayloadContractTest`; the remaining accepted gaps strengthened existing test bodies rather
-than adding new methods). Full module regression (`mvn -pl services/crypto -am test`) pending completion
-at the time of writing — see the next artifact for its result.
+than adding new methods).
+
+Full module regression (`mvn -pl services/crypto -am test`): 743 tests, 6 failures, 0 errors — the same 6
+pre-existing, unrelated failures disclosed since T18-T22, confirmed by name: `ProviderHealthRepositoryIntegrationTest.deleteStillFailsAtTheDatabaseLevel`,
+`ObservationRepositoryIntegrationTest.savedObservationRoundTripsEveryFieldIncludingTheJsonPayloadAndTheConvertedFactType`,
+`ObservationRepositoryIntegrationTest.repositoryHasNoUpdateOrDeleteMethodReachableAtTheDatabaseLevel`,
+`QuorumDecisionRepositoryIntegrationTest.repositoryHasNoUpdateOrDeleteMethodReachableAtTheDatabaseLevel`,
+`TokenAllowlistRepositoryIntegrationTest.deleteFailsAtTheDatabaseLevel`,
+`TokenAllowlistRepositoryIntegrationTest.findCurrentVersionEntryScopesToPerChainMaxVersionIndependently`
+— all pre-existing DB-permission-grant issues in modules this task never touches. Zero regressions.
