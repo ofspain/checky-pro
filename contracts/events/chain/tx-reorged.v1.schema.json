@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/chain/tx-reorged.v1.schema.json",
+  "title": "chain.tx.reorged (schema_version 1)",
+  "description": "Emitted via the outbox when a previously observed transaction is invalidated by a blockchain reorg (R11, L6) - the cursor is walked backward and no forward-derived state survives. Partition key = watchId. Idempotency key = chain:txHash:reorged.",
+  "type": "object",
+  "required": ["idempotencyKey", "watchId", "chain", "txHash", "tokenContractAddress", "occurredAt"],
+  "properties": {
+    "idempotencyKey": { "type": "string", "description": "chain:txHash:eventtype (L5)." },
+    "watchId": { "type": "string", "format": "uuid" },
+    "invoiceUuid": { "type": "string", "format": "uuid" },
+    "chain": { "type": "string", "enum": ["ETHEREUM", "TRON"] },
+    "txHash": { "type": "string" },
+    "tokenContractAddress": { "type": "string" },
+    "occurredAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

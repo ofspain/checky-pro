@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/chain/tx-seen.v1.schema.json",
+  "title": "chain.tx.seen (schema_version 1)",
+  "description": "Emitted via the outbox on the first quorum-agreed sighting of a watched tx (R8). Partition key = watchId. Idempotency key = chain:txHash:seen.",
+  "type": "object",
+  "required": ["idempotencyKey", "watchId", "chain", "txHash", "tokenContractAddress", "confirmations", "occurredAt"],
+  "properties": {
+    "idempotencyKey": { "type": "string", "description": "chain:txHash:eventtype (L5)." },
+    "watchId": { "type": "string", "format": "uuid" },
+    "invoiceUuid": { "type": "string", "format": "uuid" },
+    "chain": { "type": "string", "enum": ["ETHEREUM", "TRON"] },
+    "txHash": { "type": "string" },
+    "tokenContractAddress": { "type": "string" },
+    "confirmations": { "type": "integer", "description": "Best-effort majority confirmation count observed alongside the agreeing EXISTENCE answers - not itself independently quorum-decided at this point." },
+    "occurredAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

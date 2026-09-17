@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/chain/provider-degraded.v1.schema.json",
+  "title": "chain.provider.degraded (schema_version 1)",
+  "description": "Emitted via the outbox when a provider transitions to unhealthy (R5). Partition key = {chain}:{provider}. Idempotency key = {chain}:{provider}:degraded:{occurredAt}:{UUID} - deliberately NOT the chain:txHash:eventtype format L5 fixes for chain.tx.* events: a provider can degrade, recover, and degrade again, so a fixed key would collide with itself on the second episode against the outbox's own UNIQUE(idempotency_key). This event's idempotency key is passed to OutboxPublisher directly and is not itself a field of this payload body, unlike the four chain.tx.* events above.",
+  "type": "object",
+  "required": ["chain", "provider", "reason", "occurredAt"],
+  "properties": {
+    "chain": { "type": "string", "enum": ["ETHEREUM", "TRON"] },
+    "provider": { "type": "string" },
+    "reason": { "type": "string", "enum": ["UNHEALTHY", "LAGGING", "REPEATED_DISAGREEMENT"] },
+    "occurredAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

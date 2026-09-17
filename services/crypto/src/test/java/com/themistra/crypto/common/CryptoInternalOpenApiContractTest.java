@@ -15,7 +15,6 @@ import com.themistra.crypto.watch.dto.RegisterWatchRequest;
 import com.themistra.crypto.watch.dto.RegisterWatchResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotatedElementUtils;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 
@@ -126,9 +125,11 @@ class CryptoInternalOpenApiContractTest {
         assertThat(parameters).as("DELETE /internal/v1/watches/{watchId} must declare its parameters").isNotNull();
         boolean hasWatchIdPathParam = StreamSupport.stream(parameters.spliterator(), false)
                 .anyMatch(p -> "watchId".equals(p.get("name").asText()) && "path".equals(p.get("in").asText())
-                        && p.get("required").asBoolean());
+                        && p.get("required").asBoolean()
+                        && "string".equals(p.get("schema").get("type").asText())
+                        && "uuid".equals(p.get("schema").get("format").asText()));
         assertThat(hasWatchIdPathParam)
-                .as("watchId must be declared as a required path parameter")
+                .as("watchId must be declared as a required path parameter with schema type: string, format: uuid")
                 .isTrue();
     }
 
@@ -310,6 +311,15 @@ class CryptoInternalOpenApiContractTest {
         return routes;
     }
 
+    /**
+     * Known limitation (Phase 7 self-review Finding 2 / Kimi Phase 8 Finding 6): a handler using a
+     * bare {@code @RequestMapping} with no explicit HTTP method yields an empty
+     * {@code mapping.method()} array, so the loop below silently adds zero routes for it — such a
+     * handler would be skipped by both completeness checks rather than flagged. No handler in
+     * {@link WatchController}, {@link AttestController}, or {@link VerificationKeysController} does
+     * this today (each uses a method-fixing shorthand like {@code @PostMapping}), so this is a
+     * documented, currently-dormant gap, not a live defect.
+     */
     private Set<Route> controllerRoutes() {
         Set<Route> routes = new LinkedHashSet<>();
         for (Class<?> controller : CONTROLLERS) {
