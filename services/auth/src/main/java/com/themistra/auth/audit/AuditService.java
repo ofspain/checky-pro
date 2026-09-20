@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
@@ -43,7 +44,17 @@ public class AuditService {
         this.clock = clock;
     }
 
-    @Transactional
+    /**
+     * {@code REQUIRES_NEW} (T18 Phase 9 finding, changed from the default {@code REQUIRED}):
+     * every caller that records a FAILURE outcome and then throws within the same transaction
+     * (introduced by {@code MfaService}'s confirm/disable/verifyRecoveryCode failure paths) would
+     * otherwise have this audit row silently rolled back along with the exception that follows
+     * it — defeating the entire point of a failure audit. Committing independently means an audit
+     * row can now persist even if the caller's own transaction subsequently rolls back for an
+     * unrelated reason; accepted trade-off (a slightly-early-committed audit event is preferable
+     * to a required-by-spec failure record that never exists at all).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(RecordAuditEventRequest request) {
         Instant now = clock.instant();
         String userAgentHash = request.rawUserAgent() == null

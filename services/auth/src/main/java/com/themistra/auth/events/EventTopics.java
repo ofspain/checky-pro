@@ -11,9 +11,8 @@ public final class EventTopics {
 
     private static final Map<String, String> TOPIC_BY_AGGREGATE_TYPE = Map.of(
             "account", "auth.user.lifecycle",
-            "audit", "auth.security.audit"
-            // "verification-token" -> "auth.email.requested" joins this table when the
-            // account email-verification stage lands.
+            "audit", "auth.security.audit",
+            "verification-token", "auth.email.requested"
     );
 
     private EventTopics() {

@@ -1,5 +1,6 @@
 package com.themistra.auth.token;
 
+import com.themistra.auth.authn.TotpAuthenticationProvider;
 import com.themistra.auth.authz.RoleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,10 +48,16 @@ public class TokenClaimsCustomizer implements OAuth2TokenCustomizer<JwtEncodingC
         // interactive (authorization_code / refresh_token) principal — 'sub' is the account UUID
         // (AccountUserDetailsService), so effective roles are resolved and template-expanded
         // fresh on every issuance (never cached: a template edit affects future tokens only).
+        // On a refresh-token grant, SAS replays the same Authentication captured at the original
+        // interactive login (TotpAuthenticationProvider, task 20), so amr/acr below are preserved
+        // across refresh without any grant-type branching (R26/R27). The MFA outcome rides as a
+        // synthetic granted authority, not a custom Authentication subclass, so it survives
+        // JdbcOAuth2AuthorizationService's Jackson-based persistence (Phase 8/9 finding #1).
+        boolean otpUsed = context.getPrincipal().getAuthorities().contains(TotpAuthenticationProvider.OTP_VERIFIED_AUTHORITY);
         context.getClaims()
                 .claim("roles", List.copyOf(resolveRoles(context.getPrincipal().getName())))
-                .claim("amr", List.of("pwd"))             // MFA stage appends "otp" when MFA passed
-                .claim("acr", "urn:themistra:acr:pwd")
+                .claim("amr", otpUsed ? List.of("pwd", "otp") : List.of("pwd"))
+                .claim("acr", otpUsed ? "urn:themistra:acr:otp" : "urn:themistra:acr:pwd")
                 .claim("email_verified",
                         context.getAuthorizedScopes().contains(OidcScopes.EMAIL));
     }

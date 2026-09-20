@@ -4,6 +4,8 @@ import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -20,8 +22,18 @@ import java.util.UUID;
  *
  * Enumeration/leak rules (target-design §13): violation entries carry field + message but never
  * the rejected value (it may be a password); 5xx bodies are opaque, correlated by trace_id only.
+ *
+ * <p>{@code @Order(LOWEST_PRECEDENCE)} is load-bearing, not decorative: Spring resolves
+ * {@code @ExceptionHandler} methods by iterating {@code @RestControllerAdvice} beans in order and
+ * using the FIRST bean with any matching handler — it does not search all advice beans for the
+ * most specific match (verified against {@code ExceptionHandlerExceptionResolver}'s actual
+ * source). Without this annotation, this class's catch-all {@code Exception.class} handler could
+ * shadow every domain-specific handler (e.g. {@code SessionExceptionHandler.onNotFound}) whenever
+ * this bean happens to sort earlier, silently turning an intended 404/409/etc. into a 500. This
+ * class must always be tried last.</p>
  */
 @RestControllerAdvice
+@Order(Ordered.LOWEST_PRECEDENCE)
 public class ApiExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);

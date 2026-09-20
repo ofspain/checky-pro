@@ -1,6 +1,9 @@
 package com.themistra.auth.authz;
 
 import com.themistra.auth.TestcontainersConfiguration;
+import com.themistra.auth.account.AccountService;
+import com.themistra.auth.account.dto.AccountResponse;
+import com.themistra.auth.account.dto.RegisterAccountRequest;
 import com.themistra.auth.authz.dto.CreateRoleRequest;
 import com.themistra.auth.authz.dto.CreateRoleTemplateRequest;
 import org.junit.jupiter.api.Test;
@@ -23,16 +26,29 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Import(TestcontainersConfiguration.class)
 class RoleAssignmentIntegrationTest {
 
+    private static final String PASSWORD = "correct-horse-battery";
+
     @Autowired
     private RoleService roleService;
+
+    @Autowired
+    private AccountService accountService;
 
     private static String unique(String prefix) {
         return prefix + "_" + UUID.randomUUID().toString().substring(0, 8);
     }
 
+    private UUID registerAndActivate(String email) {
+        AccountResponse registered = accountService.register(new RegisterAccountRequest(email, PASSWORD));
+        accountService.activateEmail(registered.accountUuid(), registered.accountUuid());
+        return registered.accountUuid();
+    }
+
     @Test
     void directAndTemplateExpandedRolesAreUnionedCorrectly() {
-        UUID accountUuid = UUID.randomUUID();
+        // T37 fix: a real account is required - assignRole's audit write has a real FK to accounts,
+        // and a fabricated UUID.randomUUID() (this test's original form) violates it.
+        UUID accountUuid = registerAndActivate("role-union-" + UUID.randomUUID() + "@example.com");
         String directRole = unique("ROLE_DIRECT");
         String templateRoleA = unique("ROLE_TPL_A");
         String templateRoleB = unique("ROLE_TPL_B");
@@ -53,7 +69,7 @@ class RoleAssignmentIntegrationTest {
 
     @Test
     void removingATemplateRemovesItsContributionButNotDirectRoles() {
-        UUID accountUuid = UUID.randomUUID();
+        UUID accountUuid = registerAndActivate("role-remove-" + UUID.randomUUID() + "@example.com");
         String directRole = unique("ROLE_DIRECT");
         String templateRole = unique("ROLE_TPL");
         String templateName = unique("template");

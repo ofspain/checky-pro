@@ -5,8 +5,10 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 /**
- * Password rules follow NIST 800-63B (D-006): length 12–128, no composition rules.
- * Breached-password screening is a separate policy check in the authn module, not bean validation.
+ * Password rules follow NIST 800-63B (D-006): length 12–128, no composition rules. All content
+ * enforcement — length and breached-password screening — is {@link
+ * com.themistra.auth.account.PasswordPolicy}'s job (T09), not bean validation; this layer only
+ * rejects a blank password.
  */
 public record RegisterAccountRequest(
 
@@ -16,7 +18,6 @@ public record RegisterAccountRequest(
         String email,
 
         @NotBlank
-        @Size(min = 12, max = 128)
         String password
 ) {
 }

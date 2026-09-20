@@ -1,0 +1,183 @@
+openapi: 3.0.3
+info:
+  title: crypto-service internal API
+  description: >
+    The internal watch-registration and attest endpoints (scope internal.crypto:write), plus the
+    public verification-keys well-known endpoint. Scoped to success responses only (T23/R28) -
+    request bodies and parameters are documented here for human/codegen value but are not
+    contract-tested; error responses (409 problem+json for a refused attest) are a cross-cutting
+    shape (common.ApiExceptionHandler) not specific to any one endpoint and are out of this
+    contract's scope, mirroring auth.yaml's own identical R47 precedent.
+  version: "1.0"
+servers:
+  - url: /
+
+paths:
+  /internal/v1/watches:
+    post:
+      summary: Register a new watch
+      operationId: registerWatch
+      security:
+        - bearerAuth: [internal.crypto:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterWatchRequest'
+      responses:
+        '200':
+          description: Watch registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterWatchResponse'
+
+  /internal/v1/watches/{watchId}:
+    delete:
+      summary: Unregister a watch
+      operationId: unregisterWatch
+      security:
+        - bearerAuth: [internal.crypto:write]
+      parameters:
+        - name: watchId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Watch unregistered (idempotent - also returned for an already-unregistered watch).
+
+  /internal/v1/attest:
+    post:
+      summary: Request a signature for a receipt digest
+      operationId: attest
+      security:
+        - bearerAuth: [internal.crypto:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttestRequest'
+      responses:
+        '200':
+          description: >
+            Either a signed attestation (outcome: SIGNED) or a sanctioned-counterparty refusal
+            (outcome: BLOCKED) - never a signature in the BLOCKED case. A gate failure that is not
+            an active sanctions hit (quorum/finality unmet, screening ERROR) is a 409 problem+json
+            instead, out of this contract's own success-response-only scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestResponse'
+
+  /.well-known/themistra-verification-keys:
+    get:
+      summary: Publish the attestation key's public component
+      operationId: verificationKeys
+      security: []
+      responses:
+        '200':
+          description: Never cached (Cache-Control - no-store) - a key rotation must always be reflected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationKeysResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    RegisterWatchRequest:
+      type: object
+      required: [invoiceUuid, chain, address, tokenContractAddress, expectedAmount, expiresAt]
+      properties:
+        invoiceUuid:
+          type: string
+          format: uuid
+        chain:
+          type: string
+          enum: [ETHEREUM, TRON]
+        address:
+          type: string
+        tokenContractAddress:
+          type: string
+        expectedAmount:
+          type: string
+          description: Token base units as a decimal string (never a JSON number).
+        expiresAt:
+          type: string
+          format: date-time
+
+    RegisterWatchResponse:
+      type: object
+      required: [watchId, status]
+      properties:
+        watchId:
+          type: string
+          format: uuid
+        status:
+          type: string
+
+    AttestRequest:
+      type: object
+      required: [receiptDigestSha256, chain, txHash]
+      properties:
+        receiptDigestSha256:
+          type: string
+          description: 64 hex characters (a SHA-256 digest).
+        chain:
+          type: string
+          enum: [ETHEREUM, TRON]
+        txHash:
+          type: string
+
+    AttestResponse:
+      type: object
+      required: [outcome]
+      properties:
+        signature:
+          type: string
+          description: Base64-encoded - present only when outcome is SIGNED.
+        kmsKeyId:
+          type: string
+          description: Present only when outcome is SIGNED.
+        signedAt:
+          type: string
+          format: date-time
+          description: Present only when outcome is SIGNED.
+        outcome:
+          type: string
+          enum: [SIGNED, BLOCKED]
+        reason:
+          type: string
+          description: Present only when outcome is BLOCKED.
+
+    PublicKeyInfo:
+      type: object
+      required: [kid, kmsKeyId, alg, publicKeyPem]
+      properties:
+        kid:
+          type: string
+        kmsKeyId:
+          type: string
+        alg:
+          type: string
+        publicKeyPem:
+          type: string
+
+    VerificationKeysResponse:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicKeyInfo'

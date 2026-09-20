@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/auth/security-audit.v1.schema.json",
+  "title": "auth.security.audit (schema_version 1)",
+  "description": "Published by the audit module via the outbox whenever a security-relevant action occurs (login success/failure, lock, unlock, MFA events, password/key changes, token reuse, API-key operations — R43). A reduced mirror of the stored auth_audit row: IP and the hashed user agent stay in the database only, downstream consumers get the security-relevant facts, not the forensic detail.",
+  "type": "object",
+  "required": ["eventType", "outcome", "occurredAt"],
+  "properties": {
+    "eventType": {
+      "type": "string",
+      "description": "The audited action's own identifier (e.g. login.failed, api_key.revoked)."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["SUCCESS", "FAILURE"]
+    },
+    "accountUuid": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The account the event is about. Nullable: not every audited action is scoped to a specific account (see AuditService.partitionKey's own fallback for events with no account)."
+    },
+    "actorUuid": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Who performed the action, which may differ from accountUuid for admin operations. Nullable: not every audited action has a distinct actor (e.g. an automated/system-initiated event)."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

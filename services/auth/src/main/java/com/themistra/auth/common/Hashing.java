@@ -23,4 +23,16 @@ public final class Hashing {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
     }
+
+    /**
+     * Constant-time comparison of two hex-encoded digests, via {@link MessageDigest#isEqual}
+     * rather than {@link String#equals} (which short-circuits on the first mismatched character
+     * and is not safe for comparing secret-derived values). Both arguments are expected to be
+     * hex strings produced by {@link #sha256}; each is decoded to bytes before comparison.
+     */
+    public static boolean constantTimeEquals(String hexA, String hexB) {
+        byte[] a = HexFormat.of().parseHex(hexA);
+        byte[] b = HexFormat.of().parseHex(hexB);
+        return MessageDigest.isEqual(a, b);
+    }
 }

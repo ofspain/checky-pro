@@ -1,0 +1,134 @@
+package com.themistra.crypto.screening;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataAccessResourceFailureException;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/** AC2 (always fail-closed), AC3 (persists exactly one row per call), AC7 (no network I/O - structural:
+ * this class has no HTTP/RPC client field to call), AC8 (observability) - frozen brief Phase 4. */
+@ExtendWith(MockitoExtension.class)
+class FailClosedScreeningClientTest {
+
+    private static final Instant NOW = Instant.parse("2026-09-12T00:00:00Z");
+
+    @Mock
+    private ScreeningResultRepository screeningResultRepository;
+
+    private FailClosedScreeningClient client;
+
+    @BeforeEach
+    void setUp() {
+        client = new FailClosedScreeningClient(screeningResultRepository, Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
+    @Test
+    void alwaysReturnsErrorForANormalInput() {
+        ScreeningOutcome outcome = client.screen("ETHEREUM", "0xaddr", "0xtx");
+
+        assertThat(outcome).isEqualTo(ScreeningOutcome.ERROR);
+    }
+
+    @Test
+    void alwaysReturnsErrorWhenTxHashIsNull() {
+        ScreeningOutcome outcome = client.screen("ETHEREUM", "0xaddr", null);
+
+        assertThat(outcome).isEqualTo(ScreeningOutcome.ERROR);
+    }
+
+    @Test
+    void alwaysReturnsErrorForAMalformedAddressSinceThisClassPerformsNoFormatValidation() {
+        // Phase 3 Finding #5: token.AddressValidator owns format validation, not ScreeningClient.
+        ScreeningOutcome outcome = client.screen("ETHEREUM", "not-an-address", "0xtx");
+
+        assertThat(outcome).isEqualTo(ScreeningOutcome.ERROR);
+    }
+
+    @Test
+    void neverReturnsClearedOrBlocked() {
+        ScreeningOutcome outcome = client.screen("TRON", "Taddr", "0xtx");
+
+        assertThat(outcome).isNotEqualTo(ScreeningOutcome.CLEARED);
+        assertThat(outcome).isNotEqualTo(ScreeningOutcome.BLOCKED);
+    }
+
+    @Test
+    void persistsExactlyOneScreeningResultPerCallWithTheExpectedFields() {
+        client.screen("ETHEREUM", "0xaddr", "0xtx");
+
+        ArgumentCaptor<ScreeningResult> captor = ArgumentCaptor.forClass(ScreeningResult.class);
+        verify(screeningResultRepository).save(captor.capture());
+        ScreeningResult saved = captor.getValue();
+
+        assertThat(saved.chain()).isEqualTo("ETHEREUM");
+        assertThat(saved.address()).isEqualTo("0xaddr");
+        assertThat(saved.txHash()).isEqualTo("0xtx");
+        assertThat(saved.outcome()).isEqualTo(ScreeningOutcome.ERROR);
+        assertThat(saved.provider()).isEqualTo(FailClosedScreeningClient.PROVIDER_NAME);
+        assertThat(saved.rawResponse()).isNull();
+        assertThat(saved.screenedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void twoConsecutiveCallsPersistTwoIndependentRowsRatherThanReusingOrOverwritingTheFirst() {
+        // Phase 9 (Kimi Phase 8 Finding #10): AC3 says "every call", not just "a call" - proves the
+        // second invocation doesn't somehow reuse or mutate the first call's already-built entity.
+        client.screen("ETHEREUM", "0xaddr-1", "0xtx-1");
+        client.screen("TRON", "Taddr-2", "0xtx-2");
+
+        ArgumentCaptor<ScreeningResult> captor = ArgumentCaptor.forClass(ScreeningResult.class);
+        verify(screeningResultRepository, times(2)).save(captor.capture());
+        ScreeningResult first = captor.getAllValues().get(0);
+        ScreeningResult second = captor.getAllValues().get(1);
+
+        assertThat(first).isNotSameAs(second);
+        assertThat(first.chain()).isEqualTo("ETHEREUM");
+        assertThat(first.txHash()).isEqualTo("0xtx-1");
+        assertThat(second.chain()).isEqualTo("TRON");
+        assertThat(second.txHash()).isEqualTo("0xtx-2");
+    }
+
+    @Test
+    void rejectsNullChainBeforeLoggingOrPersistingAnything() {
+        // Phase 9 (Kimi Phase 8 Finding #1, matching Self-Review Finding #1): validation now happens
+        // before the log/clock-read side effect, so a null chain never reaches the repository at all.
+        assertThatNullPointerException().isThrownBy(() -> client.screen(null, "0xaddr", "0xtx"));
+
+        verify(screeningResultRepository, never()).save(any());
+    }
+
+    @Test
+    void rejectsNullAddressBeforeLoggingOrPersistingAnything() {
+        assertThatNullPointerException().isThrownBy(() -> client.screen("ETHEREUM", null, "0xtx"));
+
+        verify(screeningResultRepository, never()).save(any());
+    }
+
+    @Test
+    void anExceptionFromRepositorySavePropagatesUnwrappedRatherThanBeingCaughtAndTreatedAsError() {
+        // Phase 11 (Kimi) Gap 2: locks in ScreeningClient's own documented contract (L12-T19b) - a
+        // persistence failure must propagate to the caller, not be swallowed into a returned ERROR.
+        when(screeningResultRepository.save(any(ScreeningResult.class)))
+                .thenThrow(new DataAccessResourceFailureException("db unavailable"));
+
+        assertThatThrownBy(() -> client.screen("ETHEREUM", "0xaddr", "0xtx"))
+                .isInstanceOf(DataAccessResourceFailureException.class)
+                .hasMessage("db unavailable");
+    }
+}

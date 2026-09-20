@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/chain/tx-finalized.v1.schema.json",
+  "title": "chain.tx.finalized (schema_version 1)",
+  "description": "Emitted via the outbox when a watched tx meets its per-chain finality policy under 2-of-3 quorum. Partition key = watchId. Idempotency key = chain:txHash:finalized.",
+  "type": "object",
+  "required": ["idempotencyKey", "watchId", "chain", "txHash", "tokenContractAddress", "amount", "occurredAt"],
+  "properties": {
+    "idempotencyKey": { "type": "string", "description": "chain:txHash:eventtype (L5)." },
+    "watchId": { "type": "string", "format": "uuid" },
+    "invoiceUuid": { "type": "string", "format": "uuid" },
+    "chain": { "type": "string", "enum": ["ETHEREUM", "TRON"] },
+    "txHash": { "type": "string" },
+    "fromAddress": { "type": "string" },
+    "toAddress": { "type": "string" },
+    "tokenContractAddress": { "type": "string" },
+    "amount": { "type": "string", "description": "Token base units as a decimal string (never a JSON number)." },
+    "confirmations": { "type": "integer" },
+    "addressPoisoningFlag": { "type": "boolean" },
+    "occurredAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

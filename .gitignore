@@ -11,6 +11,10 @@ target/
 out/
 *.class
 
+# Python (.ai framework generator)
+__pycache__/
+*.pyc
+
 # Node / TypeScript
 node_modules/
 dist/

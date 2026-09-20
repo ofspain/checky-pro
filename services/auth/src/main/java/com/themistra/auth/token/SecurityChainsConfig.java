@@ -1,6 +1,11 @@
 package com.themistra.auth.token;
 
+import com.themistra.auth.authn.LoginFailureHandler;
+import com.themistra.auth.authn.LoginSuccessHandler;
+import com.themistra.auth.authn.TotpAuthenticationDetailsSource;
+import com.themistra.auth.authn.TotpAuthenticationProvider;
 import com.themistra.auth.common.PublicEndpoints;
+import com.themistra.auth.ratelimit.RateLimitFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -9,10 +14,12 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.oauth2.jwt.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.session.DisableEncodeUrlFilter;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
 
 /**
@@ -32,7 +39,8 @@ public class SecurityChainsConfig {
 
     @Bean
     @Order(1)
-    public SecurityFilterChain authorizationServerChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain authorizationServerChain(
+            HttpSecurity http, RateLimitFilter rateLimitFilter) throws Exception {
         OAuth2AuthorizationServerConfigurer authorizationServer =
                 OAuth2AuthorizationServerConfigurer.authorizationServer();
 
@@ -42,7 +50,10 @@ public class SecurityChainsConfig {
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
                 .exceptionHandling(ex -> ex.defaultAuthenticationEntryPointFor(
                         new LoginUrlAuthenticationEntryPoint("/login"),
-                        new MediaTypeRequestMatcher(MediaType.TEXT_HTML)));
+                        new MediaTypeRequestMatcher(MediaType.TEXT_HTML)))
+                // T31, R41/D4: runs before SAS processes the /oauth2/token grant at all, so an
+                // exhausted refresh-token bucket never reaches token validation/rotation work.
+                .addFilterBefore(rateLimitFilter, DisableEncodeUrlFilter.class);
 
         return http.build();
     }
@@ -50,7 +61,11 @@ public class SecurityChainsConfig {
     @Bean
     @Order(2)
     public SecurityFilterChain applicationChain(
-            HttpSecurity http, JwtAuthenticationConverter jwtAuthenticationConverter) throws Exception {
+            HttpSecurity http, JwtAuthenticationConverter jwtAuthenticationConverter,
+            LoginFailureHandler loginFailureHandler, LoginSuccessHandler loginSuccessHandler,
+            TotpAuthenticationProvider totpAuthenticationProvider,
+            TotpAuthenticationDetailsSource totpAuthenticationDetailsSource,
+            RateLimitFilter rateLimitFilter) throws Exception {
         http
                 .authorizeHttpRequests(auth -> {
                     auth.requestMatchers(PublicEndpoints.PATTERNS).permitAll();
@@ -59,10 +74,32 @@ public class SecurityChainsConfig {
                     auth.anyRequest().authenticated();
                 })
                 // APIs are bearer-authenticated and stateless; CSRF protects only the
-                // session-backed login/authorize pages
-                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**"))
+                // session-backed login/authorize pages. /api-keys/token is exempted alongside
+                // /api/** (T25, Phase 9 gate) because it is a genuinely session-less machine
+                // endpoint: the presented API key is its own credential, and a caller with no
+                // prior session has no way to obtain a CSRF token to begin with (confirmed by
+                // SasLoginIntegrationTest's own need to scrape one off /login first, which no
+                // machine client calling this endpoint ever does).
+                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/api-keys/token"))
                 .oauth2ResourceServer(rs -> rs.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
-                .formLogin(Customizer.withDefaults());
+                // Registering a provider directly on HttpSecurity (rather than relying on the
+                // global AuthenticationManager AuthenticationConfiguration would otherwise build
+                // from every UserDetailsService/AuthenticationProvider bean in the context) scopes
+                // this chain's AuthenticationManager to exactly this provider (task 20, D-014):
+                // password and the conditional TOTP/recovery-code step are verified together, in
+                // one request, by TotpAuthenticationProvider — it must be the *only* provider this
+                // filter's manager can reach, or a co-existing DaoAuthenticationProvider could
+                // authenticate password alone and skip MFA. The resource-server JWT filter above
+                // uses its own dedicated manager and is unaffected by this local registration.
+                .authenticationProvider(totpAuthenticationProvider)
+                .formLogin(form -> form
+                        .authenticationDetailsSource(totpAuthenticationDetailsSource)
+                        .failureHandler(loginFailureHandler)
+                        .successHandler(loginSuccessHandler))
+                // T31, R41/D4: runs before UsernamePasswordAuthenticationFilter, i.e. before any
+                // password/TOTP verification work for /login, and well before the
+                // password-reset controller method for the same reason.
+                .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

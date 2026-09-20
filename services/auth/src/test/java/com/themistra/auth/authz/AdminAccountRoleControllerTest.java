@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,7 +32,9 @@ class AdminAccountRoleControllerTest {
         controller = new AdminAccountRoleController(roleService);
         actorUuid = UUID.randomUUID();
         authentication = mock(Authentication.class);
-        when(authentication.getName()).thenReturn(actorUuid.toString());
+        // Not every test below calls a controller method that reads the authentication (e.g.
+        // effectiveRolesDelegatesDirectly doesn't), so this shared stub must be lenient.
+        lenient().when(authentication.getName()).thenReturn(actorUuid.toString());
     }
 
     @Test

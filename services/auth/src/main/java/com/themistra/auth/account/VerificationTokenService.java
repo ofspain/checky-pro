@@ -1,0 +1,208 @@
+package com.themistra.auth.account;
+
+import com.themistra.auth.common.Hashing;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Base64;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * Single-use, hashed, TTL'd tokens for email verification and password reset (R3–R5, L5).
+ * Purpose-generic by design ({@link VerificationToken.Purpose#EMAIL_VERIFY} /
+ * {@link VerificationToken.Purpose#PASSWORD_RESET}) — this service only rejects tokens whose
+ * account is {@code DELETED}/{@code SUSPENDED}; purpose-specific account-state rules belong to
+ * callers.
+ *
+ * <p>{@code verify} and {@code consume} both return {@code Optional<UUID>} — empty for every
+ * failure reason (not found, expired, already used, or an unusable account) — deliberately
+ * uniform so no caller can distinguish why a token was rejected (R5).</p>
+ */
+@Service
+public class VerificationTokenService {
+
+    private static final int RAW_TOKEN_BYTES = 32;
+
+    private final VerificationTokenRepository tokenRepository;
+    private final AccountRepository accountRepository;
+    private final VerificationTokenProperties properties;
+    private final Clock clock;
+    private final SecureRandom secureRandom = new SecureRandom();
+
+    public VerificationTokenService(VerificationTokenRepository tokenRepository,
+                                    AccountRepository accountRepository,
+                                    VerificationTokenProperties properties, Clock clock) {
+        this.tokenRepository = tokenRepository;
+        this.accountRepository = accountRepository;
+        this.properties = properties;
+        this.clock = clock;
+    }
+
+    /**
+     * Invalidates any prior unused token for {@code (accountUuid, purpose)}, then issues a new
+     * one. The raw token is returned exactly once; only its hash is persisted.
+     *
+     * <p>A single insert attempt is made, not a retry loop: a {@code token_hash} collision at 32
+     * random bytes (256 bits of entropy) is astronomically unlikely, and retrying within the same
+     * PostgreSQL transaction cannot work correctly — Postgres aborts the whole transaction on the
+     * first constraint violation, so a second attempt in the same transaction would itself fail
+     * immediately rather than cleanly retry (Phase 7/8/9 finding). A collision therefore fails
+     * loudly via {@link IllegalStateException} rather than silently misbehaving.</p>
+     *
+     * @throws AccountNotFoundException if {@code accountUuid} does not resolve to an account —
+     * this is an internal-caller error signal, not the uniform R5 path (unlike {@code verify}/
+     * {@code consume}, {@code issue} is never called with attacker-controlled input).
+     */
+    @Transactional
+    public VerificationTokenResult issue(UUID accountUuid, VerificationToken.Purpose purpose) {
+        Objects.requireNonNull(accountUuid, "accountUuid must not be null");
+        Objects.requireNonNull(purpose, "purpose must not be null");
+
+        Account account = accountRepository.findByAccountUuid(accountUuid)
+                .orElseThrow(() -> new AccountNotFoundException(accountUuid));
+
+        Instant now = clock.instant();
+        tokenRepository.invalidateActive(account.getId(), purpose, now);
+
+        Instant expiresAt = now.plus(properties.ttlMinutes(), ChronoUnit.MINUTES);
+        String rawToken = generateRawToken();
+        String tokenHash = Hashing.sha256(rawToken);
+        VerificationToken token =
+                VerificationToken.create(account.getId(), purpose, tokenHash, now, expiresAt);
+        try {
+            VerificationToken saved = tokenRepository.saveAndFlush(token);
+            return new VerificationTokenResult(rawToken, saved, accountUuid, purpose);
+        } catch (DataIntegrityViolationException e) {
+            throw new IllegalStateException("Verification token hash collision on issue", e);
+        }
+    }
+
+    /** Read-only check; does not mutate state. */
+    @Transactional(readOnly = true)
+    public Optional<UUID> verify(String rawToken) {
+        Objects.requireNonNull(rawToken, "rawToken must not be null");
+
+        Optional<VerificationToken> tokenOpt =
+                tokenRepository.findByTokenHash(Hashing.sha256(rawToken));
+        if (tokenOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        VerificationToken token = tokenOpt.get();
+        Instant now = clock.instant();
+        if (token.getUsedAt() != null || !token.getExpiresAt().isAfter(now)) {
+            return Optional.empty();
+        }
+        return resolveUsableAccount(token.getAccountId());
+    }
+
+    /**
+     * Atomic verify-and-mark, scoped to a single expected purpose (T07): a token issued for one
+     * purpose (e.g. {@code EMAIL_VERIFY}) must never be redeemable for another (e.g.
+     * {@code PASSWORD_RESET}). The purpose check happens before any mutation — a mismatch returns
+     * empty without consuming the token, so a mis-purposed token remains available for its
+     * actual, intended use. Self-contained: does not call or share logic with {@link #consume},
+     * which stays purpose-blind for its own (unchanged) callers.
+     */
+    @Transactional
+    public Optional<UUID> consumeForPurpose(String rawToken, VerificationToken.Purpose purpose) {
+        Objects.requireNonNull(rawToken, "rawToken must not be null");
+        Objects.requireNonNull(purpose, "purpose must not be null");
+
+        String tokenHash = Hashing.sha256(rawToken);
+        Optional<VerificationToken> tokenOpt = tokenRepository.findByTokenHash(tokenHash);
+        if (tokenOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        VerificationToken token = tokenOpt.get();
+        if (token.getPurpose() != purpose) {
+            return Optional.empty();
+        }
+
+        Optional<UUID> accountUuid = resolveUsableAccount(token.getAccountId());
+        if (accountUuid.isEmpty()) {
+            return Optional.empty();
+        }
+
+        int updated = tokenRepository.markConsumed(tokenHash, clock.instant());
+        if (updated == 0) {
+            return Optional.empty();
+        }
+
+        return resolveUsableAccount(token.getAccountId());
+    }
+
+    /** Atomic verify-and-mark; the sole state-mutating redemption path. */
+    @Transactional
+    public Optional<UUID> consume(String rawToken) {
+        Objects.requireNonNull(rawToken, "rawToken must not be null");
+
+        String tokenHash = Hashing.sha256(rawToken);
+        Optional<VerificationToken> tokenOpt = tokenRepository.findByTokenHash(tokenHash);
+        if (tokenOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        VerificationToken token = tokenOpt.get();
+
+        // Resolve and check the account before mutating anything: a token belonging to a
+        // deleted/suspended account must never be marked used by a rejected attempt.
+        Optional<UUID> accountUuid = resolveUsableAccount(token.getAccountId());
+        if (accountUuid.isEmpty()) {
+            return Optional.empty();
+        }
+
+        int updated = tokenRepository.markConsumed(tokenHash, clock.instant());
+        if (updated == 0) {
+            return Optional.empty();
+        }
+
+        // Re-check account usability after the atomic mark-used write: the two checks are not
+        // themselves atomic with each other, so a concurrent suspend/delete landing in between
+        // must still result in a uniform rejection, even though the token is now spent.
+        return resolveUsableAccount(token.getAccountId());
+    }
+
+    /** Cleanup job (T30, R40) - hard-deletes tokens whose expiry has passed. Returns the number
+     * of rows deleted, for job-run logging. */
+    @Transactional
+    public int deleteExpiredTokens(Instant cutoff) {
+        return tokenRepository.deleteExpiredBefore(cutoff);
+    }
+
+    private Optional<UUID> resolveUsableAccount(Long accountId) {
+        return accountRepository.findById(accountId)
+                .filter(this::isAccountUsable)
+                .map(Account::getAccountUuid);
+    }
+
+    private boolean isAccountUsable(Account account) {
+        return account.getStatus() != AccountStatus.DELETED
+                && account.getStatus() != AccountStatus.SUSPENDED;
+    }
+
+    private String generateRawToken() {
+        byte[] bytes = new byte[RAW_TOKEN_BYTES];
+        secureRandom.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    /**
+     * @param rawToken returned exactly once; never persisted or logged.
+     * @param token the persisted row (hash only — no raw-token field exists to leak).
+     */
+    public record VerificationTokenResult(
+            String rawToken, VerificationToken token, UUID accountUuid, VerificationToken.Purpose purpose) {
+
+        /** Overridden so the raw token can never leak via a default record {@code toString()}. */
+        @Override
+        public String toString() {
+            return "VerificationTokenResult[accountUuid=" + accountUuid + ", purpose=" + purpose + "]";
+        }
+    }
+}

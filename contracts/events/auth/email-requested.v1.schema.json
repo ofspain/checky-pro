@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/auth/email-requested.v1.schema.json",
+  "title": "auth.email.requested (schema_version 1)",
+  "description": "Published by the auth service's account module via the outbox (D-009) whenever a transactional email needs to be sent (email verification, password reset). Partition key = accountUuid. Consumed by the Notification Service, which has no other channel to obtain the raw token.",
+  "type": "object",
+  "required": ["accountUuid", "purpose", "token", "occurredAt"],
+  "properties": {
+    "accountUuid": {
+      "type": "string",
+      "format": "uuid",
+      "description": "External account identifier — the same value used as the JWT 'sub' claim."
+    },
+    "purpose": {
+      "type": "string",
+      "description": "What the email is for. Known values today: verify_email, password_reset. Deliberately not a closed enum — this is an open, string-typed reason code, not a fixed set (the payload's own Javadoc: 'later password_reset', i.e. open to more values over time)."
+    },
+    "token": {
+      "type": "string",
+      "description": "The raw verification/reset token, in the clear. A deliberate, documented exception to the standing rule that a credential appears exactly once in a creation response — the Notification Service has no other channel to obtain it."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}
