@@ -1,0 +1,24 @@
+# Local development dependencies only — the service itself runs from your IDE or
+# `./mvnw -pl services/crypto spring-boot:run -Dspring-boot.run.profiles=local`.
+# Matches the defaults in application.properties.
+#   docker compose -f services/crypto/compose.local.yaml up -d
+#
+# No Kafka yet: this service publishes nothing until the event-publishing change lands.
+# Chain access is not a local dependency — providers are real endpoints over the internet,
+# which is the point of §6.1 and cannot be faked by a container.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: checky-crypto-postgres
+    environment:
+      POSTGRES_DB: checky
+      POSTGRES_USER: checky
+      POSTGRES_PASSWORD: checky-local-only
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U checky"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
