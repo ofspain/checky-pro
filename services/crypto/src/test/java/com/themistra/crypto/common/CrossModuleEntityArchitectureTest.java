@@ -1,5 +1,6 @@
 package com.themistra.crypto.common;
 
+import archtestfixtures.RogueUnmappedEntity;
 import com.themistra.crypto.attest.AttestationService;
 import com.themistra.crypto.quorum.QuorumDecision;
 import com.themistra.crypto.token.TokenAllowlist;
@@ -150,7 +151,26 @@ class CrossModuleEntityArchitectureTest {
 
         assertThatThrownBy(() -> shouldPreventCrossModuleEntityImports.check(violatingClasses))
                 .as("a feature module importing another feature module's entity must fail this rule")
-                .isInstanceOf(AssertionError.class);
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueWatchEntityReferencer")
+                .hasMessageContaining("TokenAllowlist");
+    }
+
+    /** T25 Phase 11 (Kimi Test Review) Finding #1: the genuine-violation test above only exercises the
+     * {@code entityModule != dependingModule} path - it says nothing about whether the separate
+     * fail-fast path (an {@code @Entity} outside every {@code FEATURE_MODULES} entry) actually fires.
+     * {@link RogueUnmappedEntity} is a real {@code @Entity}, deliberately placed
+     * outside {@code com.themistra.crypto} entirely (T20's own standalone {@code archtestfixtures}
+     * package), so this test proves the documented "fail loudly, don't silently skip" behavior. */
+    @Test
+    void shouldFailFastWhenAnEntityIsOutsideEveryFeatureModule() {
+        JavaClasses unmappedEntityOnly = new ClassFileImporter()
+                .importClasses(RogueUnmappedEntity.class);
+
+        assertThatThrownBy(() -> shouldPreventCrossModuleEntityImports.check(unmappedEntityOnly))
+                .as("an @Entity outside every FEATURE_MODULES entry must fail loudly, not be silently unenforced")
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("does not reside in any module listed in FEATURE_MODULES");
     }
 
     /** T25 Phase 9 (self-review Finding #1 / Kimi Phase 8 Findings #1-2): mirrors auth's own

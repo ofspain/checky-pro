@@ -40,4 +40,25 @@ confirmed by its own 11/11 pass in this environment moments ago).
 ## Gaps
 
 None identified beyond what Phase 7/8/9 already surfaced and resolved (at the time this section was
-first written — see the Phase 11 additions below, once Kimi's test review lands).
+first written — see the Phase 11 additions below).
+
+## Phase 11 (Kimi Test Review) additions
+
+Per this pipeline's own Phase 11 convention, no separate resolution artifact is written — accepted
+findings are folded directly into this artifact and the test suite. Kimi raised 5 strengthening
+recommendations (no correctness defects). 2 accepted, 2 rejected as exercising no new code path beyond
+what an existing test already covers, 1 acknowledged-not-implemented (a repeat of Phase 8's identical
+Finding #5, dispositioned identically for the same reason).
+
+| Recommendation | Disposition | Resolution |
+|---|---|---|
+| 1. No negative-proof for the fail-fast null-module path | **ACCEPTED** | Added `shouldFailFastWhenAnEntityIsOutsideEveryFeatureModule`, using a new fixture `archtestfixtures.RogueUnmappedEntity` (a real `@Entity`, placed outside `com.themistra.crypto` entirely, T20's own established location for exactly this purpose) — proves the documented "fail loudly, don't silently skip" behavior, a genuinely different code branch than the existing negative-proof exercises. |
+| 2. No negative-proof for `common` importing a feature-module entity | **REJECTED — no new code path** | Verified directly against the `ArchCondition`'s own logic: `sameModule = entityModule.equals(dependingModule)` treats a `common`-package importer (`dependingModule == null`) identically to any other non-matching module (`dependingModule` = a different string) — both simply make the equality `false`, the same branch the existing `RogueWatchEntityReferencer` test already exercises. A dedicated `common`-specific fixture would prove the same boolean outcome with different input data, not new logic. |
+| 3. Negative-proof only exercises a field-dependency shape | **ACKNOWLEDGED, not implemented** | Identical to Phase 8 Finding #5, dispositioned identically at Phase 9: `ArchCondition` never inspects dependency *shape*, only origin/target module identity — the real Phase 6 first-run violations already empirically proved multiple shapes (field, method parameter, return type, method call) are caught by the same underlying ArchUnit API, before this task's own tests even existed. |
+| 4. Negative-proof doesn't assert the failure message (could pass for the wrong reason) | **ACCEPTED** | Strengthened `shouldPreventCrossModuleEntityImportsActuallyFailsAgainstAGenuineViolation` with `.hasMessageContaining("RogueWatchEntityReferencer")` and `.hasMessageContaining("TokenAllowlist")`, verified passing against the real thrown message. |
+| 5. No test that a *new*, non-allowlisted cross-module entity import is still rejected | **REJECTED — already proven** | The existing `RogueWatchEntityReferencer`→`TokenAllowlist` pair is itself not in `ALLOWED_CROSS_MODULE_ENTITY_DEPENDENCIES` — the existing negative-proof test already demonstrates the allowlist is narrow (specific pairs, not a blanket per-module exemption). Kimi's suggested substitution (`screening.ScreeningResult` instead of `token.TokenAllowlist`) is the same property with different data, not new coverage. |
+
+**Verification run (Phase 11):**
+`mvn -pl services/crypto test -Dtest=CrossModuleEntityArchitectureTest,KmsSignerArchitectureTest,ResourceServerConfigIntegrationTest`
+— 17/17 pass (4 in `CrossModuleEntityArchitectureTest`, up from 3; 2 in `KmsSignerArchitectureTest`; 11
+in `ResourceServerConfigIntegrationTest`, both cited unmodified).
