@@ -26,6 +26,7 @@ class T01SkeletonRegressionTest {
     private static final Path AUTH_POM = Path.of("../auth/pom.xml");
     private static final Path APPLICATION_PROPERTIES = Path.of("src/main/resources/application.properties");
     private static final Path THREAT_MODEL = Path.of("../../SECURITY-THREAT-MODEL.md");
+    private static final Path CRYPTO_PACKAGE_SPEC = Path.of("../../spec/crypto-service/package.md");
     private static final Path ADR_0004 = Path.of("../../docs/adr/0004-narrow-kms-exception-for-crypto-attestation.md");
 
     /** AC1 (T01): SECURITY-THREAT-MODEL.md threats #1-6 name an owning task; #7-8 are untouched
@@ -165,5 +166,18 @@ class T01SkeletonRegressionTest {
             throw new AssertionError("no match for \"" + label + "\" using pattern: " + pattern);
         }
         return matcher.group(1);
+    }
+
+    /** T29 (Kimi Phase 3 Finding #8): guards the one thing T29 actually changes -
+     * {@code package.md}'s own header - against a silent revert. Deliberately narrow: does not assert
+     * every Section 9 item is {@code [x]}, since item 13 (mvn verify / Docker build) is genuinely,
+     * honestly partial as of T29 and a broader assertion would either be wrong today or need constant
+     * updating as its own follow-up lands. */
+    @Test
+    void packageSpecHeaderReflectsReadyForImplAndVersionZeroTwo() throws IOException {
+        String spec = Files.readString(CRYPTO_PACKAGE_SPEC);
+
+        assertThat(spec).as("Version must be bumped to 0.2").contains("| Version | `0.2` |");
+        assertThat(spec).as("Status must be READY FOR IMPL").contains("| Status | `READY FOR IMPL` |");
     }
 }

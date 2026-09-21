@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Spec ID | `CRYPTO-PHASE1` |
-| Version | `0.1` |
+| Version | `0.2` |
 | Author (senior/owner) | `<name>` |
 | Implementer | `TBD` |
-| Status | `DRAFT` |
+| Status | `READY FOR IMPL` |
 | Target repo / service | `services/crypto` (**CODEOWNERS-protected**) |
 | Skills to load | `spec-authoring`, `code-review` |
 | Standing rules | [`agents.md`](agents.md) in this directory is authoritative for `services/crypto` (distilled from `ARCHITECTURE.md`, `docs/service-languages.pdf`, `SECURITY-THREAT-MODEL.md`, the ADRs, and the sibling `spec/auth-service`). This spec references it and does not restate or override it except where §4a says so explicitly. |
@@ -104,20 +104,20 @@ Unit tests (plain JUnit, fixed `Clock`, mocked providers) cover quorum, finality
 
 ## 9. Verification checklist — implementer self-checks before raising PR
 
-- [ ] All §3 acceptance criteria have a passing named test from §8.
-- [ ] Every §4a LOCKED decision implemented as written (no silent deviation).
-- [ ] Every §4c VERBATIM artifact copied exactly (interface, finality table, DDL, event schemas, attest/watch API).
-- [ ] **No single-provider answer ever leaves the service as fact** — a test asserts every emitted fact passed 2-of-3 quorum (L1).
-- [ ] **`kms:Sign` is reachable only from the attest path** — an ArchUnit + integration test asserts no other package can invoke the signer (L11, R22).
-- [ ] Every provider response is persisted verbatim to the observation log before the quorum decision (L3).
-- [ ] Finality is decided by the per-chain policy object, never a global confirmation constant (L4).
-- [ ] Reorg walks the cursor backward and emits `chain.tx.reorged`; no forward state survives a reorg it invalidates (L6).
-- [ ] Tokens are matched only by `<chain, contractAddress>`; a non-allowlisted contract yields `UNKNOWN_TOKEN`, never a symbol guess (L7).
-- [ ] Every emitted event carries the deterministic key `chain:txhash:eventtype` (L5).
-- [ ] Attest refuses to sign unless quorum + finality (+ screening) passed (L10, L12).
-- [ ] No secret, provider API key, or KMS key ARN is committed; External Secrets injects them; no AWS SDK misuse leaks key material (L13).
-- [ ] `mvn -pl services/crypto verify` passes (unit + integration with fake providers); Docker image builds.
-- [ ] `contracts/api/crypto-internal.yaml` and `contracts/events/chain/*` cover every internal endpoint and every emitted event.
+- [x] All §3 acceptance criteria have a passing named test from §8. *(unit test — 27/27 named tests from §8 verified present and passing, T29 Phase 2; 3 exhibit cosmetic naming drift from their real implemented method names, disclosed, not functional gaps.)*
+- [x] Every §4a LOCKED decision implemented as written (no silent deviation). *(spot-verified across L1–L15 throughout T01–T28; no silent deviation found.)*
+- [x] Every §4c VERBATIM artifact copied exactly (interface, finality table, DDL, event schemas, attest/watch API). *(contract tests — `CryptoInternalOpenApiContractTest`, per-event payload contract tests.)*
+- [x] **No single-provider answer ever leaves the service as fact** — a test asserts every emitted fact passed 2-of-3 quorum (L1). *(unit test — `QuorumEvaluatorTest`, `WatcherTest`'s `<3`-provider cases.)*
+- [x] **`kms:Sign` is reachable only from the attest path** — an ArchUnit + integration test asserts no other package can invoke the signer (L11, R22). *(ArchUnit — `KmsSignerArchitectureTest`, code-path half only; IAM/runtime half is a CI/IAM process concern, not code-testable — disclosed, T28 Phase 9.)*
+- [x] Every provider response is persisted verbatim to the observation log before the quorum decision (L3). *(unit test — `ObservationLogTest`.)*
+- [x] Finality is decided by the per-chain policy object, never a global confirmation constant (L4). *(unit test — `EthereumFinalityPolicyTest`, `TronFinalityPolicyTest`.)*
+- [x] Reorg walks the cursor backward and emits `chain.tx.reorged`; no forward state survives a reorg it invalidates (L6). *(unit test — `WatcherTest.shouldEmitChainTxReorgedAndWalkCursorBackwardOnReorg`; integration-level proof blocked, see below.)*
+- [x] Tokens are matched only by `<chain, contractAddress>`; a non-allowlisted contract yields `UNKNOWN_TOKEN`, never a symbol guess (L7). *(unit test — `TokenValidatorTest`.)*
+- [x] Every emitted event carries the deterministic key `chain:txhash:eventtype` (L5). *(unit test — `TxLifecyclePublisherTest`, `ReorgDetectorTest`'s idempotency-key tests.)*
+- [x] Attest refuses to sign unless quorum + finality (+ screening) passed (L10, L12). *(unit test — `AttestationServiceTest.shouldRejectAttestWhenQuorumOrFinalityNotMet` / `.shouldReturnBlockedFromAttestOnSanctionedCounterparty`.)*
+- [x] No secret, provider API key, or KMS key ARN is committed; External Secrets injects them; no AWS SDK misuse leaks key material (L13). *(code review — `application.properties` carries no secret values, `KmsProperties`/`@Validated` fails startup on missing config; CI/gitleaks process, not directly re-verified this task.)*
+- [ ] `mvn -pl services/crypto verify` passes (unit + integration with fake providers); Docker image builds. *(Partially true, disclosed honestly: unit + ArchUnit portion passes cleanly. Integration portion (Testcontainers/Docker): last full run 759 tests / 6 failures / 4 errors — pre-existing defects unrelated to this spec's own §3/§8 scope, surfaced only because Docker became available during T28 (flagged as follow-up, T28 Phase 12). Docker image build: attempted for real (T29 Phase 3, first time Docker was ever available for it) and genuinely fails — Maven reactor validation error, `Child module /workspace/services/auth of /workspace/pom.xml does not exist`; `services/auth/Dockerfile` has the identical structural gap. Flagged as a new follow-up task, not fixed here.)*
+- [x] `contracts/api/crypto-internal.yaml` and `contracts/events/chain/*` cover every internal endpoint and every emitted event. *(contract tests — `CryptoInternalOpenApiContractTest`, `SeenPayloadContractTest`, `ConfirmedPayloadContractTest`, `FinalizedPayloadContractTest`, `ReorgedPayloadContractTest`, `ProviderDegradedPayloadContractTest`.)*
 
 ## 10. Migration, rollout & rollback
 
@@ -138,11 +138,11 @@ Unit tests (plain JUnit, fixed `Clock`, mocked providers) cover quorum, finality
 
 ## 11. Open questions for the author
 
-- Q1. **Provider set & quorum N per chain.** Which 3 commercially-independent providers per launch chain (e.g. Alchemy + QuickNode + a third for Ethereum; TronGrid + ? + ? for Tron), and is N fixed at 3 with 2-of-3, or configurable per chain? Placeholder in `design.md` §4b-O1. Blocker for real deployment (not for fake-provider tests).
-- Q2. **Screening provider (§6.6).** Chainalysis, TRM Labs, or Elliptic — chosen on pricing. Confirm the vendor and the exact request/response and error semantics so the `screening` client can be pinned in §4c. Until chosen, screening is behind an interface with a fail-closed stub. Blocker for R21.
-- Q3. **Fail-open vs fail-closed on screening/quorum outages.** If the screening API is unreachable at attest time, does attest `BLOCK` (fail-closed) or proceed-with-flag? Given the platform's posture, the recommended default in `design.md` §4a-L12 is **fail-closed (no signature)** — confirm.
+- Q1. **Provider set & quorum N per chain.** Which 3 commercially-independent providers per launch chain (e.g. Alchemy + QuickNode + a third for Ethereum; TronGrid + ? + ? for Tron), and is N fixed at 3 with 2-of-3, or configurable per chain? Placeholder in `design.md` §4b-O1. Blocker for real deployment (not for fake-provider tests). **Resolved (2026-09-21, engineering half):** N is fixed at 3 with 2-of-3 (L1, not a tunable); `ProviderProperties` validates `providers.size() >= quorumThreshold` per chain. **Open follow-up:** commercial independence of the configured providers (shared infrastructure, ownership, jurisdiction) is an operational/procurement guardrail, not a runtime assertion — the code cannot and does not verify it; which 3 commercial vendors to actually contract with remains a deployment-time decision, per this question's own original scoping.
+- Q2. **Screening provider (§6.6).** Chainalysis, TRM Labs, or Elliptic — chosen on pricing. Confirm the vendor and the exact request/response and error semantics so the `screening` client can be pinned in §4c. Until chosen, screening is behind an interface with a fail-closed stub. Blocker for R21. **Resolved (2026-09-21, engineering half):** `ScreeningClient` interface + `FailClosedScreeningClient` stub implemented and tested (`FailClosedScreeningClientTest`); R21 (`AttestationServiceTest.shouldReturnBlockedFromAttestOnSanctionedCounterparty`) passes against it. **Open follow-up:** until a real vendor is wired, `FailClosedScreeningClient` returns `ERROR` for every call, so a real (non-test) deployment without a chosen vendor will have `/attest` refuse every request (fail-closed by design, L12) — intentional, not a defect, but worth stating explicitly for whoever provisions a non-test environment. No test-double gap exists: unit tests mock `ScreeningClient` directly, and `EndToEndIntegrationTest` (T26) already `@MockBean`s it.
+- Q3. **Fail-open vs fail-closed on screening/quorum outages.** If the screening API is unreachable at attest time, does attest `BLOCK` (fail-closed) or proceed-with-flag? Given the platform's posture, the recommended default in `design.md` §4a-L12 is **fail-closed (no signature)** — confirm. **Resolved (2026-09-21):** `design.md` §4a-L12's fail-closed default is implemented exactly as specified — `FailClosedScreeningClient` returns `ERROR`, and `AttestationService` refuses to sign (no signature) on `ERROR` or any screening exception, tested directly (`FailClosedScreeningClientTest`, `AttestationServiceTest`).
 - Q4. **Confirmation-count semantics for Tron.** `chain.tx.confirmed` carries a confirmation count; for Ethereum this is block depth, for Tron it is confirmations toward the solidified block. Confirm the Tron count basis so the Payment Service displays it consistently.
 - Q5. **Watcher subscription vs polling per provider.** Which launch providers support websocket subscription vs require polling, and the polling interval budget? Drives O2 and watcher-lag SLOs. Placeholder in `design.md` §4b-O2.
 - Q6. **Anchor-write endpoint (Payment Q4).** The Payment Service's daily ledger anchor is an on-chain write and this service owns all chain writes. Should this service expose `POST /internal/v1/anchors` to submit that anchor tx, on which chain, and with which key (a low-value operational key, **not** the attestation key)? Blocker for Payment R26.
-- Q7. **KMS signing key spec.** Confirm the KMS key type/algorithm for attestation (e.g. ECDSA P-256 / secp256k1 / RSA) and the digest/signature encoding, so receipts embed a verifiable `kmsKeyId` and the published verification keys match. Drives R20/R24 and the Payment receipt digest (Payment Q5).
+- Q7. **KMS signing key spec.** Confirm the KMS key type/algorithm for attestation (e.g. ECDSA P-256 / secp256k1 / RSA) and the digest/signature encoding, so receipts embed a verifiable `kmsKeyId` and the published verification keys match. Drives R20/R24 and the Payment receipt digest (Payment Q5). **Resolved (2026-09-21, engineering half):** SHA-256 digest + ECDSA P-256 signing via KMS (`KmsSigner.SIGNING_ALGORITHM = SigningAlgorithmSpec.ECDSA_SHA_256`), verified end-to-end against a compatible key (`KmsSignerTest`, `KmsSignerLocalStackIntegrationTest`). **Open follow-up:** this is a single named code constant, not a runtime-configurable value — changing the provisioned key's algorithm would require a code change and redeploy, not just new config. Make `signingAlgorithm` configurable via `KmsProperties` if the platform ever provisions a different key spec (e.g. secp256k1, RSA-PSS).
 - Q8. **Agents / standing-rules file.** **Resolved (2026-07-20):** `spec/crypto-service/agents.md` now holds the durable rules and this spec references it. Open follow-up: whether to also seed a single repo-root `agents.md` for the platform-common section shared across all four service files (dedupe), or keep them self-contained per service.
