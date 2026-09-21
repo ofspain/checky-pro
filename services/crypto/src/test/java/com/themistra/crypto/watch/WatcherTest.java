@@ -169,6 +169,11 @@ class WatcherTest {
 
         verifyNoInteractions(quorumDecisionService);
         verifyNoInteractions(txLifecyclePublisher);
+        // T28 Phase 11 (Kimi Test Review Finding #6): L3 requires every provider response logged
+        // verbatim even when quorum can never fire - proves this test's own "no evaluation" outcome
+        // isn't because the responses were silently dropped.
+        verify(observationLog).record(eq("ETHEREUM"), eq(TX_HASH), eq("provider-a"), eq(FactType.EXISTENCE), anyString());
+        verify(observationLog).record(eq("ETHEREUM"), eq(TX_HASH), eq("provider-b"), eq(FactType.EXISTENCE), anyString());
     }
 
     /** T28 Phase 9 (Kimi Phase 8 Finding #3): the literal "single-provider" shape SECURITY-THREAT-MODEL.md
@@ -183,6 +188,8 @@ class WatcherTest {
 
         verifyNoInteractions(quorumDecisionService);
         verifyNoInteractions(txLifecyclePublisher);
+        // T28 Phase 11 (Kimi Test Review Finding #6): same rationale as the two-provider test above.
+        verify(observationLog).record(eq("ETHEREUM"), eq(TX_HASH), eq("provider-a"), eq(FactType.EXISTENCE), anyString());
     }
 
     @Test
@@ -203,6 +210,9 @@ class WatcherTest {
         verifyNoInteractions(quorumDecisionService);
         verifyNoInteractions(txLifecyclePublisher);
         verify(providerHealthTracker).recordUnhealthy("ETHEREUM", "provider-c", DegradationReason.LAGGING);
+        // T28 Phase 11 (Kimi Test Review Finding #6): same rationale as the two-provider test above.
+        verify(observationLog).record(eq("ETHEREUM"), eq(TX_HASH), eq("provider-a"), eq(FactType.EXISTENCE), anyString());
+        verify(observationLog).record(eq("ETHEREUM"), eq(TX_HASH), eq("provider-b"), eq(FactType.EXISTENCE), anyString());
     }
 
     // ---------- AC2: log before decide ----------

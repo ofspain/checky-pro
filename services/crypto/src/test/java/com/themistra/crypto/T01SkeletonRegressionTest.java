@@ -52,8 +52,8 @@ class T01SkeletonRegressionTest {
                     .doesNotEndWith("| — |");
         }
         String row3 = rowStartingWith(lines, "| 3 |");
-        assertThat(row3).as("threat #3's execution-gap caveat must not be silently dropped")
-                .contains("not yet executed");
+        assertThat(row3).as("threat #3's pre-existing-defect caveat must not be silently dropped")
+                .contains("currently fails");
         String row4 = rowStartingWith(lines, "| 4 |");
         assertThat(row4).as("threat #4's code-path-only caveat must not be silently dropped")
                 .contains("code-path only");
