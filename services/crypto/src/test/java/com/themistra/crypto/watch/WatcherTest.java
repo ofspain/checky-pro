@@ -71,6 +71,19 @@ class WatcherTest {
             new ProviderSet.NamedAdapter("provider-b", providerB),
             new ProviderSet.NamedAdapter("provider-c", providerC));
 
+    /** T24 (R25/L14): a sidecar-backed {@code ChainAdapter} is, by design, indistinguishable from any
+     * other provider - {@code sidecar-ethereum} is a plain {@link FakeChainAdapter} like any other,
+     * named to match the watch's own {@code ETHEREUM} chain (Frozen Brief Finding #4) with a
+     * colon-free label (Finding #1: {@code ProviderDegradedPublisher} rejects any provider name
+     * containing {@code ':'}, so the {@code sidecar:<chain>} spelling design.md's own DDL comment
+     * suggests would crash real degraded-event publishing the moment this provider ever disagreed or
+     * went unhealthy - worked around here in the test's own naming choice, not in production code). */
+    private final FakeChainAdapter providerSidecar = new FakeChainAdapter(Chain.ETHEREUM, "sidecar-ethereum");
+    private final List<ProviderSet.NamedAdapter> sidecarAdapters = List.of(
+            new ProviderSet.NamedAdapter("provider-a", providerA),
+            new ProviderSet.NamedAdapter("provider-b", providerB),
+            new ProviderSet.NamedAdapter("sidecar-ethereum", providerSidecar));
+
     private final ObservationLog observationLog = mock(ObservationLog.class);
     private final QuorumDecisionService quorumDecisionService = mock(QuorumDecisionService.class);
     private final ProviderHealthTracker providerHealthTracker = mock(ProviderHealthTracker.class);
@@ -99,6 +112,13 @@ class WatcherTest {
     }
 
     private Watcher newWatcher(long correlationWindowMs) {
+        return newWatcher(correlationWindowMs, adapters);
+    }
+
+    /** T24 Frozen Brief Finding #6: explicit-adapters overload, so a test can swap in a
+     * sidecar-labeled {@link ProviderSet.NamedAdapter} without touching the shared {@link #adapters}
+     * field every pre-existing test in this class relies on. */
+    private Watcher newWatcher(long correlationWindowMs, List<ProviderSet.NamedAdapter> adapters) {
         return new Watcher(watch, adapters, observationLog, quorumDecisionService, providerHealthTracker,
                 chainCursorRepository, correlationWindowMs, meterRegistry, clock, objectMapper,
                 txLifecyclePublisher, List.of(finalityPolicy), FINALITY_POLL_INTERVAL_MS, reorgDetector);
@@ -294,6 +314,111 @@ class WatcherTest {
         verify(observationLog, never()).record(anyString(), anyString(), anyString(), eq(FactType.AMOUNT), anyString());
         verify(observationLog, never()).record(anyString(), anyString(), anyString(), eq(FactType.TOKEN), anyString());
         verify(observationLog, never()).record(anyString(), anyString(), anyString(), eq(FactType.CONFIRMATIONS), anyString());
+    }
+
+    // ---------- Sidecar-as-provider (R25/L14, T24) ----------
+    //
+    // These four tests prove the Java core (Watcher/QuorumDecisionService/ProviderHealthTracker)
+    // grants a sidecar-labeled ChainAdapter no special treatment whatsoever - not that a real
+    // TypeScript sidecar process itself has no signing/state access (Frozen Brief Finding #2), which
+    // is a cross-process concern governed by L14 and sidecar build/deployment controls, out of what
+    // any Java unit test can demonstrate. AC3 (no signing access) is proven separately, structurally,
+    // by the pre-existing, unmodified KmsSignerArchitectureTest rule: no class outside `attest` -
+    // including any ChainAdapter implementation, sidecar-labeled or not - may touch the KMS SDK at
+    // all. AC4 (no business state access) holds true by construction: providerSidecar and its
+    // NamedAdapter wrapper are never given a repository or persistence reference anywhere in this
+    // class's setup.
+
+    /** The named test (`package.md` §8): R25/AC1. 2-of-3 agreement including the sidecar-labeled
+     * provider reaches quorum evaluation exactly like any other combination - an {@link
+     * ArgumentCaptor} confirms the sidecar's own answer is genuinely present in the evaluated list
+     * (Finding #3), not merely that some {@code anyList()} was passed. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void shouldTreatSidecarOutputAsJustAnotherProviderAnswer() {
+        Watcher watcher = newWatcher(60_000, sidecarAdapters);
+        watcher.start();
+        TxResult agreed = tx(true, 100L, BigDecimal.TEN, 3);
+
+        deliver(providerA, agreed);
+        deliver(providerB, agreed);
+        deliver(providerSidecar, agreed);
+
+        ArgumentCaptor<List<ProviderAnswer<Boolean>>> captor = ArgumentCaptor.forClass(List.class);
+        verify(quorumDecisionService).evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.EXISTENCE), captor.capture());
+        assertThat(captor.getValue())
+                .as("the sidecar's own answer is genuinely included in the evaluated list")
+                .extracting(ProviderAnswer::provider)
+                .contains("sidecar-ethereum");
+    }
+
+    /** AC2: a sidecar-labeled provider in the minority of a 2-1 disagreement is flagged exactly like
+     * any other minority provider - no exemption, no special weighting. Mirrors
+     * {@link #recordsDisagreementForTheMinorityProviderInATwoOneSplit()}'s exact structure with the
+     * minority provider swapped for the sidecar. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void sidecarInTheMinorityIsRecordedAsDisagreeingLikeAnyOtherProvider() {
+        Watcher watcher = newWatcher(60_000, sidecarAdapters);
+        watcher.start();
+        TxResult majority = tx(true, 100L, BigDecimal.TEN, 3);
+        TxResult minority = tx(true, 100L, BigDecimal.ONE, 3);
+
+        deliver(providerA, majority);
+        deliver(providerB, majority);
+        deliver(providerSidecar, minority);
+
+        verify(providerHealthTracker).recordDisagreement("ETHEREUM", "sidecar-ethereum");
+        verify(providerHealthTracker, never()).recordDisagreement(eq("ETHEREUM"), eq("provider-a"));
+        verify(providerHealthTracker, never()).recordDisagreement(eq("ETHEREUM"), eq("provider-b"));
+
+        ArgumentCaptor<List<ProviderAnswer<BigDecimal>>> captor = ArgumentCaptor.forClass(List.class);
+        verify(quorumDecisionService).evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.AMOUNT), captor.capture());
+        assertThat(captor.getValue())
+                .as("the sidecar's own (minority) answer is genuinely included in the evaluated list")
+                .extracting(ProviderAnswer::provider)
+                .contains("sidecar-ethereum");
+    }
+
+    /** AC5 (part 1): a sidecar-labeled provider that never answers is marked {@code LAGGING} exactly
+     * like any other missing provider - no exemption. Mirrors
+     * {@link #laggingProviderNeverForcesEvaluationWithFewerThanThreeRealAnswers()}'s exact structure. */
+    @Test
+    void sidecarAsTheMissingThirdAnswerIsMarkedLaggingLikeAnyOtherProvider() {
+        long correlationWindowMs = 60_000;
+        Watcher watcher = newWatcher(correlationWindowMs, sidecarAdapters);
+        watcher.start();
+        TxResult agreed = tx(true, 100L, BigDecimal.TEN, 3);
+        deliver(providerA, agreed);
+        deliver(providerB, agreed);
+
+        clock.advanceBy(Duration.ofMillis(correlationWindowMs + 1));
+        assertThatCode(watcher::sweepStaleCorrelations).doesNotThrowAnyException();
+
+        verifyNoInteractions(quorumDecisionService);
+        verify(providerHealthTracker).recordUnhealthy("ETHEREUM", "sidecar-ethereum", DegradationReason.LAGGING);
+    }
+
+    /** AC5 (part 2): a sidecar-labeled provider reporting {@code exists=false} is excluded from
+     * AMOUNT/TOKEN/CONFIRMATIONS exactly like any other provider reporting the same. Mirrors
+     * {@link #excludesProvidersReportingExistsFalseFromAmountTokenAndConfirmationsButNotExistence()}'s
+     * exact structure. */
+    @Test
+    void sidecarReportingExistsFalseIsExcludedFromAmountTokenConfirmationsLikeAnyOtherProvider() {
+        Watcher watcher = newWatcher(60_000, sidecarAdapters);
+        watcher.start();
+
+        deliver(providerA, tx(true, 100L, BigDecimal.TEN, 3));
+        deliver(providerB, tx(true, 100L, BigDecimal.TEN, 3));
+        deliver(providerSidecar, tx(false, 0L, null, 0));
+
+        verify(quorumDecisionService).evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.EXISTENCE), anyList());
+        verify(quorumDecisionService, never())
+                .evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.AMOUNT), anyList());
+        verify(quorumDecisionService, never())
+                .evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.TOKEN), anyList());
+        verify(quorumDecisionService, never())
+                .evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.CONFIRMATIONS), anyList());
     }
 
     // ---------- AC5: duplicate-decision swallowed ----------
