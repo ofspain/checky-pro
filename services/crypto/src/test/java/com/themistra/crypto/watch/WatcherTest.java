@@ -332,10 +332,16 @@ class WatcherTest {
     /** The named test (`package.md` §8): R25/AC1. 2-of-3 agreement including the sidecar-labeled
      * provider reaches quorum evaluation exactly like any other combination - an {@link
      * ArgumentCaptor} confirms the sidecar's own answer is genuinely present in the evaluated list
-     * (Finding #3), not merely that some {@code anyList()} was passed. */
+     * (Finding #3), not merely that some {@code anyList()} was passed. The evaluation is stubbed to
+     * return {@code AGREED} and {@code txLifecyclePublisher.seen(...)} is asserted (Phase 8/9 Finding
+     * #1) so the test proves the sidecar's answer genuinely participates in - and does not block - the
+     * real {@code AGREED} path all the way to the emitted lifecycle event, not merely that some call
+     * was made. */
     @Test
     @SuppressWarnings("unchecked")
     void shouldTreatSidecarOutputAsJustAnotherProviderAnswer() {
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.EXISTENCE), anyList()))
+                .thenReturn(agreed(FactType.EXISTENCE));
         Watcher watcher = newWatcher(60_000, sidecarAdapters);
         watcher.start();
         TxResult agreed = tx(true, 100L, BigDecimal.TEN, 3);
@@ -350,6 +356,7 @@ class WatcherTest {
                 .as("the sidecar's own answer is genuinely included in the evaluated list")
                 .extracting(ProviderAnswer::provider)
                 .contains("sidecar-ethereum");
+        verify(txLifecyclePublisher).seen(eq(watch), eq(TX_HASH), eq(3));
     }
 
     /** AC2: a sidecar-labeled provider in the minority of a 2-1 disagreement is flagged exactly like
@@ -380,6 +387,27 @@ class WatcherTest {
                 .contains("sidecar-ethereum");
     }
 
+    /** AC2 (Phase 8/9 Finding #3): "no special treatment" must hold in both directions - a
+     * sidecar-labeled provider in the *majority* of a 2-1 disagreement grants it no immunity-granting
+     * power over the genuinely disagreeing minority provider either. Mirrors
+     * {@link #sidecarInTheMinorityIsRecordedAsDisagreeingLikeAnyOtherProvider()} with the sidecar and
+     * the minority provider's roles swapped. */
+    @Test
+    void sidecarInTheMajorityDoesNotSuppressTheMinorityProviderBeingFlagged() {
+        Watcher watcher = newWatcher(60_000, sidecarAdapters);
+        watcher.start();
+        TxResult majority = tx(true, 100L, BigDecimal.TEN, 3);
+        TxResult minority = tx(true, 100L, BigDecimal.ONE, 3);
+
+        deliver(providerA, majority);
+        deliver(providerSidecar, majority);
+        deliver(providerB, minority);
+
+        verify(providerHealthTracker).recordDisagreement("ETHEREUM", "provider-b");
+        verify(providerHealthTracker, never()).recordDisagreement(eq("ETHEREUM"), eq("provider-a"));
+        verify(providerHealthTracker, never()).recordDisagreement(eq("ETHEREUM"), eq("sidecar-ethereum"));
+    }
+
     /** AC5 (part 1): a sidecar-labeled provider that never answers is marked {@code LAGGING} exactly
      * like any other missing provider - no exemption. Mirrors
      * {@link #laggingProviderNeverForcesEvaluationWithFewerThanThreeRealAnswers()}'s exact structure. */
@@ -400,9 +428,12 @@ class WatcherTest {
     }
 
     /** AC5 (part 2): a sidecar-labeled provider reporting {@code exists=false} is excluded from
-     * AMOUNT/TOKEN/CONFIRMATIONS exactly like any other provider reporting the same. Mirrors
-     * {@link #excludesProvidersReportingExistsFalseFromAmountTokenAndConfirmationsButNotExistence()}'s
-     * exact structure. */
+     * AMOUNT/TOKEN/CONFIRMATIONS - both the quorum evaluation itself and the observation log entries
+     * that would otherwise precede it (Phase 8/9 Finding #2) - exactly like any other provider
+     * reporting the same. Mirrors
+     * {@link #excludesProvidersReportingExistsFalseFromAmountTokenAndConfirmationsButNotExistence()}
+     * and {@link #doesNotLogAmountTokenOrConfirmationsForAProviderReportingExistsFalse()}'s combined
+     * structure. */
     @Test
     void sidecarReportingExistsFalseIsExcludedFromAmountTokenConfirmationsLikeAnyOtherProvider() {
         Watcher watcher = newWatcher(60_000, sidecarAdapters);
@@ -419,6 +450,12 @@ class WatcherTest {
                 .evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.TOKEN), anyList());
         verify(quorumDecisionService, never())
                 .evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.CONFIRMATIONS), anyList());
+        verify(observationLog, never())
+                .record(anyString(), anyString(), eq("sidecar-ethereum"), eq(FactType.AMOUNT), anyString());
+        verify(observationLog, never())
+                .record(anyString(), anyString(), eq("sidecar-ethereum"), eq(FactType.TOKEN), anyString());
+        verify(observationLog, never())
+                .record(anyString(), anyString(), eq("sidecar-ethereum"), eq(FactType.CONFIRMATIONS), anyString());
     }
 
     // ---------- AC5: duplicate-decision swallowed ----------
