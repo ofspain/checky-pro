@@ -6,6 +6,7 @@ import com.themistra.crypto.adapter.FakeChainAdapter;
 import com.themistra.crypto.adapter.ProviderSet;
 import com.themistra.crypto.adapter.model.FinalityStatus;
 import com.themistra.crypto.adapter.model.TxResult;
+import com.themistra.crypto.attest.Attestation;
 import com.themistra.crypto.attest.AttestRequest;
 import com.themistra.crypto.attest.KmsSigner;
 import com.themistra.crypto.events.OutboxRelay;
@@ -64,6 +65,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -264,6 +266,17 @@ class EndToEndIntegrationTest {
                 .getResultList();
     }
 
+    /** T26 Phase 11 Finding #8: the HTTP response shape alone doesn't prove a durable audit row
+     * exists - R20/R21 require every attestation outcome to be persisted. */
+    @SuppressWarnings("unchecked")
+    private List<Attestation> findAttestations(String chain, String txHash) {
+        return entityManager.createQuery(
+                        "select a from Attestation a where a.chain = :chain and a.txHash = :txHash")
+                .setParameter("chain", chain)
+                .setParameter("txHash", txHash)
+                .getResultList();
+    }
+
     @SuppressWarnings("unchecked")
     private List<ScreeningResult> findScreeningResults(String chain, String address) {
         return entityManager.createQuery(
@@ -273,13 +286,21 @@ class EndToEndIntegrationTest {
                 .getResultList();
     }
 
-    /** T26 Phase 8/9 Finding #10: a matched record is removed from the buffer once returned, rather
-     * than left in place - so a later {@link #noRecordAppearsOnTopic} check for the same topic can
-     * never report a stale "found" from a record this test already consumed and asserted on earlier
-     * in the same flow. */
-    private ConsumerRecord<String, String> awaitRecordOnTopic(String topic, Duration timeout) {
+    /** T26 Phase 11 Findings #1/#4: filters on the record's own parsed {@code txHash} payload field,
+     * not just the topic. Two distinct problems this closes together: (1) the {@code KafkaContainer}
+     * and its topics are class-scoped, and every test's consumer group is brand-new with
+     * {@code auto.offset.reset=earliest}, so without this filter a later flow's consumer would see
+     * every earlier flow's messages too, on the same topic, and could satisfy (or wrongly fail) an
+     * assertion using another flow's leftover record entirely; (2) a topic-only match never actually
+     * validates the event's own content (Finding #4) - matching on {@code txHash} is the cheapest
+     * meaningful content check every one of this task's own emitted-event payload shapes (T23's
+     * {@code SeenPayload}/{@code ConfirmedPayload}/{@code FinalizedPayload}/{@code ReorgedPayload})
+     * carries in common. A matched record is removed from the buffer once returned (Phase 8/9 Finding
+     * #10), so a later {@link #noRecordAppearsOnTopic} check can never report a stale "found". */
+    private ConsumerRecord<String, String> awaitRecordOnTopic(String topic, String expectedTxHash,
+                                                                Duration timeout) {
         Optional<ConsumerRecord<String, String>> alreadyBuffered = receivedRecords.stream()
-                .filter(record -> record.topic().equals(topic))
+                .filter(record -> record.topic().equals(topic) && recordHasTxHash(record, expectedTxHash))
                 .findFirst();
         if (alreadyBuffered.isPresent()) {
             receivedRecords.remove(alreadyBuffered.get());
@@ -290,7 +311,7 @@ class EndToEndIntegrationTest {
             ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
             records.forEach(receivedRecords::add);
             for (ConsumerRecord<String, String> record : records) {
-                if (record.topic().equals(topic)) {
+                if (record.topic().equals(topic) && recordHasTxHash(record, expectedTxHash)) {
                     receivedRecords.remove(record);
                     return record;
                 }
@@ -299,8 +320,27 @@ class EndToEndIntegrationTest {
         return null;
     }
 
-    private boolean noRecordAppearsOnTopic(String topic, Duration window) {
-        return awaitRecordOnTopic(topic, window) == null;
+    private boolean recordHasTxHash(ConsumerRecord<String, String> record, String expectedTxHash) {
+        try {
+            return objectMapper.readTree(record.value()).get("txHash").asText().equals(expectedTxHash);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean noRecordAppearsOnTopic(String topic, String txHash, Duration window) {
+        return awaitRecordOnTopic(topic, txHash, window) == null;
+    }
+
+    /** T26 Phase 11 Finding #6: monotonic wall-clock ordering across a flow's own lifecycle events,
+     * using each record's own Kafka-assigned produce timestamp (offsets aren't comparable across
+     * different topics' independent partitions, but timestamps are). */
+    private void assertStrictlyOrdered(ConsumerRecord<String, String> earlier,
+                                        ConsumerRecord<String, String> later) {
+        assertThat(earlier.timestamp())
+                .as("%s (topic %s) must be produced before %s (topic %s)", earlier.value(), earlier.topic(),
+                        later.value(), later.topic())
+                .isLessThanOrEqualTo(later.timestamp());
     }
 
     @Test
@@ -323,12 +363,20 @@ class EndToEndIntegrationTest {
         providerC.simulateReorg(txHash, agreed);
         outboxRelay.relay();
 
-        assertThat(awaitRecordOnTopic("chain.tx.seen", Duration.ofSeconds(10))).isNotNull();
-        assertThat(awaitRecordOnTopic("chain.tx.confirmed", Duration.ofSeconds(10))).isNotNull();
+        ConsumerRecord<String, String> seenRecord = awaitRecordOnTopic("chain.tx.seen", txHash, Duration.ofSeconds(10));
+        ConsumerRecord<String, String> confirmedRecord =
+                awaitRecordOnTopic("chain.tx.confirmed", txHash, Duration.ofSeconds(10));
+        assertThat(seenRecord).isNotNull();
+        assertThat(confirmedRecord).isNotNull();
+        assertStrictlyOrdered(seenRecord, confirmedRecord);
 
         assertThat(findObservations("ETHEREUM", txHash, FactType.EXISTENCE)).hasSize(3);
         assertThat(findObservations("ETHEREUM", txHash, FactType.AMOUNT)).hasSize(3);
         assertThat(quorumDecisionService.isAgreed("ETHEREUM", txHash, FactType.EXISTENCE)).isTrue();
+        // Phase 11 Finding #10: TOKEN is one of AttestationService's own REQUIRED_FACTS alongside
+        // EXISTENCE/AMOUNT/FINALITY - asserted explicitly so a missing/wrong TOKEN decision fails
+        // here, not only indirectly via a later attest-gate failure.
+        assertThat(quorumDecisionService.isAgreed("ETHEREUM", txHash, FactType.TOKEN)).isTrue();
 
         FinalityStatus finalStatus = new FinalityStatus(100L, 200L, 150L);
         providerA.scriptFinalityStatus(txHash, finalStatus);
@@ -337,7 +385,10 @@ class EndToEndIntegrationTest {
         activeWatcher.pollFinality();
         outboxRelay.relay();
 
-        assertThat(awaitRecordOnTopic("chain.tx.finalized", Duration.ofSeconds(10))).isNotNull();
+        ConsumerRecord<String, String> finalizedRecord =
+                awaitRecordOnTopic("chain.tx.finalized", txHash, Duration.ofSeconds(10));
+        assertThat(finalizedRecord).isNotNull();
+        assertStrictlyOrdered(confirmedRecord, finalizedRecord);
         assertThat(quorumDecisionService.isAgreed("ETHEREUM", txHash, FactType.FINALITY)).isTrue();
 
         doReturn(newSignatureResult("c2ln", "test-key", Instant.now(clock))).when(kmsSigner).sign(any());
@@ -350,6 +401,15 @@ class EndToEndIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.outcome").value("SIGNED"))
                 .andExpect(jsonPath("$.signature").value("c2ln"));
+
+        // Phase 11 Finding #7: a mocked signer returning a fixed value without ever being invoked
+        // could otherwise still produce this exact response if the service short-circuited signing.
+        verify(kmsSigner, times(1)).sign(any());
+        // Phase 11 Finding #9: a bug that alerted on a healthy flow would otherwise go unnoticed.
+        verify(heldFactAlerter, never()).alert(anyString(), anyString(), any(), any());
+        // Phase 11 Finding #8: the HTTP response alone doesn't prove a durable audit row exists (R20).
+        assertThat(findAttestations("ETHEREUM", txHash))
+                .anyMatch(attestation -> "SIGNED".equals(attestation.outcome().name()));
     }
 
     @Test
@@ -375,14 +435,15 @@ class EndToEndIntegrationTest {
         providerC.simulateReorg(txHash, tx(txHash, true, 100L, BigDecimal.valueOf(3L), 3));
         outboxRelay.relay();
 
-        assertThat(awaitRecordOnTopic("chain.tx.seen", Duration.ofSeconds(10))).isNotNull();
+        assertThat(awaitRecordOnTopic("chain.tx.seen", txHash, Duration.ofSeconds(10))).isNotNull();
         assertThat(quorumDecisionService.isAgreed("ETHEREUM", txHash, FactType.AMOUNT)).isFalse();
         assertThat(quorumDecisionService.isAgreed("ETHEREUM", txHash, FactType.CONFIRMATIONS)).isFalse();
         verify(heldFactAlerter).alert(eq("ETHEREUM"), eq(txHash), eq(FactType.AMOUNT), any());
         verify(heldFactAlerter).alert(eq("ETHEREUM"), eq(txHash), eq(FactType.CONFIRMATIONS), any());
 
-        assertThat(noRecordAppearsOnTopic("chain.tx.confirmed", Duration.ofSeconds(5))).isTrue();
-        assertThat(noRecordAppearsOnTopic("chain.tx.finalized", Duration.ofSeconds(2))).isTrue();
+        assertThat(noRecordAppearsOnTopic("chain.tx.confirmed", txHash, Duration.ofSeconds(5))).isTrue();
+        assertThat(noRecordAppearsOnTopic("chain.tx.finalized", txHash, Duration.ofSeconds(2))).isTrue();
+        verify(kmsSigner, never()).sign(any());
     }
 
     @Test
@@ -404,7 +465,12 @@ class EndToEndIntegrationTest {
         providerB.simulateReorg(txHash, agreed);
         providerC.simulateReorg(txHash, agreed);
         outboxRelay.relay();
-        assertThat(awaitRecordOnTopic("chain.tx.confirmed", Duration.ofSeconds(10))).isNotNull();
+        ConsumerRecord<String, String> seenRecord = awaitRecordOnTopic("chain.tx.seen", txHash, Duration.ofSeconds(10));
+        ConsumerRecord<String, String> confirmedRecord =
+                awaitRecordOnTopic("chain.tx.confirmed", txHash, Duration.ofSeconds(10));
+        assertThat(seenRecord).isNotNull();
+        assertThat(confirmedRecord).isNotNull();
+        assertStrictlyOrdered(seenRecord, confirmedRecord);
 
         TxResult reorgedAway = tx(txHash, false, 0L, null, 0);
         providerA.scriptTx(txHash, reorgedAway);
@@ -413,13 +479,17 @@ class EndToEndIntegrationTest {
         activeWatcher.pollFinality();
         outboxRelay.relay();
 
-        assertThat(awaitRecordOnTopic("chain.tx.reorged", Duration.ofSeconds(10))).isNotNull();
+        ConsumerRecord<String, String> reorgedRecord =
+                awaitRecordOnTopic("chain.tx.reorged", txHash, Duration.ofSeconds(10));
+        assertThat(reorgedRecord).isNotNull();
+        assertStrictlyOrdered(confirmedRecord, reorgedRecord);
 
         Optional<ChainCursor> cursor = chainCursorRepository.findByWatchId(watchId);
         assertThat(cursor).isPresent();
         assertThat(cursor.get().txHash()).isNull();
 
-        assertThat(noRecordAppearsOnTopic("chain.tx.finalized", Duration.ofSeconds(5))).isTrue();
+        assertThat(noRecordAppearsOnTopic("chain.tx.finalized", txHash, Duration.ofSeconds(5))).isTrue();
+        verify(heldFactAlerter, never()).alert(anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -441,7 +511,12 @@ class EndToEndIntegrationTest {
         providerB.simulateReorg(txHash, agreed);
         providerC.simulateReorg(txHash, agreed);
         outboxRelay.relay();
-        assertThat(awaitRecordOnTopic("chain.tx.confirmed", Duration.ofSeconds(10))).isNotNull();
+        ConsumerRecord<String, String> seenRecord = awaitRecordOnTopic("chain.tx.seen", txHash, Duration.ofSeconds(10));
+        ConsumerRecord<String, String> confirmedRecord =
+                awaitRecordOnTopic("chain.tx.confirmed", txHash, Duration.ofSeconds(10));
+        assertThat(seenRecord).isNotNull();
+        assertThat(confirmedRecord).isNotNull();
+        assertStrictlyOrdered(seenRecord, confirmedRecord);
 
         FinalityStatus finalStatus = new FinalityStatus(100L, 200L, 150L);
         providerA.scriptFinalityStatus(txHash, finalStatus);
@@ -449,7 +524,10 @@ class EndToEndIntegrationTest {
         providerC.scriptFinalityStatus(txHash, finalStatus);
         activeWatcher.pollFinality();
         outboxRelay.relay();
-        assertThat(awaitRecordOnTopic("chain.tx.finalized", Duration.ofSeconds(10))).isNotNull();
+        ConsumerRecord<String, String> finalizedRecord =
+                awaitRecordOnTopic("chain.tx.finalized", txHash, Duration.ofSeconds(10));
+        assertThat(finalizedRecord).isNotNull();
+        assertStrictlyOrdered(confirmedRecord, finalizedRecord);
 
         // Mirrors the real ScreeningClient contract (screening/ScreeningClient.java): every call
         // persists exactly one ScreeningResult row before returning, regardless of outcome. Wrapped in
@@ -479,8 +557,11 @@ class EndToEndIntegrationTest {
                 .andExpect(jsonPath("$.outcome").value("BLOCKED"));
 
         verify(kmsSigner, never()).sign(any());
+        verify(heldFactAlerter, never()).alert(anyString(), anyString(), any(), any());
         assertThat(findScreeningResults("ETHEREUM", COUNTERPARTY_ADDRESS))
                 .anyMatch(result -> result.outcome() == ScreeningOutcome.BLOCKED);
+        assertThat(findAttestations("ETHEREUM", txHash))
+                .anyMatch(attestation -> "BLOCKED".equals(attestation.outcome().name()));
     }
 
     /** T26 Phase 8/9 Finding #3: {@link Watch}'s real JPA {@code @Id} is an auto-generated surrogate
