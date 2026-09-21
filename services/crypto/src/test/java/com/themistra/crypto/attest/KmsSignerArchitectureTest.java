@@ -16,6 +16,7 @@ import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -177,6 +178,26 @@ class KmsSignerArchitectureTest {
                 .isInstanceOf(AssertionError.class)
                 .hasMessageContaining("RogueAttestReferencer")
                 .hasMessageContaining("KmsClient");
+    }
+
+    /** T27 Phase 11 (Kimi Test Review Finding #4): the existing tests prove the rule fails on a
+     * non-allowlisted violation ({@link #bothRulesActuallyFailAgainstAGenuineViolation()}) and that
+     * {@code EndToEndIntegrationTest} still depends on {@code KmsSigner}
+     * ({@link #allowlistedKmsSignerCrossModuleReferenceStillExistsInCode()}), but nothing had
+     * directly proven the allowlist's own "allowed" branch doesn't throw - that was, until now, only
+     * implied by the real canary happening to pass against the whole codebase. Scoped to
+     * {@code watch}+{@code attest} (not the single-class narrow imports the other negative/positive
+     * proofs use) because {@code EndToEndIntegrationTest} is package-private, so it cannot be named
+     * by a class literal from this {@code attest}-package test - the same constraint that makes the
+     * allowlist itself a string literal. */
+    @Test
+    void allowlistedClassIsNotFlaggedAsAViolation() {
+        JavaClasses watchAndAttestClasses = new ClassFileImporter()
+                .importPackages("com.themistra.crypto.watch", "com.themistra.crypto.attest");
+
+        assertThatCode(() -> noClassOutsideAttestMayReferenceKmsSigner.check(watchAndAttestClasses))
+                .as("EndToEndIntegrationTest's allowlisted KmsSigner reference must not be flagged")
+                .doesNotThrowAnyException();
     }
 
     /** T27 Phase 6: mirrors {@code CrossModuleEntityArchitectureTest
