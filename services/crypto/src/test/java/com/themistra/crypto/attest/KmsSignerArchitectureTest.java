@@ -1,14 +1,21 @@
 package com.themistra.crypto.attest;
 
 import archtestfixtures.RogueAttestReferencer;
+import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
+import com.tngtech.archunit.lang.ConditionEvents;
+import com.tngtech.archunit.lang.SimpleConditionEvent;
 import org.junit.jupiter.api.Test;
 
+import java.util.Set;
+
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -60,11 +67,53 @@ class KmsSignerArchitectureTest {
      * silently drift apart. */
     static final String ANALYZED_PACKAGE = "com.themistra.crypto";
 
+    /** T27 Phase 6: a single, narrow, named exception - mirroring
+     * {@code CrossModuleEntityArchitectureTest.ALLOWED_CROSS_MODULE_ENTITY_DEPENDENCIES}'s own
+     * allowlist pattern exactly, chosen by explicit human decision at T27's own Phase 6 gate over
+     * both "leave it red as a separate follow-up task" and "widen T27's scope silently." T26's
+     * {@code EndToEndIntegrationTest} legitimately needs to {@code @MockBean}-double {@code KmsSigner}
+     * and stub {@code .sign(...)} from the {@code watch} package - the same, already-accepted shape
+     * as {@code KmsSignerTest} mocking the KMS SDK itself, just one module further out, and Mockito
+     * stubbing inherently requires referencing {@code KmsSigner} by name. Moving the test into
+     * {@code attest} was considered and rejected: it would lose package-private access to
+     * {@code Watcher}, {@code ObservationRepository}, and {@code ScreeningResultRepository}, each in
+     * their own separate packages. {@link #allowlistedKmsSignerCrossModuleReferenceStillExistsInCode()}
+     * closes the same staleness gap the entity allowlist's own regression guard closes. */
+    private static final Set<String> ALLOWED_CROSS_MODULE_KMS_SIGNER_REFERENCES =
+            Set.of("com.themistra.crypto.watch.EndToEndIntegrationTest");
+
     @ArchTest
     static final ArchRule noClassOutsideAttestMayReferenceKmsSigner = noClasses()
             .that().resideOutsideOfPackage("com.themistra.crypto.attest..")
-            .should().dependOnClassesThat().haveFullyQualifiedName("com.themistra.crypto.attest.KmsSigner")
-            .because("R22/L11: kms:Sign is reachable only from the attest module");
+            .should(dependOnKmsSignerUnlessAllowlisted())
+            .because("R22/L11: kms:Sign is reachable only from the attest module, except a narrow, "
+                    + "named allowlist for legitimate cross-module test doubles");
+
+    /** {@code noClasses()} negates whatever this condition reports (confirmed directly against
+     * ArchUnit 1.3.0's own {@code ArchRuleDefinition.Creator.noClasses()} source - it wraps every
+     * given condition with {@code negateCondition()}), so - counter-intuitively for a condition meant
+     * to describe a violation - {@code satisfied=true} here is what {@code noClasses()} turns into an
+     * actual reported failure. Verified empirically: the inverted boolean below is what makes
+     * {@link #bothRulesActuallyFailAgainstAGenuineViolation()} pass; the naive
+     * satisfied-means-violation reading (which seems more intuitive when writing a "should NOT" rule)
+     * silently let the negative-proof test's {@code RogueAttestReferencer} violation through
+     * unreported. */
+    private static ArchCondition<JavaClass> dependOnKmsSignerUnlessAllowlisted() {
+        return new ArchCondition<JavaClass>("not depend on KmsSigner, except an allowlisted test double") {
+            @Override
+            public void check(JavaClass javaClass, ConditionEvents events) {
+                boolean allowed = ALLOWED_CROSS_MODULE_KMS_SIGNER_REFERENCES.contains(javaClass.getName());
+                boolean dependsOnKmsSigner = javaClass.getDirectDependenciesFromSelf().stream()
+                        .anyMatch(dependency -> dependency.getTargetClass().getFullName()
+                                .equals("com.themistra.crypto.attest.KmsSigner"));
+                if (dependsOnKmsSigner && !allowed) {
+                    events.add(new SimpleConditionEvent(javaClass, true, javaClass.getName()
+                            + " depends on com.themistra.crypto.attest.KmsSigner but resides outside "
+                            + "attest and is not in ALLOWED_CROSS_MODULE_KMS_SIGNER_REFERENCES"));
+                }
+            }
+        };
+    }
 
     @ArchTest
     static final ArchRule onlyKmsSignerMayUseTheKmsSigningSdk = noClasses()
@@ -117,5 +166,24 @@ class KmsSignerArchitectureTest {
         assertThatThrownBy(() -> onlyKmsSignerMayUseTheKmsSigningSdk.check(violatingClasses))
                 .as("a non-KmsSigner* class depending on the KMS SDK must fail this rule")
                 .isInstanceOf(AssertionError.class);
+    }
+
+    /** T27 Phase 6: mirrors {@code CrossModuleEntityArchitectureTest
+     * .allowlistedCrossModuleEntityDependenciesStillExistInCode()} exactly - if a future refactor ever
+     * removed {@code EndToEndIntegrationTest}'s own dependency on {@code KmsSigner} (e.g., it stopped
+     * mocking it), its entry in {@link #ALLOWED_CROSS_MODULE_KMS_SIGNER_REFERENCES} would become
+     * silent dead configuration with nothing else noticing. This fails loudly instead. */
+    @Test
+    void allowlistedKmsSignerCrossModuleReferenceStillExistsInCode() {
+        JavaClasses watchPackage = new ClassFileImporter().importPackages("com.themistra.crypto.watch");
+        JavaClass endToEndIntegrationTest =
+                watchPackage.get("com.themistra.crypto.watch.EndToEndIntegrationTest");
+
+        assertThat(endToEndIntegrationTest.getDirectDependenciesFromSelf().stream()
+                        .anyMatch(dependency -> dependency.getTargetClass().getFullName()
+                                .equals("com.themistra.crypto.attest.KmsSigner")))
+                .as("EndToEndIntegrationTest should still depend on KmsSigner - if this is no longer "
+                        + "true, remove the now-stale allowlist entry for it")
+                .isTrue();
     }
 }
