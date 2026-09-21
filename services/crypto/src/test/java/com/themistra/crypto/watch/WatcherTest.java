@@ -168,6 +168,7 @@ class WatcherTest {
         deliver(providerB, agreed);
 
         verifyNoInteractions(quorumDecisionService);
+        verifyNoInteractions(txLifecyclePublisher);
     }
 
     @Test
@@ -186,6 +187,7 @@ class WatcherTest {
         assertThatCode(watcher::sweepStaleCorrelations).doesNotThrowAnyException();
 
         verifyNoInteractions(quorumDecisionService);
+        verifyNoInteractions(txLifecyclePublisher);
         verify(providerHealthTracker).recordUnhealthy("ETHEREUM", "provider-c", DegradationReason.LAGGING);
     }
 

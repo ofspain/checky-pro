@@ -28,15 +28,19 @@ class T01SkeletonRegressionTest {
     private static final Path THREAT_MODEL = Path.of("../../SECURITY-THREAT-MODEL.md");
     private static final Path ADR_0004 = Path.of("../../docs/adr/0004-narrow-kms-exception-for-crypto-attestation.md");
 
-    /** AC1: SECURITY-THREAT-MODEL.md threats #1-6 are tracked with an owning task; #7-8 are
-     * untouched (out of this service's scope). */
+    /** AC1 (T01): SECURITY-THREAT-MODEL.md threats #1-6 name an owning task; #7-8 are untouched
+     * (out of this service's scope). Originally asserted {@code "tracked"} for #1-6 - superseded by
+     * T28 ("Threat-model closure"), whose entire purpose is to move each row from {@code tracked} to
+     * {@code closed} once a named, passing test verifies its mitigation. Asserting {@code "closed"}
+     * here is this same regression guard doing its job against the current, correct expected state,
+     * not a relaxation of it. */
     @Test
     void threatModelTracksThreatsOneToSixWithAnOwningTaskAndLeavesSevenEightUntouched() throws IOException {
         String[] lines = Files.readString(THREAT_MODEL).split("\n");
 
         for (int n = 1; n <= 6; n++) {
             String row = rowStartingWith(lines, "| " + n + " |");
-            assertThat(row).as("threat #%d row", n).contains("tracked");
+            assertThat(row).as("threat #%d row", n).contains("closed");
             assertThat(row.trim()).as("threat #%d must name an owning task, not be left empty", n)
                     .doesNotEndWith("| — |");
         }
