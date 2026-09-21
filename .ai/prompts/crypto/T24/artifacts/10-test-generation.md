@@ -40,4 +40,24 @@ task touches depends on Testcontainers.
 ## Gaps
 
 None identified beyond what Phase 7/8/9 already surfaced and resolved (at the time this section was
-first written — see the Phase 11 additions below, once Kimi's test review lands).
+first written — see the Phase 11 additions below).
+
+## Phase 11 (Kimi Test Review) additions
+
+Per this pipeline's own Phase 11 convention, no separate resolution artifact is written — accepted
+findings are folded directly into this artifact and the test suite. Kimi raised 5 strengthening
+recommendations (no correctness defects). 2 accepted, 2 rejected (1 verified factually incorrect by
+direct execution, 1 already dispositioned at Phase 9), 1 rejected as low-value/redundant.
+
+| Recommendation | Disposition | Resolution |
+|---|---|---|
+| 1. Lagging test doesn't assert `provider-a`/`provider-b` are *not* also marked unhealthy | **ACCEPTED** | Added `verify(providerHealthTracker, never()).recordUnhealthy(...)` for both answering providers to `sidecarAsTheMissingThirdAnswerIsMarkedLaggingLikeAnyOtherProvider`. |
+| 2. No sidecar-specific at-most-once-lagging test | **REJECTED — low value** | The underlying guard (`TxCorrelation.markLaggingFlagged`, a plain `Set<String>.add`) has zero conditional logic on provider-name content — it cannot possibly behave differently for a `sidecar-`-prefixed name. The pre-existing, non-sidecar `marksALaggingProviderAtMostOncePerCorrelationAcrossRepeatedSweeps` already fully proves this property; a sidecar-labeled duplicate would exercise no code path capable of differing by name. |
+| 3. No positive proof that `provider-a`/`provider-b` are still evaluated/logged for AMOUNT when the sidecar reports `exists=false` | **REJECTED — verified factually incorrect** | Directly probed by temporarily adding Kimi's exact suggested assertion (`verify(quorumDecisionService).evaluate(..., AMOUNT, ...)`) and running the test: it **fails**. `Watcher.evaluateFact` hard-requires exactly 3 qualifying (`exists=true`) answers before evaluating AMOUNT/TOKEN/CONFIRMATIONS at all (a pre-existing, deliberate design, unrelated to T24) — with only 2 of 3 providers reporting `exists=true` in this scenario, AMOUNT is never evaluated for *anyone*, sidecar or not. The existing `never()`-only assertions are the only correct ones; the identical, pre-existing non-sidecar test (`excludesProvidersReportingExistsFalseFromAmountTokenAndConfirmationsButNotExistence`) makes the same choice for the same reason. |
+| 4. Sidecar-in-majority test doesn't prove inclusion via `ArgumentCaptor` (asymmetric with the minority test) | **ACCEPTED** | Added the same `ArgumentCaptor` inclusion proof to `sidecarInTheMajorityDoesNotSuppressTheMinorityProviderBeingFlagged`, asserting the captured `AMOUNT` list contains both `"provider-a"` and `"sidecar-ethereum"`. |
+| 5. New tests don't call `watcher.stop()` | **REJECTED — already dispositioned at Phase 9** | Re-raises Phase 8 Finding #5, already verified factually inconsistent with this file's own convention (only 3 of 64 `start()`-calling tests ever call `stop()` — the 3 tests specifically about `stop()`'s own behavior). Kimi's own Phase 11 text already concedes "this is not a new regression." No change. |
+
+**Verification run (Phase 11):**
+`mvn -pl services/crypto test -Dtest=WatcherTest,KmsSignerArchitectureTest` — 69/69 pass (67 in
+`WatcherTest`, same count as Phase 9 — both accepted findings strengthened existing test bodies rather
+than adding new methods; 2 in `KmsSignerArchitectureTest`, cited unmodified).

@@ -393,6 +393,7 @@ class WatcherTest {
      * {@link #sidecarInTheMinorityIsRecordedAsDisagreeingLikeAnyOtherProvider()} with the sidecar and
      * the minority provider's roles swapped. */
     @Test
+    @SuppressWarnings("unchecked")
     void sidecarInTheMajorityDoesNotSuppressTheMinorityProviderBeingFlagged() {
         Watcher watcher = newWatcher(60_000, sidecarAdapters);
         watcher.start();
@@ -406,6 +407,13 @@ class WatcherTest {
         verify(providerHealthTracker).recordDisagreement("ETHEREUM", "provider-b");
         verify(providerHealthTracker, never()).recordDisagreement(eq("ETHEREUM"), eq("provider-a"));
         verify(providerHealthTracker, never()).recordDisagreement(eq("ETHEREUM"), eq("sidecar-ethereum"));
+
+        ArgumentCaptor<List<ProviderAnswer<BigDecimal>>> captor = ArgumentCaptor.forClass(List.class);
+        verify(quorumDecisionService).evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.AMOUNT), captor.capture());
+        assertThat(captor.getValue())
+                .as("the sidecar's own (majority) answer is genuinely included in the evaluated list, symmetric with the minority test")
+                .extracting(ProviderAnswer::provider)
+                .contains("provider-a", "sidecar-ethereum");
     }
 
     /** AC5 (part 1): a sidecar-labeled provider that never answers is marked {@code LAGGING} exactly
@@ -425,6 +433,8 @@ class WatcherTest {
 
         verifyNoInteractions(quorumDecisionService);
         verify(providerHealthTracker).recordUnhealthy("ETHEREUM", "sidecar-ethereum", DegradationReason.LAGGING);
+        verify(providerHealthTracker, never()).recordUnhealthy(eq("ETHEREUM"), eq("provider-a"), any());
+        verify(providerHealthTracker, never()).recordUnhealthy(eq("ETHEREUM"), eq("provider-b"), any());
     }
 
     /** AC5 (part 2): a sidecar-labeled provider reporting {@code exists=false} is excluded from
