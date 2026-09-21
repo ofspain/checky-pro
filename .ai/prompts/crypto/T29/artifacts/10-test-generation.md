@@ -30,9 +30,19 @@ implementation (Phase 6) and review-resolution (Phase 9) work, not deferred to t
 tests, 6 failures, 4 errors** — the same pre-existing, unrelated set disclosed since T28 Phase 12, no
 new regressions from this task's own edits.
 
-## Phase 11 (Kimi Test Review) preview
+## Phase 11 (Kimi Test Review) additions
 
-Every test this task touched or added lives in `T01SkeletonRegressionTest` and is already covered by
-Phase 9's own review-resolution pass (itself informed by Kimi's Phase 8 review, which reviewed these
-exact three methods). If Kimi's Phase 11 pass finds anything, it will necessarily be about this same
-file, not a dedicated new suite.
+Kimi's Phase 11 pass (`artifacts/11-test-review.md`) raised 6 findings, all about the same three test
+methods, as predicted above.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | Item-13 guard checks the "genuinely fails" prose but not the `[ ]` checkbox itself | **Accepted.** `item13StaysHonestlyDisclosedAsGenuinelyFailingUntilTheFollowUpLands` now asserts the specific item-13 line both starts with `- [ ]` and contains the prose, on the same line — a future edit satisfying only one half now fails. |
+| 2 | Q4/Q5/Q6 guard is tied to today's specific resolution date | **Accepted.** Strengthened to the stronger invariant: the line must not contain `"Resolved ("` at all, not just not-today's-date. |
+| 3 | Resolution guard only checks the first line of each Q-bullet, not wrapped continuation lines | **Rejected.** Verified directly: every §11 bullet, including Q1's own 872-character line, is a single continuous line — matches this file's own established, deliberate long-single-line convention (same as `SECURITY-THREAT-MODEL.md`'s rows). No wrapped line currently exists to miss. |
+| 4 | Header guard is brittle to markdown table formatting | **Rejected — same class of concern already rejected at Phase 9** for the identical reason: exact-substring matching is this file's own established style. |
+| 5 | No guard that §9 items 1–12 stay checked and item 13 is the only unchecked one | **Accepted.** Added `exactlyThirteenOfSectionNinesFourteenItemsAreCheckedAndOnlyItemThirteenIsNot`, scoped to lines between the §9 and §10 headers (verified no other checkbox line exists anywhere else in the file), asserting the 13/1 split. |
+| 6 | Tests assume a specific working directory | **Rejected — matches established, working convention.** Kimi's own finding marks this "(Optional)" and defers to "keep the existing style if the build already standardizes the working directory" — it does, identically, for every other test in this file. |
+
+Full suite re-verified after the accepted fixes: 763 tests (762 + 1 new), 0 new failures, the same 6
+failures / 4 errors already disclosed since T28.

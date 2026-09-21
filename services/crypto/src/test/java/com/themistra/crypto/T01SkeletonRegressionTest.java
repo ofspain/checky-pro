@@ -181,11 +181,14 @@ class T01SkeletonRegressionTest {
         assertThat(spec).as("Status must be READY FOR IMPL").contains("| Status | `READY FOR IMPL` |");
     }
 
-    /** T29 Phase 9 (Kimi Phase 8 Finding #6): a silent revert of Q1/Q2/Q3/Q7's own resolution notes
-     * would not be caught by the header-only guard above. Reuses {@link #rowStartingWith} - it is a
-     * generic "line starting with this prefix" scan, equally valid for a {@code package.md} §11
-     * bullet as for a {@code SECURITY-THREAT-MODEL.md} table row. Q8 already carried its own,
-     * differently-dated resolution before T29 and is deliberately excluded from both loops. */
+    /** T29 Phase 9 (Kimi Phase 8 Finding #6), strengthened at Phase 11 (Kimi Finding #2): a silent
+     * revert of Q1/Q2/Q3/Q7's own resolution notes would not be caught by the header-only guard above.
+     * Reuses {@link #rowStartingWith} - it is a generic "line starting with this prefix" scan, equally
+     * valid for a {@code package.md} §11 bullet as for a {@code SECURITY-THREAT-MODEL.md} table row.
+     * Q8 already carried its own, differently-dated resolution before T29 and is deliberately excluded
+     * from both loops. The Q4/Q5/Q6 assertion checks for any {@code "Resolved ("} at all, not just
+     * today's date - Phase 9's own original date-scoped check would have silently passed a future
+     * resolution dated any other day, which would still mean those questions are no longer open. */
     @Test
     void resolvedOpenQuestionsCarryTheirResolutionNoteAndUnresolvedOnesDoNotClaimThisTasksResolution()
             throws IOException {
@@ -197,21 +200,60 @@ class T01SkeletonRegressionTest {
         }
         for (int n : new int[] {4, 5, 6}) {
             String line = rowStartingWith(lines, "- Q" + n + ".");
-            assertThat(line).as("Q%d must not claim T29's resolution", n)
-                    .doesNotContain("Resolved (2026-09-21");
+            assertThat(line).as("Q%d must remain genuinely unresolved", n).doesNotContain("Resolved (");
         }
     }
 
-    /** T29 Phase 9 (Kimi Phase 8 Finding #9): item 13's own honest, partial disclosure lives only in
-     * prose - nothing stops a future edit from silently ticking it {@code [x]} or deleting the caveat.
-     * This fails loudly if that phrase ever disappears without the item being genuinely, verifiably
-     * fixed (at which point this test itself should be updated, not silently left red). */
+    /** T29 Phase 9 (Kimi Phase 8 Finding #9), strengthened at Phase 11 (Kimi Finding #1): the original
+     * version only asserted the honest "genuinely fails" prose survives, which a future edit could
+     * satisfy while still silently ticking the checkbox itself to {@code [x]} - the prose and the
+     * checkbox are two separate things a bad edit could diverge. Now asserts both on the same,
+     * specific line. */
     @Test
     void item13StaysHonestlyDisclosedAsGenuinelyFailingUntilTheFollowUpLands() throws IOException {
-        String spec = Files.readString(CRYPTO_PACKAGE_SPEC);
+        String[] lines = Files.readString(CRYPTO_PACKAGE_SPEC).split("\n");
+        String item13 = rowStartingWith(lines, "- [ ] `mvn -pl services/crypto verify` passes");
 
-        assertThat(spec).as("item 13's genuine Docker-build failure must stay disclosed, not silently "
+        assertThat(item13).as("item 13 must remain unchecked until the Docker-build follow-up lands")
+                .startsWith("- [ ]");
+        assertThat(item13).as("item 13's genuine Docker-build failure must stay disclosed, not silently "
                         + "marked complete")
                 .contains("genuinely fails");
+    }
+
+    /** T29 Phase 11 (Kimi Finding #5): the two guards above check item 13 specifically and Q1/2/3/7's
+     * notes, but nothing stops items 1-12 from being silently unchecked, or a second item joining item
+     * 13 as unchecked, without failing a test. Scoped to lines between the §9 and §10 headers
+     * specifically (not the whole file) so an unrelated checklist added elsewhere later couldn't skew
+     * the count - verified directly that no other {@code - [x]}/{@code - [ ]} line exists anywhere
+     * else in this file today. */
+    @Test
+    void exactlyThirteenOfSectionNinesFourteenItemsAreCheckedAndOnlyItemThirteenIsNot() throws IOException {
+        String[] lines = Files.readString(CRYPTO_PACKAGE_SPEC).split("\n");
+        int start = indexOfLineStartingWith(lines, "## 9.");
+        int end = indexOfLineStartingWith(lines, "## 10.");
+
+        long checked = 0;
+        long unchecked = 0;
+        for (int i = start; i < end; i++) {
+            if (lines[i].startsWith("- [x]")) {
+                checked++;
+            } else if (lines[i].startsWith("- [ ]")) {
+                unchecked++;
+            }
+        }
+
+        assertThat(checked).as("13 of Section 9's 14 items should be checked").isEqualTo(13);
+        assertThat(unchecked).as("exactly 1 of Section 9's 14 items (item 13) should remain unchecked")
+                .isEqualTo(1);
+    }
+
+    private static int indexOfLineStartingWith(String[] lines, String prefix) {
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].startsWith(prefix)) {
+                return i;
+            }
+        }
+        throw new AssertionError("no line starting with \"" + prefix + "\" found in " + CRYPTO_PACKAGE_SPEC);
     }
 }
