@@ -180,4 +180,38 @@ class T01SkeletonRegressionTest {
         assertThat(spec).as("Version must be bumped to 0.2").contains("| Version | `0.2` |");
         assertThat(spec).as("Status must be READY FOR IMPL").contains("| Status | `READY FOR IMPL` |");
     }
+
+    /** T29 Phase 9 (Kimi Phase 8 Finding #6): a silent revert of Q1/Q2/Q3/Q7's own resolution notes
+     * would not be caught by the header-only guard above. Reuses {@link #rowStartingWith} - it is a
+     * generic "line starting with this prefix" scan, equally valid for a {@code package.md} §11
+     * bullet as for a {@code SECURITY-THREAT-MODEL.md} table row. Q8 already carried its own,
+     * differently-dated resolution before T29 and is deliberately excluded from both loops. */
+    @Test
+    void resolvedOpenQuestionsCarryTheirResolutionNoteAndUnresolvedOnesDoNotClaimThisTasksResolution()
+            throws IOException {
+        String[] lines = Files.readString(CRYPTO_PACKAGE_SPEC).split("\n");
+
+        for (int n : new int[] {1, 2, 3, 7}) {
+            String line = rowStartingWith(lines, "- Q" + n + ".");
+            assertThat(line).as("Q%d must carry T29's resolution note", n).contains("Resolved (2026-09-21");
+        }
+        for (int n : new int[] {4, 5, 6}) {
+            String line = rowStartingWith(lines, "- Q" + n + ".");
+            assertThat(line).as("Q%d must not claim T29's resolution", n)
+                    .doesNotContain("Resolved (2026-09-21");
+        }
+    }
+
+    /** T29 Phase 9 (Kimi Phase 8 Finding #9): item 13's own honest, partial disclosure lives only in
+     * prose - nothing stops a future edit from silently ticking it {@code [x]} or deleting the caveat.
+     * This fails loudly if that phrase ever disappears without the item being genuinely, verifiably
+     * fixed (at which point this test itself should be updated, not silently left red). */
+    @Test
+    void item13StaysHonestlyDisclosedAsGenuinelyFailingUntilTheFollowUpLands() throws IOException {
+        String spec = Files.readString(CRYPTO_PACKAGE_SPEC);
+
+        assertThat(spec).as("item 13's genuine Docker-build failure must stay disclosed, not silently "
+                        + "marked complete")
+                .contains("genuinely fails");
+    }
 }
