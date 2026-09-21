@@ -2,6 +2,7 @@ package com.themistra.crypto.common;
 
 import com.themistra.crypto.attest.AttestationService;
 import com.themistra.crypto.quorum.QuorumDecision;
+import com.themistra.crypto.token.TokenAllowlist;
 import com.themistra.crypto.watch.ChainCursor;
 import com.themistra.crypto.watch.RogueWatchEntityReferencer;
 import com.tngtech.archunit.core.domain.JavaClass;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -70,9 +72,13 @@ class CrossModuleEntityArchitectureTest {
      * pattern. Keyed by fully-qualified name (not {@code Class.getName()} for every entry) because
      * {@link com.themistra.crypto.watch.Watcher} is package-private and cannot be referenced via a
      * class literal from this {@code common}-package test - its entry is spelled out as a string
-     * literal instead, sacrificing that one entry's rename-safety for the other three's. Both
-     * couplings are candidates for a future decoupling task (passing a derived value/DTO instead of
-     * the entity itself), not fixed here - production code changes are out of this task's own scope. */
+     * literal instead, sacrificing that one entry's rename-safety for the other three's -
+     * {@link #allowlistedCrossModuleEntityDependenciesStillExistInCode()} closes that gap anyway (a
+     * rename makes its {@code analyzedClasses.get(...)} lookup throw, failing loudly). No tracking
+     * issue exists in this repository today; both couplings are recorded here, in
+     * {@code artifacts/06-implementation-notes.md}, and in {@code artifacts/12-specification-verification.md}
+     * as candidates for a future decoupling task (passing a derived value/DTO instead of the entity
+     * itself) - not fixed here, since production code changes are out of this task's own scope. */
     private static final Set<String> ALLOWED_CROSS_MODULE_ENTITY_DEPENDENCIES = Set.of(
             AttestationService.class.getName() + "->" + ChainCursor.class.getName(),
             "com.themistra.crypto.watch.Watcher->" + QuorumDecision.class.getName());
@@ -140,11 +146,43 @@ class CrossModuleEntityArchitectureTest {
     @Test
     void shouldPreventCrossModuleEntityImportsActuallyFailsAgainstAGenuineViolation() {
         JavaClasses violatingClasses = new ClassFileImporter()
-                .importClasses(RogueWatchEntityReferencer.class,
-                        com.themistra.crypto.token.TokenAllowlist.class);
+                .importClasses(RogueWatchEntityReferencer.class, TokenAllowlist.class);
 
         assertThatThrownBy(() -> shouldPreventCrossModuleEntityImports.check(violatingClasses))
                 .as("a feature module importing another feature module's entity must fail this rule")
                 .isInstanceOf(AssertionError.class);
+    }
+
+    /** T25 Phase 9 (self-review Finding #1 / Kimi Phase 8 Findings #1-2): mirrors auth's own
+     * {@code allowlistedControllerServiceDependenciesStillExistInCode} exactly - if a future refactor
+     * ever removed either allowlisted dependency, its entry in
+     * {@link #ALLOWED_CROSS_MODULE_ENTITY_DEPENDENCIES} would become silent dead configuration (the
+     * rule would simply never have anything to apply it to, not fail) with nothing else noticing. This
+     * fails loudly instead. Also closes Kimi Finding #2 for free: {@code Watcher}'s entry is a plain
+     * string literal (package-private, no class-literal reference possible from this
+     * {@code common}-package test), so a rename would silently stop matching the allowlist rather than
+     * failing compilation - but {@code analyzedClasses.get("...Watcher")} below throws
+     * {@code IllegalArgumentException} the moment that name no longer resolves to a real class,
+     * failing this test loudly instead. */
+    @Test
+    void allowlistedCrossModuleEntityDependenciesStillExistInCode() {
+        assertThat(hasDirectDependency(AttestationService.class, ChainCursor.class))
+                .as("%s should still depend on %s - if this is no longer true, remove the now-stale "
+                        + "allowlist entry for it", AttestationService.class.getSimpleName(),
+                        ChainCursor.class.getSimpleName())
+                .isTrue();
+
+        JavaClass watcherClass = analyzedClasses.get("com.themistra.crypto.watch.Watcher");
+        assertThat(watcherClass.getDirectDependenciesFromSelf().stream()
+                        .anyMatch(dependency -> dependency.getTargetClass().getFullName()
+                                .equals(QuorumDecision.class.getName())))
+                .as("Watcher should still depend on %s - if this is no longer true, remove the now-stale "
+                        + "allowlist entry for it", QuorumDecision.class.getSimpleName())
+                .isTrue();
+    }
+
+    private static boolean hasDirectDependency(Class<?> origin, Class<?> target) {
+        return analyzedClasses.get(origin).getDirectDependenciesFromSelf().stream()
+                .anyMatch(dependency -> dependency.getTargetClass().getFullName().equals(target.getName()));
     }
 }
