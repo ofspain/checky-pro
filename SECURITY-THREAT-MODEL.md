@@ -19,6 +19,10 @@
 Threats #1–#6 are owned by `crypto-service` (`spec/crypto-service/tasks.md`); `closed` means the row's
 Implementing task has landed and a named, currently-passing test (cited in the Status column) verifies
 its mitigation — crypto-service T28 verified all six directly against the real test suite, not assumed.
-Where a row's mitigation spans infrastructure or another service (rows #3-#5, see their own Status
-cells), the crypto-service-owned portion alone is what `closed` certifies. Threats #7–#8 are
-auth-service/payments concerns, out of this table's crypto-service update scope.
+Two different kinds of caveat appear in individual Status cells, not interchangeably: row #3's is an
+**execution gap** — its integration-level proof exists in code but has not yet run, because this
+development environment has no Docker daemon; rows #4 and #5's are **ownership splits** — part of each
+mitigation is infrastructure-controlled (IAM, S3 Object Lock) or owned by a different, not-yet-built
+service (the Payment Service's hash-chain ledger and on-chain anchor), so `closed` there certifies only
+the crypto-service-owned portion. Threats #7–#8 are auth-service/payments concerns, out of this table's
+crypto-service update scope.
