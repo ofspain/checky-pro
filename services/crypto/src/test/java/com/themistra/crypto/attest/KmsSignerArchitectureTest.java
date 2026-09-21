@@ -102,15 +102,19 @@ class KmsSignerArchitectureTest {
         return new ArchCondition<JavaClass>("not depend on KmsSigner, except an allowlisted test double") {
             @Override
             public void check(JavaClass javaClass, ConditionEvents events) {
-                boolean allowed = ALLOWED_CROSS_MODULE_KMS_SIGNER_REFERENCES.contains(javaClass.getName());
-                boolean dependsOnKmsSigner = javaClass.getDirectDependenciesFromSelf().stream()
-                        .anyMatch(dependency -> dependency.getTargetClass().getFullName()
-                                .equals("com.themistra.crypto.attest.KmsSigner"));
-                if (dependsOnKmsSigner && !allowed) {
-                    events.add(new SimpleConditionEvent(javaClass, true, javaClass.getName()
-                            + " depends on com.themistra.crypto.attest.KmsSigner but resides outside "
-                            + "attest and is not in ALLOWED_CROSS_MODULE_KMS_SIGNER_REFERENCES"));
+                if (ALLOWED_CROSS_MODULE_KMS_SIGNER_REFERENCES.contains(javaClass.getName())) {
+                    return;
                 }
+                // Phase 7 self-review: report per dependency edge (mirroring
+                // CrossModuleEntityArchitectureTest's own onlyBeAccessedFromTheSameFeatureModule
+                // pattern), not one aggregate event per class - preserves the original DSL rule's
+                // exact field/method/line diagnostic granularity for any real, non-allowlisted
+                // violation.
+                javaClass.getDirectDependenciesFromSelf().stream()
+                        .filter(dependency -> dependency.getTargetClass().getFullName()
+                                .equals("com.themistra.crypto.attest.KmsSigner"))
+                        .forEach(dependency -> events.add(
+                                new SimpleConditionEvent(dependency, true, dependency.getDescription())));
             }
         };
     }
