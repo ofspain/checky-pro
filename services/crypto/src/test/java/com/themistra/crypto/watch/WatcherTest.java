@@ -171,6 +171,20 @@ class WatcherTest {
         verifyNoInteractions(txLifecyclePublisher);
     }
 
+    /** T28 Phase 9 (Kimi Phase 8 Finding #3): the literal "single-provider" shape SECURITY-THREAT-MODEL.md
+     * row #1 describes, not just "fewer than three" via two answering providers. */
+    @Test
+    void doesNotEvaluateWithOnlyOneOfThreeProvidersAnswering() {
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult agreed = tx(true, 100L, BigDecimal.TEN, 3);
+
+        deliver(providerA, agreed);
+
+        verifyNoInteractions(quorumDecisionService);
+        verifyNoInteractions(txLifecyclePublisher);
+    }
+
     @Test
     void laggingProviderNeverForcesEvaluationWithFewerThanThreeRealAnswers() {
         // Phase 4 follow-up correction: advancing the clock past correlationWindowMs (rather than

@@ -33,17 +33,33 @@ class T01SkeletonRegressionTest {
      * T28 ("Threat-model closure"), whose entire purpose is to move each row from {@code tracked} to
      * {@code closed} once a named, passing test verifies its mitigation. Asserting {@code "closed"}
      * here is this same regression guard doing its job against the current, correct expected state,
-     * not a relaxation of it. */
+     * not a relaxation of it. Renamed (T28 Phase 9, Kimi Phase 8 Finding #6) to match: the old name's
+     * "Tracks" verb described the pre-T28 state this test no longer asserts. */
     @Test
-    void threatModelTracksThreatsOneToSixWithAnOwningTaskAndLeavesSevenEightUntouched() throws IOException {
+    void threatModelClosesThreatsOneToSixWithAnOwningTaskAndLeavesSevenEightUntouched() throws IOException {
         String[] lines = Files.readString(THREAT_MODEL).split("\n");
 
+        // T28 Phase 9 (Kimi Phase 8 Findings #1/#2): "closed" alone would also match a row reading
+        // "closed - no test cited", and wouldn't notice row #3/#4/#5's own documented caveats being
+        // silently dropped by a future edit. A real ClassName.methodName citation, plus each row's
+        // own caveat keyword, must both be present.
         for (int n = 1; n <= 6; n++) {
             String row = rowStartingWith(lines, "| " + n + " |");
             assertThat(row).as("threat #%d row", n).contains("closed");
+            assertThat(row).as("threat #%d must cite a real ClassName.methodName test, not just say "
+                    + "\"closed\"", n).containsPattern("`[A-Za-z0-9]+\\.[a-zA-Z0-9]+`");
             assertThat(row.trim()).as("threat #%d must name an owning task, not be left empty", n)
                     .doesNotEndWith("| — |");
         }
+        String row3 = rowStartingWith(lines, "| 3 |");
+        assertThat(row3).as("threat #3's execution-gap caveat must not be silently dropped")
+                .contains("not yet executed");
+        String row4 = rowStartingWith(lines, "| 4 |");
+        assertThat(row4).as("threat #4's code-path-only caveat must not be silently dropped")
+                .contains("code-path only");
+        String row5 = rowStartingWith(lines, "| 5 |");
+        assertThat(row5).as("threat #5's crypto-service-scope caveat must not be silently dropped")
+                .contains("crypto-service portion");
         for (int n = 7; n <= 8; n++) {
             String row = rowStartingWith(lines, "| " + n + " |");
             assertThat(row).as("threat #%d row must remain untouched", n).contains("designed");
