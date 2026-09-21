@@ -7,6 +7,8 @@ import com.themistra.crypto.adapter.ProviderSet;
 import com.themistra.crypto.adapter.model.FinalityStatus;
 import com.themistra.crypto.adapter.model.TxResult;
 import com.themistra.crypto.attest.AttestRequest;
+import com.themistra.crypto.attest.KmsSigner;
+import com.themistra.crypto.events.OutboxRelay;
 import com.themistra.crypto.finality.FinalityPolicy;
 import com.themistra.crypto.observation.Observation;
 import com.themistra.crypto.observation.ObservationLog;
@@ -39,6 +41,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.KafkaContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -50,11 +53,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -105,7 +106,8 @@ class EndToEndIntegrationTest {
     private static final long CORRELATION_WINDOW_MS = 60_000L;
     private static final long FINALITY_POLL_INTERVAL_MS = 3_600_000L;
     private static final String VALID_RECIPIENT = "0x5AEDA56215b167893e80B4fE645BA6d5Bab767DE";
-    private static final String VALID_TOKEN_CONTRACT = "0x5AEDA56215b167893e80B4fE645BA6d5Bab767DE";
+    private static final String VALID_TOKEN_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
+    private static final String COUNTERPARTY_ADDRESS = "0xCounterpartyPaysFromThisAddress00000001";
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -128,7 +130,7 @@ class EndToEndIntegrationTest {
     @MockBean
     private ObservationSnapshotStore observationSnapshotStore;
     @MockBean
-    private com.themistra.crypto.attest.KmsSigner kmsSigner;
+    private KmsSigner kmsSigner;
     @MockBean
     private ScreeningClient screeningClient;
     @MockBean
@@ -151,7 +153,7 @@ class EndToEndIntegrationTest {
     @Autowired
     private ReorgDetector reorgDetector;
     @Autowired
-    private com.themistra.crypto.events.OutboxRelay outboxRelay;
+    private OutboxRelay outboxRelay;
     @Autowired
     private List<FinalityPolicy> finalityPolicies;
     @Autowired
@@ -160,8 +162,15 @@ class EndToEndIntegrationTest {
     private Clock clock;
     @Autowired
     private EntityManager entityManager;
+    @Autowired
+    private TransactionTemplate transactionTemplate;
 
     private KafkaConsumer<String, String> consumer;
+    /** T26 Phase 8/9 Finding #9: tracked so {@link #tearDown()} can stop it even if an earlier
+     * assertion in the same test throws - unlike {@code WatcherTest}'s own fully-mocked, per-method-
+     * isolated instances, this {@code Watcher} runs its scheduler against the real, class-shared
+     * Postgres/Kafka containers, so a leaked one could interfere with a later test method. */
+    private Watcher activeWatcher;
     /** T26 self-review: {@code chain.tx.seen} and {@code chain.tx.confirmed} can legitimately arrive
      * in the same {@code poll()} batch (both facts can agree from the same delivery round). A naive
      * "poll and return on first match" helper would silently lose the second record - once a batch is
@@ -192,6 +201,9 @@ class EndToEndIntegrationTest {
      * in a test still releases it. */
     @AfterEach
     void tearDown() {
+        if (activeWatcher != null) {
+            activeWatcher.stop();
+        }
         consumer.close();
     }
 
@@ -201,7 +213,7 @@ class EndToEndIntegrationTest {
                 txLifecyclePublisher, finalityPolicies, FINALITY_POLL_INTERVAL_MS, reorgDetector);
     }
 
-    private UUID registerWatch(String txHashHint, String expectedAmount) throws Exception {
+    private UUID registerWatch(String expectedAmount) throws Exception {
         RegisterWatchRequest request = new RegisterWatchRequest(UUID.randomUUID(), "ETHEREUM",
                 VALID_RECIPIENT, VALID_TOKEN_CONTRACT, expectedAmount, Instant.now(clock).plusSeconds(86_400));
         String responseJson = mockMvc.perform(post("/internal/v1/watches")
@@ -213,8 +225,13 @@ class EndToEndIntegrationTest {
         return UUID.fromString(objectMapper.readTree(responseJson).get("watchId").asText());
     }
 
-    private static TxResult tx(boolean exists, long blockNumber, BigDecimal amount, int confirmations) {
-        return new TxResult(exists, "0xtxhash", "0xfrom-sanctioned-or-not", VALID_RECIPIENT,
+    /** T26 Phase 8/9 Finding #4: {@code txHash} must be threaded through explicitly - the original
+     * version hardcoded {@code "0xtxhash"} regardless of the map key each flow scripted it under,
+     * so every flow's {@link TxResult} secretly shared one identical transaction hash, colliding on
+     * the outbox's own idempotency-key uniqueness and on this test's own Kafka assertions. */
+    private static TxResult tx(String txHash, boolean exists, long blockNumber, BigDecimal amount,
+                                int confirmations) {
+        return new TxResult(exists, txHash, COUNTERPARTY_ADDRESS, VALID_RECIPIENT,
                 VALID_TOKEN_CONTRACT, amount, confirmations, blockNumber);
     }
 
@@ -256,11 +273,16 @@ class EndToEndIntegrationTest {
                 .getResultList();
     }
 
+    /** T26 Phase 8/9 Finding #10: a matched record is removed from the buffer once returned, rather
+     * than left in place - so a later {@link #noRecordAppearsOnTopic} check for the same topic can
+     * never report a stale "found" from a record this test already consumed and asserted on earlier
+     * in the same flow. */
     private ConsumerRecord<String, String> awaitRecordOnTopic(String topic, Duration timeout) {
         Optional<ConsumerRecord<String, String>> alreadyBuffered = receivedRecords.stream()
                 .filter(record -> record.topic().equals(topic))
                 .findFirst();
         if (alreadyBuffered.isPresent()) {
+            receivedRecords.remove(alreadyBuffered.get());
             return alreadyBuffered.get();
         }
         Instant deadline = Instant.now(clock).plus(timeout);
@@ -269,6 +291,7 @@ class EndToEndIntegrationTest {
             records.forEach(receivedRecords::add);
             for (ConsumerRecord<String, String> record : records) {
                 if (record.topic().equals(topic)) {
+                    receivedRecords.remove(record);
                     return record;
                 }
             }
@@ -282,43 +305,44 @@ class EndToEndIntegrationTest {
 
     @Test
     void endToEndFlowRegistersObservesAndAttestsWithASignature() throws Exception {
-        UUID watchId = registerWatch("0xtxhash", "1000000");
-        Watch watch = new WatchAccessor(watchId).load();
+        UUID watchId = registerWatch("1000000");
+        Watch watch = loadWatch(watchId);
+        String txHash = "0xtxhash1";
 
         FakeChainAdapter providerA = new FakeChainAdapter(Chain.ETHEREUM, "provider-a");
         FakeChainAdapter providerB = new FakeChainAdapter(Chain.ETHEREUM, "provider-b");
         FakeChainAdapter providerC = new FakeChainAdapter(Chain.ETHEREUM, "provider-c");
         List<ProviderSet.NamedAdapter> adapters = List.of(
                 named("provider-a", providerA), named("provider-b", providerB), named("provider-c", providerC));
-        Watcher watcher = newRealWatcher(watch, adapters);
-        watcher.start();
+        activeWatcher = newRealWatcher(watch, adapters);
+        activeWatcher.start();
 
-        TxResult agreed = tx(true, 100L, BigDecimal.valueOf(1_000_000L), 3);
-        providerA.simulateReorg("0xtxhash", agreed);
-        providerB.simulateReorg("0xtxhash", agreed);
-        providerC.simulateReorg("0xtxhash", agreed);
+        TxResult agreed = tx(txHash, true, 100L, BigDecimal.valueOf(1_000_000L), 3);
+        providerA.simulateReorg(txHash, agreed);
+        providerB.simulateReorg(txHash, agreed);
+        providerC.simulateReorg(txHash, agreed);
         outboxRelay.relay();
 
         assertThat(awaitRecordOnTopic("chain.tx.seen", Duration.ofSeconds(10))).isNotNull();
         assertThat(awaitRecordOnTopic("chain.tx.confirmed", Duration.ofSeconds(10))).isNotNull();
 
-        assertThat(findObservations("ETHEREUM", "0xtxhash", FactType.EXISTENCE)).hasSize(3);
-        assertThat(findObservations("ETHEREUM", "0xtxhash", FactType.AMOUNT)).hasSize(3);
-        assertThat(quorumDecisionService.isAgreed("ETHEREUM", "0xtxhash", FactType.EXISTENCE)).isTrue();
+        assertThat(findObservations("ETHEREUM", txHash, FactType.EXISTENCE)).hasSize(3);
+        assertThat(findObservations("ETHEREUM", txHash, FactType.AMOUNT)).hasSize(3);
+        assertThat(quorumDecisionService.isAgreed("ETHEREUM", txHash, FactType.EXISTENCE)).isTrue();
 
         FinalityStatus finalStatus = new FinalityStatus(100L, 200L, 150L);
-        providerA.scriptFinalityStatus("0xtxhash", finalStatus);
-        providerB.scriptFinalityStatus("0xtxhash", finalStatus);
-        providerC.scriptFinalityStatus("0xtxhash", finalStatus);
-        watcher.pollFinality();
+        providerA.scriptFinalityStatus(txHash, finalStatus);
+        providerB.scriptFinalityStatus(txHash, finalStatus);
+        providerC.scriptFinalityStatus(txHash, finalStatus);
+        activeWatcher.pollFinality();
         outboxRelay.relay();
 
         assertThat(awaitRecordOnTopic("chain.tx.finalized", Duration.ofSeconds(10))).isNotNull();
-        assertThat(quorumDecisionService.isAgreed("ETHEREUM", "0xtxhash", FactType.FINALITY)).isTrue();
+        assertThat(quorumDecisionService.isAgreed("ETHEREUM", txHash, FactType.FINALITY)).isTrue();
 
         doReturn(newSignatureResult("c2ln", "test-key", Instant.now(clock))).when(kmsSigner).sign(any());
 
-        AttestRequest attestRequest = new AttestRequest("d".repeat(64), "ETHEREUM", "0xtxhash");
+        AttestRequest attestRequest = new AttestRequest("d".repeat(64), "ETHEREUM", txHash);
         mockMvc.perform(post("/internal/v1/attest")
                         .with(jwt().authorities(new SimpleGrantedAuthority(INTERNAL_SCOPE)))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -326,65 +350,67 @@ class EndToEndIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.outcome").value("SIGNED"))
                 .andExpect(jsonPath("$.signature").value("c2ln"));
-
-        watcher.stop();
     }
 
     @Test
     void disagreementOnANonBooleanFactHoldsAndEmitsNothingFurther() throws Exception {
-        UUID watchId = registerWatch("0xtxhash2", "1000000");
-        Watch watch = new WatchAccessor(watchId).load();
+        UUID watchId = registerWatch("1000000");
+        Watch watch = loadWatch(watchId);
+        String txHash = "0xtxhash2";
 
         FakeChainAdapter providerA = new FakeChainAdapter(Chain.ETHEREUM, "provider-a");
         FakeChainAdapter providerB = new FakeChainAdapter(Chain.ETHEREUM, "provider-b");
         FakeChainAdapter providerC = new FakeChainAdapter(Chain.ETHEREUM, "provider-c");
         List<ProviderSet.NamedAdapter> adapters = List.of(
                 named("provider-a", providerA), named("provider-b", providerB), named("provider-c", providerC));
-        Watcher watcher = newRealWatcher(watch, adapters);
-        watcher.start();
+        activeWatcher = newRealWatcher(watch, adapters);
+        activeWatcher.start();
 
         // EXISTENCE agrees for all three (a genuine 3-way split is impossible for a Boolean fact,
-        // Frozen Brief Finding #3), but AMOUNT is three genuinely distinct values - no 2-of-3 majority.
-        providerA.simulateReorg("0xtxhash2", tx(true, 100L, BigDecimal.valueOf(1L), 3));
-        providerB.simulateReorg("0xtxhash2", tx(true, 100L, BigDecimal.valueOf(2L), 3));
-        providerC.simulateReorg("0xtxhash2", tx(true, 100L, BigDecimal.valueOf(3L), 3));
+        // Frozen Brief Finding #3), but AMOUNT and CONFIRMATIONS are each three genuinely distinct
+        // values - no 2-of-3 majority for either (Phase 8/9 Finding #5: confirmations must also
+        // disagree, or CONFIRMATIONS alone reaches AGREED and chain.tx.confirmed fires anyway).
+        providerA.simulateReorg(txHash, tx(txHash, true, 100L, BigDecimal.valueOf(1L), 1));
+        providerB.simulateReorg(txHash, tx(txHash, true, 100L, BigDecimal.valueOf(2L), 2));
+        providerC.simulateReorg(txHash, tx(txHash, true, 100L, BigDecimal.valueOf(3L), 3));
         outboxRelay.relay();
 
         assertThat(awaitRecordOnTopic("chain.tx.seen", Duration.ofSeconds(10))).isNotNull();
-        assertThat(quorumDecisionService.isAgreed("ETHEREUM", "0xtxhash2", FactType.AMOUNT)).isFalse();
-        verify(heldFactAlerter).alert(eq("ETHEREUM"), eq("0xtxhash2"), eq(FactType.AMOUNT), any());
+        assertThat(quorumDecisionService.isAgreed("ETHEREUM", txHash, FactType.AMOUNT)).isFalse();
+        assertThat(quorumDecisionService.isAgreed("ETHEREUM", txHash, FactType.CONFIRMATIONS)).isFalse();
+        verify(heldFactAlerter).alert(eq("ETHEREUM"), eq(txHash), eq(FactType.AMOUNT), any());
+        verify(heldFactAlerter).alert(eq("ETHEREUM"), eq(txHash), eq(FactType.CONFIRMATIONS), any());
 
         assertThat(noRecordAppearsOnTopic("chain.tx.confirmed", Duration.ofSeconds(5))).isTrue();
         assertThat(noRecordAppearsOnTopic("chain.tx.finalized", Duration.ofSeconds(2))).isTrue();
-
-        watcher.stop();
     }
 
     @Test
     void reorgAfterConfirmedEmitsReorgedAndInvalidatesTheCursor() throws Exception {
-        UUID watchId = registerWatch("0xtxhash3", "1000000");
-        Watch watch = new WatchAccessor(watchId).load();
+        UUID watchId = registerWatch("1000000");
+        Watch watch = loadWatch(watchId);
+        String txHash = "0xtxhash3";
 
         FakeChainAdapter providerA = new FakeChainAdapter(Chain.ETHEREUM, "provider-a");
         FakeChainAdapter providerB = new FakeChainAdapter(Chain.ETHEREUM, "provider-b");
         FakeChainAdapter providerC = new FakeChainAdapter(Chain.ETHEREUM, "provider-c");
         List<ProviderSet.NamedAdapter> adapters = List.of(
                 named("provider-a", providerA), named("provider-b", providerB), named("provider-c", providerC));
-        Watcher watcher = newRealWatcher(watch, adapters);
-        watcher.start();
+        activeWatcher = newRealWatcher(watch, adapters);
+        activeWatcher.start();
 
-        TxResult agreed = tx(true, 100L, BigDecimal.valueOf(1_000_000L), 3);
-        providerA.simulateReorg("0xtxhash3", agreed);
-        providerB.simulateReorg("0xtxhash3", agreed);
-        providerC.simulateReorg("0xtxhash3", agreed);
+        TxResult agreed = tx(txHash, true, 100L, BigDecimal.valueOf(1_000_000L), 3);
+        providerA.simulateReorg(txHash, agreed);
+        providerB.simulateReorg(txHash, agreed);
+        providerC.simulateReorg(txHash, agreed);
         outboxRelay.relay();
         assertThat(awaitRecordOnTopic("chain.tx.confirmed", Duration.ofSeconds(10))).isNotNull();
 
-        TxResult reorgedAway = tx(false, 0L, null, 0);
-        providerA.scriptTx("0xtxhash3", reorgedAway);
-        providerB.scriptTx("0xtxhash3", reorgedAway);
-        providerC.scriptTx("0xtxhash3", reorgedAway);
-        watcher.pollFinality();
+        TxResult reorgedAway = tx(txHash, false, 0L, null, 0);
+        providerA.scriptTx(txHash, reorgedAway);
+        providerB.scriptTx(txHash, reorgedAway);
+        providerC.scriptTx(txHash, reorgedAway);
+        activeWatcher.pollFinality();
         outboxRelay.relay();
 
         assertThat(awaitRecordOnTopic("chain.tx.reorged", Duration.ofSeconds(10))).isNotNull();
@@ -394,51 +420,57 @@ class EndToEndIntegrationTest {
         assertThat(cursor.get().txHash()).isNull();
 
         assertThat(noRecordAppearsOnTopic("chain.tx.finalized", Duration.ofSeconds(5))).isTrue();
-
-        watcher.stop();
     }
 
     @Test
     void sanctionedCounterpartyIsBlockedWithNoSignature() throws Exception {
-        UUID watchId = registerWatch("0xtxhash4", "1000000");
-        Watch watch = new WatchAccessor(watchId).load();
+        UUID watchId = registerWatch("1000000");
+        Watch watch = loadWatch(watchId);
+        String txHash = "0xtxhash4";
 
         FakeChainAdapter providerA = new FakeChainAdapter(Chain.ETHEREUM, "provider-a");
         FakeChainAdapter providerB = new FakeChainAdapter(Chain.ETHEREUM, "provider-b");
         FakeChainAdapter providerC = new FakeChainAdapter(Chain.ETHEREUM, "provider-c");
         List<ProviderSet.NamedAdapter> adapters = List.of(
                 named("provider-a", providerA), named("provider-b", providerB), named("provider-c", providerC));
-        Watcher watcher = newRealWatcher(watch, adapters);
-        watcher.start();
+        activeWatcher = newRealWatcher(watch, adapters);
+        activeWatcher.start();
 
-        TxResult agreed = tx(true, 100L, BigDecimal.valueOf(1_000_000L), 3);
-        providerA.simulateReorg("0xtxhash4", agreed);
-        providerB.simulateReorg("0xtxhash4", agreed);
-        providerC.simulateReorg("0xtxhash4", agreed);
+        TxResult agreed = tx(txHash, true, 100L, BigDecimal.valueOf(1_000_000L), 3);
+        providerA.simulateReorg(txHash, agreed);
+        providerB.simulateReorg(txHash, agreed);
+        providerC.simulateReorg(txHash, agreed);
         outboxRelay.relay();
         assertThat(awaitRecordOnTopic("chain.tx.confirmed", Duration.ofSeconds(10))).isNotNull();
 
         FinalityStatus finalStatus = new FinalityStatus(100L, 200L, 150L);
-        providerA.scriptFinalityStatus("0xtxhash4", finalStatus);
-        providerB.scriptFinalityStatus("0xtxhash4", finalStatus);
-        providerC.scriptFinalityStatus("0xtxhash4", finalStatus);
-        watcher.pollFinality();
+        providerA.scriptFinalityStatus(txHash, finalStatus);
+        providerB.scriptFinalityStatus(txHash, finalStatus);
+        providerC.scriptFinalityStatus(txHash, finalStatus);
+        activeWatcher.pollFinality();
         outboxRelay.relay();
         assertThat(awaitRecordOnTopic("chain.tx.finalized", Duration.ofSeconds(10))).isNotNull();
 
         // Mirrors the real ScreeningClient contract (screening/ScreeningClient.java): every call
-        // persists exactly one ScreeningResult row before returning, regardless of outcome.
+        // persists exactly one ScreeningResult row before returning, regardless of outcome. Wrapped in
+        // a TransactionTemplate (Phase 8/9 Finding #8) - AttestationService itself is deliberately not
+        // @Transactional, so entityManager.persist(...) called from within this mocked answer, reached
+        // via the real HTTP call below, would otherwise have no active transaction to join and throw
+        // TransactionRequiredException.
         doAnswer(invocation -> {
             String chain = invocation.getArgument(0);
             String address = invocation.getArgument(1);
-            String txHash = invocation.getArgument(2);
-            ScreeningResult result = ScreeningResult.create(chain, address, txHash, ScreeningOutcome.BLOCKED,
-                    "test-sanctions-list", "{\"match\":\"OFAC (test fixture)\"}", Instant.now(clock));
-            entityManager.persist(result);
+            String answerTxHash = invocation.getArgument(2);
+            transactionTemplate.executeWithoutResult(status -> {
+                ScreeningResult result = ScreeningResult.create(chain, address, answerTxHash,
+                        ScreeningOutcome.BLOCKED, "test-sanctions-list",
+                        "{\"match\":\"OFAC (test fixture)\"}", Instant.now(clock));
+                entityManager.persist(result);
+            });
             return ScreeningOutcome.BLOCKED;
         }).when(screeningClient).screen(anyString(), anyString(), anyString());
 
-        AttestRequest attestRequest = new AttestRequest("d".repeat(64), "ETHEREUM", "0xtxhash4");
+        AttestRequest attestRequest = new AttestRequest("d".repeat(64), "ETHEREUM", txHash);
         mockMvc.perform(post("/internal/v1/attest")
                         .with(jwt().authorities(new SimpleGrantedAuthority(INTERNAL_SCOPE)))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -447,24 +479,18 @@ class EndToEndIntegrationTest {
                 .andExpect(jsonPath("$.outcome").value("BLOCKED"));
 
         verify(kmsSigner, never()).sign(any());
-        assertThat(findScreeningResults("ETHEREUM", "0xfrom-sanctioned-or-not"))
+        assertThat(findScreeningResults("ETHEREUM", COUNTERPARTY_ADDRESS))
                 .anyMatch(result -> result.outcome() == ScreeningOutcome.BLOCKED);
-
-        watcher.stop();
     }
 
-    /** Package-private helper reusing {@code watch}'s own visibility to load the real, persisted
-     * {@link Watch} row a {@code MockMvc} registration call created, so each flow's manually-
-     * constructed {@link Watcher} operates on the same entity the rest of the system sees. */
-    private class WatchAccessor {
-        private final UUID watchId;
-
-        WatchAccessor(UUID watchId) {
-            this.watchId = watchId;
-        }
-
-        Watch load() {
-            return entityManager.find(Watch.class, watchId);
-        }
+    /** T26 Phase 8/9 Finding #3: {@link Watch}'s real JPA {@code @Id} is an auto-generated surrogate
+     * {@code Long id} - {@code watchId} (the UUID returned to callers, and the one this test actually
+     * has) is a separate, non-{@code @Id} column. {@code entityManager.find(Watch.class, watchId)}
+     * would look up by the wrong key entirely and silently return {@code null}. Queried by the real
+     * {@code watchId} column via JPQL instead. */
+    private Watch loadWatch(UUID watchId) {
+        return entityManager.createQuery("select w from Watch w where w.watchId = :watchId", Watch.class)
+                .setParameter("watchId", watchId)
+                .getSingleResult();
     }
 }
