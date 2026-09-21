@@ -9,144 +9,145 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-import java.math.BigInteger;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
- * What the payment service asked us to look for.
+ * A registered address-watch for a Payment invoice (R18/R19) - maps {@code chain.watches} exactly as
+ * shipped by T02 (see {@code V1__chain_baseline.sql}). {@code watchId} is the public identifier
+ * returned to callers, deliberately distinct from the surrogate {@code id} primary key - the DDL gives
+ * {@code watch_id} no default, so it is always generated in application code
+ * ({@link WatchService#register}), never left to the database.
  *
- * <p>Addresses are stored normalised. EIP-55 checksumming is a transport and display concern
- * (§6.3); whether an observation matches a watch must not depend on the casing the caller happened
- * to send.
+ * <p>No raw setters, and no {@code unregister()} instance mutator either - unlike {@code
+ * ProviderHealth}'s own update-in-place precedent, the {@code REGISTERED -> UNREGISTERED} transition is
+ * a single atomic conditional {@code UPDATE} issued directly by {@link WatchRepository#markUnregisteredIfRegistered},
+ * not a load-then-save entity mutation (Phase 3 Kimi Finding 4 - race-safe by construction: two
+ * concurrent {@code DELETE}s can never both "win" and double-set {@code unregisteredAt}, since at most
+ * one {@code UPDATE ... WHERE status = 'REGISTERED'} can match a given row).</p>
  *
- * <p>The amount is base units as a {@link BigInteger}, never a converted decimal — the same
- * exactness the observation side keeps.
+ * <p><b>Stored addresses are not case-normalized (T15 Phase 8 Finding 7).</b> {@code address} and
+ * {@code tokenContractAddress} are persisted exactly as validated - {@link
+ * com.themistra.crypto.token.AddressValidator#isValidEvmAddress} requires (and therefore preserves) a
+ * correctly checksummed, mixed-case EVM address. {@code TokenAllowlist} (T11) stores and matches EVM
+ * contract addresses as lowercase, case-sensitive exact strings with no folding. A future consumer that
+ * looks up this watch's {@code tokenContractAddress} against the allowlist (not built by this task) must
+ * account for that mismatch itself - e.g. lowercase before lookup - or it will incorrectly see
+ * {@code UNKNOWN_TOKEN} for a checksummed address that is genuinely on the allowlist.</p>
  */
 @Entity
-@Table(name = "watches")
+@Table(name = "watches", schema = "chain")
 public class Watch {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** External identifier. The internal id never leaves the service. */
-    @Column(name = "watch_uuid", nullable = false, updatable = false)
-    private UUID watchUuid;
+    @Column(name = "watch_id", nullable = false, unique = true)
+    private UUID watchId;
 
-    /** The caller's own reference — its invoice id. The idempotency key. */
-    @Column(name = "caller_reference", nullable = false, updatable = false)
-    private String callerReference;
+    @Column(name = "invoice_uuid", nullable = false)
+    private UUID invoiceUuid;
 
-    @Column(name = "chain_id", nullable = false, updatable = false)
-    private String chainId;
+    @Column(nullable = false, length = 32)
+    private String chain;
 
-    @Column(name = "recipient_address", nullable = false, updatable = false)
-    private String recipientAddress;
+    @Column(nullable = false, length = 128)
+    private String address;
 
-    @Column(name = "token_address", nullable = false, updatable = false)
-    private String tokenAddress;
+    @Column(name = "token_contract_address", nullable = false, length = 128)
+    private String tokenContractAddress;
 
-    @Column(name = "expected_amount", nullable = false, updatable = false)
-    private BigInteger expectedAmount;
-
-    @Column(name = "expires_at", nullable = false, updatable = false)
-    private Instant expiresAt;
+    @Column(name = "expected_amount", nullable = false, precision = 78, scale = 0)
+    private BigDecimal expectedAmount;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false)
+    @Column(nullable = false, length = 16)
     private WatchStatus status;
 
-    @Column(name = "created_at", nullable = false, updatable = false)
+    @Column(name = "expires_at", nullable = false)
+    private Instant expiresAt;
+
+    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
-    @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt;
+    @Column(name = "unregistered_at")
+    private Instant unregisteredAt;
 
     protected Watch() {
-        // JPA
+        // JPA only
     }
 
-    public Watch(UUID watchUuid, String callerReference, String chainId, String recipientAddress,
-                 String tokenAddress, BigInteger expectedAmount, Instant expiresAt, Instant now) {
-        this.watchUuid = watchUuid;
-        this.callerReference = callerReference;
-        this.chainId = chainId;
-        this.recipientAddress = recipientAddress;
-        this.tokenAddress = tokenAddress;
-        this.expectedAmount = expectedAmount;
-        this.expiresAt = expiresAt;
-        this.status = WatchStatus.ACTIVE;
-        this.createdAt = now;
-        this.updatedAt = now;
+    /** A freshly registered watch (R18) - {@code status = REGISTERED}, {@code unregisteredAt = null}.
+     * {@code watchId} and {@code now} are supplied by the caller ({@link WatchService#register}), never
+     * generated here, so this factory stays a pure, deterministic function of its arguments. */
+    public static Watch register(UUID watchId, UUID invoiceUuid, String chain, String address,
+            String tokenContractAddress, BigDecimal expectedAmount, Instant expiresAt, Instant now) {
+        Objects.requireNonNull(watchId, "watchId");
+        Objects.requireNonNull(invoiceUuid, "invoiceUuid");
+        Objects.requireNonNull(chain, "chain");
+        Objects.requireNonNull(address, "address");
+        Objects.requireNonNull(tokenContractAddress, "tokenContractAddress");
+        Objects.requireNonNull(expectedAmount, "expectedAmount");
+        Objects.requireNonNull(expiresAt, "expiresAt");
+        Objects.requireNonNull(now, "now");
+
+        Watch watch = new Watch();
+        watch.watchId = watchId;
+        watch.invoiceUuid = invoiceUuid;
+        watch.chain = chain;
+        watch.address = address;
+        watch.tokenContractAddress = tokenContractAddress;
+        watch.expectedAmount = expectedAmount;
+        watch.status = WatchStatus.REGISTERED;
+        watch.expiresAt = expiresAt;
+        watch.createdAt = now;
+        return watch;
     }
 
-    /**
-     * Whether this watch is currently active.
-     *
-     * <p>Active means active <em>and unexpired at the moment of asking</em>. Nothing sweeps rows
-     * into {@link WatchStatus#EXPIRED}, so the clock is always part of the answer.
-     */
-    public boolean isActiveAt(Instant instant) {
-        return status == WatchStatus.ACTIVE && expiresAt.isAfter(instant);
-    }
-
-    public void cancel(Instant now) {
-        this.status = WatchStatus.CANCELLED;
-        this.updatedAt = now;
-    }
-
-    /** Whether another registration under the same reference describes the same watch. */
-    public boolean hasSameTermsAs(String chainId, String recipientAddress,
-                                  String tokenAddress, BigInteger expectedAmount) {
-        return this.chainId.equals(chainId)
-                && this.recipientAddress.equals(recipientAddress)
-                && this.tokenAddress.equals(tokenAddress)
-                && this.expectedAmount.equals(expectedAmount);
-    }
-
-    public Long getId() {
+    public Long id() {
         return id;
     }
 
-    public UUID getWatchUuid() {
-        return watchUuid;
+    public UUID watchId() {
+        return watchId;
     }
 
-    public String getCallerReference() {
-        return callerReference;
+    public UUID invoiceUuid() {
+        return invoiceUuid;
     }
 
-    public String getChainId() {
-        return chainId;
+    public String chain() {
+        return chain;
     }
 
-    public String getRecipientAddress() {
-        return recipientAddress;
+    public String address() {
+        return address;
     }
 
-    public String getTokenAddress() {
-        return tokenAddress;
+    public String tokenContractAddress() {
+        return tokenContractAddress;
     }
 
-    public BigInteger getExpectedAmount() {
+    public BigDecimal expectedAmount() {
         return expectedAmount;
     }
 
-    public Instant getExpiresAt() {
-        return expiresAt;
-    }
-
-    public WatchStatus getStatus() {
+    public WatchStatus status() {
         return status;
     }
 
-    public Instant getCreatedAt() {
+    public Instant expiresAt() {
+        return expiresAt;
+    }
+
+    public Instant createdAt() {
         return createdAt;
     }
 
-    public Instant getUpdatedAt() {
-        return updatedAt;
+    public Instant unregisteredAt() {
+        return unregisteredAt;
     }
 }

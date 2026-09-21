@@ -164,12 +164,19 @@ class KmsSignerArchitectureTest {
 
         // Verified directly (a standalone diagnostic run): ArchRule.check(...) throws plain
         // java.lang.AssertionError on a violation, not some ArchUnit-specific subtype.
+        // T27 Phase 9 (Kimi Phase 8 Finding #4): message assertions added, mirroring
+        // CrossModuleEntityArchitectureTest's own negative-proof test - isInstanceOf alone would
+        // also pass for an unrelated AssertionError thrown for the wrong reason.
         assertThatThrownBy(() -> noClassOutsideAttestMayReferenceKmsSigner.check(violatingClasses))
                 .as("a class outside attest depending on KmsSigner must fail this rule")
-                .isInstanceOf(AssertionError.class);
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueAttestReferencer")
+                .hasMessageContaining("KmsSigner");
         assertThatThrownBy(() -> onlyKmsSignerMayUseTheKmsSigningSdk.check(violatingClasses))
                 .as("a non-KmsSigner* class depending on the KMS SDK must fail this rule")
-                .isInstanceOf(AssertionError.class);
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueAttestReferencer")
+                .hasMessageContaining("KmsClient");
     }
 
     /** T27 Phase 6: mirrors {@code CrossModuleEntityArchitectureTest

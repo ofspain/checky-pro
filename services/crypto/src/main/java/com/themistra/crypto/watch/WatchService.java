@@ -1,121 +1,104 @@
 package com.themistra.crypto.watch;
 
-import com.themistra.crypto.chain.ChainAddress;
-import com.themistra.crypto.chain.ChainAdapterRegistry;
-import com.themistra.crypto.chain.ChainId;
+import com.themistra.crypto.token.AddressValidator;
+import com.themistra.crypto.watch.dto.RegisterWatchRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigInteger;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
-/**
- * Registering, retrieving and cancelling watches.
- *
- * <p>Rejects at registration anything that could never match — an unconfigured chain, a malformed
- * address, a non-positive amount, an expiry already past. Each of those would otherwise become a
- * watch that sits there costing provider calls and presenting, to a merchant, as a payment that
- * never arrived.
- */
+/** Register/unregister a watch (R18/R19) - the only writer of {@link Watch}/{@link ChainCursor}. */
 @Service
 public class WatchService {
 
-    private final WatchRepository repository;
-    private final ChainAdapterRegistry registry;
+    /** Positive, scale-0 integer only (Phase 3 Finding 2) - matches {@code expected_amount NUMERIC(78,
+     * 0)}. No leading zero (so "0" itself, and any zero-value amount, is rejected by requiring the
+     * first digit to be 1-9), no decimal point, no exponent - "1.5"/"1e18"/"-0" are all rejected.
+     * Capped at 78 digits total (Phase 7/8 - self-review Finding 1 / Kimi Finding 2): the column's own
+     * precision, so an oversized value is rejected here with 400 rather than reaching the database. */
+    private static final Pattern EXPECTED_AMOUNT_PATTERN = Pattern.compile("^[1-9][0-9]{0,77}$");
+
+    private static final String ETHEREUM = "ETHEREUM";
+
+    private final WatchRepository watchRepository;
+    private final ChainCursorRepository chainCursorRepository;
+    private final AddressValidator addressValidator;
     private final Clock clock;
 
-    public WatchService(WatchRepository repository, ChainAdapterRegistry registry, Clock clock) {
-        this.repository = repository;
-        this.registry = registry;
+    public WatchService(WatchRepository watchRepository, ChainCursorRepository chainCursorRepository,
+            AddressValidator addressValidator, Clock clock) {
+        this.watchRepository = watchRepository;
+        this.chainCursorRepository = chainCursorRepository;
+        this.addressValidator = addressValidator;
         this.clock = clock;
     }
 
-    /**
-     * Registers a watch, or returns the existing one for this caller reference.
-     *
-     * @throws WatchException.Invalid  when the request could never produce a workable watch
-     * @throws WatchException.Conflict when the reference names a watch with different terms
-     */
+    /** R18: validates, then persists a {@link Watch} and its placeholder {@link ChainCursor}
+     * atomically. {@code watchId} is generated here, never left to the database. */
     @Transactional
-    public Watch register(String callerReference, String chainIdValue, String recipientAddress,
-                          String tokenAddress, BigInteger expectedAmount, Instant expiresAt) {
-
-        require(callerReference != null && !callerReference.isBlank(), "callerReference is required");
-        require(expectedAmount != null && expectedAmount.signum() > 0,
-                "expectedAmount must be a positive base-unit integer");
-        require(expiresAt != null, "expiresAt is required");
+    public Watch register(RegisterWatchRequest request) {
+        BigDecimal expectedAmount = parseExpectedAmount(request.expectedAmount());
+        validateExpiresAt(request.expiresAt());
+        validateAddress(request.chain(), request.address());
+        validateAddress(request.chain(), request.tokenContractAddress());
 
         Instant now = clock.instant();
-        require(expiresAt.isAfter(now), "expiresAt must be in the future");
-
-        ChainId chainId = parseChain(chainIdValue);
-        if (!registry.supports(chainId)) {
-            throw new WatchException.Invalid(
-                    "chain " + chainId + " is not configured — a watch on it could never be observed");
-        }
-
-        String recipient = normalise(chainId, recipientAddress, "recipientAddress");
-        String token = normalise(chainId, tokenAddress, "tokenAddress");
-
-        Optional<Watch> existing = repository.findByCallerReference(callerReference);
-        if (existing.isPresent()) {
-            Watch watch = existing.get();
-            if (!watch.hasSameTermsAs(chainId.value(), recipient, token, expectedAmount)) {
-                throw new WatchException.Conflict(callerReference);
-            }
-            return watch;
-        }
-
-        return repository.save(new Watch(
-                UUID.randomUUID(), callerReference, chainId.value(),
-                recipient, token, expectedAmount, expiresAt, now));
+        UUID watchId = UUID.randomUUID();
+        Watch watch = Watch.register(watchId, request.invoiceUuid(), request.chain(), request.address(),
+                request.tokenContractAddress(), expectedAmount, request.expiresAt(), now);
+        watchRepository.save(watch);
+        chainCursorRepository.save(ChainCursor.placeholder(request.chain(), watchId, now));
+        return watch;
     }
 
-    @Transactional(readOnly = true)
-    public Watch findByUuid(UUID watchUuid) {
-        return repository.findByWatchUuid(watchUuid)
-                .orElseThrow(() -> new WatchException.NotFound("uuid " + watchUuid));
-    }
-
-    /** Active watches for a chain — active meaning unexpired as of now. */
-    @Transactional(readOnly = true)
-    public List<Watch> activeWatches(ChainId chainId) {
-        return repository.findActive(chainId.value(), clock.instant());
-    }
-
-    /** Cancelling an already-cancelled watch succeeds: a caller retrying should not have to care. */
+    /** R19: {@code 404} (via {@link WatchNotFoundException}) if {@code watchId} matches no row at all;
+     * otherwise an atomic conditional {@code UPDATE} (race-safe, Phase 3 Finding 4) transitions a
+     * {@code REGISTERED} watch to {@code UNREGISTERED} and is a no-op for any other status. */
     @Transactional
-    public void cancel(UUID watchUuid) {
-        Watch watch = findByUuid(watchUuid);
-        if (watch.getStatus() != WatchStatus.CANCELLED) {
-            watch.cancel(clock.instant());
-            repository.save(watch);
+    public void unregister(UUID watchId) {
+        if (!watchRepository.existsByWatchId(watchId)) {
+            throw new WatchNotFoundException(watchId);
+        }
+        watchRepository.markUnregisteredIfRegistered(watchId, clock.instant());
+    }
+
+    private BigDecimal parseExpectedAmount(String raw) {
+        if (!EXPECTED_AMOUNT_PATTERN.matcher(raw).matches()) {
+            throw new InvalidWatchRequestException(
+                    "expectedAmount must be a positive integer decimal string in token base units");
+        }
+        return new BigDecimal(raw);
+    }
+
+    private void validateExpiresAt(Instant expiresAt) {
+        if (!expiresAt.isAfter(clock.instant())) {
+            throw new InvalidWatchRequestException("expiresAt must be in the future");
         }
     }
 
-    private ChainId parseChain(String value) {
-        try {
-            return ChainId.parse(value);
-        } catch (IllegalArgumentException e) {
-            throw new WatchException.Invalid("chainId is invalid: " + e.getMessage());
-        }
+    /** {@code chain} is already bean-validated to exactly {@code ETHEREUM}/{@code TRON}
+     * (`RegisterWatchRequest`'s own {@code @Pattern}) before this ever runs - no further chain-value
+     * guard is added here (this codebase's own established discipline against unprecedented
+     * defense-in-depth for an invariant already enforced upstream, e.g. T14 Phase 3/8/11). */
+    /** T21: this module's public read seam for {@code AttestationService} - {@link
+     * ChainCursorRepository} itself stays package-private (agents.md module-boundary convention).
+     * Returns every matching cursor, not just one; more than one watch can legitimately observe the
+     * same transaction (see {@link ChainCursorRepository#findByChainAndTxHash}'s own Javadoc). */
+    public List<ChainCursor> findChainCursors(String chain, String txHash) {
+        return chainCursorRepository.findByChainAndTxHash(chain, txHash);
     }
 
-    private String normalise(ChainId chainId, String address, String field) {
-        try {
-            return ChainAddress.normalise(chainId, address);
-        } catch (IllegalArgumentException e) {
-            throw new WatchException.Invalid(field + " is not valid for chain " + chainId);
-        }
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new WatchException.Invalid(message);
+    private void validateAddress(String chain, String address) {
+        boolean valid = ETHEREUM.equals(chain)
+                ? addressValidator.isValidEvmAddress(address)
+                : addressValidator.isValidTronAddress(address);
+        if (!valid) {
+            throw new InvalidWatchRequestException("address is not a valid " + chain + " address");
         }
     }
 }
