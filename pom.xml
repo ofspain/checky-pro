@@ -23,6 +23,7 @@
          precede any service module that depends on them. -->
     <module>services/auth</module>
     <module>services/crypto</module>
+    <module>services/notification</module>
   </modules>
 
   <properties>
