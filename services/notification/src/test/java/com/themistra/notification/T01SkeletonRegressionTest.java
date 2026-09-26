@@ -45,7 +45,12 @@ class T01SkeletonRegressionTest {
     }
 
     /** AC2 (Kimi Phase 3 Findings #1/#2): every required dependency is present by its exact artifact,
-     * and the issuer starter (this service never issues tokens) is absent. */
+     * and the issuer starter (this service never issues tokens) is absent. {@code postgresql} appears
+     * twice in this pom (the runtime JDBC driver, {@code org.postgresql:postgresql}, and the
+     * Testcontainers module, {@code org.testcontainers:postgresql}) - a plain {@code contains}
+     * wouldn't notice either one going missing while the other remains, so both are checked by their
+     * groupId+artifactId pair specifically (self-review catch: the original version only checked the
+     * bare artifactId string once). */
     @Test
     void notificationPomDeclaresTheRequiredDependenciesAndExcludesTheIssuerStarter() throws IOException {
         String pom = Files.readString(MODULE_POM);
@@ -57,7 +62,8 @@ class T01SkeletonRegressionTest {
         assertThat(pom).contains("spring-boot-starter-data-jpa");
         assertThat(pom).contains("flyway-core");
         assertThat(pom).contains("flyway-database-postgresql");
-        assertThat(pom).contains("<artifactId>postgresql</artifactId>");
+        assertThat(hasGroupAndArtifact(pom, "org.postgresql", "postgresql"))
+                .as("runtime JDBC driver").isTrue();
         assertThat(pom).contains("spring-kafka");
         assertThat(pom).contains("<artifactId>sesv2</artifactId>");
         assertThat(pom).contains("spring-boot-starter-actuator");
@@ -65,12 +71,20 @@ class T01SkeletonRegressionTest {
         assertThat(pom).contains("spring-boot-starter-test");
         assertThat(pom).contains("spring-security-test");
         assertThat(pom).contains("spring-boot-testcontainers");
+        assertThat(hasGroupAndArtifact(pom, "org.testcontainers", "postgresql"))
+                .as("Testcontainers Postgres module").isTrue();
         assertThat(pom).contains("<artifactId>kafka</artifactId>");
         assertThat(pom).contains("<artifactId>junit-jupiter</artifactId>");
         assertThat(pom).contains("archunit-junit5");
         assertThat(pom).contains("awaitility");
         assertThat(pom).as("notification-service validates tokens, it never issues them")
                 .doesNotContain("oauth2-authorization-server");
+    }
+
+    private static boolean hasGroupAndArtifact(String pomContent, String groupId, String artifactId) {
+        String pattern = "<groupId>" + Pattern.quote(groupId) + "</groupId>\\s*<artifactId>"
+                + Pattern.quote(artifactId) + "</artifactId>";
+        return Pattern.compile(pattern).matcher(pomContent).find();
     }
 
     /** Kimi Phase 3 Finding #5/#8: build output naming and the local-dev Flyway plugin mirror the
