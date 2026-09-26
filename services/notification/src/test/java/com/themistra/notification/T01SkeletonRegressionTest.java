@@ -9,8 +9,10 @@ import software.amazon.awssdk.services.sesv2.SesV2Client;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,7 +33,10 @@ class T01SkeletonRegressionTest {
     private static final Path APPLICATION_JAVA =
             Path.of("src/main/java/com/themistra/notification/NotificationServiceApplication.java");
 
-    /** AC1: services/notification is registered in the root reactor, after both existing services. */
+    /** AC1: services/notification is registered in the root reactor, after both existing services.
+     * Kimi Phase 11 Gap 1: chains all three positions rather than only checking the last pair - the
+     * original version would have passed a reorder to auth/notification/crypto just as easily as the
+     * intended auth/crypto/notification. */
     @Test
     void rootPomRegistersNotificationServiceAfterAuthAndCrypto() throws IOException {
         String rootPom = Files.readString(ROOT_POM);
@@ -39,9 +44,13 @@ class T01SkeletonRegressionTest {
         assertThat(rootPom).contains("<module>services/auth</module>");
         assertThat(rootPom).contains("<module>services/crypto</module>");
         assertThat(rootPom).contains("<module>services/notification</module>");
-        assertThat(rootPom.indexOf("<module>services/crypto</module>"))
-                .as("services/crypto must be listed before services/notification (dependency order)")
-                .isLessThan(rootPom.indexOf("<module>services/notification</module>"));
+
+        int authIdx = rootPom.indexOf("<module>services/auth</module>");
+        int cryptoIdx = rootPom.indexOf("<module>services/crypto</module>");
+        int notificationIdx = rootPom.indexOf("<module>services/notification</module>");
+        assertThat(authIdx).as("services/auth must be listed before services/crypto").isLessThan(cryptoIdx);
+        assertThat(cryptoIdx).as("services/crypto must be listed before services/notification (dependency order)")
+                .isLessThan(notificationIdx);
     }
 
     /** AC2 (Kimi Phase 3 Findings #1/#2): every required dependency is present by its exact artifact,
@@ -93,21 +102,46 @@ class T01SkeletonRegressionTest {
                 .doesNotContain("jackson-dataformat-yaml");
     }
 
-    /** Kimi Phase 8 Finding #6: dependency presence alone doesn't guard scope - a future edit could
-     * flip the runtime JDBC driver to compile scope or the Testcontainers module to runtime without
-     * failing any other assertion. Narrowly scoped to the two dependencies the brief calls out by
-     * scope explicitly, not every dependency in the file. */
+    private record Coordinate(String groupId, String artifactId) {
+    }
+
+    /** Kimi Phase 11 Gap 3: every test-only dependency in this pom - a scope regression to
+     * {@code compile} for any of these would leak test infrastructure into the production artifact
+     * without failing any other test. */
+    private static final List<Coordinate> TEST_SCOPED_DEPENDENCIES = List.of(
+            new Coordinate("org.springframework.boot", "spring-boot-starter-test"),
+            new Coordinate("org.springframework.security", "spring-security-test"),
+            new Coordinate("org.springframework.boot", "spring-boot-testcontainers"),
+            new Coordinate("org.testcontainers", "postgresql"),
+            new Coordinate("org.testcontainers", "kafka"),
+            new Coordinate("org.testcontainers", "junit-jupiter"),
+            new Coordinate("com.tngtech.archunit", "archunit-junit5"),
+            new Coordinate("org.awaitility", "awaitility"));
+
+    /** Kimi Phase 8 Finding #6, extended at Phase 11 (Kimi Gaps #2/#3): dependency presence alone
+     * doesn't guard scope - a future edit could flip the runtime JDBC driver to compile scope, or any
+     * test-only dependency to compile scope, without failing any other assertion. */
     @Test
     void runtimeAndTestScopesAreCorrect() throws IOException {
         String pom = Files.readString(MODULE_POM);
 
         assertThat(dependencyScope(pom, "org.postgresql", "postgresql")).isEqualTo("runtime");
-        assertThat(dependencyScope(pom, "org.testcontainers", "postgresql")).isEqualTo("test");
+        assertThat(dependencyScope(pom, "io.micrometer", "micrometer-registry-prometheus"))
+                .isEqualTo("runtime");
+        for (Coordinate c : TEST_SCOPED_DEPENDENCIES) {
+            assertThat(dependencyScope(pom, c.groupId(), c.artifactId()))
+                    .as("%s:%s must be test-scoped", c.groupId(), c.artifactId())
+                    .isEqualTo("test");
+        }
     }
 
     private static String dependencyScope(String pomContent, String groupId, String artifactId) {
+        // Some dependencies (archunit-junit5, awaitility) carry an explicit <version> between
+        // <artifactId> and <scope>, since they're not managed by the parent Spring Boot BOM - the
+        // optional (?:...)? group tolerates either shape.
         String pattern = "<groupId>" + Pattern.quote(groupId) + "</groupId>\\s*<artifactId>"
-                + Pattern.quote(artifactId) + "</artifactId>\\s*<scope>([^<]+)</scope>";
+                + Pattern.quote(artifactId) + "</artifactId>\\s*(?:<version>[^<]+</version>\\s*)?"
+                + "<scope>([^<]+)</scope>";
         return extractFirst(pomContent, pattern, groupId + ":" + artifactId + " scope");
     }
 
@@ -166,6 +200,48 @@ class T01SkeletonRegressionTest {
                 .doesNotContain("@EnableScheduling");
         assertThat(code).as("no ShedLock-guarded job exists yet")
                 .doesNotContain("@EnableSchedulerLock");
+    }
+
+    /** Kimi Phase 11 Gap 5: the brief's own "Out" scope excludes any production class beyond the bare
+     * Application class - a premature config/entity class added in this task would not fail any other
+     * test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads one named file. */
+    @Test
+    void noExtraProductionClassesExistBeyondTheBareApplicationClass() throws IOException {
+        Path mainSourceDir = Path.of("src/main/java/com/themistra/notification");
+
+        try (Stream<Path> files = Files.walk(mainSourceDir)) {
+            List<String> javaFiles = files
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .map(p -> mainSourceDir.relativize(p).toString())
+                    .sorted()
+                    .toList();
+            assertThat(javaFiles).containsExactly("NotificationServiceApplication.java");
+        }
+    }
+
+    /** Kimi Phase 11 Gap 6: the brief requires SES to be added via a {@code dependencyManagement}
+     * import specifically (so its version stays centrally managed and aligned across dependents),
+     * not merely declared as a regular dependency that happens to carry the right version string -
+     * {@link #sharedDependencyVersionsStayAlignedWithAuthAndCrypto()} only proves the latter. */
+    @Test
+    void awsSdkBomIsImportedNotMerelyDeclaredAtTheRightVersion() throws IOException {
+        String pom = Files.readString(MODULE_POM);
+        String dependencyManagement = dependencyManagementBlock(pom);
+
+        assertThat(dependencyManagement).contains("<groupId>software.amazon.awssdk</groupId>");
+        assertThat(dependencyManagement).contains("<artifactId>bom</artifactId>");
+        assertThat(dependencyManagement).contains("<version>2.50.2</version>");
+        assertThat(dependencyManagement).contains("<type>pom</type>");
+        assertThat(dependencyManagement).contains("<scope>import</scope>");
+    }
+
+    private static String dependencyManagementBlock(String pomContent) {
+        String pattern = "(?s)<dependencyManagement>.*?</dependencyManagement>";
+        Matcher matcher = Pattern.compile(pattern).matcher(pomContent);
+        if (!matcher.find()) {
+            throw new AssertionError("no <dependencyManagement> block found");
+        }
+        return matcher.group();
     }
 
     /** Kimi Phase 3 Finding #4 (T01 Phase 4 resolution): verified directly via {@code
