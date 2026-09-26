@@ -65,7 +65,8 @@ class T01SkeletonRegressionTest {
         assertThat(hasGroupAndArtifact(pom, "org.postgresql", "postgresql"))
                 .as("runtime JDBC driver").isTrue();
         assertThat(pom).contains("spring-kafka");
-        assertThat(pom).contains("<artifactId>sesv2</artifactId>");
+        assertThat(hasGroupAndArtifact(pom, "software.amazon.awssdk", "sesv2"))
+                .as("SES v2 client, correct groupId (Kimi Phase 8 Finding #3)").isTrue();
         assertThat(pom).contains("spring-boot-starter-actuator");
         assertThat(pom).contains("micrometer-registry-prometheus");
         assertThat(pom).contains("spring-boot-starter-test");
@@ -73,12 +74,41 @@ class T01SkeletonRegressionTest {
         assertThat(pom).contains("spring-boot-testcontainers");
         assertThat(hasGroupAndArtifact(pom, "org.testcontainers", "postgresql"))
                 .as("Testcontainers Postgres module").isTrue();
-        assertThat(pom).contains("<artifactId>kafka</artifactId>");
-        assertThat(pom).contains("<artifactId>junit-jupiter</artifactId>");
+        assertThat(hasGroupAndArtifact(pom, "org.testcontainers", "kafka"))
+                .as("Testcontainers Kafka module (Kimi Phase 8 Finding #2)").isTrue();
+        assertThat(hasGroupAndArtifact(pom, "org.testcontainers", "junit-jupiter"))
+                .as("Testcontainers JUnit 5 integration (Kimi Phase 8 Finding #2)").isTrue();
         assertThat(pom).contains("archunit-junit5");
         assertThat(pom).contains("awaitility");
         assertThat(pom).as("notification-service validates tokens, it never issues them")
                 .doesNotContain("oauth2-authorization-server");
+        // Kimi Phase 8 Finding #4: guards against blindly copying auth-specific dependencies this
+        // task's own "shared subset only" scope excludes.
+        assertThat(pom).as("ShedLock is not needed until a scheduled job exists (task 14)")
+                .doesNotContain("shedlock-spring")
+                .doesNotContain("shedlock-provider-jdbc-template");
+        assertThat(pom).as("rate limiting is an auth-specific concern (T31/R41), not this task's")
+                .doesNotContain("bucket4j");
+        assertThat(pom).as("no OpenAPI YAML contract exists for this service yet")
+                .doesNotContain("jackson-dataformat-yaml");
+    }
+
+    /** Kimi Phase 8 Finding #6: dependency presence alone doesn't guard scope - a future edit could
+     * flip the runtime JDBC driver to compile scope or the Testcontainers module to runtime without
+     * failing any other assertion. Narrowly scoped to the two dependencies the brief calls out by
+     * scope explicitly, not every dependency in the file. */
+    @Test
+    void runtimeAndTestScopesAreCorrect() throws IOException {
+        String pom = Files.readString(MODULE_POM);
+
+        assertThat(dependencyScope(pom, "org.postgresql", "postgresql")).isEqualTo("runtime");
+        assertThat(dependencyScope(pom, "org.testcontainers", "postgresql")).isEqualTo("test");
+    }
+
+    private static String dependencyScope(String pomContent, String groupId, String artifactId) {
+        String pattern = "<groupId>" + Pattern.quote(groupId) + "</groupId>\\s*<artifactId>"
+                + Pattern.quote(artifactId) + "</artifactId>\\s*<scope>([^<]+)</scope>";
+        return extractFirst(pomContent, pattern, groupId + ":" + artifactId + " scope");
     }
 
     private static boolean hasGroupAndArtifact(String pomContent, String groupId, String artifactId) {
@@ -87,16 +117,33 @@ class T01SkeletonRegressionTest {
         return Pattern.compile(pattern).matcher(pomContent).find();
     }
 
-    /** Kimi Phase 3 Finding #5/#8: build output naming and the local-dev Flyway plugin mirror the
-     * sibling-service convention exactly, except the schema name. */
+    /** Kimi Phase 3 Finding #5/#8, tightened at Phase 8 (Kimi Findings #1/#5): build output naming and
+     * the local-dev Flyway plugin mirror the sibling-service convention exactly, except the schema
+     * name - and, critically, the plugin is never bound to the Maven lifecycle (the brief's own text:
+     * "runs solely via explicit `mvn flyway:migrate`, never during `package`/`verify`/CI"). The
+     * version check is now scoped to the plugin's own extracted block, not a global substring search -
+     * a coincidentally-matching version elsewhere in the pom would no longer satisfy it. */
     @Test
     void finalNameAndFlywayPluginMirrorTheSiblingConvention() throws IOException {
         String pom = Files.readString(MODULE_POM);
+        String flywayPlugin = pluginBlock(pom, "flyway-maven-plugin");
 
         assertThat(pom).contains("<finalName>notification-service</finalName>");
-        assertThat(pom).contains("<artifactId>flyway-maven-plugin</artifactId>");
-        assertThat(pom).contains("<version>11.7.2</version>");
-        assertThat(pom).contains("<schemas>notifications</schemas>");
+        assertThat(dependencyVersion(flywayPlugin, "flyway-maven-plugin")).isEqualTo("11.7.2");
+        assertThat(flywayPlugin).contains("<schemas>notifications</schemas>");
+        assertThat(flywayPlugin)
+                .as("must never bind to package/verify/CI - local-dev-only via explicit mvn flyway:migrate")
+                .doesNotContain("<executions>");
+    }
+
+    private static String pluginBlock(String pomContent, String artifactId) {
+        String pattern = "(?s)<plugin>\\s*<groupId>[^<]*</groupId>\\s*<artifactId>"
+                + Pattern.quote(artifactId) + "</artifactId>.*?</plugin>";
+        Matcher matcher = Pattern.compile(pattern).matcher(pomContent);
+        if (!matcher.find()) {
+            throw new AssertionError("no <plugin> block found for artifactId " + artifactId);
+        }
+        return matcher.group();
     }
 
     /** Kimi Phase 3 Finding #3/#6: the skeleton Application class is bare - annotated, has a real
@@ -161,6 +208,11 @@ class T01SkeletonRegressionTest {
                 .as("AWS SDK BOM version (dependencyManagement)")
                 .isEqualTo(dependencyVersion(authPom, "bom"))
                 .isEqualTo(dependencyVersion(cryptoPom, "bom"));
+        // Kimi Phase 8 Finding #7: the brief says the Flyway plugin block mirrors auth/crypto
+        // exactly except the schema - the version-alignment check should say so too.
+        assertThat(dependencyVersion(notificationPom, "flyway-maven-plugin"))
+                .isEqualTo(dependencyVersion(authPom, "flyway-maven-plugin"))
+                .isEqualTo(dependencyVersion(cryptoPom, "flyway-maven-plugin"));
     }
 
     private static String propertyValue(String pomContent, String propertyName) {
