@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -130,7 +131,14 @@ class NotificationBaselineMigrationIntegrationTest {
                 block.append(line).append('\n');
             }
         }
-        return block.toString();
+        String fence = block.toString();
+        // Kimi Phase 8 Finding #6: pins fence-selection to V1's own header comment, so a future
+        // design.md edit that adds another sql fence before this one fails loudly here instead of
+        // silently comparing V1 against the wrong block.
+        assertThat(fence)
+                .as("the extracted fence must be V1's own baseline block")
+                .startsWith("-- Notification Service baseline (notifications schema).");
+        return fence;
     }
 
     @Test
@@ -180,14 +188,50 @@ class NotificationBaselineMigrationIntegrationTest {
 
     @Test
     void notificationAppHasNoAccessAtAllToTablesOutsideAc2Scope() throws SQLException {
-        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD); Statement statement = app.createStatement()) {
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
             for (String table : UNGRANTED_TABLES) {
-                assertThatThrownBy(() -> statement.executeQuery("SELECT * FROM notifications." + table))
-                        .as("SELECT on %s must be denied for notification_app (not AC2's one named table)", table)
-                        .isInstanceOf(SQLException.class)
-                        .hasMessageContaining("permission denied");
+                try (Statement statement = app.createStatement()) {
+                    assertThatThrownBy(() -> statement.executeQuery("SELECT * FROM notifications." + table))
+                            .as("SELECT on %s must be denied for notification_app (not AC2's one named table)", table)
+                            .isInstanceOf(SQLException.class)
+                            .hasMessageContaining("permission denied");
+                }
+                // Kimi Phase 8 Finding #2: SELECT-only denial doesn't prove "no access at all" - a
+                // regression granting INSERT (but not SELECT) on an ungranted table would pass the
+                // check above while violating least-privilege. Proves INSERT is denied too.
+                try (Statement statement = app.createStatement()) {
+                    assertThatThrownBy(() -> statement.execute(minimalInsertFixtureFor(table)))
+                            .as("INSERT on %s must be denied for notification_app (not AC2's one named table)", table)
+                            .isInstanceOf(SQLException.class)
+                            .hasMessageContaining("permission denied");
+                }
             }
         }
+    }
+
+    private static String minimalInsertFixtureFor(String table) {
+        return switch (table) {
+            case "contact_projection" -> "INSERT INTO notifications.contact_projection (account_uuid) "
+                    + "VALUES ('00000000-0000-0000-0000-000000000001')";
+            case "channel_preferences" -> "INSERT INTO notifications.channel_preferences "
+                    + "(account_uuid, category, channel) "
+                    + "VALUES ('00000000-0000-0000-0000-000000000001', 'SECURITY', 'EMAIL')";
+            case "templates" -> "INSERT INTO notifications.templates (name, channel, version, body) "
+                    + "VALUES ('it-denied', 'EMAIL', 1, 'body')";
+            case "processed_events" -> "INSERT INTO notifications.processed_events (event_key, event_type) "
+                    + "VALUES ('it-denied', 'test')";
+            case "inapp_notifications" -> "INSERT INTO notifications.inapp_notifications "
+                    + "(notification_uuid, account_uuid, category, title, body) VALUES "
+                    + "('00000000-0000-0000-0000-000000000002', "
+                    + "'00000000-0000-0000-0000-000000000001', 'SECURITY', 't', 'b')";
+            case "delivery_retry" -> "INSERT INTO notifications.delivery_retry "
+                    + "(source_event_key, channel, attempt, next_attempt_at) "
+                    + "VALUES ('it-denied', 'EMAIL', 1, now())";
+            case "shedlock" -> "INSERT INTO notifications.shedlock "
+                    + "(name, lock_until, locked_at, locked_by) "
+                    + "VALUES ('it-denied', now(), now(), 'it')";
+            default -> throw new IllegalArgumentException("no INSERT fixture for " + table);
+        };
     }
 
     @Test
@@ -237,15 +281,26 @@ class NotificationBaselineMigrationIntegrationTest {
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
-                     "SELECT name, channel, version FROM notifications.templates")) {
+                     "SELECT name, channel, version, subject FROM notifications.templates")) {
             List<String> actualPairs = new ArrayList<>();
             Set<String> distinctNames = new HashSet<>();
             int rowCount = 0;
             while (resultSet.next()) {
                 rowCount++;
+                String name = resultSet.getString("name");
+                String channel = resultSet.getString("channel");
                 assertThat(resultSet.getInt("version")).as("every seeded template must be version 1").isEqualTo(1);
-                actualPairs.add(resultSet.getString("name") + ":" + resultSet.getString("channel"));
-                distinctNames.add(resultSet.getString("name"));
+                actualPairs.add(name + ":" + channel);
+                distinctNames.add(name);
+
+                // Kimi Phase 8 Finding #5: guards V3's own EMAIL-has-subject / IN_APP-has-no-subject
+                // convention, without asserting exact copy (which stays revisable).
+                String subject = resultSet.getString("subject");
+                if ("EMAIL".equals(channel)) {
+                    assertThat(subject).as("EMAIL row %s must have a non-null subject", name).isNotNull();
+                } else {
+                    assertThat(subject).as("IN_APP row %s must have a null subject", name).isNull();
+                }
             }
             assertThat(rowCount).as("14 rows: 7 mappings x 2 channels").isEqualTo(14);
             assertThat(distinctNames)
@@ -256,41 +311,68 @@ class NotificationBaselineMigrationIntegrationTest {
         }
     }
 
+    // Kimi Phase 8 Finding #4: sourceEventKey is bound via PreparedStatement rather than
+    // concatenated, so this proven grant-test pattern isn't the one future maintainers copy for
+    // genuinely user-controlled input. Table names stay concatenated (a fixed internal constant
+    // list, not user input - JDBC can't parameterize identifiers anyway).
     private void assertInsertAndSelectSucceedUpdateAndDeleteAreDenied(Connection app, String table) throws SQLException {
         String sourceEventKey = "it-" + table;
-        try (Statement statement = app.createStatement()) {
-            statement.execute(insertStatementFor(table, sourceEventKey));
+        try (PreparedStatement insert = insertStatementFor(app, table, sourceEventKey)) {
+            insert.execute();
+        }
 
-            try (ResultSet resultSet = statement.executeQuery(
-                    "SELECT count(*) FROM notifications." + table + " WHERE source_event_key = '" + sourceEventKey + "'")) {
+        try (PreparedStatement select = app.prepareStatement(
+                "SELECT count(*) FROM notifications." + table + " WHERE source_event_key = ?")) {
+            select.setString(1, sourceEventKey);
+            try (ResultSet resultSet = select.executeQuery()) {
                 resultSet.next();
                 assertThat(resultSet.getInt(1)).as("SELECT on %s must see the row notification_app just inserted", table).isEqualTo(1);
             }
-
-            assertThatThrownBy(() -> statement.execute("UPDATE notifications." + table + " SET outcome = 'FAILED' WHERE source_event_key = '" + sourceEventKey + "'"))
-                    .as("UPDATE on %s must be denied for notification_app", table)
-                    .isInstanceOf(SQLException.class)
-                    .hasMessageContaining("permission denied");
-
-            assertThatThrownBy(() -> statement.execute("DELETE FROM notifications." + table + " WHERE source_event_key = '" + sourceEventKey + "'"))
-                    .as("DELETE on %s must be denied for notification_app", table)
-                    .isInstanceOf(SQLException.class)
-                    .hasMessageContaining("permission denied");
         }
+
+        assertThatThrownBy(() -> {
+            try (PreparedStatement update = app.prepareStatement(
+                    "UPDATE notifications." + table + " SET outcome = 'FAILED' WHERE source_event_key = ?")) {
+                update.setString(1, sourceEventKey);
+                update.execute();
+            }
+        })
+                .as("UPDATE on %s must be denied for notification_app", table)
+                .isInstanceOf(SQLException.class)
+                .hasMessageContaining("permission denied");
+
+        assertThatThrownBy(() -> {
+            try (PreparedStatement delete = app.prepareStatement(
+                    "DELETE FROM notifications." + table + " WHERE source_event_key = ?")) {
+                delete.setString(1, sourceEventKey);
+                delete.execute();
+            }
+        })
+                .as("DELETE on %s must be denied for notification_app", table)
+                .isInstanceOf(SQLException.class)
+                .hasMessageContaining("permission denied");
+
         cleanUpAsAdmin(table, sourceEventKey);
     }
 
-    private static String insertStatementFor(String table, String sourceEventKey) {
+    private static PreparedStatement insertStatementFor(Connection app, String table, String sourceEventKey) throws SQLException {
         return switch (table) {
-            case "delivery_log" -> "INSERT INTO notifications.delivery_log (channel, source_event_key, outcome) "
-                    + "VALUES ('EMAIL', '" + sourceEventKey + "', 'SENT')";
+            case "delivery_log" -> {
+                PreparedStatement statement = app.prepareStatement(
+                        "INSERT INTO notifications.delivery_log (channel, source_event_key, outcome) VALUES ('EMAIL', ?, 'SENT')");
+                statement.setString(1, sourceEventKey);
+                yield statement;
+            }
             default -> throw new IllegalArgumentException("no INSERT fixture for " + table);
         };
     }
 
     private void cleanUpAsAdmin(String table, String sourceEventKey) throws SQLException {
-        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
-            statement.execute("DELETE FROM notifications." + table + " WHERE source_event_key = '" + sourceEventKey + "'");
+        try (Connection admin = adminConnection();
+             PreparedStatement statement = admin.prepareStatement(
+                     "DELETE FROM notifications." + table + " WHERE source_event_key = ?")) {
+            statement.setString(1, sourceEventKey);
+            statement.execute();
         }
     }
 
