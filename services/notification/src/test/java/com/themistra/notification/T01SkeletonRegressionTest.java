@@ -194,19 +194,24 @@ class T01SkeletonRegressionTest {
         assertThat(app).contains("package com.themistra.notification;");
         assertThat(code).contains("@SpringBootApplication");
         assertThat(code).contains("SpringApplication.run(NotificationServiceApplication.class, args);");
-        assertThat(code).as("no @ConfigurationProperties class exists yet to scan")
-                .doesNotContain("@ConfigurationPropertiesScan");
+        assertThat(code).as("T03 added the first @ConfigurationProperties classes to scan")
+                .contains("@ConfigurationPropertiesScan");
         assertThat(code).as("no scheduled job exists yet")
                 .doesNotContain("@EnableScheduling");
         assertThat(code).as("no ShedLock-guarded job exists yet")
                 .doesNotContain("@EnableSchedulerLock");
     }
 
-    /** Kimi Phase 11 Gap 5: the brief's own "Out" scope excludes any production class beyond the bare
-     * Application class - a premature config/entity class added in this task would not fail any other
-     * test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads one named file. */
+    /** Kimi Phase 11 Gap 5: T01's own frozen brief "Out" scope excluded any production class beyond
+     * the bare Application class - a premature config/entity class added in that task would not
+     * fail any other test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads
+     * one named file. T03 is the task that legitimately ends the bare-skeleton era (its own frozen
+     * brief authorizes exactly these 7 files: 4 {@code @ConfigurationProperties} records, the
+     * profile-conditional link-URL validator, {@code PublicEndpoints}, {@code ResourceServerConfig});
+     * this list is updated to name them explicitly rather than loosened to "at least N files" -
+     * an unnamed-count assertion would silently tolerate a stray file T03 never authorized. */
     @Test
-    void noExtraProductionClassesExistBeyondTheBareApplicationClass() throws IOException {
+    void noExtraProductionClassesExistBeyondT03sOwnAuthorizedSet() throws IOException {
         Path mainSourceDir = Path.of("src/main/java/com/themistra/notification");
 
         try (Stream<Path> files = Files.walk(mainSourceDir)) {
@@ -215,7 +220,15 @@ class T01SkeletonRegressionTest {
                     .map(p -> mainSourceDir.relativize(p).toString())
                     .sorted()
                     .toList();
-            assertThat(javaFiles).containsExactly("NotificationServiceApplication.java");
+            assertThat(javaFiles).containsExactly(
+                    "NotificationServiceApplication.java",
+                    "common/PublicEndpoints.java",
+                    "common/ResourceServerConfig.java",
+                    "common/config/EmailProperties.java",
+                    "common/config/InappProperties.java",
+                    "common/config/LinkProperties.java",
+                    "common/config/LinkPropertiesStartupValidation.java",
+                    "common/config/RetryProperties.java");
         }
     }
 
