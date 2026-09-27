@@ -47,6 +47,18 @@ class ApplicationPropertiesSecurityConfigTest {
         assertThat(properties.getProperty("management.endpoint.health.probes.enabled"))
                 .as("without this, /actuator/health/liveness|readiness 404 outside k8s")
                 .isEqualTo("true");
+        assertThat(properties.getProperty("management.endpoint.health.show-details"))
+                .as("Kimi Phase 11 Gap #2: internal detail must never leak to an unauthenticated caller")
+                .isEqualTo("never");
+    }
+
+    @Test
+    void activeProfileDefaultsToLocal() throws IOException {
+        // Kimi Phase 11 Gap #1: the entire profile-conditional LinkProperties.baseUrl strategy
+        // depends on this default - if it's ever deleted, a developer with no explicit profile set
+        // would hit LinkPropertiesStartupValidation's own failure unexpectedly.
+        Properties properties = loadApplicationProperties();
+        assertThat(properties.getProperty("spring.profiles.active")).isEqualTo("local");
     }
 
     @Test

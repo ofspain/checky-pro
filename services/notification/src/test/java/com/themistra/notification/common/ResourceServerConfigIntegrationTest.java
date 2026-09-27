@@ -1,12 +1,18 @@
 package com.themistra.notification.common;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -55,5 +61,24 @@ class ResourceServerConfigIntegrationTest {
         mockMvc.perform(get("/v1/notifications/unread")
                         .header(HttpHeaders.AUTHORIZATION, "Basic dXNlcjpwYXNzd29yZA=="))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /** Kimi Phase 11 Gap #7: no path in T03 itself triggers the 403 handler (no authority rule
+     * exists until task 13), so this invokes it directly - immediate regression coverage rather
+     * than a TODO comment, per Kimi's own preferred option. */
+    @Test
+    void accessDeniedHandlerWritesRfc9457ProblemJson() throws Exception {
+        AccessDeniedHandler handler = new ResourceServerConfig().problemJsonAccessDeniedHandler(new ObjectMapper());
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        handler.handle(request, response, new AccessDeniedException("denied"));
+
+        assertThat(response.getStatus()).isEqualTo(403);
+        assertThat(response.getContentType()).isEqualTo("application/problem+json");
+        String body = response.getContentAsString();
+        assertThat(body).contains("\"title\":\"Forbidden\"");
+        assertThat(body).contains("\"status\":403");
+        assertThat(body).contains("\"detail\":\"The token does not carry the required access.\"");
     }
 }

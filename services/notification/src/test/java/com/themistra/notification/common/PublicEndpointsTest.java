@@ -9,6 +9,11 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -67,5 +72,25 @@ class PublicEndpointsTest {
     @Test
     void nonPublicApplicationPathIsNotPublic() throws Exception {
         mockMvc.perform(get("/v1/notifications/unread")).andExpect(status().isUnauthorized());
+    }
+
+    /** Kimi Phase 11 Gap #3: the literal static "sweep" AC4 describes - a future edit adding a
+     * second {@code .permitAll()} call anywhere in {@code ResourceServerConfig} (e.g. for a new,
+     * forgotten-to-restrict path) fails this test even if that new path is never added to the
+     * behavioral test lists above. */
+    @Test
+    void resourceServerConfigContainsNoPermitAllOutsidePublicEndpoints() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/themistra/notification/common/ResourceServerConfig.java"));
+        List<String> permitAllLines = source.lines()
+                .filter(line -> line.contains(".permitAll()"))
+                .toList();
+
+        assertThat(permitAllLines)
+                .as("exactly one permitAll() call is allowed, guarding PublicEndpoints.PATTERNS only")
+                .hasSize(1);
+        assertThat(permitAllLines.get(0))
+                .as("the one permitAll() call must be scoped to PublicEndpoints.PATTERNS")
+                .contains("PublicEndpoints.PATTERNS");
     }
 }

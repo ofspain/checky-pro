@@ -66,3 +66,37 @@ real security regression, not just document intended behavior. Reverted; `git st
 `mvn -pl services/notification -am verify` — 63 tests, 0 failures (9 `T01SkeletonRegressionTest` +
 13 `NotificationBaselineMigrationIntegrationTest`, both unaffected, + 41 new). No production code
 modified in this phase (the mutation above was reverted before the final verification run).
+
+## Addendum (post Phase 11) — all 8 gaps accepted and added
+
+Kimi's Phase 11 review raised 8 gaps. All 8 verified against the actual test/source files before
+acting, all genuine, all added (63 tests → 67):
+
+- **Gap #1** (`spring.profiles.active=local` unguarded) — added `activeProfileDefaultsToLocal` to
+  `ApplicationPropertiesSecurityConfigTest`.
+- **Gap #2** (`management.endpoint.health.show-details=never` unasserted) — folded into
+  `exposesExactlyHealthInfoAndPrometheusOverActuator`.
+- **Gap #3** (`PublicEndpointsTest` not a true static sweep) — added
+  `resourceServerConfigContainsNoPermitAllOutsidePublicEndpoints`, reading `ResourceServerConfig.java`
+  as text and asserting exactly one `.permitAll()` call, scoped to `PublicEndpoints.PATTERNS`. A real
+  mutation test (adding a second, forgotten `.permitAll()` path, rerunning `PublicEndpointsTest`)
+  confirmed this specific new check catches it while the 13 pre-existing behavioral tests in the same
+  class do not — exactly the gap in kind Kimi's own finding described. Reverted clean afterward.
+- **Gap #4** (staging/prod loop only asserted `hasFailed()`) — tightened to the same
+  `IllegalStateException` + message-fragment assertions the `dev` test already used.
+- **Gap #5** (no-active-profile default case untested) — added
+  `defaultProfileWithNoActiveProfileAlsoFailsWithNoBaseUrl`.
+- **Gap #6** (`connection-init-sql` order unasserted) — tightened `.contains("notifications")` to an
+  exact-value assertion (`SET search_path TO notifications, public`).
+- **Gap #7** (403 handler untriggered, no coverage) — added
+  `accessDeniedHandlerWritesRfc9457ProblemJson`, invoking `problemJsonAccessDeniedHandler` directly
+  with a real `MockHttpServletRequest`/`MockHttpServletResponse` (Kimi's own preferred option (a) —
+  immediate coverage over a TODO comment).
+- **Gap #8** (password placeholder discipline unasserted) — added to
+  `datasourceUsesTheLeastPrivilegeRuntimeRole`: asserts `spring.datasource.password` starts with
+  `${DB_PASSWORD:` and ends with `}`.
+
+**Verification:** `mvn -pl services/notification -am verify` — 67 tests, 0 failures (9 + 13 + 45
+across the T03 test files, all previously-existing tests unaffected). A second mutation test (Gap #3's
+own check) performed and reverted clean (`git status -s` on `ResourceServerConfig.java` empty
+afterward).

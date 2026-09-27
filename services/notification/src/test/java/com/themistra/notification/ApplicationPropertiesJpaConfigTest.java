@@ -51,8 +51,14 @@ class ApplicationPropertiesJpaConfigTest {
                 .as("must connect as notification_app (T02), never the migration-owning role")
                 .isEqualTo("${DB_USERNAME:notification_app}");
         assertThat(properties.getProperty("spring.datasource.hikari.connection-init-sql"))
-                .as("search_path must narrow to the notifications schema")
-                .contains("notifications");
+                .as("Kimi Phase 11 Gap #6: exact order matters - notifications must be first for "
+                        + "runtime table resolution, public must be present for citext visibility")
+                .isEqualTo("SET search_path TO notifications, public");
+        assertThat(properties.getProperty("spring.datasource.password"))
+                .as("Kimi Phase 11 Gap #8: must stay an env-var placeholder with a local-only "
+                        + "default, never a hardcoded real credential (L10)")
+                .startsWith("${DB_PASSWORD:")
+                .endsWith("}");
     }
 
     @Test

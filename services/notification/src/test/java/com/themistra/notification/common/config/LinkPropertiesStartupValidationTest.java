@@ -56,11 +56,30 @@ class LinkPropertiesStartupValidationTest {
 
     @Test
     void stagingAndProdProfilesAlsoFailWithNoBaseUrl() {
+        // Kimi Phase 11 Gap #4: asserts the specific IllegalStateException, not just "some"
+        // failure - an unrelated profile-loading bug would satisfy a bare hasFailed() just as well.
         for (String profile : new String[] {"staging", "prod"}) {
             contextRunner
                     .withInitializer(context -> context.getEnvironment().addActiveProfile(profile))
                     .withPropertyValues("themistra.notification.link.base-url=")
-                    .run(context -> assertThat(context).hasFailed());
+                    .run(context -> assertThat(context.getStartupFailure())
+                            .rootCause().isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("themistra.notification.link.base-url")
+                            .hasMessageContaining("outside the local profile"));
         }
+    }
+
+    @Test
+    void defaultProfileWithNoActiveProfileAlsoFailsWithNoBaseUrl() {
+        // Kimi Phase 11 Gap #5: ApplicationContextRunner has no active profile unless one is added,
+        // so this exercises @Profile("!local")'s own "anything but local" semantics directly - if
+        // the annotation were ever narrowed to an explicit list (e.g. @Profile({"dev","staging","prod"})),
+        // this test would catch the no-profile case silently falling through unvalidated.
+        contextRunner
+                .withPropertyValues("themistra.notification.link.base-url=")
+                .run(context -> assertThat(context.getStartupFailure())
+                        .rootCause().isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("themistra.notification.link.base-url")
+                        .hasMessageContaining("outside the local profile"));
     }
 }
