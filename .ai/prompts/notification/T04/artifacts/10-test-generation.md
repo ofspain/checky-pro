@@ -41,3 +41,31 @@ status -s` on `ProcessedEventRepository.java` empty afterward; full suite re-ver
 `mvn -pl services/notification clean verify` — 76 tests, 0 failures (68 T01-T03 unaffected + 8 new).
 No production code left modified in this phase (the mutation above was reverted before the final
 verification run).
+
+## Addendum (post Phase 11) — all 7 gaps accepted and added
+
+Kimi's Phase 11 review raised 7 gaps. All verified against source before acting, all genuine, all
+added (76 tests → 79):
+
+- **Gap #1** (round-trip test used a wall-clock range, not proof the injected `Clock` is what's
+  used) — added `FixedClockConfig`, a `@TestConfiguration` overriding `ClockConfig`'s own
+  `Clock.systemUTC()` bean with `Clock.fixed(...)` via `@Primary` (a same-name `@Bean` override hit
+  `BeanDefinitionOverrideException` on first attempt - Spring Boot disables bean-definition
+  overriding by default; fixed by naming the override bean differently, `fixedClock()`, relying on
+  `@Primary` for autowiring resolution instead of same-name replacement). The round-trip test now
+  asserts exact equality against the fixed instant, plus `eventKey`/`eventType` (folds in Gap #6).
+- **Gap #2 / #7** (no permanent guard for the `ON CONFLICT DO NOTHING` SQL shape) — added
+  `insertIfNewUsesOnConflictDoNothing`, a static text-scan test.
+- **Gap #3** (concurrent test didn't verify DB row count) — added `repository.findById` +
+  a direct row-count query assertion to `concurrentCallsWithSameKeyResolveToExactlyOneTrue`.
+- **Gap #4** (no proof of the `@Transactional` mechanism itself, only its behavior) — added
+  `recordIfNewUsesDefaultRequiredPropagation` (reflection-based, unit-level, no DB needed).
+- **Gap #5** (unit tests never varied `eventType` independently) — added
+  `shouldPassTheSuppliedEventTypeThroughUnchanged`.
+- **Gap #6** — folded into Gap #1's fix above.
+
+**Verification:** `mvn -pl services/notification clean verify` — 79 tests, 0 failures. Two real
+mutation tests performed and reverted clean (`git status -s` empty afterward): (1) Gap #4's own
+check — changed `recordIfNew`'s propagation to `REQUIRES_NEW`, confirmed both the new reflection
+test (unit-level, fast) and the pre-existing transaction-join integration test independently caught
+it; (2) the Phase 10 `ON CONFLICT DO NOTHING` mutation (unchanged from before, still valid).

@@ -1,7 +1,10 @@
 package com.themistra.notification.consumer;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -49,5 +52,33 @@ class IdempotencyGuardUnitTest {
         guard.recordIfNew("key-1", "type-1");
 
         verify(repository).insertIfNew(eq("key-1"), eq("type-1"), eq(FIXED_INSTANT));
+    }
+
+    /** Kimi Phase 11 Gap #5: the other tests all use the same {@code eventKey}/{@code eventType} in
+     * both stubbing and assertion - a bug that hardcoded or swapped {@code eventType} would not be
+     * caught by them. This passes a distinct value and verifies it specifically, not just "some"
+     * value. */
+    @Test
+    void shouldPassTheSuppliedEventTypeThroughUnchanged() {
+        when(repository.insertIfNew(any(), any(), any())).thenReturn(1);
+
+        guard.recordIfNew("key-1", "a-very-specific-event-type");
+
+        verify(repository).insertIfNew(eq("key-1"), eq("a-very-specific-event-type"), eq(FIXED_INSTANT));
+    }
+
+    /** Kimi Phase 11 Gap #4: proves the *mechanism* (the annotation itself), not just the behavior
+     * the integration tests already exercise - a future refactor moving transaction demarcation
+     * elsewhere could still pass those behavioral tests while silently changing this method's own
+     * propagation. */
+    @Test
+    void recordIfNewUsesDefaultRequiredPropagation() throws NoSuchMethodException {
+        Method method = IdempotencyGuard.class.getMethod("recordIfNew", String.class, String.class);
+        Transactional transactional = method.getAnnotation(Transactional.class);
+
+        assertThat(transactional).as("recordIfNew must be @Transactional").isNotNull();
+        assertThat(transactional.propagation())
+                .as("must never be REQUIRES_NEW/NOT_SUPPORTED - would break L1's same-transaction requirement")
+                .isEqualTo(Propagation.REQUIRED);
     }
 }

@@ -5,6 +5,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -14,11 +18,17 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -38,9 +48,26 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @Testcontainers
 @SpringBootTest
+@Import(IdempotencyGuardIntegrationTest.FixedClockConfig.class)
 class IdempotencyGuardIntegrationTest {
 
     private static final String NOTIFICATION_APP_PASSWORD = "it-notification-app-password";
+
+    /** Kimi Phase 11 Gap #1: overrides {@code ClockConfig}'s own {@code Clock.systemUTC()} bean so
+     * the round-trip test below can assert exact equality against a known instant, not just "close
+     * to wall-clock time" - the latter would still pass even if {@link IdempotencyGuard} used
+     * {@code Instant.now()} directly instead of the injected {@code Clock}. */
+    @TestConfiguration
+    static class FixedClockConfig {
+
+        static final Instant FIXED_INSTANT = Instant.parse("2026-01-01T00:00:00Z");
+
+        @Bean
+        @Primary
+        Clock fixedClock() {
+            return Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC);
+        }
+    }
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES =
@@ -118,7 +145,7 @@ class IdempotencyGuardIntegrationTest {
      * {@code REQUIRED} propagation threw {@code UnexpectedRollbackException} for 7 of 8 threads;
      * {@code Propagation.NESTED} then failed with {@code NestedTransactionNotSupportedException}). */
     @Test
-    void concurrentCallsWithSameKeyResolveToExactlyOneTrue() throws InterruptedException {
+    void concurrentCallsWithSameKeyResolveToExactlyOneTrue() throws InterruptedException, SQLException {
         String eventKey = "it-concurrent-" + System.nanoTime();
         int threadCount = 8;
         ExecutorService pool = Executors.newFixedThreadPool(threadCount);
@@ -148,21 +175,54 @@ class IdempotencyGuardIntegrationTest {
                 .hasSize(threadCount);
         assertThat(results.stream().filter(r -> r).count()).as("exactly one true").isEqualTo(1);
         assertThat(results.stream().filter(r -> !r).count()).as("all others false").isEqualTo(threadCount - 1);
+
+        // Kimi Phase 11 Gap #3: the boolean returns alone don't prove the DB itself ended up with
+        // exactly one row - a pathological bug could return the right booleans while writing zero
+        // or multiple rows for the same key.
+        assertThat(repository.findById(eventKey)).isPresent();
+        assertThat(countRowsWithEventKey(eventKey)).as("exactly one row for this key").isEqualTo(1);
     }
 
-    /** Kimi Phase 8 Finding #4 / self-review Finding #3: proves the persisted value round-trips
-     * through the native query's parameter binding, not just that some non-null value exists. */
+    /** Kimi Phase 8 Finding #4 / self-review Finding #3, tightened per Kimi Phase 11 Gaps #1/#6:
+     * proves the persisted value is exactly the fixed clock's instant (not merely "recent"), and
+     * that eventKey/eventType round-trip correctly too - a wall-clock range assertion would still
+     * pass even if {@link IdempotencyGuard} used {@code Instant.now()} directly instead of the
+     * injected {@code Clock}; {@link FixedClockConfig} closes that gap by making the injected clock
+     * itself a known, fixed value. */
     @Test
     void processedAtRoundTripsFromTheInjectedClockThroughToAReadableRow() {
         String eventKey = "it-roundtrip-" + System.nanoTime();
-        Instant before = Instant.now();
 
         assertThat(guard.recordIfNew(eventKey, "test.event")).isTrue();
 
-        Instant after = Instant.now();
-        Instant stored = repository.findById(eventKey).orElseThrow().getProcessedAt();
+        ProcessedEvent stored = repository.findById(eventKey).orElseThrow();
+        assertThat(stored.getEventKey()).isEqualTo(eventKey);
+        assertThat(stored.getEventType()).isEqualTo("test.event");
+        assertThat(stored.getProcessedAt()).isEqualTo(FixedClockConfig.FIXED_INSTANT);
+    }
 
-        assertThat(stored).isBetween(before.minusSeconds(1), after.plusSeconds(1));
+    /** Kimi Phase 11 Gaps #2/#7: a permanent, cheap static guard for the exact SQL shape the entire
+     * concurrent-deduplication guarantee rests on - a future edit that reverts to a plain
+     * {@code INSERT} would otherwise only be caught by re-running the Phase 10 manual mutation test
+     * by hand. */
+    @Test
+    void insertIfNewUsesOnConflictDoNothing() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/themistra/notification/consumer/ProcessedEventRepository.java"));
+
+        assertThat(source).contains("ON CONFLICT");
+        assertThat(source).contains("DO NOTHING");
+    }
+
+    private long countRowsWithEventKey(String eventKey) throws SQLException {
+        try (Connection admin = adminConnection();
+             Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT count(*) FROM notifications.processed_events WHERE event_key = '"
+                             + eventKey + "'")) {
+            resultSet.next();
+            return resultSet.getLong(1);
+        }
     }
 
     private static Connection adminConnection() throws SQLException {
