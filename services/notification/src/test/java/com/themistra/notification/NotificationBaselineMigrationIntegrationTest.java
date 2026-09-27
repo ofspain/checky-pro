@@ -40,12 +40,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class NotificationBaselineMigrationIntegrationTest {
 
     private static final List<String> GRANTED_TABLES = List.of("delivery_log");
-    // T02's own literal scope grants only delivery_log. The other six baseline tables and shedlock
-    // each get their own grant migration in the task that first needs runtime access to them
-    // (mirroring crypto-service's own incremental-grant pattern) - all seven are therefore expected
-    // to remain fully inaccessible to notification_app as of this task.
+    // T02's own literal scope grants only delivery_log; T04's own V4 additionally grants
+    // processed_events (tested separately below - its schema shape has no source_event_key/outcome
+    // columns, so it doesn't fit assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own
+    // delivery_log-shaped assumptions). The remaining five baseline tables and shedlock each get
+    // their own grant migration in the task that first needs runtime access to them (mirroring
+    // crypto-service's own incremental-grant pattern) - they are therefore expected to remain fully
+    // inaccessible to notification_app as of this task.
     private static final List<String> UNGRANTED_TABLES = List.of("contact_projection",
-            "channel_preferences", "templates", "processed_events", "inapp_notifications",
+            "channel_preferences", "templates", "inapp_notifications",
             "delivery_retry", "shedlock");
 
     @Container
@@ -169,7 +172,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4");
         }
     }
 
@@ -220,6 +223,63 @@ class NotificationBaselineMigrationIntegrationTest {
             for (String table : GRANTED_TABLES) {
                 assertInsertAndSelectSucceedUpdateAndDeleteAreDenied(app, table);
             }
+        }
+    }
+
+    /** T04's own V4 grant. Not folded into {@link #assertInsertAndSelectSucceedUpdateAndDeleteAreDenied}
+     * (the shared {@code GRANTED_TABLES} helper) - that helper's SELECT/UPDATE probes are hardcoded
+     * around {@code delivery_log}'s own {@code source_event_key}/{@code outcome} columns, which
+     * {@code processed_events} doesn't have (its own natural key, {@code event_key}, IS the row
+     * identifier - there is no separate correlator column). Self-contained here instead. */
+    @Test
+    void notificationAppCanInsertAndSelectButNotUpdateOrDeleteOnProcessedEvents() throws SQLException {
+        String eventKey = "it-processed-events";
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
+            try (PreparedStatement insert = app.prepareStatement(
+                    "INSERT INTO notifications.processed_events (event_key, event_type) VALUES (?, 'test.event')")) {
+                insert.setString(1, eventKey);
+                insert.execute();
+            }
+
+            try (PreparedStatement select = app.prepareStatement(
+                    "SELECT count(*) FROM notifications.processed_events WHERE event_key = ?")) {
+                select.setString(1, eventKey);
+                try (ResultSet resultSet = select.executeQuery()) {
+                    resultSet.next();
+                    assertThat(resultSet.getInt(1))
+                            .as("SELECT must see the row notification_app just inserted")
+                            .isEqualTo(1);
+                }
+            }
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement update = app.prepareStatement(
+                        "UPDATE notifications.processed_events SET event_type = 'other' WHERE event_key = ?")) {
+                    update.setString(1, eventKey);
+                    update.execute();
+                }
+            })
+                    .as("UPDATE on processed_events must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement delete = app.prepareStatement(
+                        "DELETE FROM notifications.processed_events WHERE event_key = ?")) {
+                    delete.setString(1, eventKey);
+                    delete.execute();
+                }
+            })
+                    .as("DELETE on processed_events must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+        }
+
+        try (Connection admin = adminConnection();
+             PreparedStatement cleanup = admin.prepareStatement(
+                     "DELETE FROM notifications.processed_events WHERE event_key = ?")) {
+            cleanup.setString(1, eventKey);
+            cleanup.execute();
         }
     }
 
@@ -274,7 +334,6 @@ class NotificationBaselineMigrationIntegrationTest {
             case "contact_projection" -> "UPDATE notifications.contact_projection SET display_name = 'x'";
             case "channel_preferences" -> "UPDATE notifications.channel_preferences SET enabled = false";
             case "templates" -> "UPDATE notifications.templates SET body = 'x'";
-            case "processed_events" -> "UPDATE notifications.processed_events SET event_type = 'x'";
             case "inapp_notifications" -> "UPDATE notifications.inapp_notifications SET title = 'x'";
             case "delivery_retry" -> "UPDATE notifications.delivery_retry SET attempt = 2";
             case "shedlock" -> "UPDATE notifications.shedlock SET locked_by = 'x'";
@@ -287,7 +346,6 @@ class NotificationBaselineMigrationIntegrationTest {
             case "contact_projection" -> "DELETE FROM notifications.contact_projection";
             case "channel_preferences" -> "DELETE FROM notifications.channel_preferences";
             case "templates" -> "DELETE FROM notifications.templates";
-            case "processed_events" -> "DELETE FROM notifications.processed_events";
             case "inapp_notifications" -> "DELETE FROM notifications.inapp_notifications";
             case "delivery_retry" -> "DELETE FROM notifications.delivery_retry";
             case "shedlock" -> "DELETE FROM notifications.shedlock";
@@ -304,8 +362,6 @@ class NotificationBaselineMigrationIntegrationTest {
                     + "VALUES ('00000000-0000-0000-0000-000000000001', 'SECURITY', 'EMAIL')";
             case "templates" -> "INSERT INTO notifications.templates (name, channel, version, body) "
                     + "VALUES ('it-denied', 'EMAIL', 1, 'body')";
-            case "processed_events" -> "INSERT INTO notifications.processed_events (event_key, event_type) "
-                    + "VALUES ('it-denied', 'test')";
             case "inapp_notifications" -> "INSERT INTO notifications.inapp_notifications "
                     + "(notification_uuid, account_uuid, category, title, body) VALUES "
                     + "('00000000-0000-0000-0000-000000000002', "

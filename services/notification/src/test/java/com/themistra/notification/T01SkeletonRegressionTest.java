@@ -205,13 +205,14 @@ class T01SkeletonRegressionTest {
     /** Kimi Phase 11 Gap 5: T01's own frozen brief "Out" scope excluded any production class beyond
      * the bare Application class - a premature config/entity class added in that task would not
      * fail any other test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads
-     * one named file. T03 is the task that legitimately ends the bare-skeleton era (its own frozen
-     * brief authorizes exactly these 7 files: 4 {@code @ConfigurationProperties} records, the
-     * profile-conditional link-URL validator, {@code PublicEndpoints}, {@code ResourceServerConfig});
-     * this list is updated to name them explicitly rather than loosened to "at least N files" -
-     * an unnamed-count assertion would silently tolerate a stray file T03 never authorized. */
+     * one named file. T03 ended the bare-skeleton era (7 files); T04 (Kimi Phase 3 Finding #3) adds
+     * 4 more: {@code ProcessedEvent}/{@code ProcessedEventRepository}/{@code IdempotencyGuard}
+     * (idempotency ledger, L1) and {@code ClockConfig} (this module's first injectable
+     * {@code Clock} bean). This list is updated to name all 12 explicitly rather than loosened to
+     * "at least N files" - an unnamed-count assertion would silently tolerate a stray file no task
+     * ever authorized. */
     @Test
-    void noExtraProductionClassesExistBeyondT03sOwnAuthorizedSet() throws IOException {
+    void noExtraProductionClassesExistBeyondT04sOwnAuthorizedSet() throws IOException {
         Path mainSourceDir = Path.of("src/main/java/com/themistra/notification");
 
         try (Stream<Path> files = Files.walk(mainSourceDir)) {
@@ -222,13 +223,17 @@ class T01SkeletonRegressionTest {
                     .toList();
             assertThat(javaFiles).containsExactly(
                     "NotificationServiceApplication.java",
+                    "common/ClockConfig.java",
                     "common/PublicEndpoints.java",
                     "common/ResourceServerConfig.java",
                     "common/config/EmailProperties.java",
                     "common/config/InappProperties.java",
                     "common/config/LinkProperties.java",
                     "common/config/LinkPropertiesStartupValidation.java",
-                    "common/config/RetryProperties.java");
+                    "common/config/RetryProperties.java",
+                    "consumer/IdempotencyGuard.java",
+                    "consumer/ProcessedEvent.java",
+                    "consumer/ProcessedEventRepository.java");
         }
     }
 
