@@ -21,6 +21,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -71,6 +73,20 @@ class NotificationBaselineMigrationIntegrationTest {
         try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
             statement.execute("CREATE SCHEMA IF NOT EXISTS notifications");
             statement.execute("CREATE EXTENSION IF NOT EXISTS citext SCHEMA notifications");
+
+            // Kimi Phase 11 Gap #5: confirms the pre-step actually landed citext where V1's own
+            // narrowed search_path needs it, rather than trusting the CREATE EXTENSION call silently.
+            try (ResultSet resultSet = statement.executeQuery(
+                    "SELECT n.nspname FROM pg_extension e "
+                            + "JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'citext'")) {
+                assertThat(resultSet.next())
+                        .as("citext extension must be installed for this pre-step to have done anything")
+                        .isTrue();
+                assertThat(resultSet.getString("nspname"))
+                        .as("citext must live in notifications - V1's SET search_path TO notifications "
+                                + "makes any other schema's install invisible to CREATE TABLE")
+                        .isEqualTo("notifications");
+            }
         }
 
         Flyway.configure()
@@ -167,6 +183,27 @@ class NotificationBaselineMigrationIntegrationTest {
                 .doesNotThrowAnyException();
     }
 
+    /** Kimi Phase 11 Gap #2: the test above only proves Flyway's own bookkeeping skips an
+     * already-applied version - it never re-executes V2's SQL, so it can't catch a real regression
+     * in V2's own {@code IF NOT EXISTS} guard or its GRANT statements' idempotency. This test
+     * re-executes V2's actual file content directly against the admin connection a second time (V2
+     * already ran once via the {@code @BeforeAll} migration), then re-proves the grant is still
+     * exactly as scoped afterward. */
+    @Test
+    void v2sOwnSqlIsIdempotentWhenReExecutedDirectlyNotJustSkippedByFlyway() throws IOException, SQLException {
+        String v2Sql = Files.readString(Path.of("src/main/resources/db/migration/V2__notification_app_role_and_grants.sql"));
+
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            assertThatCode(() -> statement.execute(v2Sql))
+                    .as("V2's own CREATE ROLE guard and GRANT statements must tolerate a direct re-run")
+                    .doesNotThrowAnyException();
+        }
+
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
+            assertInsertAndSelectSucceedUpdateAndDeleteAreDenied(app, "delivery_log");
+        }
+    }
+
     @Test
     void notificationAppRoleRequiresItsProvisionedPassword() {
         assertThatThrownBy(() -> connectAsNotificationApp("definitely-wrong-password"))
@@ -205,8 +242,57 @@ class NotificationBaselineMigrationIntegrationTest {
                             .isInstanceOf(SQLException.class)
                             .hasMessageContaining("permission denied");
                 }
+                // Kimi Phase 11 Gap #3: SELECT+INSERT denial doesn't prove UPDATE/DELETE are denied
+                // too - a regression granting only those (without SELECT/INSERT) would still pass
+                // the two checks above. The WHERE predicate targets a row that doesn't exist; Postgres
+                // checks table-level privilege before any row is matched, so denial fires regardless.
+                try (Statement statement = app.createStatement()) {
+                    assertThatThrownBy(() -> statement.execute(noWhereUpdateStatementFor(table)))
+                            .as("UPDATE on %s must be denied for notification_app (not AC2's one named table)", table)
+                            .isInstanceOf(SQLException.class)
+                            .hasMessageContaining("permission denied");
+                }
+                try (Statement statement = app.createStatement()) {
+                    assertThatThrownBy(() -> statement.execute(noWhereDeleteStatementFor(table)))
+                            .as("DELETE on %s must be denied for notification_app (not AC2's one named table)", table)
+                            .isInstanceOf(SQLException.class)
+                            .hasMessageContaining("permission denied");
+                }
             }
         }
+    }
+
+    // Deliberately no WHERE clause: an UPDATE/DELETE predicate referencing a column would be denied
+    // as soon as Postgres needs SELECT to evaluate it, even if UPDATE/DELETE were mistakenly granted
+    // on the table - masking exactly the regression this check exists to catch. A mutation test
+    // (temporarily granting UPDATE on notifications.templates in V2, confirming this test then fails
+    // with no exception thrown, then reverting) caught this the first time these fixtures had a
+    // WHERE clause and proved the fix; both revert cleanly since these run against an ephemeral
+    // Testcontainers instance discarded after the test.
+    private static String noWhereUpdateStatementFor(String table) {
+        return switch (table) {
+            case "contact_projection" -> "UPDATE notifications.contact_projection SET display_name = 'x'";
+            case "channel_preferences" -> "UPDATE notifications.channel_preferences SET enabled = false";
+            case "templates" -> "UPDATE notifications.templates SET body = 'x'";
+            case "processed_events" -> "UPDATE notifications.processed_events SET event_type = 'x'";
+            case "inapp_notifications" -> "UPDATE notifications.inapp_notifications SET title = 'x'";
+            case "delivery_retry" -> "UPDATE notifications.delivery_retry SET attempt = 2";
+            case "shedlock" -> "UPDATE notifications.shedlock SET locked_by = 'x'";
+            default -> throw new IllegalArgumentException("no UPDATE fixture for " + table);
+        };
+    }
+
+    private static String noWhereDeleteStatementFor(String table) {
+        return switch (table) {
+            case "contact_projection" -> "DELETE FROM notifications.contact_projection";
+            case "channel_preferences" -> "DELETE FROM notifications.channel_preferences";
+            case "templates" -> "DELETE FROM notifications.templates";
+            case "processed_events" -> "DELETE FROM notifications.processed_events";
+            case "inapp_notifications" -> "DELETE FROM notifications.inapp_notifications";
+            case "delivery_retry" -> "DELETE FROM notifications.delivery_retry";
+            case "shedlock" -> "DELETE FROM notifications.shedlock";
+            default -> throw new IllegalArgumentException("no DELETE fixture for " + table);
+        };
     }
 
     private static String minimalInsertFixtureFor(String table) {
@@ -232,6 +318,51 @@ class NotificationBaselineMigrationIntegrationTest {
                     + "VALUES ('it-denied', now(), now(), 'it')";
             default -> throw new IllegalArgumentException("no INSERT fixture for " + table);
         };
+    }
+
+    /** Kimi Phase 11 Gap #1: {@code T01SkeletonRegressionTest}'s own
+     * {@code finalNameAndFlywayPluginMirrorTheSiblingConvention} already guards {@code <schemas>}
+     * and the no-{@code <executions>} rule, but not the connection details AC4's real
+     * {@code mvn flyway:migrate} actually depends on - not modified here since T02's own scope
+     * excludes touching T01's test file; this is T02's own copy of that same guard, scoped to what
+     * this task's AC4 depends on. */
+    @Test
+    void flywayPluginConnectionDetailsMatchTheDocumentedLocalDevSetup() throws IOException {
+        String pom = Files.readString(Path.of("pom.xml"));
+        String flywayPlugin = pluginBlock(pom, "flyway-maven-plugin");
+
+        assertThat(flywayPlugin).contains("<url>jdbc:postgresql://localhost:5432/checky</url>");
+        assertThat(flywayPlugin).contains("<user>checky</user>");
+        assertThat(flywayPlugin).contains("<password>checky-local-only</password>");
+        assertThat(flywayPlugin).contains("<schemas>notifications</schemas>");
+    }
+
+    private static String pluginBlock(String pomContent, String artifactId) {
+        String pattern = "(?s)<plugin>\\s*<groupId>[^<]*</groupId>\\s*<artifactId>"
+                + Pattern.quote(artifactId) + "</artifactId>.*?</plugin>";
+        Matcher matcher = Pattern.compile(pattern).matcher(pomContent);
+        if (!matcher.find()) {
+            throw new AssertionError("no <plugin> block found for artifactId " + artifactId);
+        }
+        return matcher.group();
+    }
+
+    /** Kimi Phase 11 Gap #4: V2's own header comment documents the secrets-discipline rules
+     * (no committed password, no hardcoded database name, dynamic {@code current_database()}) in
+     * prose, but nothing failed if a future edit violated them. Comments are stripped first, since
+     * the header comment legitimately mentions {@code PASSWORD} as documentation of the one-time
+     * local-dev step (README/Phase 9), not as executable SQL. */
+    @Test
+    void v2ContainsNoCommittedPasswordOrHardcodedDatabaseName() throws IOException {
+        String v2Sql = Files.readString(Path.of("src/main/resources/db/migration/V2__notification_app_role_and_grants.sql"));
+        String codeOnly = v2Sql.replaceAll("(?m)^\\s*--.*$", "");
+
+        assertThat(codeOnly).as("no committed password in V2's own executable SQL")
+                .doesNotContainIgnoringCase("PASSWORD");
+        assertThat(codeOnly).as("no hardcoded database name - must target current_database() dynamically")
+                .doesNotContain("checky");
+        assertThat(codeOnly).as("GRANT CONNECT must target current_database(), not a literal name")
+                .contains("current_database()");
     }
 
     @Test
