@@ -206,15 +206,15 @@ class T01SkeletonRegressionTest {
      * the bare Application class - a premature config/entity class added in that task would not
      * fail any other test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads
      * one named file. T03 ended the bare-skeleton era (7 files); T04 added 4 more; T05 added 3
-     * more; T06 added 5 more; T08 adds 3 more: {@code ChannelPreference}/
-     * {@code ChannelPreferenceRepository}/{@code PreferenceResolver} (opt-out resolution, L6).
-     * T08's own frozen brief did not name this file in its own "Files to Modify" list - the same
-     * recurring gap T04/T05/T06 each hit in turn - fixed here as a required, disclosed deviation
-     * (flagged in Phase 6's own implementation notes) rather than left to break the build. This
-     * list is updated to name all 23 explicitly rather than loosened to "at least N files" - an
+     * more; T06 added 5 more; T08 added 3 more; T09 adds 3 more: {@code Template}/
+     * {@code TemplateRenderer}/{@code TemplateRepository} (versioned rendering, L9). T09's own
+     * frozen brief did not name this file in its own "Files to Modify" list - the same recurring
+     * gap T04/T05/T06/T08 each hit in turn - fixed here as a required, disclosed deviation (flagged
+     * in Phase 6's own implementation notes) rather than left to break the build. This list is
+     * updated to name all 26 explicitly rather than loosened to "at least N files" - an
      * unnamed-count assertion would silently tolerate a stray file no task ever authorized. */
     @Test
-    void noExtraProductionClassesExistBeyondT08sOwnAuthorizedSet() throws IOException {
+    void noExtraProductionClassesExistBeyondT09sOwnAuthorizedSet() throws IOException {
         Path mainSourceDir = Path.of("src/main/java/com/themistra/notification");
 
         try (Stream<Path> files = Files.walk(mainSourceDir)) {
@@ -246,7 +246,10 @@ class T01SkeletonRegressionTest {
                     "preference/ContactProjection.java",
                     "preference/ContactProjectionRepository.java",
                     "preference/ContactProjectionUpdater.java",
-                    "preference/PreferenceResolver.java");
+                    "preference/PreferenceResolver.java",
+                    "template/Template.java",
+                    "template/TemplateRenderer.java",
+                    "template/TemplateRepository.java");
         }
     }
 

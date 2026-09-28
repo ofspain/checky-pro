@@ -41,15 +41,16 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static final List<String> GRANTED_TABLES = List.of("delivery_log");
     // T02's own literal scope grants only delivery_log; T04's own V4 additionally grants
-    // processed_events, T05's own V5 grants contact_projection, and T08's own V6 grants
-    // channel_preferences (all three tested separately below - none fit
-    // assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own delivery_log-shaped assumptions,
-    // and channel_preferences' own grant is SELECT-only, unlike the other two). The remaining three
-    // baseline tables and shedlock each get their own grant migration in the task that first needs
-    // runtime access to them (mirroring crypto-service's own incremental-grant pattern) - they are
-    // therefore expected to remain fully inaccessible to notification_app as of this task.
+    // processed_events, T05's own V5 grants contact_projection, T08's own V6 grants
+    // channel_preferences, and T09's own V7 grants templates (all four tested separately below -
+    // none fit assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own delivery_log-shaped
+    // assumptions, and channel_preferences'/templates' own grants are SELECT-only, unlike the other
+    // two). The remaining two baseline tables and shedlock each get their own grant migration in
+    // the task that first needs runtime access to them (mirroring crypto-service's own
+    // incremental-grant pattern) - they are therefore expected to remain fully inaccessible to
+    // notification_app as of this task.
     private static final List<String> UNGRANTED_TABLES = List.of(
-            "templates", "inapp_notifications", "delivery_retry", "shedlock");
+            "inapp_notifications", "delivery_retry", "shedlock");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -172,7 +173,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7");
         }
     }
 
@@ -409,6 +410,54 @@ class NotificationBaselineMigrationIntegrationTest {
         }
     }
 
+    /** T09's own V7 grant. Same `SELECT`-only shape as T08's `channel_preferences` grant - the
+     * seeded row is already present from `V3__seed_launch_templates.sql`, no admin-inserted fixture
+     * needed. */
+    @Test
+    void notificationAppCanSelectButNotInsertUpdateOrDeleteOnTemplates() throws SQLException {
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
+            try (Statement select = app.createStatement();
+                 ResultSet resultSet = select.executeQuery(
+                         "SELECT count(*) FROM notifications.templates WHERE name = 'email.verify'")) {
+                resultSet.next();
+                assertThat(resultSet.getInt(1))
+                        .as("SELECT must see the seeded email.verify row")
+                        .isEqualTo(1);
+            }
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement insert = app.prepareStatement(
+                        "INSERT INTO notifications.templates (name, channel, version, body) "
+                                + "VALUES ('it-denied', 'EMAIL', 1, 'body')")) {
+                    insert.execute();
+                }
+            })
+                    .as("INSERT on templates must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement update = app.prepareStatement(
+                        "UPDATE notifications.templates SET body = 'x' WHERE name = 'email.verify'")) {
+                    update.execute();
+                }
+            })
+                    .as("UPDATE on templates must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement delete = app.prepareStatement(
+                        "DELETE FROM notifications.templates WHERE name = 'email.verify'")) {
+                    delete.execute();
+                }
+            })
+                    .as("DELETE on templates must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+        }
+    }
+
     @Test
     void notificationAppHasNoAccessAtAllToTablesOutsideAc2Scope() throws SQLException {
         try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
@@ -457,7 +506,6 @@ class NotificationBaselineMigrationIntegrationTest {
     // Testcontainers instance discarded after the test.
     private static String noWhereUpdateStatementFor(String table) {
         return switch (table) {
-            case "templates" -> "UPDATE notifications.templates SET body = 'x'";
             case "inapp_notifications" -> "UPDATE notifications.inapp_notifications SET title = 'x'";
             case "delivery_retry" -> "UPDATE notifications.delivery_retry SET attempt = 2";
             case "shedlock" -> "UPDATE notifications.shedlock SET locked_by = 'x'";
@@ -467,7 +515,6 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static String noWhereDeleteStatementFor(String table) {
         return switch (table) {
-            case "templates" -> "DELETE FROM notifications.templates";
             case "inapp_notifications" -> "DELETE FROM notifications.inapp_notifications";
             case "delivery_retry" -> "DELETE FROM notifications.delivery_retry";
             case "shedlock" -> "DELETE FROM notifications.shedlock";
@@ -477,8 +524,6 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static String minimalInsertFixtureFor(String table) {
         return switch (table) {
-            case "templates" -> "INSERT INTO notifications.templates (name, channel, version, body) "
-                    + "VALUES ('it-denied', 'EMAIL', 1, 'body')";
             case "inapp_notifications" -> "INSERT INTO notifications.inapp_notifications "
                     + "(notification_uuid, account_uuid, category, title, body) VALUES "
                     + "('00000000-0000-0000-0000-000000000002', "
