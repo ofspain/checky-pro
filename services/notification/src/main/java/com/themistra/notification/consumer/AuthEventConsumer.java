@@ -5,11 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.notification.consumer.dto.EmailRequestedEvent;
 import com.themistra.notification.consumer.dto.UserLifecycleEvent;
 import com.themistra.notification.preference.ContactProjectionUpdater;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * The first real {@code @KafkaListener} in this codebase - consumes {@code auth.email.requested}
@@ -36,6 +39,8 @@ import java.util.Map;
  */
 @Component
 public class AuthEventConsumer {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthEventConsumer.class);
 
     private final ObjectMapper objectMapper;
     private final IdempotencyGuard idempotencyGuard;
@@ -67,7 +72,8 @@ public class AuthEventConsumer {
             return;
         }
 
-        contactProjectionUpdater.upsertEmail(event.accountUuid(), event.email(), event.occurredAt());
+        logProjectionOutcome(event.accountUuid(),
+                contactProjectionUpdater.upsertEmail(event.accountUuid(), event.email(), event.occurredAt()));
 
         String notificationKind = switch (event.purpose()) {
             case "verify_email" -> "verify_email";
@@ -97,11 +103,25 @@ public class AuthEventConsumer {
             return;
         }
 
-        contactProjectionUpdater.upsertEmail(event.accountUuid(), event.email(), event.occurredAt());
+        logProjectionOutcome(event.accountUuid(),
+                contactProjectionUpdater.upsertEmail(event.accountUuid(), event.email(), event.occurredAt()));
 
         if (!"user.registered".equals(event.eventType())) {
             return;
         }
         notificationDispatcher.dispatch(event.accountUuid(), "user.registered", Map.of());
+    }
+
+    /**
+     * Kimi Phase 8 Finding #8 / self-review Finding 2: {@code upsertEmail}'s own {@code boolean}
+     * return (accepted vs. rejected as stale by the out-of-order guard) was previously discarded
+     * entirely. Logged at {@code DEBUG}, not branched on - nothing in this task's own scope needs
+     * to change behavior based on the outcome, only to make it observable.
+     */
+    private void logProjectionOutcome(UUID accountUuid, boolean updated) {
+        if (log.isDebugEnabled()) {
+            log.debug("Contact projection {} for accountUuid={}",
+                    updated ? "updated" : "skipped (stale/out-of-order)", accountUuid);
+        }
     }
 }

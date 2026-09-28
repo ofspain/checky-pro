@@ -16,6 +16,13 @@ import java.util.UUID;
  * caller's own {@code ContactProjectionUpdater.upsertEmail} call (which runs before
  * {@code dispatch}, in the same transaction) ensures that projection is at least as fresh as this
  * event allows.</p>
+ *
+ * <p>Lives in {@code consumer/} today because the frozen brief names this exact package (Kimi Phase
+ * 8 Finding #7) - once a real implementation lands in a future {@code delivery/}-style package
+ * (task 11/12), that package will depend back on this one, which is architecturally backward.
+ * Relocating this interface to a neutral package (e.g. {@code notification.delivery.api}) is a
+ * reasonable follow-up for whichever task first adds a real implementer, not required by T06's own
+ * scope.</p>
  */
 public interface NotificationDispatcher {
 
