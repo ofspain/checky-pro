@@ -134,12 +134,68 @@ class AuthEventConsumerIntegrationTest {
                                 && "raw-token-xyz".equals(c.eventData().get("token"))))
                         .isTrue());
 
-        int callsBeforeRedelivery = SpyDispatcherConfig.CALLS.size();
+        // Kimi Phase 11 Gap #2: filters on this test's own accountUuid rather than comparing the
+        // shared static spy list's total size - immune to ordering/interleaving with other test
+        // methods in this class, which all use their own distinct, randomly-generated accountUuid.
         kafkaTemplate.send("auth.email.requested", accountUuid.toString(), json);
         await().pollDelay(Duration.ofSeconds(3)).atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(SpyDispatcherConfig.CALLS.size())
+                assertThat(SpyDispatcherConfig.CALLS.stream()
+                        .filter(c -> c.accountUuid().equals(accountUuid))
+                        .count())
                         .as("redelivery of the same event must not re-dispatch")
-                        .isEqualTo(callsBeforeRedelivery));
+                        .isEqualTo(1));
+    }
+
+    /** Kimi Phase 11 Gap #3: the integration-level counterpart of
+     * {@code AuthEventConsumerTest.shouldSendPasswordResetEmailOnAuthEmailRequestedReset} - the
+     * unit test proves the routing logic, this proves the real deserialization/wiring path for the
+     * same purpose value, which {@code emailRequestedVerifyEmailIsConsumedDedupedProjectedAndDispatched}
+     * does not exercise. */
+    @Test
+    void passwordResetIsConsumedDedupedProjectedAndDispatched() {
+        UUID accountUuid = UUID.randomUUID();
+        String occurredAt = Instant.parse("2026-01-06T00:00:00Z").toString();
+        String eventKey = accountUuid + ":password_reset:" + occurredAt;
+        String json = "{\"accountUuid\":\"" + accountUuid + "\",\"purpose\":\"password_reset\","
+                + "\"token\":\"raw-token-reset\",\"email\":\"scratch6@example.com\","
+                + "\"occurredAt\":\"" + occurredAt + "\"}";
+
+        kafkaTemplate.send("auth.email.requested", accountUuid.toString(), json);
+
+        await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->
+                assertThat(processedEventRepository.existsById(eventKey)).isTrue());
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(emailForAccount(accountUuid)).isEqualTo("scratch6@example.com"));
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(SpyDispatcherConfig.CALLS.stream()
+                        .anyMatch(c -> c.accountUuid().equals(accountUuid)
+                                && c.notificationKind().equals("password_reset")
+                                && "raw-token-reset".equals(c.eventData().get("token"))))
+                        .isTrue());
+    }
+
+    /** Kimi Phase 11 Gap #5: proves the consumer survives and keeps processing after a poisoned
+     * (non-JSON) message on the same topic, rather than asserting a specific non-existent row for
+     * the poison message itself (which carries no extractable accountUuid to query by). Frozen
+     * brief Finding #7's own accepted disposition: exceptions propagate, the container's default
+     * error handler retries and then moves past the record - this test locks that the *next* real
+     * message on the same partition is still consumed normally afterward. */
+    @Test
+    void malformedMessageDoesNotPermanentlyPoisonTheListener() {
+        kafkaTemplate.send("auth.email.requested", "malformed-key", "{not valid json");
+
+        UUID accountUuid = UUID.randomUUID();
+        String occurredAt = Instant.parse("2026-01-07T00:00:00Z").toString();
+        String eventKey = accountUuid + ":verify_email:" + occurredAt;
+        String json = "{\"accountUuid\":\"" + accountUuid + "\",\"purpose\":\"verify_email\","
+                + "\"token\":\"raw-token-after-poison\",\"email\":\"scratch7@example.com\","
+                + "\"occurredAt\":\"" + occurredAt + "\"}";
+        kafkaTemplate.send("auth.email.requested", accountUuid.toString(), json);
+
+        await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->
+                assertThat(processedEventRepository.existsById(eventKey))
+                        .as("a later, well-formed message must still be consumed after a poisoned one")
+                        .isTrue());
     }
 
     @Test

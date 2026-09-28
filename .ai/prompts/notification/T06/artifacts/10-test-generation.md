@@ -97,3 +97,47 @@ strategy is explicitly out of this task's own scope (Finding #7's own frozen dis
 + 20 new). Re-ran the full suite twice more (`AuthEventConsumerIntegrationTest` specifically three
 times) to confirm the group-id isolation fix from Phase 6/7's own noted flakiness holds; all runs
 clean.
+
+## Addendum (post Phase 11) — all 9 gaps verified against source and accepted
+
+Kimi's Phase 11 review raised 9 gaps, all independently verified true before acting (none false).
+All 9 are added (127 tests → from 118):
+
+- **Gap #1** (no permanent guard that the idempotency short-circuit itself exists) — added
+  `AuthEventConsumerTest.bothListenersShortCircuitOnTheIdempotencyGuardBeforeAnyOtherCall`, a static
+  text-scan test mirroring `ContactProjectionRepository`'s own Gap #1 precedent from T05.
+- **Gap #2** (fragile static-list-size redelivery assertion) — rewrote
+  `emailRequestedVerifyEmailIsConsumedDedupedProjectedAndDispatched`'s redelivery check to filter
+  `SpyDispatcherConfig.CALLS` by this test's own `accountUuid` and assert a count of exactly `1`,
+  immune to ordering/interleaving with the class's other test methods.
+- **Gap #3** (no integration-level `password_reset` coverage) — added
+  `AuthEventConsumerIntegrationTest.passwordResetIsConsumedDedupedProjectedAndDispatched`.
+- **Gap #4** (listener annotation metadata unlocked) — added
+  `AuthEventConsumerTest.listenerMethodsAreAnnotatedWithTheCorrectTopicsAndAreTransactional`,
+  reflection-based, asserting both `@KafkaListener(topics = ...)` values and both `@Transactional`
+  presences.
+- **Gap #5** (no malformed-message handling proof) — added
+  `AuthEventConsumerIntegrationTest.malformedMessageDoesNotPermanentlyPoisonTheListener`: sends a
+  non-JSON message first, then a well-formed one, and asserts the well-formed message is still
+  consumed - proving the poisoned record doesn't wedge the listener, without asserting a specific
+  non-existent row for the poison message itself (which carries no extractable key to query by).
+- **Gap #6** (status vs. eventType routing untested independently) — added two
+  `AuthEventConsumerTest` methods:
+  `dispatchDependsOnEventTypeNotStatusForARegisteredEventWithAnUnusualStatus`
+  (`status=SUSPENDED, eventType=user.registered` → dispatched) and
+  `noDispatchForAnActiveStatusEventWithANonRegisteredEventType`
+  (`status=ACTIVE, eventType=user.reinstated` → not dispatched).
+- **Gap #7** (dispatch-on-stale-projection semantics untested) — added
+  `AuthEventConsumerTest.dispatchStillHappensWhenTheProjectionUpsertIsRejectedAsStale`, stubbing
+  `upsertEmail` to return `false` and asserting `dispatch` is still called.
+- **Gap #8** (no proof the real `NoOpNotificationDispatcher` is the resolved Spring bean) — added
+  `IdempotencyGuardIntegrationTest.theRealNoOpDispatcherIsTheResolvedSpringBean` - the one existing
+  test class whose Spring context never overrides `NotificationDispatcher` with a spy/throwing test
+  bean, making it the correct place for this proof.
+- **Gap #9** (`auto-offset-reset`/`group-id` not asserted) — added
+  `ApplicationPropertiesJpaConfigTest.kafkaConsumerGroupIdAndOffsetResetAreConfigured`, mirroring
+  that file's own existing direct-properties-read technique (no Spring context, no Docker).
+
+**Verification:** `mvn -pl services/notification clean verify` — 127 tests, 0 failures. Ran
+`AuthEventConsumerIntegrationTest` (now 6 tests) three times in isolation to confirm Gap #2's and
+Gap #5's own new tests are stable, not just passing once; all runs clean.

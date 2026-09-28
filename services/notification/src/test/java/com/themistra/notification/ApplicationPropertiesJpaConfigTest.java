@@ -66,4 +66,17 @@ class ApplicationPropertiesJpaConfigTest {
         Properties properties = loadApplicationProperties();
         assertThat(properties.getProperty("spring.kafka.bootstrap-servers")).isNotBlank();
     }
+
+    /** Kimi Phase 11 Gap #9 (T06 Finding #5): {@code latest} is a deliberate choice, not a default
+     * left unset - a newly deployed/rebalanced consumer must not replay historical
+     * verification/reset links or re-welcome inactive accounts. Locks the committed value so a
+     * future edit can't silently drop back to Kafka's own {@code earliest} default. */
+    @Test
+    void kafkaConsumerGroupIdAndOffsetResetAreConfigured() throws IOException {
+        Properties properties = loadApplicationProperties();
+        assertThat(properties.getProperty("spring.kafka.consumer.group-id"))
+                .isEqualTo("notification-service");
+        assertThat(properties.getProperty("spring.kafka.consumer.auto-offset-reset"))
+                .isEqualTo("latest");
+    }
 }

@@ -107,6 +107,19 @@ class IdempotencyGuardIntegrationTest {
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    @Autowired
+    private NotificationDispatcher notificationDispatcher;
+
+    /** Kimi Phase 11 Gap #8: this class is the one place in the suite that boots a real Spring
+     * context without overriding {@link NotificationDispatcher} with a test spy/throwing bean
+     * (unlike {@code AuthEventConsumerIntegrationTest} and
+     * {@code AuthEventConsumerTransactionRollbackIntegrationTest}) - so it is the only place that
+     * can prove the real production bean is what actually gets component-scanned and wired. */
+    @Test
+    void theRealNoOpDispatcherIsTheResolvedSpringBean() {
+        assertThat(notificationDispatcher).isInstanceOf(NoOpNotificationDispatcher.class);
+    }
+
     @Test
     void recordIfNewJoinsAnExternallyOpenedTransactionAndRollsBackWithIt() {
         String eventKey = "it-rollback-" + System.nanoTime();

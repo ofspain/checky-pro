@@ -4,11 +4,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.notification.preference.ContactProjectionUpdater;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -179,5 +186,78 @@ class AuthEventConsumerTest {
                 "a@example.com", occurredAt));
 
         verify(contactProjectionUpdater).upsertEmail(accountUuid, "a@example.com", occurredAt);
+    }
+
+    /** Kimi Phase 11 Gap #1: a permanent, cheap static guard for the exact idempotency
+     * short-circuit shape both behavioral tests above depend on - a future edit that reordered the
+     * guard after the projection/dispatch calls, or removed it entirely, would otherwise only be
+     * caught by re-running Phase 10's own manual mutation test by hand. */
+    @Test
+    void bothListenersShortCircuitOnTheIdempotencyGuardBeforeAnyOtherCall() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/themistra/notification/consumer/AuthEventConsumer.java"));
+
+        assertThat(source).contains("if (!idempotencyGuard.recordIfNew(eventKey, event.purpose())) {");
+        assertThat(source).contains("if (!idempotencyGuard.recordIfNew(eventKey, event.eventType())) {");
+    }
+
+    /** Kimi Phase 11 Gap #4: locks the topic strings and the transaction boundary at the
+     * source-code level, not just via the integration tests' own observed behavior - a typo'd
+     * topic string would otherwise only surface as a silently-missing message against a real
+     * broker, not a test failure. */
+    @Test
+    void listenerMethodsAreAnnotatedWithTheCorrectTopicsAndAreTransactional() throws NoSuchMethodException {
+        Method onEmailRequested = AuthEventConsumer.class.getMethod("onEmailRequested", String.class);
+        Method onUserLifecycle = AuthEventConsumer.class.getMethod("onUserLifecycle", String.class);
+
+        assertThat(onEmailRequested.getAnnotation(KafkaListener.class).topics())
+                .containsExactly("auth.email.requested");
+        assertThat(onUserLifecycle.getAnnotation(KafkaListener.class).topics())
+                .containsExactly("auth.user.lifecycle");
+        assertThat(onEmailRequested.getAnnotation(Transactional.class)).isNotNull();
+        assertThat(onUserLifecycle.getAnnotation(Transactional.class)).isNotNull();
+    }
+
+    /** Kimi Phase 11 Gap #6: AC4's routing decision is based on {@code eventType}, not
+     * {@code status} - proven here by deliberately mismatching them, since every other test
+     * happens to pair them the way a real caller would. */
+    @Test
+    void dispatchDependsOnEventTypeNotStatusForARegisteredEventWithAnUnusualStatus() throws Exception {
+        UUID accountUuid = UUID.randomUUID();
+        Instant occurredAt = Instant.parse("2026-01-01T00:00:00Z");
+
+        consumer.onUserLifecycle(lifecycleJson(accountUuid, "SUSPENDED", "a@example.com",
+                "user.registered", occurredAt));
+
+        verify(notificationDispatcher).dispatch(accountUuid, "user.registered", Map.of());
+    }
+
+    /** The converse of the above: {@code status=ACTIVE} alone must never trigger dispatch when
+     * {@code eventType} says otherwise - the exact ambiguity this task's own eventType field was
+     * added to resolve (Phase 1's own blocker). */
+    @Test
+    void noDispatchForAnActiveStatusEventWithANonRegisteredEventType() throws Exception {
+        UUID accountUuid = UUID.randomUUID();
+        Instant occurredAt = Instant.parse("2026-01-01T00:00:00Z");
+
+        consumer.onUserLifecycle(lifecycleJson(accountUuid, "ACTIVE", "a@example.com",
+                "user.reinstated", occurredAt));
+
+        verifyNoInteractions(notificationDispatcher);
+    }
+
+    /** Kimi Phase 11 Gap #7: {@code upsertEmail}'s boolean return (accepted vs. rejected as stale)
+     * is currently discarded, not branched on - locks that dispatch still happens even when the
+     * projection write was rejected, so a future change that accidentally started skipping dispatch
+     * on a stale projection would fail this test, not slip through silently. */
+    @Test
+    void dispatchStillHappensWhenTheProjectionUpsertIsRejectedAsStale() throws Exception {
+        when(contactProjectionUpdater.upsertEmail(any(), any(), any())).thenReturn(false);
+        UUID accountUuid = UUID.randomUUID();
+
+        consumer.onEmailRequested(emailRequestedJson(accountUuid, "verify_email", "tok",
+                "a@example.com", Instant.parse("2026-01-01T00:00:00Z")));
+
+        verify(notificationDispatcher).dispatch(accountUuid, "verify_email", Map.of("token", "tok"));
     }
 }
