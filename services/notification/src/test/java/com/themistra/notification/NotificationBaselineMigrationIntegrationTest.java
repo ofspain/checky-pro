@@ -41,15 +41,15 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static final List<String> GRANTED_TABLES = List.of("delivery_log");
     // T02's own literal scope grants only delivery_log; T04's own V4 additionally grants
-    // processed_events and T05's own V5 grants contact_projection (both tested separately below -
-    // neither schema shape fits assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own
-    // delivery_log-shaped assumptions). The remaining four baseline tables and shedlock each get
-    // their own grant migration in the task that first needs runtime access to them (mirroring
-    // crypto-service's own incremental-grant pattern) - they are therefore expected to remain fully
-    // inaccessible to notification_app as of this task.
+    // processed_events, T05's own V5 grants contact_projection, and T08's own V6 grants
+    // channel_preferences (all three tested separately below - none fit
+    // assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own delivery_log-shaped assumptions,
+    // and channel_preferences' own grant is SELECT-only, unlike the other two). The remaining three
+    // baseline tables and shedlock each get their own grant migration in the task that first needs
+    // runtime access to them (mirroring crypto-service's own incremental-grant pattern) - they are
+    // therefore expected to remain fully inaccessible to notification_app as of this task.
     private static final List<String> UNGRANTED_TABLES = List.of(
-            "channel_preferences", "templates", "inapp_notifications",
-            "delivery_retry", "shedlock");
+            "templates", "inapp_notifications", "delivery_retry", "shedlock");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -172,7 +172,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6");
         }
     }
 
@@ -339,6 +339,76 @@ class NotificationBaselineMigrationIntegrationTest {
         }
     }
 
+    /** T08's own V6 grant (Kimi Phase 3 Finding #5). Unlike {@code processed_events}/
+     * {@code contact_projection}, this table's own grant is {@code SELECT} only - nothing in this
+     * codebase ever writes to {@code channel_preferences} (no write API exists anywhere in this
+     * spec), so the row this test selects is inserted as the admin role, not {@code notification_app}. */
+    @Test
+    void notificationAppCanSelectButNotInsertUpdateOrDeleteOnChannelPreferences() throws SQLException {
+        String accountUuid = "22222222-2222-2222-2222-222222222222";
+        try (Connection admin = adminConnection();
+             PreparedStatement insert = admin.prepareStatement(
+                     "INSERT INTO notifications.channel_preferences (account_uuid, category, channel, enabled) "
+                             + "VALUES (?::uuid, 'MARKETING', 'EMAIL', false)")) {
+            insert.setString(1, accountUuid);
+            insert.execute();
+        }
+
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
+            try (PreparedStatement select = app.prepareStatement(
+                    "SELECT enabled FROM notifications.channel_preferences WHERE account_uuid = ?::uuid")) {
+                select.setString(1, accountUuid);
+                try (ResultSet resultSet = select.executeQuery()) {
+                    resultSet.next();
+                    assertThat(resultSet.getBoolean("enabled"))
+                            .as("SELECT must see the row the admin role just inserted")
+                            .isFalse();
+                }
+            }
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement insert = app.prepareStatement(
+                        "INSERT INTO notifications.channel_preferences (account_uuid, category, channel) "
+                                + "VALUES (?::uuid, 'PAYMENT', 'EMAIL')")) {
+                    insert.setString(1, accountUuid);
+                    insert.execute();
+                }
+            })
+                    .as("INSERT on channel_preferences must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement update = app.prepareStatement(
+                        "UPDATE notifications.channel_preferences SET enabled = true WHERE account_uuid = ?::uuid")) {
+                    update.setString(1, accountUuid);
+                    update.execute();
+                }
+            })
+                    .as("UPDATE on channel_preferences must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement delete = app.prepareStatement(
+                        "DELETE FROM notifications.channel_preferences WHERE account_uuid = ?::uuid")) {
+                    delete.setString(1, accountUuid);
+                    delete.execute();
+                }
+            })
+                    .as("DELETE on channel_preferences must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+        }
+
+        try (Connection admin = adminConnection();
+             PreparedStatement cleanup = admin.prepareStatement(
+                     "DELETE FROM notifications.channel_preferences WHERE account_uuid = ?::uuid")) {
+            cleanup.setString(1, accountUuid);
+            cleanup.execute();
+        }
+    }
+
     @Test
     void notificationAppHasNoAccessAtAllToTablesOutsideAc2Scope() throws SQLException {
         try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
@@ -387,7 +457,6 @@ class NotificationBaselineMigrationIntegrationTest {
     // Testcontainers instance discarded after the test.
     private static String noWhereUpdateStatementFor(String table) {
         return switch (table) {
-            case "channel_preferences" -> "UPDATE notifications.channel_preferences SET enabled = false";
             case "templates" -> "UPDATE notifications.templates SET body = 'x'";
             case "inapp_notifications" -> "UPDATE notifications.inapp_notifications SET title = 'x'";
             case "delivery_retry" -> "UPDATE notifications.delivery_retry SET attempt = 2";
@@ -398,7 +467,6 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static String noWhereDeleteStatementFor(String table) {
         return switch (table) {
-            case "channel_preferences" -> "DELETE FROM notifications.channel_preferences";
             case "templates" -> "DELETE FROM notifications.templates";
             case "inapp_notifications" -> "DELETE FROM notifications.inapp_notifications";
             case "delivery_retry" -> "DELETE FROM notifications.delivery_retry";
@@ -409,9 +477,6 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static String minimalInsertFixtureFor(String table) {
         return switch (table) {
-            case "channel_preferences" -> "INSERT INTO notifications.channel_preferences "
-                    + "(account_uuid, category, channel) "
-                    + "VALUES ('00000000-0000-0000-0000-000000000001', 'SECURITY', 'EMAIL')";
             case "templates" -> "INSERT INTO notifications.templates (name, channel, version, body) "
                     + "VALUES ('it-denied', 'EMAIL', 1, 'body')";
             case "inapp_notifications" -> "INSERT INTO notifications.inapp_notifications "

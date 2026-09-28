@@ -206,17 +206,15 @@ class T01SkeletonRegressionTest {
      * the bare Application class - a premature config/entity class added in that task would not
      * fail any other test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads
      * one named file. T03 ended the bare-skeleton era (7 files); T04 added 4 more; T05 added 3
-     * more; T06 adds 5 more: {@code AuthEventConsumer}, {@code NotificationDispatcher} (the seam),
-     * {@code NoOpNotificationDispatcher} (its temporary implementation), and
-     * {@code consumer/dto/{EmailRequestedEvent,UserLifecycleEvent}} (deserialization records).
-     * T06's own frozen brief did not name this file in its own "Files to Modify" list - a real gap
-     * discovered during implementation, the same kind T04/T05 each hit in turn - fixed here as a
-     * required, disclosed deviation (flagged in Phase 6's own implementation notes) rather than
-     * left to break the build. This list is updated to name all 20 explicitly rather than loosened
-     * to "at least N files" - an unnamed-count assertion would silently tolerate a stray file no
-     * task ever authorized. */
+     * more; T06 added 5 more; T08 adds 3 more: {@code ChannelPreference}/
+     * {@code ChannelPreferenceRepository}/{@code PreferenceResolver} (opt-out resolution, L6).
+     * T08's own frozen brief did not name this file in its own "Files to Modify" list - the same
+     * recurring gap T04/T05/T06 each hit in turn - fixed here as a required, disclosed deviation
+     * (flagged in Phase 6's own implementation notes) rather than left to break the build. This
+     * list is updated to name all 23 explicitly rather than loosened to "at least N files" - an
+     * unnamed-count assertion would silently tolerate a stray file no task ever authorized. */
     @Test
-    void noExtraProductionClassesExistBeyondT06sOwnAuthorizedSet() throws IOException {
+    void noExtraProductionClassesExistBeyondT08sOwnAuthorizedSet() throws IOException {
         Path mainSourceDir = Path.of("src/main/java/com/themistra/notification");
 
         try (Stream<Path> files = Files.walk(mainSourceDir)) {
@@ -243,9 +241,12 @@ class T01SkeletonRegressionTest {
                     "consumer/ProcessedEventRepository.java",
                     "consumer/dto/EmailRequestedEvent.java",
                     "consumer/dto/UserLifecycleEvent.java",
+                    "preference/ChannelPreference.java",
+                    "preference/ChannelPreferenceRepository.java",
                     "preference/ContactProjection.java",
                     "preference/ContactProjectionRepository.java",
-                    "preference/ContactProjectionUpdater.java");
+                    "preference/ContactProjectionUpdater.java",
+                    "preference/PreferenceResolver.java");
         }
     }
 
