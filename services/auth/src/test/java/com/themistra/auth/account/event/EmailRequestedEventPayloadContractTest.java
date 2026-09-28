@@ -32,7 +32,7 @@ class EmailRequestedEventPayloadContractTest {
         JsonNode schema = objectMapper.readTree(Files.readString(SCHEMA_PATH));
 
         EmailRequestedEventPayload payload = new EmailRequestedEventPayload(
-                UUID.randomUUID(), "verify_email", "raw-token-value",
+                UUID.randomUUID(), "verify_email", "raw-token-value", "owner@example.com",
                 Instant.parse("2026-07-13T00:00:00Z"));
         JsonNode serialized = objectMapper.valueToTree(payload);
 
@@ -58,7 +58,8 @@ class EmailRequestedEventPayloadContractTest {
     void bothKnownPurposeValuesSerializeCleanly() {
         for (String purpose : new String[] {"verify_email", "password_reset"}) {
             EmailRequestedEventPayload payload = new EmailRequestedEventPayload(
-                    UUID.randomUUID(), purpose, "raw-token-value", Instant.parse("2026-07-13T00:00:00Z"));
+                    UUID.randomUUID(), purpose, "raw-token-value", "owner@example.com",
+                    Instant.parse("2026-07-13T00:00:00Z"));
             JsonNode serialized = objectMapper.valueToTree(payload);
             assertThat(serialized.get("purpose").asText()).isEqualTo(purpose);
         }

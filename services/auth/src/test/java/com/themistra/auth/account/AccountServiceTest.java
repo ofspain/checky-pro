@@ -135,6 +135,7 @@ class AccountServiceTest {
         assertThat(event.accountUuid()).isEqualTo(response.accountUuid());
         assertThat(event.purpose()).isEqualTo("verify_email");
         assertThat(event.token()).isEqualTo("raw-verification-token");
+        assertThat(event.email()).isEqualTo("merchant@example.com");
         assertThat(event.occurredAt()).isEqualTo(NOW);
         // Finding 1's mitigation: the raw token must never leak via a default toString().
         assertThat(event.toString()).doesNotContain("raw-verification-token");
@@ -248,6 +249,7 @@ class AccountServiceTest {
         var event = (UserLifecycleEventPayload) payload.getValue();
         assertThat(event.accountUuid()).isEqualTo(account.getAccountUuid());
         assertThat(event.status()).isEqualTo(AccountStatus.ACTIVE);
+        assertThat(event.email()).isEqualTo("user@example.com");
         assertThat(event.occurredAt()).isEqualTo(NOW);
 
         // activation is now an admin-only stopgap (D-024), so it IS audited, with the real actor
@@ -533,6 +535,7 @@ class AccountServiceTest {
         // Phase 9's fix (a "user.unlocked" event whose own payload still said SUSPENDED).
         assertThat(payloadCaptor.getValue().accountUuid()).isEqualTo(account.getAccountUuid());
         assertThat(payloadCaptor.getValue().status()).isEqualTo(AccountStatus.ACTIVE);
+        assertThat(payloadCaptor.getValue().email()).isEqualTo("locked-admin@example.com");
 
         ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
                 ArgumentCaptor.forClass(RecordAuditEventRequest.class);
@@ -1084,6 +1087,7 @@ class AccountServiceTest {
         verify(outboxPublisher).publish(
                 eq("account"), anyString(), eq("user.locked"), eq(1), payloadCaptor.capture());
         assertThat(payloadCaptor.getValue().status()).isEqualTo(AccountStatus.LOCKED);
+        assertThat(payloadCaptor.getValue().email()).isEqualTo("lock-active@example.com");
         ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
                 ArgumentCaptor.forClass(RecordAuditEventRequest.class);
         verify(auditService).record(auditCaptor.capture());

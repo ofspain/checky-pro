@@ -4,7 +4,7 @@
   "title": "auth.user.lifecycle (schema_version 1)",
   "description": "Published by the auth service's account module via the outbox (D-009) whenever an account's lifecycle state changes. Partition key = accountUuid. event_type is one of user.registered | user.suspended | user.reinstated | user.deleted.",
   "type": "object",
-  "required": ["accountUuid", "status", "occurredAt"],
+  "required": ["accountUuid", "status", "email", "occurredAt"],
   "properties": {
     "accountUuid": {
       "type": "string",
@@ -14,6 +14,11 @@
     "status": {
       "type": "string",
       "enum": ["PENDING_VERIFICATION", "ACTIVE", "LOCKED", "SUSPENDED", "DELETED"]
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "description": "The account's own email address at the time the event was published — added to unblock notification-service's own contact projection (T05), which otherwise has no channel to obtain a recipient address without a synchronous Auth call (forbidden by L2)."
     },
     "occurredAt": {
       "type": "string",

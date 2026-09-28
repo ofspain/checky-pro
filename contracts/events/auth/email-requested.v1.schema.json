@@ -4,7 +4,7 @@
   "title": "auth.email.requested (schema_version 1)",
   "description": "Published by the auth service's account module via the outbox (D-009) whenever a transactional email needs to be sent (email verification, password reset). Partition key = accountUuid. Consumed by the Notification Service, which has no other channel to obtain the raw token.",
   "type": "object",
-  "required": ["accountUuid", "purpose", "token", "occurredAt"],
+  "required": ["accountUuid", "purpose", "token", "email", "occurredAt"],
   "properties": {
     "accountUuid": {
       "type": "string",
@@ -18,6 +18,11 @@
     "token": {
       "type": "string",
       "description": "The raw verification/reset token, in the clear. A deliberate, documented exception to the standing rule that a credential appears exactly once in a creation response — the Notification Service has no other channel to obtain it."
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "description": "The account's own email address at the time the event was published — added to unblock notification-service's own contact projection (T05), which otherwise has no channel to obtain a recipient address without a synchronous Auth call (forbidden by L2)."
     },
     "occurredAt": {
       "type": "string",

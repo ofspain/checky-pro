@@ -435,6 +435,7 @@ class EndToEndLifecycleIntegrationTest {
                         // Phase 11, Kimi Gap 8: verify the full email-requested.v1.schema.json
                         // required-field shape, not just the two fields this helper needs to act on.
                         assertThat(payload.get("accountUuid").asText()).isEqualTo(accountUuid.toString());
+                        assertThat(payload.get("email").asText()).isNotBlank();
                         assertThat(payload.get("occurredAt").asText()).isNotBlank();
                         token.set(rawToken.asText());
                     }

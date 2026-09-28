@@ -391,7 +391,8 @@ public class AccountService {
                 "email.requested",
                 SCHEMA_VERSION,
                 new EmailRequestedEventPayload(
-                        account.getAccountUuid(), purposeLabel, result.rawToken(), clock.instant()));
+                        account.getAccountUuid(), purposeLabel, result.rawToken(), account.getEmail(),
+                        clock.instant()));
     }
 
     private void recordAudit(String eventType, UUID accountUuid, UUID actorUuid) {
@@ -405,7 +406,8 @@ public class AccountService {
                 account.getAccountUuid().toString(),
                 eventType,
                 SCHEMA_VERSION,
-                new UserLifecycleEventPayload(account.getAccountUuid(), account.getStatus(), clock.instant()));
+                new UserLifecycleEventPayload(
+                        account.getAccountUuid(), account.getStatus(), account.getEmail(), clock.instant()));
     }
 
     private Account getAccount(UUID accountUuid) {

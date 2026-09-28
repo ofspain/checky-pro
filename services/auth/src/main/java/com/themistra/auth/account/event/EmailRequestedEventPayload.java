@@ -14,17 +14,26 @@ import java.util.UUID;
  * obtain it. The overridden {@link #toString()} below is the corresponding mitigation — records
  * otherwise auto-generate a {@code toString()} that would print every component, exactly the leak
  * T05's equivalent {@code VerificationTokenResult} guarded against.</p>
+ *
+ * <p>{@code email} was added to unblock notification-service's own T05 (contact projection):
+ * neither this event nor {@code auth.user.lifecycle} carried a recipient address, leaving
+ * notification-service with no way to populate {@code contact_projection} without a synchronous
+ * Auth call, which L2 forbids. Backward-compatible, additive field (`contracts/README.md`'s own
+ * "backward-compatible evolution only" rule) - the same v1 schema file gained the property rather
+ * than a new v2 file, matching the only precedent in this repo (no v2 event schema exists anywhere).
+ * Unlike {@code token}, {@code email} is not a secret and is safe to include in {@link #toString()}.</p>
  */
 public record EmailRequestedEventPayload(
         UUID accountUuid,
         String purpose,
         String token,
+        String email,
         Instant occurredAt
 ) {
 
     @Override
     public String toString() {
         return "EmailRequestedEventPayload[accountUuid=" + accountUuid + ", purpose=" + purpose
-                + ", occurredAt=" + occurredAt + "]";
+                + ", email=" + email + ", occurredAt=" + occurredAt + "]";
     }
 }

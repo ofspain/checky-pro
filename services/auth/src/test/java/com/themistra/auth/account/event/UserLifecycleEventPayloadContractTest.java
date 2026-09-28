@@ -37,7 +37,8 @@ class UserLifecycleEventPayloadContractTest {
         JsonNode schema = objectMapper.readTree(Files.readString(SCHEMA_PATH));
 
         UserLifecycleEventPayload payload = new UserLifecycleEventPayload(
-                UUID.randomUUID(), AccountStatus.ACTIVE, Instant.parse("2026-07-13T00:00:00Z"));
+                UUID.randomUUID(), AccountStatus.ACTIVE, "owner@example.com",
+                Instant.parse("2026-07-13T00:00:00Z"));
         JsonNode serialized = objectMapper.valueToTree(payload);
 
         schema.get("required").forEach(field ->
