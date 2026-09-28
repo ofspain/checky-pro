@@ -205,13 +205,18 @@ class T01SkeletonRegressionTest {
     /** Kimi Phase 11 Gap 5: T01's own frozen brief "Out" scope excluded any production class beyond
      * the bare Application class - a premature config/entity class added in that task would not
      * fail any other test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads
-     * one named file. T03 ended the bare-skeleton era (7 files); T04 added 4 more; T05 (Kimi Phase
-     * 3 Finding #4) adds 3 more: {@code ContactProjection}/{@code ContactProjectionRepository}/
-     * {@code ContactProjectionUpdater} (recipient-contact projection, O1). This list is updated to
-     * name all 15 explicitly rather than loosened to "at least N files" - an unnamed-count
-     * assertion would silently tolerate a stray file no task ever authorized. */
+     * one named file. T03 ended the bare-skeleton era (7 files); T04 added 4 more; T05 added 3
+     * more; T06 adds 5 more: {@code AuthEventConsumer}, {@code NotificationDispatcher} (the seam),
+     * {@code NoOpNotificationDispatcher} (its temporary implementation), and
+     * {@code consumer/dto/{EmailRequestedEvent,UserLifecycleEvent}} (deserialization records).
+     * T06's own frozen brief did not name this file in its own "Files to Modify" list - a real gap
+     * discovered during implementation, the same kind T04/T05 each hit in turn - fixed here as a
+     * required, disclosed deviation (flagged in Phase 6's own implementation notes) rather than
+     * left to break the build. This list is updated to name all 20 explicitly rather than loosened
+     * to "at least N files" - an unnamed-count assertion would silently tolerate a stray file no
+     * task ever authorized. */
     @Test
-    void noExtraProductionClassesExistBeyondT05sOwnAuthorizedSet() throws IOException {
+    void noExtraProductionClassesExistBeyondT06sOwnAuthorizedSet() throws IOException {
         Path mainSourceDir = Path.of("src/main/java/com/themistra/notification");
 
         try (Stream<Path> files = Files.walk(mainSourceDir)) {
@@ -230,9 +235,14 @@ class T01SkeletonRegressionTest {
                     "common/config/LinkProperties.java",
                     "common/config/LinkPropertiesStartupValidation.java",
                     "common/config/RetryProperties.java",
+                    "consumer/AuthEventConsumer.java",
                     "consumer/IdempotencyGuard.java",
+                    "consumer/NoOpNotificationDispatcher.java",
+                    "consumer/NotificationDispatcher.java",
                     "consumer/ProcessedEvent.java",
                     "consumer/ProcessedEventRepository.java",
+                    "consumer/dto/EmailRequestedEvent.java",
+                    "consumer/dto/UserLifecycleEvent.java",
                     "preference/ContactProjection.java",
                     "preference/ContactProjectionRepository.java",
                     "preference/ContactProjectionUpdater.java");
