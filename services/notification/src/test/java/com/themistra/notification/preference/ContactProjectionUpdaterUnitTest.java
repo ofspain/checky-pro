@@ -4,7 +4,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -62,5 +65,19 @@ class ContactProjectionUpdaterUnitTest {
                 .as("must never be REQUIRES_NEW/NOT_SUPPORTED - would break the same-transaction "
                         + "requirement with a future IdempotencyGuard.recordIfNew call")
                 .isEqualTo(Propagation.REQUIRED);
+    }
+
+    /** Kimi Phase 11 Gap #1: a permanent, cheap static guard for the exact SQL shape the entire
+     * out-of-order-rejection guarantee rests on - a future edit that weakens or removes the
+     * {@code WHERE} clause would otherwise only be caught by re-running the Phase 10 manual
+     * mutation test by hand. */
+    @Test
+    void upsertEmailNativeQueryContainsTheOutOfOrderGuard() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/themistra/notification/preference/ContactProjectionRepository.java"));
+
+        assertThat(source).contains("ON CONFLICT");
+        assertThat(source).contains("DO UPDATE");
+        assertThat(source).contains("WHERE notifications.contact_projection.updated_at <= EXCLUDED.updated_at");
     }
 }

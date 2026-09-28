@@ -46,3 +46,34 @@ re-verified green.
 `mvn -pl services/notification clean verify` — 88 tests, 0 failures (80 T01-T04 unaffected + 8 new).
 No production code left modified in this phase (the mutation above was reverted before the final
 verification run).
+
+## Addendum (post Phase 11) — all 6 actionable gaps accepted and added (Gap #7 already covered)
+
+Kimi's Phase 11 review raised 7 gaps. All verified against source before acting. Gap #7 (verify
+`ContactProjectionUpdater` is a Spring bean) was Kimi's own low-priority, already-covered-by-the-
+integration-test concession — no action taken. The other 6 were genuine and are all added
+(92 tests → from 88):
+
+- **Gap #1** (no permanent guard that the `WHERE` guard itself exists) — added
+  `upsertEmailNativeQueryContainsTheOutOfOrderGuard`, a static text-scan test.
+- **Gap #2** (equal-`occurredAt` tie-breaking untested) — added
+  `equalOccurredAtTiesResolveToTheLaterProcessedCallWinning`.
+- **Gap #3** (no test exercises the repository's own `int` return directly) — added
+  `repositoryUpsertEmailReturnsAffectedRowCountDirectly`. **Real bug found while writing this test**:
+  calling `repository.upsertEmail(...)` directly (not through `ContactProjectionUpdater`, which
+  supplies its own `@Transactional`) failed with `InvalidDataAccessApiUsage: No EntityManager with
+  actual transaction available for current thread - cannot reliably process 'flush' call` —
+  `flushAutomatically = true` needs an open transaction to flush against. Fixed by wrapping both
+  direct calls in a `TransactionTemplate`, mirroring the pattern already used elsewhere in this file.
+- **Gap #4** (no `citext` case-preservation proof) — added `citextPreservesOriginalCaseOnReadBack`.
+- **Gap #5** (stale-write rejection only proven via the Hibernate read path) — folded into
+  `olderCallDoesNotOverwriteANewerProjection`: added a direct JDBC assertion alongside the existing
+  entity-based one.
+- **Gap #6** (`display_name` not re-checked after a rejected stale write) — folded into the same
+  test: added a `getDisplayName()` null assertion after the rejected write.
+
+**Verification:** `mvn -pl services/notification clean verify` — 92 tests, 0 failures. A second real
+mutation test performed and reverted clean (`git status -s` empty afterward): removed the `WHERE`
+clause entirely, confirmed only Gap #1's own new static-scan test caught it (the behavioral
+`olderCallDoesNotOverwriteANewerProjection` test was not re-run in this specific check, since the
+static scan is deliberately the faster, cheaper permanent guard Gap #1 asked for).
