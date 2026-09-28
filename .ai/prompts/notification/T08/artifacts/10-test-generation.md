@@ -58,3 +58,45 @@ proves the floor is unconditional, not merely default-shaped.) Reverted (`git ch
 
 `mvn -pl services/notification clean verify` — 143 tests, 0 failures. No production code left
 modified in this phase (the mutation above was reverted before the final verification run).
+
+## Addendum (post Phase 11) — 5 of 7 gaps accepted and added; 2 dispositioned with no action
+
+Kimi's Phase 11 review raised 7 gaps. All verified against source before acting. 5 are added
+(148 tests → from 143):
+
+- **Gap #1** (no permanent guard that the `SECURITY`+`EMAIL` early return itself exists, in the
+  right place) — added `resolveContainsTheSecurityEmailEarlyReturnBeforeAnyRepositoryCall`, a
+  static text-scan test asserting the early return appears before the repository call in source
+  order.
+- **Gap #2** (no test for `SECURITY`/`IN_APP` opt-out, the hard floor's own non-floored sibling) —
+  added `securityInAppStillHonoursAStoredOptOutUnlikeSecurityEmail`, proving the floor is scoped
+  exactly to `SECURITY`+`EMAIL`, not the whole `SECURITY` category. (The symmetric "stored `true`
+  row on `SECURITY`/`EMAIL`" half of this gap was judged not worth a dedicated test — trivially
+  implied by the unconditional-`true` early return already proven by
+  `securityEmailNeverQueriesTheRepository`.)
+- **Gap #3** (no test for a stored row on an unsupported channel) — added
+  `storedRowOnAnUnsupportedChannelTakesPrecedenceOverItsMissingDefault`
+  (`PAYMENT`/`WEBHOOK`, `enabled=true`, real Postgres).
+- **Gap #4** (whitespace/empty-string input behavior undocumented) — added
+  `whitespacePaddedInputIsNotTrimmedAndFallsBackToFalse`, documenting the current behavior (not
+  trimmed, a caller-bug case treated the same as the already-accepted null-argument contract,
+  Finding #6) rather than changing `resolve` to trim - no real caller exists yet (task 11 doesn't
+  exist), and inventing defensive behavior for a hypothetical caller was judged out of this task's
+  own scope.
+- **Gap #5** (no test verifies `ChannelPreference`'s own column mapping directly) — added
+  `channelPreferenceEntityMapsAllSixColumnsCorrectly`, reading a real stored row via
+  `ChannelPreferenceRepository` directly (not through `PreferenceResolver`) and asserting all 6
+  getters.
+- **Gap #6** (verbatim-drift test's own regex is sensitive to `design.md` formatting) —
+  **no action**. The regex's sensitivity to reformatting is the point, not a flaw: if `design.md`'s
+  own default table is ever restated in a different shape, the drift test failing loudly (via the
+  existing `lineCount == 3` assertion, which already produces a clear actual-vs-expected message)
+  is the correct outcome, not something to soften. Generalizing the regex to tolerate
+  reformatting would weaken exactly the guarantee this test exists to provide.
+- **Gap #7** (no test reads `channel_preferences` via `notification_app` from `PreferenceResolver`'s
+  own perspective) — **no action**, per Kimi's own concession: already covered by
+  `NotificationBaselineMigrationIntegrationTest.notificationAppCanSelectButNotInsertUpdateOrDeleteOnChannelPreferences`
+  (Phase 6), which proves the runtime role's read privilege directly; a second, narrower proof
+  through `PreferenceResolver` specifically would be redundant.
+
+**Verification:** `mvn -pl services/notification clean verify` — 148 tests, 0 failures.

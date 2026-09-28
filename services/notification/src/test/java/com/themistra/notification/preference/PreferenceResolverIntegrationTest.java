@@ -17,6 +17,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,6 +64,9 @@ class PreferenceResolverIntegrationTest {
 
     @Autowired
     private PreferenceResolver resolver;
+
+    @Autowired
+    private ChannelPreferenceRepository repository;
 
     private static void insertRow(UUID accountUuid, String category, String channel, boolean enabled) throws SQLException {
         try (Connection admin = adminConnection();
@@ -129,6 +133,38 @@ class PreferenceResolverIntegrationTest {
         insertRow(accountUuid, "PAYMENT", "EMAIL", false);
 
         assertThat(resolver.resolve(accountUuid, "payment", "email")).isFalse();
+    }
+
+    /** Kimi Phase 11 Gap #3: "stored row takes precedence" is not conditional on the pair being one
+     * of the 6 documented defaults - a stored row on an unsupported channel still wins over its own
+     * missing default, exactly like any other pair. */
+    @Test
+    void storedRowOnAnUnsupportedChannelTakesPrecedenceOverItsMissingDefault() throws SQLException {
+        UUID accountUuid = UUID.randomUUID();
+        insertRow(accountUuid, "PAYMENT", "WEBHOOK", true);
+
+        assertThat(resolver.resolve(accountUuid, "PAYMENT", "WEBHOOK")).isTrue();
+    }
+
+    /** Kimi Phase 11 Gap #5: asserts {@link ChannelPreference}'s own column mapping directly via
+     * the repository, not only indirectly through {@link PreferenceResolver}'s own boolean return -
+     * a `@Column` name drift on `category`/`channel`/`updatedAt` would otherwise only surface as a
+     * confusing resolver-level failure. */
+    @Test
+    void channelPreferenceEntityMapsAllSixColumnsCorrectly() throws SQLException {
+        UUID accountUuid = UUID.randomUUID();
+        insertRow(accountUuid, "PAYMENT", "IN_APP", true);
+
+        ChannelPreference stored = repository
+                .findByAccountUuidAndCategoryAndChannel(accountUuid, "PAYMENT", "IN_APP")
+                .orElseThrow();
+
+        assertThat(stored.getId()).isNotNull();
+        assertThat(stored.getAccountUuid()).isEqualTo(accountUuid);
+        assertThat(stored.getCategory()).isEqualTo("PAYMENT");
+        assertThat(stored.getChannel()).isEqualTo("IN_APP");
+        assertThat(stored.isEnabled()).isTrue();
+        assertThat(stored.getUpdatedAt()).isNotNull().isBeforeOrEqualTo(Instant.now());
     }
 
     private static Connection adminConnection() throws SQLException {

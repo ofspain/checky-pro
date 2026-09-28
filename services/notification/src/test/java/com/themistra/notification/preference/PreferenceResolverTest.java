@@ -153,6 +153,53 @@ class PreferenceResolverTest {
         assertThat(actual).isEqualTo(expected);
     }
 
+    /** Kimi Phase 11 Gap #1: a permanent, cheap static guard for the exact early-return shape the
+     * entire hard-floor guarantee rests on - a future edit that removed it, or moved it after the
+     * repository call, would otherwise only be caught by re-running Phase 10's own manual mutation
+     * test by hand. */
+    @Test
+    void resolveContainsTheSecurityEmailEarlyReturnBeforeAnyRepositoryCall() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/themistra/notification/preference/PreferenceResolver.java"));
+
+        int earlyReturnIndex = source.indexOf(
+                "if (\"SECURITY\".equals(normalizedCategory) && \"EMAIL\".equals(normalizedChannel)) {");
+        int repositoryCallIndex = source.indexOf("repository.findByAccountUuidAndCategoryAndChannel");
+
+        assertThat(earlyReturnIndex).as("the SECURITY+EMAIL early return must exist").isGreaterThan(-1);
+        assertThat(repositoryCallIndex).as("the repository call must exist").isGreaterThan(-1);
+        assertThat(earlyReturnIndex)
+                .as("the early return must appear before the repository call, not after")
+                .isLessThan(repositoryCallIndex);
+    }
+
+    /** Kimi Phase 11 Gap #2: the hard floor's own symmetric cases - a stored opt-out on the
+     * sibling SECURITY/IN_APP pair still suppresses normally (it is not itself a floor), and a
+     * stored true row on SECURITY/EMAIL is (trivially) still true, proving the floor doesn't
+     * accidentally invert anything for the non-adversarial case. */
+    @Test
+    void securityInAppStillHonoursAStoredOptOutUnlikeSecurityEmail() {
+        UUID accountUuid = UUID.randomUUID();
+        ChannelPreference stored = channelPreference(false);
+        when(repository.findByAccountUuidAndCategoryAndChannel(accountUuid, "SECURITY", "IN_APP"))
+                .thenReturn(Optional.of(stored));
+
+        assertThat(resolver.resolve(accountUuid, "SECURITY", "IN_APP")).isFalse();
+    }
+
+    /** Kimi Phase 11 Gap #4: documents current behavior for whitespace-padded input - not trimmed,
+     * so a padded category/channel simply won't match anything and falls back to `false` (a caller
+     * bug, not a case this method defensively handles - consistent with the null-argument contract,
+     * Finding #6). */
+    @Test
+    void whitespacePaddedInputIsNotTrimmedAndFallsBackToFalse() {
+        UUID accountUuid = UUID.randomUUID();
+        when(repository.findByAccountUuidAndCategoryAndChannel(any(), any(), any())).thenReturn(Optional.empty());
+
+        assertThat(resolver.resolve(accountUuid, " SECURITY", "EMAIL")).isFalse();
+        assertThat(resolver.resolve(accountUuid, "SECURITY", " EMAIL")).isFalse();
+    }
+
     private static ChannelPreference channelPreference(boolean enabled) {
         ChannelPreference preference = mock(ChannelPreference.class);
         when(preference.isEnabled()).thenReturn(enabled);
