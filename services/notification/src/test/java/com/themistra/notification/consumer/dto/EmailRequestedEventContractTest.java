@@ -60,6 +60,23 @@ class EmailRequestedEventContractTest {
         }
     }
 
+    /** Kimi Phase 8 Finding #6: field-presence checks alone don't prove the serialized values
+     * actually conform to the schema's own {@code format}/{@code pattern} constraints - a
+     * lightweight substitute for a full JSON Schema validator (out of this task's own scope, no
+     * such dependency exists anywhere in this repo). */
+    @Test
+    void serializedFieldsConformToTheSchemasFormatConstraints() {
+        UUID accountUuid = UUID.randomUUID();
+        Instant occurredAt = Instant.parse("2026-07-13T00:00:00Z");
+        EmailRequestedEvent event = new EmailRequestedEvent(
+                accountUuid, "verify_email", "raw-token-value", "owner@example.com", occurredAt);
+        JsonNode serialized = objectMapper.valueToTree(event);
+
+        assertThat(UUID.fromString(serialized.get("accountUuid").asText())).isEqualTo(accountUuid);
+        assertThat(serialized.get("email").asText()).contains("@");
+        assertThat(Instant.parse(serialized.get("occurredAt").asText())).isEqualTo(occurredAt);
+    }
+
     /** Kimi Phase 3 Finding #4's own concern applied to this DTO too, not just the no-op
      * dispatcher - a future debug/error log accidentally printing this record must not leak the
      * raw token (L4). */

@@ -56,6 +56,23 @@ class UserLifecycleEventContractTest {
         assertThat(allowedStatuses).contains(serialized.get("status").asText());
     }
 
+    /** Kimi Phase 8 Finding #6: field-presence checks alone don't prove the serialized values
+     * actually conform to the schema's own {@code format}/{@code pattern} constraints - a
+     * lightweight substitute for a full JSON Schema validator (out of this task's own scope, no
+     * such dependency exists anywhere in this repo). */
+    @Test
+    void serializedFieldsConformToTheSchemasFormatConstraints() {
+        UUID accountUuid = UUID.randomUUID();
+        Instant occurredAt = Instant.parse("2026-07-13T00:00:00Z");
+        UserLifecycleEvent event = new UserLifecycleEvent(
+                accountUuid, "ACTIVE", "owner@example.com", "user.registered", occurredAt);
+        JsonNode serialized = objectMapper.valueToTree(event);
+
+        assertThat(UUID.fromString(serialized.get("accountUuid").asText())).isEqualTo(accountUuid);
+        assertThat(serialized.get("email").asText()).contains("@");
+        assertThat(Instant.parse(serialized.get("occurredAt").asText())).isEqualTo(occurredAt);
+    }
+
     /** The schema deliberately leaves {@code eventType} as an open string, not a closed enum (its
      * own description explains why) - documents that every value known today deserializes cleanly. */
     @Test
