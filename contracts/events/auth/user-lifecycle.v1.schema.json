@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://checky.pro/contracts/events/auth/user-lifecycle.v1.schema.json",
   "title": "auth.user.lifecycle (schema_version 1)",
-  "description": "Published by the auth service's account module via the outbox (D-009) whenever an account's lifecycle state changes. Partition key = accountUuid. event_type is one of user.registered | user.suspended | user.reinstated | user.deleted.",
+  "description": "Published by the auth service's account module via the outbox (D-009) whenever an account's lifecycle state changes. Partition key = accountUuid. See the eventType property for the specific transition - status alone is ambiguous (e.g. ACTIVE results from user.registered, user.reinstated, or user.unlocked alike).",
   "type": "object",
-  "required": ["accountUuid", "status", "email", "occurredAt"],
+  "required": ["accountUuid", "status", "email", "eventType", "occurredAt"],
   "properties": {
     "accountUuid": {
       "type": "string",
@@ -19,6 +19,10 @@
       "type": "string",
       "format": "email",
       "description": "The account's own email address at the time the event was published — added to unblock notification-service's own contact projection (T05), which otherwise has no channel to obtain a recipient address without a synchronous Auth call (forbidden by L2)."
+    },
+    "eventType": {
+      "type": "string",
+      "description": "The specific lifecycle transition. Known values today: user.registered, user.suspended, user.reinstated, user.deleted, user.locked, user.unlocked. Deliberately not a closed enum (mirrors the purpose field on auth.email.requested) - added to unblock notification-service's own T06, which otherwise cannot distinguish e.g. user.registered from user.reinstated/user.unlocked, all of which produce status=ACTIVE alike."
     },
     "occurredAt": {
       "type": "string",

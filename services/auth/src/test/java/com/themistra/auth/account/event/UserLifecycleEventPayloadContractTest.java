@@ -37,7 +37,7 @@ class UserLifecycleEventPayloadContractTest {
         JsonNode schema = objectMapper.readTree(Files.readString(SCHEMA_PATH));
 
         UserLifecycleEventPayload payload = new UserLifecycleEventPayload(
-                UUID.randomUUID(), AccountStatus.ACTIVE, "owner@example.com",
+                UUID.randomUUID(), AccountStatus.ACTIVE, "owner@example.com", "user.registered",
                 Instant.parse("2026-07-13T00:00:00Z"));
         JsonNode serialized = objectMapper.valueToTree(payload);
 
@@ -57,6 +57,23 @@ class UserLifecycleEventPayloadContractTest {
                 .map(JsonNode::asText)
                 .toList();
         assertThat(allowedStatuses).contains(serialized.get("status").asText());
+    }
+
+    /** The schema deliberately leaves {@code eventType} as an open string, not a closed enum (its
+     * own description explains why) - mirrors
+     * {@link EmailRequestedEventPayloadContractTest#bothKnownPurposeValuesSerializeCleanly()}'s own
+     * style: documents that every value known today serializes cleanly. */
+    @Test
+    void everyKnownEventTypeValueSerializesCleanly() {
+        for (String eventType : new String[] {
+                "user.registered", "user.suspended", "user.reinstated",
+                "user.deleted", "user.locked", "user.unlocked"}) {
+            UserLifecycleEventPayload payload = new UserLifecycleEventPayload(
+                    UUID.randomUUID(), AccountStatus.ACTIVE, "owner@example.com", eventType,
+                    Instant.parse("2026-07-13T00:00:00Z"));
+            JsonNode serialized = objectMapper.valueToTree(payload);
+            assertThat(serialized.get("eventType").asText()).isEqualTo(eventType);
+        }
     }
 
     @Test

@@ -209,9 +209,10 @@ class EndToEndLifecycleIntegrationTest {
         String verificationToken = awaitRawVerificationToken(merchantUuid);
         ResponseEntity<String> verifyResponse = verifyEmailViaHttp(verificationToken);
         assertThat(verifyResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
-        // R4's event half: auth.user.registered is a status-transition event with no distinct
-        // "eventType" field on the wire (OutboxRelay never serializes one) - status=ACTIVE on
-        // auth.user.lifecycle for this account is exactly what that transition looks like on Kafka.
+        // R4's event half: auth.user.lifecycle now carries a real eventType field (added to
+        // unblock notification-service's own T06 - status=ACTIVE alone is ambiguous between
+        // user.registered, user.reinstated, and user.unlocked), so this asserts the specific
+        // transition, not just the resulting status.
         awaitUserRegisteredLifecycleEvent(merchantUuid);
         // Direct assertion of the actual AC1 transition, not just its Kafka proxy (Phase 9, Kimi
         // Finding 6): a bug that emitted the event while leaving the account PENDING_VERIFICATION
@@ -455,13 +456,13 @@ class EndToEndLifecycleIntegrationTest {
             for (ConsumerRecord<String, String> record : records) {
                 if ("auth.user.lifecycle".equals(record.topic()) && accountUuid.toString().equals(record.key())) {
                     JsonNode payload = objectMapper.readTree(record.value());
-                    JsonNode status = payload.get("status");
-                    if (status != null && "ACTIVE".equals(status.asText())) {
+                    JsonNode eventType = payload.get("eventType");
+                    if (eventType != null && "user.registered".equals(eventType.asText())) {
                         found = true;
                     }
                 }
             }
-            assertThat(found).as("auth.user.lifecycle(ACTIVE) event observed for %s", accountUuid).isTrue();
+            assertThat(found).as("auth.user.lifecycle(user.registered) event observed for %s", accountUuid).isTrue();
         });
     }
 

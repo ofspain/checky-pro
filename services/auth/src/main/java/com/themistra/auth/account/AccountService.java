@@ -407,7 +407,8 @@ public class AccountService {
                 eventType,
                 SCHEMA_VERSION,
                 new UserLifecycleEventPayload(
-                        account.getAccountUuid(), account.getStatus(), account.getEmail(), clock.instant()));
+                        account.getAccountUuid(), account.getStatus(), account.getEmail(), eventType,
+                        clock.instant()));
     }
 
     private Account getAccount(UUID accountUuid) {

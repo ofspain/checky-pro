@@ -250,6 +250,7 @@ class AccountServiceTest {
         assertThat(event.accountUuid()).isEqualTo(account.getAccountUuid());
         assertThat(event.status()).isEqualTo(AccountStatus.ACTIVE);
         assertThat(event.email()).isEqualTo("user@example.com");
+        assertThat(event.eventType()).isEqualTo("user.registered");
         assertThat(event.occurredAt()).isEqualTo(NOW);
 
         // activation is now an admin-only stopgap (D-024), so it IS audited, with the real actor
@@ -536,6 +537,7 @@ class AccountServiceTest {
         assertThat(payloadCaptor.getValue().accountUuid()).isEqualTo(account.getAccountUuid());
         assertThat(payloadCaptor.getValue().status()).isEqualTo(AccountStatus.ACTIVE);
         assertThat(payloadCaptor.getValue().email()).isEqualTo("locked-admin@example.com");
+        assertThat(payloadCaptor.getValue().eventType()).isEqualTo("user.unlocked");
 
         ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
                 ArgumentCaptor.forClass(RecordAuditEventRequest.class);
@@ -1088,6 +1090,7 @@ class AccountServiceTest {
                 eq("account"), anyString(), eq("user.locked"), eq(1), payloadCaptor.capture());
         assertThat(payloadCaptor.getValue().status()).isEqualTo(AccountStatus.LOCKED);
         assertThat(payloadCaptor.getValue().email()).isEqualTo("lock-active@example.com");
+        assertThat(payloadCaptor.getValue().eventType()).isEqualTo("user.locked");
         ArgumentCaptor<RecordAuditEventRequest> auditCaptor =
                 ArgumentCaptor.forClass(RecordAuditEventRequest.class);
         verify(auditService).record(auditCaptor.capture());
