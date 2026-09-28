@@ -21,6 +21,11 @@ import java.util.UUID;
  * injected {@code Clock} - the out-of-order guard in
  * {@link ContactProjectionRepository#upsertEmail} compares *event* time, not *processing* time, so
  * this class needs no {@code Clock} dependency at all.</p>
+ *
+ * <p>{@link #upsertEmail} returns whether the write was actually accepted (Kimi Phase 8
+ * Finding #5) - {@code false} means the out-of-order guard rejected it as stale, not an error;
+ * mirrors {@code IdempotencyGuard.recordIfNew}'s own boolean-result shape so a future caller can
+ * log/observe suppressed-stale-write cases without this class needing a follow-up refactor.</p>
  */
 @Service
 public class ContactProjectionUpdater {
@@ -32,7 +37,7 @@ public class ContactProjectionUpdater {
     }
 
     @Transactional
-    public void upsertEmail(UUID accountUuid, String email, Instant occurredAt) {
-        repository.upsertEmail(accountUuid, email, occurredAt);
+    public boolean upsertEmail(UUID accountUuid, String email, Instant occurredAt) {
+        return repository.upsertEmail(accountUuid, email, occurredAt) == 1;
     }
 }
