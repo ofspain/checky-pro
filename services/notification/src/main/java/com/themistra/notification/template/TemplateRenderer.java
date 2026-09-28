@@ -44,7 +44,21 @@ public class TemplateRenderer {
         this.linkProperties = linkProperties;
     }
 
+    /**
+     * Kimi Phase 8 Finding #2 (L4): {@code body}/{@code subject} can contain the recipient's own
+     * display name and, for {@code email.verify}/{@code email.password_reset}, the raw
+     * verification/reset token embedded in a computed link - the record's own default
+     * {@code toString()} would print both in full. Overridden to log only {@code version} and each
+     * field's own length, never content, mirroring {@code EmailRequestedEvent}'s own precedent
+     * (T06) of excluding sensitive fields from a debug/error log that might print this record.
+     */
     public record RenderedMessage(String subject, String body, int version) {
+
+        @Override
+        public String toString() {
+            return "RenderedMessage[subjectLength=" + (subject == null ? 0 : subject.length())
+                    + ", bodyLength=" + (body == null ? 0 : body.length()) + ", version=" + version + "]";
+        }
     }
 
     /**
