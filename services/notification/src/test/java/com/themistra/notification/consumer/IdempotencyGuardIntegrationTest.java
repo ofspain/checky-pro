@@ -1,6 +1,7 @@
 package com.themistra.notification.consumer;
 
 import com.themistra.notification.preference.PreferenceResolver;
+import com.themistra.notification.template.TemplateRenderer;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -114,6 +115,9 @@ class IdempotencyGuardIntegrationTest {
     @Autowired
     private PreferenceResolver preferenceResolver;
 
+    @Autowired
+    private TemplateRenderer templateRenderer;
+
     /** Kimi Phase 11 Gap #8: this class is the one place in the suite that boots a real Spring
      * context without overriding {@link NotificationDispatcher} with a test spy/throwing bean
      * (unlike {@code AuthEventConsumerIntegrationTest} and
@@ -130,6 +134,12 @@ class IdempotencyGuardIntegrationTest {
     @Test
     void preferenceResolverIsAResolvedSpringBean() {
         assertThat(preferenceResolver).isNotNull();
+    }
+
+    /** T09 Kimi Phase 8 Finding #7: same proof, for {@link TemplateRenderer}. */
+    @Test
+    void templateRendererIsAResolvedSpringBean() {
+        assertThat(templateRenderer).isNotNull();
     }
 
     @Test
