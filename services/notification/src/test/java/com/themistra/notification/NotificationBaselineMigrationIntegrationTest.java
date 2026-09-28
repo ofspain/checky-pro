@@ -41,13 +41,13 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static final List<String> GRANTED_TABLES = List.of("delivery_log");
     // T02's own literal scope grants only delivery_log; T04's own V4 additionally grants
-    // processed_events (tested separately below - its schema shape has no source_event_key/outcome
-    // columns, so it doesn't fit assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own
-    // delivery_log-shaped assumptions). The remaining five baseline tables and shedlock each get
+    // processed_events and T05's own V5 grants contact_projection (both tested separately below -
+    // neither schema shape fits assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own
+    // delivery_log-shaped assumptions). The remaining four baseline tables and shedlock each get
     // their own grant migration in the task that first needs runtime access to them (mirroring
     // crypto-service's own incremental-grant pattern) - they are therefore expected to remain fully
     // inaccessible to notification_app as of this task.
-    private static final List<String> UNGRANTED_TABLES = List.of("contact_projection",
+    private static final List<String> UNGRANTED_TABLES = List.of(
             "channel_preferences", "templates", "inapp_notifications",
             "delivery_retry", "shedlock");
 
@@ -172,7 +172,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5");
         }
     }
 
@@ -283,6 +283,62 @@ class NotificationBaselineMigrationIntegrationTest {
         }
     }
 
+    /** T05's own V5 grant (Kimi Phase 3 Finding #3). Self-contained, same reasoning as the
+     * {@code processed_events} test above - {@code contact_projection}'s own natural key,
+     * {@code account_uuid}, IS the row identifier, and this table also needs a genuine
+     * UPDATE-succeeds proof the shared {@code GRANTED_TABLES} helper (built around
+     * {@code delivery_log}'s own insert-only grant) never had to make. */
+    @Test
+    void notificationAppCanInsertSelectAndUpdateButNotDeleteOnContactProjection() throws SQLException {
+        String accountUuid = "11111111-1111-1111-1111-111111111111";
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
+            try (PreparedStatement insert = app.prepareStatement(
+                    "INSERT INTO notifications.contact_projection (account_uuid, email, updated_at) "
+                            + "VALUES (?::uuid, 'it-contact-projection@example.com', now())")) {
+                insert.setString(1, accountUuid);
+                insert.execute();
+            }
+
+            try (PreparedStatement select = app.prepareStatement(
+                    "SELECT count(*) FROM notifications.contact_projection WHERE account_uuid = ?::uuid")) {
+                select.setString(1, accountUuid);
+                try (ResultSet resultSet = select.executeQuery()) {
+                    resultSet.next();
+                    assertThat(resultSet.getInt(1))
+                            .as("SELECT must see the row notification_app just inserted")
+                            .isEqualTo(1);
+                }
+            }
+
+            try (PreparedStatement update = app.prepareStatement(
+                    "UPDATE notifications.contact_projection SET email = 'updated@example.com' "
+                            + "WHERE account_uuid = ?::uuid")) {
+                update.setString(1, accountUuid);
+                assertThatCode(update::execute)
+                        .as("UPDATE on contact_projection must be permitted for notification_app")
+                        .doesNotThrowAnyException();
+            }
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement delete = app.prepareStatement(
+                        "DELETE FROM notifications.contact_projection WHERE account_uuid = ?::uuid")) {
+                    delete.setString(1, accountUuid);
+                    delete.execute();
+                }
+            })
+                    .as("DELETE on contact_projection must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+        }
+
+        try (Connection admin = adminConnection();
+             PreparedStatement cleanup = admin.prepareStatement(
+                     "DELETE FROM notifications.contact_projection WHERE account_uuid = ?::uuid")) {
+            cleanup.setString(1, accountUuid);
+            cleanup.execute();
+        }
+    }
+
     @Test
     void notificationAppHasNoAccessAtAllToTablesOutsideAc2Scope() throws SQLException {
         try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
@@ -331,7 +387,6 @@ class NotificationBaselineMigrationIntegrationTest {
     // Testcontainers instance discarded after the test.
     private static String noWhereUpdateStatementFor(String table) {
         return switch (table) {
-            case "contact_projection" -> "UPDATE notifications.contact_projection SET display_name = 'x'";
             case "channel_preferences" -> "UPDATE notifications.channel_preferences SET enabled = false";
             case "templates" -> "UPDATE notifications.templates SET body = 'x'";
             case "inapp_notifications" -> "UPDATE notifications.inapp_notifications SET title = 'x'";
@@ -343,7 +398,6 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static String noWhereDeleteStatementFor(String table) {
         return switch (table) {
-            case "contact_projection" -> "DELETE FROM notifications.contact_projection";
             case "channel_preferences" -> "DELETE FROM notifications.channel_preferences";
             case "templates" -> "DELETE FROM notifications.templates";
             case "inapp_notifications" -> "DELETE FROM notifications.inapp_notifications";
@@ -355,8 +409,6 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static String minimalInsertFixtureFor(String table) {
         return switch (table) {
-            case "contact_projection" -> "INSERT INTO notifications.contact_projection (account_uuid) "
-                    + "VALUES ('00000000-0000-0000-0000-000000000001')";
             case "channel_preferences" -> "INSERT INTO notifications.channel_preferences "
                     + "(account_uuid, category, channel) "
                     + "VALUES ('00000000-0000-0000-0000-000000000001', 'SECURITY', 'EMAIL')";

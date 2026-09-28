@@ -1,0 +1,38 @@
+package com.themistra.notification.preference;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * The single place every future consumer calls to record/refresh an account's known email (O1,
+ * blocker for R1/R2/R6). {@code @Transactional} relies on Spring's own default {@code REQUIRED}
+ * propagation - same rationale as T04's own {@code IdempotencyGuard} - so this method always joins
+ * whatever transaction its caller already has open rather than committing independently.
+ *
+ * <p>Necessary as a public wrapper around the package-private
+ * {@link ContactProjectionRepository}, not merely stylistic: a future
+ * {@code consumer.AuthEventConsumer} (task 6, a different package) cannot call a package-private
+ * repository directly.</p>
+ *
+ * <p>Takes {@code occurredAt} from the caller (the source event's own timestamp), not a freshly
+ * injected {@code Clock} - the out-of-order guard in
+ * {@link ContactProjectionRepository#upsertEmail} compares *event* time, not *processing* time, so
+ * this class needs no {@code Clock} dependency at all.</p>
+ */
+@Service
+public class ContactProjectionUpdater {
+
+    private final ContactProjectionRepository repository;
+
+    public ContactProjectionUpdater(ContactProjectionRepository repository) {
+        this.repository = repository;
+    }
+
+    @Transactional
+    public void upsertEmail(UUID accountUuid, String email, Instant occurredAt) {
+        repository.upsertEmail(accountUuid, email, occurredAt);
+    }
+}
