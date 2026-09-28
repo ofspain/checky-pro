@@ -1,5 +1,6 @@
 package com.themistra.notification.consumer;
 
+import com.themistra.notification.preference.PreferenceResolver;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -110,6 +111,9 @@ class IdempotencyGuardIntegrationTest {
     @Autowired
     private NotificationDispatcher notificationDispatcher;
 
+    @Autowired
+    private PreferenceResolver preferenceResolver;
+
     /** Kimi Phase 11 Gap #8: this class is the one place in the suite that boots a real Spring
      * context without overriding {@link NotificationDispatcher} with a test spy/throwing bean
      * (unlike {@code AuthEventConsumerIntegrationTest} and
@@ -118,6 +122,14 @@ class IdempotencyGuardIntegrationTest {
     @Test
     void theRealNoOpDispatcherIsTheResolvedSpringBean() {
         assertThat(notificationDispatcher).isInstanceOf(NoOpNotificationDispatcher.class);
+    }
+
+    /** T08 Kimi Phase 8 Finding #7: proves {@link PreferenceResolver} is actually component-scanned
+     * and wireable, not just compiling - a dedicated fast check for a silent bean-scan regression,
+     * mirroring the dispatcher proof above exactly. */
+    @Test
+    void preferenceResolverIsAResolvedSpringBean() {
+        assertThat(preferenceResolver).isNotNull();
     }
 
     @Test
