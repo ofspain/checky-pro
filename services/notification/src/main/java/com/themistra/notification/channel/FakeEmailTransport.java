@@ -18,6 +18,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p>Backed by a {@link CopyOnWriteArrayList} (Kimi Phase 3 Finding #2): {@code EmailChannel} is a
  * singleton called concurrently from Kafka listener container threads (T06's own
  * {@code concurrency: 2} precedent), so this capture list must be thread-safe.</p>
+ *
+ * <p>Each captured {@link EmailMessage} carries its own {@code accountUuid} (Kimi Phase 8
+ * Finding #6), so a test can correlate a captured message back to the account that triggered it
+ * without needing to already know its email address.</p>
  */
 @Component
 @ConditionalOnProperty(prefix = "themistra.notification.email", name = "transport", havingValue = "fake")
@@ -39,7 +43,12 @@ public class FakeEmailTransport implements EmailTransport {
         sent.clear();
     }
 
-    public Optional<EmailMessage> findByRecipient(String recipient) {
+    /**
+     * @return the most recently sent message to {@code recipient}, if any (Kimi Phase 8 Finding #5
+     * - named explicitly as "most recent," not "first," since a test may dispatch more than once to
+     * the same recipient and care about the latest state).
+     */
+    public Optional<EmailMessage> findMostRecentByRecipient(String recipient) {
         EmailMessage match = null;
         for (EmailMessage candidate : sent) {
             if (candidate.to().equals(recipient)) {

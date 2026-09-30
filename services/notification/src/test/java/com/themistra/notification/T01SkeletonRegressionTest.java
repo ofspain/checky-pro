@@ -207,14 +207,14 @@ class T01SkeletonRegressionTest {
      * fail any other test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads
      * one named file. T03 ended the bare-skeleton era (7 files); T04 added 4 more; T05 added 3
      * more; T06 added 5 more; T08 added 3 more; T09 added 3 more; T10 added 1 more; T11 added 6
-     * more and removed 1; T12 adds 7 more
+     * more and removed 1; T12 adds 8 more
      * ({@code channel/{EmailChannel,EmailDeliveryException,EmailMessage,EmailTransport,
-     * FakeEmailTransport,SesEmailTransport}}, {@code common/config/SesClientConfig.java}) and
-     * removes 1 ({@code channel/NoOpEmailChannel.java}, replaced by {@code EmailChannel} as the
-     * real {@code EMAIL} {@code NotificationChannel} implementation - pre-authorized since T11's
-     * own Javadoc). This list is updated to name all 38 explicitly rather than loosened to "at
-     * least N files" - an unnamed-count assertion would silently tolerate a stray file no task ever
-     * authorized. */
+     * FakeEmailTransport,SesEmailTransport}}, {@code common/config/{SesClientConfig,
+     * EmailTransportStartupValidation}}) and removes 1 ({@code channel/NoOpEmailChannel.java},
+     * replaced by {@code EmailChannel} as the real {@code EMAIL} {@code NotificationChannel}
+     * implementation - pre-authorized since T11's own Javadoc). This list is updated to name all 39
+     * explicitly rather than loosened to "at least N files" - an unnamed-count assertion would
+     * silently tolerate a stray file no task ever authorized. */
     @Test
     void noExtraProductionClassesExistBeyondT12sOwnAuthorizedSet() throws IOException {
         Path mainSourceDir = Path.of("src/main/java/com/themistra/notification");
@@ -240,6 +240,7 @@ class T01SkeletonRegressionTest {
                     "common/ResourceServerConfig.java",
                     "common/SecretSafeLogging.java",
                     "common/config/EmailProperties.java",
+                    "common/config/EmailTransportStartupValidation.java",
                     "common/config/InappProperties.java",
                     "common/config/LinkProperties.java",
                     "common/config/LinkPropertiesStartupValidation.java",

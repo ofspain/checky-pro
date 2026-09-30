@@ -20,6 +20,10 @@ import java.util.UUID;
  * unchanged) is the single place a channel's own failure becomes a {@code FAILED}
  * {@code delivery_log} row; duplicating that responsibility here would violate module
  * boundaries.</p>
+ *
+ * <p>Its own success log line names only {@code accountUuid}/{@code messageId} - never
+ * {@code recipient} (Kimi Phase 8 Finding #2: an email address is PII, and {@code agents.md}'s own
+ * observability rule forbids logging PII, not only secrets/tokens).</p>
  */
 @Component
 public class EmailChannel implements NotificationChannel {
@@ -43,11 +47,14 @@ public class EmailChannel implements NotificationChannel {
     public void send(UUID accountUuid, String recipient, TemplateRenderer.RenderedMessage message) {
         validate(recipient, message);
 
-        EmailMessage emailMessage = new EmailMessage(recipient, emailProperties.from(),
+        EmailMessage emailMessage = new EmailMessage(accountUuid, recipient, emailProperties.from(),
                 message.subject(), message.body());
         String messageId = emailTransport.send(emailMessage);
 
-        log.info("Email sent: accountUuid={}, recipient={}, messageId={}", accountUuid, recipient, messageId);
+        // Kimi Phase 8 Finding #2: recipient (an email address) is PII - agents.md's own
+        // observability rule forbids logging it. accountUuid is already a sufficient correlation
+        // key back to the real recipient, via contact_projection, for anyone who genuinely needs it.
+        log.info("Email sent: accountUuid={}, messageId={}", accountUuid, messageId);
     }
 
     private void validate(String recipient, TemplateRenderer.RenderedMessage message) {
@@ -56,6 +63,13 @@ public class EmailChannel implements NotificationChannel {
         }
         if (message.subject() == null) {
             throw new IllegalArgumentException("an email cannot be sent without a subject");
+        }
+        // Kimi Phase 8 Finding #4 / self-review Finding #4: TemplateRenderer's own contract makes
+        // body never-null in practice, but validating it here means a future violation of that
+        // contract surfaces as a clear IllegalArgumentException at this boundary, not a cryptic
+        // builder failure deep inside SesEmailTransport.
+        if (message.body() == null || message.body().isBlank()) {
+            throw new IllegalArgumentException("an email cannot be sent without a body");
         }
     }
 }
