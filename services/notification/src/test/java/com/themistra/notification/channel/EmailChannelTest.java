@@ -65,7 +65,7 @@ class EmailChannelTest {
         UUID accountUuid = UUID.randomUUID();
         when(emailTransport.send(any())).thenReturn("mid-1");
 
-        channel.send(accountUuid, "recipient@example.com", message());
+        channel.send(accountUuid, "recipient@example.com", "SECURITY", message());
 
         var captor = forClass(EmailMessage.class);
         verify(emailTransport).send(captor.capture());
@@ -81,14 +81,14 @@ class EmailChannelTest {
 
     @Test
     void sendThrowsForANullRecipientWithoutCallingTheTransport() {
-        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), null, message()))
+        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), null, "SECURITY", message()))
                 .isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(emailTransport);
     }
 
     @Test
     void sendThrowsForABlankRecipientWithoutCallingTheTransport() {
-        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), "   ", message()))
+        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), "   ", "SECURITY", message()))
                 .isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(emailTransport);
     }
@@ -97,7 +97,7 @@ class EmailChannelTest {
     void sendThrowsForANullSubjectWithoutCallingTheTransport() {
         TemplateRenderer.RenderedMessage noSubject = new TemplateRenderer.RenderedMessage(null, "body", 1);
 
-        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), "recipient@example.com", noSubject))
+        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), "recipient@example.com", "SECURITY", noSubject))
                 .isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(emailTransport);
     }
@@ -106,7 +106,7 @@ class EmailChannelTest {
     void sendThrowsForANullBodyWithoutCallingTheTransport() {
         TemplateRenderer.RenderedMessage noBody = new TemplateRenderer.RenderedMessage("subject", null, 1);
 
-        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), "recipient@example.com", noBody))
+        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), "recipient@example.com", "SECURITY", noBody))
                 .isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(emailTransport);
     }
@@ -115,7 +115,7 @@ class EmailChannelTest {
     void sendThrowsForABlankBodyWithoutCallingTheTransport() {
         TemplateRenderer.RenderedMessage blankBody = new TemplateRenderer.RenderedMessage("subject", "   ", 1);
 
-        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), "recipient@example.com", blankBody))
+        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), "recipient@example.com", "SECURITY", blankBody))
                 .isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(emailTransport);
     }
@@ -127,7 +127,7 @@ class EmailChannelTest {
         EmailDeliveryException transportFailure = new EmailDeliveryException("SES is down");
         when(emailTransport.send(any())).thenThrow(transportFailure);
 
-        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), "recipient@example.com", message()))
+        assertThatThrownBy(() -> channel.send(UUID.randomUUID(), "recipient@example.com", "SECURITY", message()))
                 .isSameAs(transportFailure);
     }
 
@@ -158,7 +158,7 @@ class EmailChannelTest {
         TemplateRenderer.RenderedMessage message = new TemplateRenderer.RenderedMessage(
                 "Reset your password", "Visit https://example.com/reset?token=raw-secret-token", 1);
 
-        channel.send(accountUuid, "victim@example.com", message);
+        channel.send(accountUuid, "victim@example.com", "SECURITY", message);
 
         assertThat(logAppender.list).hasSize(1);
         String formatted = logAppender.list.get(0).getFormattedMessage();

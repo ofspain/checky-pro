@@ -207,16 +207,17 @@ class T01SkeletonRegressionTest {
      * fail any other test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads
      * one named file. T03 ended the bare-skeleton era (7 files); T04 added 4 more; T05 added 3
      * more; T06 added 5 more; T08 added 3 more; T09 added 3 more; T10 added 1 more; T11 added 6
-     * more and removed 1; T12 adds 8 more
-     * ({@code channel/{EmailChannel,EmailDeliveryException,EmailMessage,EmailTransport,
-     * FakeEmailTransport,SesEmailTransport}}, {@code common/config/{SesClientConfig,
-     * EmailTransportStartupValidation}}) and removes 1 ({@code channel/NoOpEmailChannel.java},
-     * replaced by {@code EmailChannel} as the real {@code EMAIL} {@code NotificationChannel}
-     * implementation - pre-authorized since T11's own Javadoc). This list is updated to name all 39
-     * explicitly rather than loosened to "at least N files" - an unnamed-count assertion would
-     * silently tolerate a stray file no task ever authorized. */
+     * more and removed 1; T12 added 8 more and removed 1; T13 adds 7 more
+     * ({@code channel/InAppChannel.java}, {@code inapp/{InappNotification,
+     * InappNotificationRepository,InappStreamRegistry,InappStreamController,InappReadController}},
+     * {@code common/ApiExceptionHandler.java}) and removes 1
+     * ({@code channel/NoOpInAppChannel.java}, replaced by {@code InAppChannel} as the real
+     * {@code IN_APP} {@code NotificationChannel} implementation - pre-authorized since T11's own
+     * Javadoc). This list is updated to name all 45 explicitly rather than loosened to "at least N
+     * files" - an unnamed-count assertion would silently tolerate a stray file no task ever
+     * authorized. */
     @Test
-    void noExtraProductionClassesExistBeyondT12sOwnAuthorizedSet() throws IOException {
+    void noExtraProductionClassesExistBeyondT13sOwnAuthorizedSet() throws IOException {
         Path mainSourceDir = Path.of("src/main/java/com/themistra/notification");
 
         try (Stream<Path> files = Files.walk(mainSourceDir)) {
@@ -232,9 +233,10 @@ class T01SkeletonRegressionTest {
                     "channel/EmailMessage.java",
                     "channel/EmailTransport.java",
                     "channel/FakeEmailTransport.java",
-                    "channel/NoOpInAppChannel.java",
+                    "channel/InAppChannel.java",
                     "channel/NotificationChannel.java",
                     "channel/SesEmailTransport.java",
+                    "common/ApiExceptionHandler.java",
                     "common/ClockConfig.java",
                     "common/PublicEndpoints.java",
                     "common/ResourceServerConfig.java",
@@ -256,6 +258,11 @@ class T01SkeletonRegressionTest {
                     "delivery/DeliveryLog.java",
                     "delivery/DeliveryLogRepository.java",
                     "delivery/DeliveryOrchestrator.java",
+                    "inapp/InappNotification.java",
+                    "inapp/InappNotificationRepository.java",
+                    "inapp/InappReadController.java",
+                    "inapp/InappStreamController.java",
+                    "inapp/InappStreamRegistry.java",
                     "preference/ChannelPreference.java",
                     "preference/ChannelPreferenceRepository.java",
                     "preference/ContactProjection.java",

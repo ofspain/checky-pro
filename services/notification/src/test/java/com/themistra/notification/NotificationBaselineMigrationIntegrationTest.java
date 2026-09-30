@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -42,15 +43,14 @@ class NotificationBaselineMigrationIntegrationTest {
     private static final List<String> GRANTED_TABLES = List.of("delivery_log");
     // T02's own literal scope grants only delivery_log; T04's own V4 additionally grants
     // processed_events, T05's own V5 grants contact_projection, T08's own V6 grants
-    // channel_preferences, and T09's own V7 grants templates (all four tested separately below -
-    // none fit assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own delivery_log-shaped
-    // assumptions, and channel_preferences'/templates' own grants are SELECT-only, unlike the other
-    // two). The remaining two baseline tables and shedlock each get their own grant migration in
-    // the task that first needs runtime access to them (mirroring crypto-service's own
-    // incremental-grant pattern) - they are therefore expected to remain fully inaccessible to
-    // notification_app as of this task.
-    private static final List<String> UNGRANTED_TABLES = List.of(
-            "inapp_notifications", "delivery_retry", "shedlock");
+    // channel_preferences, T09's own V7 grants templates, and T13's own V8 grants
+    // inapp_notifications (all five tested separately below - none fit
+    // assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own delivery_log-shaped assumptions,
+    // and channel_preferences'/templates' own grants are SELECT-only, unlike the others).
+    // delivery_retry and shedlock each get their own grant migration in the task that first needs
+    // runtime access to them (mirroring crypto-service's own incremental-grant pattern) - they are
+    // therefore expected to remain fully inaccessible to notification_app as of this task.
+    private static final List<String> UNGRANTED_TABLES = List.of("delivery_retry", "shedlock");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -173,7 +173,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
         }
     }
 
@@ -458,6 +458,67 @@ class NotificationBaselineMigrationIntegrationTest {
         }
     }
 
+    /** T13's own V8 grant - discovered as a genuine gap during Phase 6 implementation (a real
+     * {@code permission denied for table inapp_notifications} error against a real Postgres
+     * instance, not assumed), mirroring every prior task's own incremental-grant pattern exactly.
+     * Same shape as {@code processed_events} - INSERT + SELECT only, no UPDATE (marking a
+     * notification read is out of this task's own scope) - {@code notification_uuid}, like
+     * {@code processed_events}' own {@code event_key}, is the natural row identifier. */
+    @Test
+    void notificationAppCanInsertAndSelectButNotUpdateOrDeleteOnInappNotifications() throws SQLException {
+        String notificationUuid = UUID.randomUUID().toString();
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
+            try (PreparedStatement insert = app.prepareStatement(
+                    "INSERT INTO notifications.inapp_notifications "
+                            + "(notification_uuid, account_uuid, category, title, body) "
+                            + "VALUES (?::uuid, ?::uuid, 'SECURITY', 'it-title', 'it-body')")) {
+                insert.setString(1, notificationUuid);
+                insert.setString(2, UUID.randomUUID().toString());
+                insert.execute();
+            }
+
+            try (PreparedStatement select = app.prepareStatement(
+                    "SELECT count(*) FROM notifications.inapp_notifications WHERE notification_uuid = ?::uuid")) {
+                select.setString(1, notificationUuid);
+                try (ResultSet resultSet = select.executeQuery()) {
+                    resultSet.next();
+                    assertThat(resultSet.getInt(1))
+                            .as("SELECT must see the row notification_app just inserted")
+                            .isEqualTo(1);
+                }
+            }
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement update = app.prepareStatement(
+                        "UPDATE notifications.inapp_notifications SET title = 'other' WHERE notification_uuid = ?::uuid")) {
+                    update.setString(1, notificationUuid);
+                    update.execute();
+                }
+            })
+                    .as("UPDATE on inapp_notifications must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+
+            assertThatThrownBy(() -> {
+                try (PreparedStatement delete = app.prepareStatement(
+                        "DELETE FROM notifications.inapp_notifications WHERE notification_uuid = ?::uuid")) {
+                    delete.setString(1, notificationUuid);
+                    delete.execute();
+                }
+            })
+                    .as("DELETE on inapp_notifications must be denied for notification_app")
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("permission denied");
+        }
+
+        try (Connection admin = adminConnection();
+             PreparedStatement cleanup = admin.prepareStatement(
+                     "DELETE FROM notifications.inapp_notifications WHERE notification_uuid = ?::uuid")) {
+            cleanup.setString(1, notificationUuid);
+            cleanup.execute();
+        }
+    }
+
     @Test
     void notificationAppHasNoAccessAtAllToTablesOutsideAc2Scope() throws SQLException {
         try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
@@ -506,7 +567,6 @@ class NotificationBaselineMigrationIntegrationTest {
     // Testcontainers instance discarded after the test.
     private static String noWhereUpdateStatementFor(String table) {
         return switch (table) {
-            case "inapp_notifications" -> "UPDATE notifications.inapp_notifications SET title = 'x'";
             case "delivery_retry" -> "UPDATE notifications.delivery_retry SET attempt = 2";
             case "shedlock" -> "UPDATE notifications.shedlock SET locked_by = 'x'";
             default -> throw new IllegalArgumentException("no UPDATE fixture for " + table);
@@ -515,7 +575,6 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static String noWhereDeleteStatementFor(String table) {
         return switch (table) {
-            case "inapp_notifications" -> "DELETE FROM notifications.inapp_notifications";
             case "delivery_retry" -> "DELETE FROM notifications.delivery_retry";
             case "shedlock" -> "DELETE FROM notifications.shedlock";
             default -> throw new IllegalArgumentException("no DELETE fixture for " + table);
@@ -524,10 +583,6 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static String minimalInsertFixtureFor(String table) {
         return switch (table) {
-            case "inapp_notifications" -> "INSERT INTO notifications.inapp_notifications "
-                    + "(notification_uuid, account_uuid, category, title, body) VALUES "
-                    + "('00000000-0000-0000-0000-000000000002', "
-                    + "'00000000-0000-0000-0000-000000000001', 'SECURITY', 't', 'b')";
             case "delivery_retry" -> "INSERT INTO notifications.delivery_retry "
                     + "(source_event_key, channel, attempt, next_attempt_at) "
                     + "VALUES ('it-denied', 'EMAIL', 1, now())";

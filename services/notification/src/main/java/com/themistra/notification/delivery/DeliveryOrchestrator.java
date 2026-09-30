@@ -191,7 +191,7 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
             }
 
             try {
-                channelBean.send(accountUuid, recipient, message);
+                channelBean.send(accountUuid, recipient, mapping.category(), message);
                 save(accountUuid, recipient, channel, sourceEventKey, templateName, message.version(), "SENT", null);
             } catch (Exception e) {
                 save(accountUuid, recipient, channel, sourceEventKey, templateName, message.version(),

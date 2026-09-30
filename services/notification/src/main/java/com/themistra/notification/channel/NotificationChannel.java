@@ -14,6 +14,12 @@ import java.util.UUID;
  * this task also provides two temporary, real (not stub) implementations,
  * {@link NoOpEmailChannel}/{@link NoOpInAppChannel}, mirroring {@code NoOpNotificationDispatcher}'s
  * own established precedent (T06).
+ *
+ * <p>{@code send}'s own {@code category} parameter (T13, Kimi Phase 3 Finding #1) was added because
+ * {@code InAppChannel}'s own {@code inapp_notifications.category} column has no other source -
+ * {@code DeliveryOrchestrator} already resolves it (from {@code NotificationMapping.category()})
+ * before this call, exactly like {@code recipient}. {@code EmailChannel} (T12) accepts and ignores
+ * it - SES has no equivalent concept.</p>
  */
 public interface NotificationChannel {
 
@@ -28,7 +34,10 @@ public interface NotificationChannel {
      * @param recipient the email address for {@code EMAIL}, the account UUID's own string form
      *                  for {@code IN_APP} (Kimi Phase 3 Finding #2/#6) - resolved once by
      *                  {@code DeliveryOrchestrator} before this call, not by the channel itself.
+     * @param category the notification's own preference category ({@code SECURITY}/{@code PAYMENT}/
+     *                  {@code MARKETING}, T13 Kimi Phase 3 Finding #1) - already resolved by
+     *                  {@code DeliveryOrchestrator} before this call, same as {@code recipient}.
      * @param message the already-rendered subject/body/version (T09).
      */
-    void send(UUID accountUuid, String recipient, TemplateRenderer.RenderedMessage message);
+    void send(UUID accountUuid, String recipient, String category, TemplateRenderer.RenderedMessage message);
 }

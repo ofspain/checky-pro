@@ -44,7 +44,9 @@ public class EmailChannel implements NotificationChannel {
     }
 
     @Override
-    public void send(UUID accountUuid, String recipient, TemplateRenderer.RenderedMessage message) {
+    public void send(UUID accountUuid, String recipient, String category, TemplateRenderer.RenderedMessage message) {
+        // category (T13, Kimi Phase 3 Finding #1) is accepted per NotificationChannel's own
+        // interface contract but never read here - SES has no equivalent concept.
         validate(recipient, message);
 
         EmailMessage emailMessage = new EmailMessage(accountUuid, recipient, emailProperties.from(),

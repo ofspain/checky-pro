@@ -94,8 +94,8 @@ class DeliveryOrchestratorTest {
                 Map.of("sourceEventKey", "k1"))).doesNotThrowAnyException();
 
         verifyNoInteractions(deliveryLogRepository, contactProjectionUpdater, preferenceResolver, templateRenderer);
-        verify(emailChannel, never()).send(any(), any(), any());
-        verify(inAppChannel, never()).send(any(), any(), any());
+        verify(emailChannel, never()).send(any(), any(), any(), any());
+        verify(inAppChannel, never()).send(any(), any(), any(), any());
     }
 
     @Test
@@ -106,8 +106,8 @@ class DeliveryOrchestratorTest {
                 .doesNotThrowAnyException();
 
         verifyNoInteractions(deliveryLogRepository, contactProjectionUpdater, preferenceResolver, templateRenderer);
-        verify(emailChannel, never()).send(any(), any(), any());
-        verify(inAppChannel, never()).send(any(), any(), any());
+        verify(emailChannel, never()).send(any(), any(), any(), any());
+        verify(inAppChannel, never()).send(any(), any(), any(), any());
     }
 
     // --- R11 named test: every attempt and outcome is recorded with the required fields ---
@@ -145,8 +145,8 @@ class DeliveryOrchestratorTest {
         assertThat(inAppRow.getTemplateVersion()).isEqualTo(1);
         assertThat(inAppRow.getOutcome()).isEqualTo("SENT");
 
-        verify(emailChannel).send(eq(accountUuid), eq("a@example.com"), eq(message(3)));
-        verify(inAppChannel).send(eq(accountUuid), eq(accountUuid.toString()), eq(message(1)));
+        verify(emailChannel).send(eq(accountUuid), eq("a@example.com"), eq("SECURITY"), eq(message(3)));
+        verify(inAppChannel).send(eq(accountUuid), eq(accountUuid.toString()), eq("SECURITY"), eq(message(1)));
     }
 
     // --- R10 named test: suppression reaches the delivery log, not just the resolver ------
@@ -177,8 +177,8 @@ class DeliveryOrchestratorTest {
         assertThat(inAppRow.getOutcome()).isEqualTo("SENT");
 
         verify(templateRenderer, never()).render(eq("email.verify"), any(), any());
-        verify(emailChannel, never()).send(any(), any(), any());
-        verify(inAppChannel).send(any(), any(), any());
+        verify(emailChannel, never()).send(any(), any(), any(), any());
+        verify(inAppChannel).send(any(), any(), any(), any());
     }
 
     // --- Finding #3 / AC5: missing contact projection is FAILED for EMAIL only -------------
@@ -211,7 +211,7 @@ class DeliveryOrchestratorTest {
         assertThat(inAppRow.getRecipient()).isEqualTo(accountUuid.toString());
 
         verify(templateRenderer, never()).render(eq("email.verify"), any(), any());
-        verify(emailChannel, never()).send(any(), any(), any());
+        verify(emailChannel, never()).send(any(), any(), any(), any());
     }
 
     /** Finding #2/#6: IN_APP's own recipient is always the account UUID's own string form - even
@@ -226,7 +226,7 @@ class DeliveryOrchestratorTest {
 
         orchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "key-4"));
 
-        verify(inAppChannel).send(eq(accountUuid), eq(accountUuid.toString()), any());
+        verify(inAppChannel).send(eq(accountUuid), eq(accountUuid.toString()), any(), any());
     }
 
     // --- AC4 / Finding #4: render failure is FAILED, not propagated, redacted --------------
@@ -250,7 +250,7 @@ class DeliveryOrchestratorTest {
                 .filter(r -> "EMAIL".equals(r.getChannel())).findFirst().orElseThrow();
         assertThat(emailRow.getOutcome()).isEqualTo("FAILED");
         assertThat(emailRow.getErrorDetail()).isEqualTo("no template for name=email.verify, channel=EMAIL");
-        verify(emailChannel, never()).send(any(), any(), any());
+        verify(emailChannel, never()).send(any(), any(), any(), any());
     }
 
     /** Finding #5: every errorDetail is redacted before persistence - a render failure whose
@@ -312,7 +312,7 @@ class DeliveryOrchestratorTest {
         when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(2));
         when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
         org.mockito.Mockito.doThrow(new RuntimeException(leaky))
-                .when(emailChannel).send(any(), any(), any());
+                .when(emailChannel).send(any(), any(), any(), any());
 
         assertThatCode(() -> orchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "key-8")))
                 .doesNotThrowAnyException();
@@ -342,12 +342,12 @@ class DeliveryOrchestratorTest {
         when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
         when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(true);
         when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
-        org.mockito.Mockito.doThrow(new SimulatedError()).when(emailChannel).send(any(), any(), any());
+        org.mockito.Mockito.doThrow(new SimulatedError()).when(emailChannel).send(any(), any(), any(), any());
 
         assertThrows(SimulatedError.class,
                 () -> orchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "key-9")));
 
-        verify(inAppChannel, never()).send(any(), any(), any());
+        verify(inAppChannel, never()).send(any(), any(), any(), any());
     }
 
     private static final class SimulatedError extends Error {
@@ -375,8 +375,8 @@ class DeliveryOrchestratorTest {
         assertThat(captor.getAllValues().stream().map(DeliveryLog::getChannel))
                 .containsExactlyInAnyOrder("EMAIL", "IN_APP");
         verifyNoInteractions(preferenceResolver, templateRenderer);
-        verify(emailChannel, never()).send(any(), any(), any());
-        verify(inAppChannel, never()).send(any(), any(), any());
+        verify(emailChannel, never()).send(any(), any(), any(), any());
+        verify(inAppChannel, never()).send(any(), any(), any(), any());
     }
 
     @Test
@@ -484,7 +484,7 @@ class DeliveryOrchestratorTest {
         DeliveryLog inAppRow = captor.getAllValues().stream()
                 .filter(r -> "IN_APP".equals(r.getChannel())).findFirst().orElseThrow();
         assertThat(inAppRow.getOutcome()).isEqualTo("SENT");
-        verify(emailChannel, never()).send(any(), any(), any());
+        verify(emailChannel, never()).send(any(), any(), any(), any());
     }
 
     // --- Kimi Phase 11 Gap #3: both channels suppressed simultaneously ---------------------
@@ -502,8 +502,8 @@ class DeliveryOrchestratorTest {
         verify(deliveryLogRepository, times(2)).save(captor.capture());
         assertThat(captor.getAllValues()).allSatisfy(row -> assertThat(row.getOutcome()).isEqualTo("SUPPRESSED"));
         verifyNoInteractions(templateRenderer);
-        verify(emailChannel, never()).send(any(), any(), any());
-        verify(inAppChannel, never()).send(any(), any(), any());
+        verify(emailChannel, never()).send(any(), any(), any(), any());
+        verify(inAppChannel, never()).send(any(), any(), any(), any());
     }
 
     // --- Kimi Phase 11 Gap #4: documents (locks) the current precedence, doesn't change it ---
