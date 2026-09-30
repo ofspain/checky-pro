@@ -3,11 +3,15 @@ package com.themistra.notification.template;
 import com.themistra.notification.common.config.LinkProperties;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -115,6 +119,89 @@ class TemplateRendererTest {
                 Map.of("verificationLink", "CALLER_SUPPLIED", "token", "abc"));
 
         assertThat(message.body()).isEqualTo("https://checky.pro/verify-email?token=abc");
+    }
+
+    /** Kimi Phase 11 Gap #1: a permanent, cheap static guard for the exact merge-order shape the
+     * whole "computed links win" guarantee rests on - a future edit that reversed the two
+     * `putAll` calls would otherwise only be caught by re-running Phase 10's own manual mutation
+     * test by hand. */
+    @Test
+    void renderMergesEventDataBeforeOverlayingComputedLinkPlaceholders() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/themistra/notification/template/TemplateRenderer.java"));
+
+        int eventDataCopyIndex = source.indexOf("new HashMap<>(eventData)");
+        int computedOverlayIndex = source.indexOf("values.putAll(computeLinkPlaceholders(eventData))");
+
+        assertThat(eventDataCopyIndex).as("values must start as a copy of eventData").isGreaterThan(-1);
+        assertThat(computedOverlayIndex).as("computed links must be overlaid afterward").isGreaterThan(-1);
+        assertThat(eventDataCopyIndex)
+                .as("eventData must be copied first, then computed links overlaid on top - not the reverse")
+                .isLessThan(computedOverlayIndex);
+    }
+
+    /** Kimi Phase 11 Gap #3: locks the {@code resetLink} path convention specifically - the URL-
+     * encoding test alone would still pass if a future edit accidentally reused
+     * {@code /verify-email} for both link types. */
+    @Test
+    void resetLinkUsesTheResetPasswordPathNotVerifyEmail() {
+        Template template = template(null, "{{resetLink}}", 1);
+        when(repository.findTopByNameAndChannelOrderByVersionDesc("x", "EMAIL")).thenReturn(Optional.of(template));
+
+        TemplateRenderer.RenderedMessage message = renderer.render("x", "EMAIL", Map.of("token", "abc"));
+
+        assertThat(message.body()).isEqualTo("https://checky.pro/reset-password?token=abc");
+    }
+
+    /** Kimi Phase 11 Gap #4: a naive {@code toString()} could still leak the literal string
+     * "null" for a null subject/body, or format differently than the non-null case - proves the
+     * override handles both uniformly. */
+    @Test
+    void toStringHandlesNullSubjectAndBodyWithoutTheLiteralNullString() {
+        var message = new TemplateRenderer.RenderedMessage(null, null, 1);
+
+        String stringified = message.toString();
+
+        assertThat(stringified).contains("version=1");
+        assertThat(stringified).doesNotContain("null");
+    }
+
+    /** Kimi Phase 11 Gap #5: {@code normalizeBaseUrl} only strips a trailing slash - a configured
+     * path prefix (a plausible real deployment shape) must survive untouched. */
+    @Test
+    void baseUrlWithAPathPrefixIsPreservedInTheComputedLink() {
+        TemplateRenderer prefixedRenderer = new TemplateRenderer(repository, new LinkProperties("https://checky.pro/app"));
+        Template template = template(null, "{{verificationLink}}", 1);
+        when(repository.findTopByNameAndChannelOrderByVersionDesc("x", "EMAIL")).thenReturn(Optional.of(template));
+
+        TemplateRenderer.RenderedMessage message = prefixedRenderer.render("x", "EMAIL", Map.of("token", "abc"));
+
+        assertThat(message.body()).isEqualTo("https://checky.pro/app/verify-email?token=abc");
+    }
+
+    /** Kimi Phase 11 Gap #6: an explicit empty string is a valid value, distinct from a missing
+     * key or an explicit `null` - must render as empty, not literally "{{key}}" or anything else. */
+    @Test
+    void emptyStringEventDataValueRendersAsEmptyString() {
+        Template template = template(null, "Hi {{displayName}}!", 1);
+        when(repository.findTopByNameAndChannelOrderByVersionDesc("x", "EMAIL")).thenReturn(Optional.of(template));
+
+        TemplateRenderer.RenderedMessage message = renderer.render("x", "EMAIL", Map.of("displayName", ""));
+
+        assertThat(message.body()).isEqualTo("Hi !");
+    }
+
+    /** Kimi Phase 11 Gap #7: {@code render} must never attempt to write into the caller's own
+     * {@code eventData} map - passing a genuinely immutable map proves this, since any write
+     * attempt would throw {@code UnsupportedOperationException}. */
+    @Test
+    void renderNeverMutatesTheCallersEventDataMap() {
+        Template template = template(null, "{{verificationLink}} {{displayName}}", 1);
+        when(repository.findTopByNameAndChannelOrderByVersionDesc("x", "EMAIL")).thenReturn(Optional.of(template));
+        Map<String, String> immutableEventData = Map.of("displayName", "Ada", "token", "abc");
+
+        assertThatCode(() -> renderer.render("x", "EMAIL", immutableEventData)).doesNotThrowAnyException();
+        assertThat(immutableEventData).containsOnlyKeys("displayName", "token");
     }
 
     /** Kimi Phase 8 Finding #6: malformed/invalid placeholders (empty, digit-leading, hyphenated,

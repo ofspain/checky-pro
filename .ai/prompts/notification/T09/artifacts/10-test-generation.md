@@ -54,3 +54,31 @@ test re-ran clean (12/12).
 
 `mvn -pl services/notification clean verify` — 166 tests, 0 failures. No production code left
 modified in this phase (the mutation above was reverted before the final verification run).
+
+## Addendum (post Phase 11) — all 8 gaps verified against source and accepted
+
+Kimi's Phase 11 review raised 8 gaps, all independently verified true before acting (none false).
+All 8 are added (174 tests → from 166):
+
+- **Gap #1** (no permanent guard that the computed-link-override merge order itself exists) —
+  added `renderMergesEventDataBeforeOverlayingComputedLinkPlaceholders`, a static text-scan test
+  mirroring T08's own Gap #1 precedent (`ContactProjectionRepository`'s own `WHERE`-guard scan).
+- **Gap #2** (no integration coverage of `getStartedLink`/`user.welcome`) — added
+  `userWelcomeRendersTheComputedGetStartedLink`.
+- **Gap #3** (`resetLink`'s own path convention unlocked) — added
+  `resetLinkUsesTheResetPasswordPathNotVerifyEmail`, proving `/reset-password`, not
+  `/verify-email`.
+- **Gap #4** (`toString()` with null `subject`/`body` untested) — added
+  `toStringHandlesNullSubjectAndBodyWithoutTheLiteralNullString`.
+- **Gap #5** (`baseUrl` with a path prefix untested) — added
+  `baseUrlWithAPathPrefixIsPreservedInTheComputedLink` (`https://checky.pro/app` → preserved,
+  not stripped).
+- **Gap #6** (empty-string `eventData` values untested) — added
+  `emptyStringEventDataValueRendersAsEmptyString`.
+- **Gap #7** (no proof `render` doesn't mutate the caller's own map) — added
+  `renderNeverMutatesTheCallersEventDataMap`, passing a genuinely immutable `Map.of(...)`.
+- **Gap #8** (no direct `Template` entity-mapping proof) — added
+  `templateEntityMapsAllSixColumnsCorrectly`, reading a real seeded row via `TemplateRepository`
+  directly and asserting all 6 getters.
+
+**Verification:** `mvn -pl services/notification clean verify` — 174 tests, 0 failures.

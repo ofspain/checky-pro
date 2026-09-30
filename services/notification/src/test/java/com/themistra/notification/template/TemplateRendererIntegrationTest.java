@@ -63,6 +63,9 @@ class TemplateRendererIntegrationTest {
     @Autowired
     private TemplateRenderer renderer;
 
+    @Autowired
+    private TemplateRepository repository;
+
     @Test
     void rendersTheRealSeededEmailVerifyTemplateWithATrailingSlashBaseUrlNormalized() {
         TemplateRenderer.RenderedMessage message = renderer.render("email.verify", "EMAIL",
@@ -113,6 +116,34 @@ class TemplateRendererIntegrationTest {
         assertThat(message.version()).isEqualTo(2);
         assertThat(message.subject()).isEqualTo("v2 subject");
         assertThat(message.body()).isEqualTo("v2 body Ada");
+    }
+
+    /** Kimi Phase 11 Gap #2: the only integration test exercising {@code getStartedLink} - every
+     * other computed link is exercised by another test method, but none renders
+     * {@code user.welcome}, the sole seeded template that references it. */
+    @Test
+    void userWelcomeRendersTheComputedGetStartedLink() {
+        TemplateRenderer.RenderedMessage message = renderer.render("user.welcome", "EMAIL",
+                Map.of("displayName", "Ada"));
+
+        assertThat(message.body()).contains("https://checky.pro");
+        assertThat(message.body()).doesNotContain("{{getStartedLink}}");
+    }
+
+    /** Kimi Phase 11 Gap #8: asserts {@link Template}'s own column mapping directly via the
+     * repository, not only indirectly through {@link TemplateRenderer}'s own rendered output. */
+    @Test
+    void templateEntityMapsAllSixColumnsCorrectly() {
+        Template template = repository.findTopByNameAndChannelOrderByVersionDesc("email.verify", "EMAIL")
+                .orElseThrow();
+
+        assertThat(template.getId()).isNotNull();
+        assertThat(template.getName()).isEqualTo("email.verify");
+        assertThat(template.getChannel()).isEqualTo("EMAIL");
+        assertThat(template.getVersion()).isEqualTo(1);
+        assertThat(template.getSubject()).isEqualTo("Verify your Themistra account");
+        assertThat(template.getBody()).contains("{{displayName}}");
+        assertThat(template.getCreatedAt()).isNotNull();
     }
 
     private static Connection adminConnection() throws SQLException {
