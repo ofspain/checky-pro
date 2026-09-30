@@ -1,6 +1,8 @@
 package com.themistra.notification.delivery;
 
+import com.themistra.notification.channel.NotificationChannel;
 import com.themistra.notification.preference.ContactProjectionUpdater;
+import com.themistra.notification.template.TemplateRenderer;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -100,6 +102,12 @@ class DeliveryOrchestratorIntegrationTest {
 
     @Autowired
     private PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private List<NotificationChannel> notificationChannels;
+
+    @Autowired
+    private TemplateRenderer templateRenderer;
 
     private static void insertChannelPreference(UUID accountUuid, String category, String channel, boolean enabled)
             throws SQLException {
@@ -255,6 +263,39 @@ class DeliveryOrchestratorIntegrationTest {
                 orchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "real-key-7")));
 
         assertThat(rowsFor(accountUuid)).hasSize(2);
+    }
+
+    /** Kimi Phase 11 Gap #2 (item 3): the whole task depends on exactly two {@code NotificationChannel}
+     * beans being collected into {@code DeliveryOrchestrator}'s own {@code channelsByName} map - a
+     * silent component-scan regression (e.g. a missing {@code @Component}) would otherwise only
+     * surface as a confusing "no channel bean registered" delivery_log row, not a test failure. */
+    @Test
+    void exactlyTwoNotificationChannelBeansAreRegisteredWithExpectedNames() {
+        assertThat(notificationChannels).hasSize(2);
+        assertThat(notificationChannels.stream().map(NotificationChannel::channel))
+                .containsExactlyInAnyOrder("EMAIL", "IN_APP");
+    }
+
+    /** Kimi Phase 11 Gap #6: {@code delivery_log} never persists the rendered body, so
+     * {@code dispatchSucceedsEndToEndWhenDisplayNameIsPopulated} above only proves the pipeline
+     * completes without error, not that the placeholder was actually substituted. This test
+     * replicates {@code DeliveryOrchestrator}'s own real {@code findDisplayName}-then-merge step
+     * against the real {@link TemplateRenderer} bean it uses internally, proving the substitution
+     * itself really happens - a real, disclosed scope narrowing (it does not call {@code dispatch}
+     * itself), not a full substitute for it. */
+    @Test
+    void displayNameActuallySubstitutesIntoARealRenderedBody() throws SQLException {
+        UUID accountUuid = UUID.randomUUID();
+        contactProjectionUpdater.upsertEmail(accountUuid, "realbody@example.com", Instant.parse("2026-01-01T00:00:00Z"));
+        setDisplayName(accountUuid, "Ada Lovelace");
+
+        String displayName = contactProjectionUpdater.findDisplayName(accountUuid).orElseThrow();
+        Map<String, String> renderData = new java.util.HashMap<>(Map.of("sourceEventKey", "real-key-8"));
+        renderData.put("displayName", displayName);
+
+        TemplateRenderer.RenderedMessage rendered = templateRenderer.render("user.welcome", "EMAIL", renderData);
+
+        assertThat(rendered.body()).contains("Ada Lovelace");
     }
 
     private static Connection adminConnection() throws SQLException {

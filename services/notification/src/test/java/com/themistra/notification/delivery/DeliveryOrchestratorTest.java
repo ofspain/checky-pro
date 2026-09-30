@@ -10,7 +10,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -452,5 +455,127 @@ class DeliveryOrchestratorTest {
         var captor = forClass(Map.class);
         verify(templateRenderer).render(eq("email.verify"), eq("EMAIL"), captor.capture());
         assertThat(captor.getValue()).isEmpty();
+    }
+
+    // --- Kimi Phase 11 Gap #1/#5: a failure inside dispatchOneChannel's own body (not already ---
+    // --- converted to a row) must still leave a best-effort FAILED row, not just a log line. ---
+
+    @Test
+    void preferenceResolverThrowingRecordsAFailedRowForThatChannelAndDoesNotPropagate() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "EMAIL"))
+                .thenThrow(new RuntimeException("resolver down"));
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "IN_APP")).thenReturn(true);
+        when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
+
+        assertThatCode(() -> orchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "key-14")))
+                .doesNotThrowAnyException();
+
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository, times(2)).save(captor.capture());
+        DeliveryLog emailRow = captor.getAllValues().stream()
+                .filter(r -> "EMAIL".equals(r.getChannel())).findFirst().orElseThrow();
+        assertThat(emailRow.getOutcome()).isEqualTo("FAILED");
+        assertThat(emailRow.getErrorDetail()).isEqualTo("resolver down");
+        assertThat(emailRow.getSourceEventKey()).isEqualTo("key-14");
+
+        DeliveryLog inAppRow = captor.getAllValues().stream()
+                .filter(r -> "IN_APP".equals(r.getChannel())).findFirst().orElseThrow();
+        assertThat(inAppRow.getOutcome()).isEqualTo("SENT");
+        verify(emailChannel, never()).send(any(), any(), any());
+    }
+
+    // --- Kimi Phase 11 Gap #3: both channels suppressed simultaneously ---------------------
+
+    @Test
+    void bothChannelsSuppressedRecordsTwoSuppressedRowsAndNeitherRendersNorSends() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(false);
+
+        orchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "key-15"));
+
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues()).allSatisfy(row -> assertThat(row.getOutcome()).isEqualTo("SUPPRESSED"));
+        verifyNoInteractions(templateRenderer);
+        verify(emailChannel, never()).send(any(), any(), any());
+        verify(inAppChannel, never()).send(any(), any(), any());
+    }
+
+    // --- Kimi Phase 11 Gap #4: documents (locks) the current precedence, doesn't change it ---
+
+    /** Current behavior: the projection's own {@code displayName} unconditionally overrides a
+     * caller-supplied value already present in {@code eventData}. Unreachable in production today
+     * ({@code AuthEventConsumer} never supplies a {@code displayName} key), but locked here so a
+     * future caller that does supply one gets a deliberate, tested precedence rule rather than an
+     * accidental one. */
+    @Test
+    void callerSuppliedDisplayNameInEventDataIsOverriddenByTheProjectionValueWhenBothArePresent() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.of("Projection Name"));
+        when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(true);
+        when(templateRenderer.render(any(), any(), any())).thenReturn(message(1));
+
+        orchestrator.dispatch(accountUuid, "verify_email",
+                Map.of("displayName", "Caller Supplied Name", "sourceEventKey", "key-16"));
+
+        var captor = forClass(Map.class);
+        verify(templateRenderer).render(eq("email.verify"), eq("EMAIL"), captor.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, String> renderData = captor.getValue();
+        assertThat(renderData).containsEntry("displayName", "Projection Name");
+    }
+
+    // --- Kimi Phase 11 Gap #7: payment-derived mappings forward eventData keys unchanged ---
+
+    @Test
+    void paymentDerivedMappingForwardsAllEventDataKeysUnchangedToBothChannels() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(true);
+        when(templateRenderer.render(any(), any(), any())).thenReturn(message(1));
+        Map<String, String> eventData = Map.of(
+                "amount", "125.00", "currency", "USD", "invoiceId", "inv-1",
+                "invoiceUuid", UUID.randomUUID().toString(), "sourceEventKey", "key-17");
+
+        orchestrator.dispatch(accountUuid, "invoice.created", eventData);
+
+        var emailCaptor = forClass(Map.class);
+        verify(templateRenderer).render(eq("invoice.created"), eq("EMAIL"), emailCaptor.capture());
+        assertThat(emailCaptor.getValue()).containsAllEntriesOf(eventData);
+
+        var inAppCaptor = forClass(Map.class);
+        verify(templateRenderer).render(eq("invoice.created"), eq("IN_APP"), inAppCaptor.capture());
+        assertThat(inAppCaptor.getValue()).containsAllEntriesOf(eventData);
+    }
+
+    // --- Kimi Phase 11 Gap #8: the mapping table is VERBATIM - lock its exact 7 entries -----
+
+    @Test
+    void notificationMappingsTableContainsExactlyTheSevenVerbatimEntriesAndExcludesAccountSuspended()
+            throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/themistra/notification/delivery/DeliveryOrchestrator.java"));
+
+        assertThat(source)
+                .contains("\"verify_email\", new NotificationMapping(\"email.verify\", \"user.verify\", \"SECURITY\")")
+                .contains("\"password_reset\", new NotificationMapping(\"email.password_reset\", "
+                        + "\"user.password_reset\", \"SECURITY\")")
+                .contains("\"user.registered\", new NotificationMapping(\"user.welcome\", \"user.welcome\", \"SECURITY\")")
+                .contains("\"invoice.created\", new NotificationMapping(\"invoice.created\", \"invoice.created\", \"PAYMENT\")")
+                .contains("\"payment.seen\", new NotificationMapping(\"payment.seen\", \"payment.seen\", \"PAYMENT\")")
+                .contains("\"payment.finalized\", new NotificationMapping(\"payment.finalized\", "
+                        + "\"payment.finalized\", \"PAYMENT\")")
+                .contains("\"receipt.issued\", new NotificationMapping(\"receipt.issued\", \"receipt.issued\", \"PAYMENT\")")
+                .doesNotContain("\"account.suspended\", new NotificationMapping(");
+
+        long mappingEntryCount = source.lines().filter(line -> line.contains("new NotificationMapping(")).count();
+        assertThat(mappingEntryCount).as("exactly 7 entries, no more, no fewer").isEqualTo(7);
     }
 }

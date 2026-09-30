@@ -52,9 +52,13 @@ import java.util.stream.Collectors;
  * {@code contactProjectionUpdater.findEmail} itself throwing), the outer catch now records a
  * best-effort {@code FAILED} row for each of {@link #LAUNCH_CHANNELS} rather than none at all
  * (Kimi Phase 8 Finding #4), so R11's own "every delivery attempt" guarantee still holds for
- * pre-loop failures. That fallback save has its own inner safety net in case {@code save} itself
- * throws (e.g. a genuinely null {@code sourceEventKey}, Finding #6) - falling back to a synthetic
- * key and, failing that, a log-only record.</p>
+ * pre-loop failures. {@code dispatchOneChannel}'s own outer catch carries the identical fallback
+ * (Kimi Phase 11 Gap #1/#5) - a failure not already converted to a row above (e.g.
+ * {@code preferenceResolver.resolve} itself throwing, or one of this method's own {@code save}
+ * calls throwing) still leaves a best-effort record for that one channel. Both fallback saves have
+ * their own inner safety net in case {@code save} itself throws (e.g. a genuinely null
+ * {@code sourceEventKey}, Finding #6) - falling back to a synthetic key and, failing that, a
+ * log-only record.</p>
  */
 @Component
 public class DeliveryOrchestrator implements NotificationDispatcher {
@@ -194,7 +198,20 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
                         "FAILED", e.getMessage());
             }
         } catch (Exception e) {
+            // Kimi Phase 11 Gap #1/#5: a failure not already converted to a FAILED row above (e.g.
+            // preferenceResolver.resolve itself throwing, or one of this method's own save() calls
+            // throwing - most plausibly a NOT NULL violation from a missing sourceEventKey,
+            // Finding #6) must still leave a best-effort record, mirroring dispatch's own outer
+            // fallback (Finding #4) exactly, including its synthetic-key handling and inner safety
+            // net.
             log.error("Unexpected failure dispatching channel={} for accountUuid={}", channel, accountUuid, e);
+            try {
+                save(accountUuid, null, channel, sourceEventKey == null ? "unknown:" + accountUuid : sourceEventKey,
+                        null, null, "FAILED", e.getMessage());
+            } catch (Exception saveFailure) {
+                log.error("Unable to record fallback FAILED row for accountUuid={}, channel={}",
+                        accountUuid, channel, saveFailure);
+            }
         }
     }
 

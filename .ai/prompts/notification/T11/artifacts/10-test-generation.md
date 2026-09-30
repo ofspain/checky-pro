@@ -75,3 +75,56 @@ exactly this reason — the same, already-established pattern every other module
 
 `mvn -pl services/notification clean verify` — 226 tests, 0 failures, 0 errors (196 pre-existing +
 30 new: 18 + 7 + 5). No production code was modified in this phase.
+
+## Addendum (post Phase 11) — 1 of 8 gaps was a real bug, fixed with a real code change; 7 covered with new tests
+
+Kimi's Phase 11 review raised 8 gaps. All verified against source before acting.
+
+- **Gap #1 / Gap #5 turned out to be the same real, live bug**, not merely hypothetical: a direct
+  read of `dispatchOneChannel`'s own source showed its outer `catch (Exception e)` (the one wrapping
+  `preferenceResolver.resolve`, both `save()` calls in the render/missing-channel-bean branches, and
+  the final `send`/`save` pair) only logged — it never recorded a fallback `FAILED` row, unlike
+  `dispatch`'s own outer catch (Finding #4). Concretely: if `preferenceResolver.resolve` throws, or
+  if any of this method's own `save()` calls throws (most plausibly a `NOT NULL` violation from a
+  missing `sourceEventKey`, Finding #6), that channel's delivery attempt silently disappears from
+  the log entirely — a direct violation of R11's "every delivery attempt is recorded." **Fixed**:
+  `dispatchOneChannel`'s own outer catch now carries the identical fallback-save pattern as
+  `dispatch`'s own outer catch (synthetic-key fallback + its own inner safety net). Added
+  `preferenceResolverThrowingRecordsAFailedRowForThatChannelAndDoesNotPropagate` (mutation-style
+  proof: stubs the resolver to throw and asserts a `FAILED` row now appears where none did before).
+- **Gap #2** (no dedicated channel-bean tests) — **fixed**: added
+  `channel/NoOpEmailChannelTest.java` / `channel/NoOpInAppChannelTest.java` (3 tests each — `channel()`
+  value, `send` completes normally with token-bearing content, a source-scan locking that the log
+  statement passes the whole `message` object, never `.subject()`/`.body()` directly) plus
+  `DeliveryOrchestratorIntegrationTest.exactlyTwoNotificationChannelBeansAreRegisteredWithExpectedNames`
+  (a real Spring context proof that exactly two beans are scanned).
+- **Gap #3** (both channels suppressed simultaneously) — **fixed**: added
+  `bothChannelsSuppressedRecordsTwoSuppressedRowsAndNeitherRendersNorSends`.
+- **Gap #4** (`displayName` precedence when `eventData` already has the key) — **documented, not
+  changed**: current behavior (the real projection value always wins over a caller-supplied one) is
+  the correct, safer choice and is unreachable in production today (`AuthEventConsumer` never
+  supplies this key). Locked with
+  `callerSuppliedDisplayNameInEventDataIsOverriddenByTheProjectionValueWhenBothArePresent`.
+  No production change.
+- **Gap #6** (no proof the rendered body actually contains `displayName`) — **fixed, with a
+  disclosed scope narrowing**: `delivery_log` never persists the rendered body, so
+  `DeliveryOrchestratorIntegrationTest.displayNameActuallySubstitutesIntoARealRenderedBody` replicates
+  `DeliveryOrchestrator`'s own real `findDisplayName`-then-merge step against the real
+  `TemplateRenderer` bean it uses internally and asserts the substitution really happens — it does
+  not call `dispatch` itself, since there is no queryable persisted body to assert against.
+- **Gap #7** (payment-derived mappings not exercised with their template variables) — **fixed**:
+  added `paymentDerivedMappingForwardsAllEventDataKeysUnchangedToBothChannels`.
+- **Gap #8** (no lock on the exact 7-entry VERBATIM mapping table) — **fixed**: added
+  `notificationMappingsTableContainsExactlyTheSevenVerbatimEntriesAndExcludesAccountSuspended`, a
+  source-scan test (mirrors the established static-guard convention, e.g.
+  `IdempotencyGuardIntegrationTest.insertIfNewUsesOnConflictDoNothing`).
+
+**Files touched this addendum:**
+- `delivery/DeliveryOrchestrator.java` (production) — the one real fix (Gap #1/#5).
+- `delivery/DeliveryOrchestratorTest.java` — +5 tests (Gaps #1, #3, #4, #7, #8).
+- `delivery/DeliveryOrchestratorIntegrationTest.java` — +2 tests (Gaps #2, #6).
+- `channel/NoOpEmailChannelTest.java`, `channel/NoOpInAppChannelTest.java` (**new**) — 3 tests each
+  (Gap #2).
+
+**Verification:** `mvn -pl services/notification clean verify` — 239 tests, 0 failures, 0 errors
+(226 + 13 new: 5 + 2 + 3 + 3).
