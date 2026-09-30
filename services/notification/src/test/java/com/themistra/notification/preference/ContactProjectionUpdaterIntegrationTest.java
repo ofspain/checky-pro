@@ -225,6 +225,52 @@ class ContactProjectionUpdaterIntegrationTest {
         assertThat(repository.existsById(accountUuid)).isTrue();
     }
 
+    /** T11's own first read path onto this projection - proves the absent case against a real
+     * table, not just {@code Optional.empty()} by inspection. */
+    @Test
+    void findEmailReturnsEmptyWhenNoRowExists() {
+        assertThat(updater.findEmail(UUID.randomUUID())).isEmpty();
+    }
+
+    @Test
+    void findEmailReturnsTheStoredEmailWhenPresent() {
+        UUID accountUuid = UUID.randomUUID();
+        updater.upsertEmail(accountUuid, "found@example.com", Instant.parse("2026-01-01T00:00:00Z"));
+
+        assertThat(updater.findEmail(accountUuid)).contains("found@example.com");
+    }
+
+    /** T11 Kimi Phase 8 Finding #2: {@code findDisplayName} is a real read path even though no
+     * application write path ever populates the column - set directly via JDBC here, the only way
+     * to exercise a non-null value against this codebase's own current write surface. */
+    @Test
+    void findDisplayNameReturnsEmptyWhenNoRowExists() {
+        assertThat(updater.findDisplayName(UUID.randomUUID())).isEmpty();
+    }
+
+    @Test
+    void findDisplayNameReturnsEmptyWhenARowExistsButDisplayNameIsStillNull() {
+        UUID accountUuid = UUID.randomUUID();
+        updater.upsertEmail(accountUuid, "noname@example.com", Instant.parse("2026-01-01T00:00:00Z"));
+
+        assertThat(updater.findDisplayName(accountUuid)).isEmpty();
+    }
+
+    @Test
+    void findDisplayNameReturnsTheStoredValueWhenPresent() throws SQLException {
+        UUID accountUuid = UUID.randomUUID();
+        updater.upsertEmail(accountUuid, "named@example.com", Instant.parse("2026-01-01T00:00:00Z"));
+        try (Connection admin = adminConnection();
+             PreparedStatement update = admin.prepareStatement(
+                     "UPDATE notifications.contact_projection SET display_name = ? WHERE account_uuid = ?::uuid")) {
+            update.setString(1, "Ada Lovelace");
+            update.setObject(2, accountUuid.toString());
+            update.execute();
+        }
+
+        assertThat(updater.findDisplayName(accountUuid)).contains("Ada Lovelace");
+    }
+
     private static Connection adminConnection() throws SQLException {
         return DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }
