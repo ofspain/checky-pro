@@ -1,5 +1,6 @@
 package com.themistra.notification.consumer;
 
+import com.themistra.notification.delivery.DeliveryOrchestrator;
 import com.themistra.notification.preference.PreferenceResolver;
 import com.themistra.notification.template.TemplateRenderer;
 import org.flywaydb.core.Flyway;
@@ -118,14 +119,17 @@ class IdempotencyGuardIntegrationTest {
     @Autowired
     private TemplateRenderer templateRenderer;
 
-    /** Kimi Phase 11 Gap #8: this class is the one place in the suite that boots a real Spring
-     * context without overriding {@link NotificationDispatcher} with a test spy/throwing bean
-     * (unlike {@code AuthEventConsumerIntegrationTest} and
+    /** Kimi Phase 11 Gap #8, updated for T11: this class is the one place in the suite that boots
+     * a real Spring context without overriding {@link NotificationDispatcher} with a test
+     * spy/throwing bean (unlike {@code AuthEventConsumerIntegrationTest} and
      * {@code AuthEventConsumerTransactionRollbackIntegrationTest}) - so it is the only place that
-     * can prove the real production bean is what actually gets component-scanned and wired. */
+     * can prove the real production bean is what actually gets component-scanned and wired.
+     * {@code NoOpNotificationDispatcher} (T06) was deleted and replaced by
+     * {@code DeliveryOrchestrator} (T11) as the real {@link NotificationDispatcher}
+     * implementation. */
     @Test
-    void theRealNoOpDispatcherIsTheResolvedSpringBean() {
-        assertThat(notificationDispatcher).isInstanceOf(NoOpNotificationDispatcher.class);
+    void theRealDeliveryOrchestratorIsTheResolvedSpringBean() {
+        assertThat(notificationDispatcher).isInstanceOf(DeliveryOrchestrator.class);
     }
 
     /** T08 Kimi Phase 8 Finding #7: proves {@link PreferenceResolver} is actually component-scanned

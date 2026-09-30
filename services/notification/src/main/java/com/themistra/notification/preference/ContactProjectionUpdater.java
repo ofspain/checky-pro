@@ -4,6 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -39,5 +40,16 @@ public class ContactProjectionUpdater {
     @Transactional
     public boolean upsertEmail(UUID accountUuid, String email, Instant occurredAt) {
         return repository.upsertEmail(accountUuid, email, occurredAt) == 1;
+    }
+
+    /**
+     * T11's own first read path onto this projection - {@code DeliveryOrchestrator} needs the
+     * recipient's own real email address for {@code delivery_log.recipient} (EMAIL channel) and to
+     * pass to {@code NotificationChannel.send}. Absent (no lifecycle/email event has been consumed
+     * for this account yet) is a legitimate, expected case, not an error - the caller decides what
+     * to do with an empty result.
+     */
+    public Optional<String> findEmail(UUID accountUuid) {
+        return repository.findById(accountUuid).map(ContactProjection::getEmail);
     }
 }

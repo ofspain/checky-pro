@@ -238,7 +238,7 @@ class AuthEventConsumerIntegrationTest {
                 assertThat(SpyDispatcherConfig.CALLS.stream()
                         .anyMatch(c -> c.accountUuid().equals(accountUuid)
                                 && c.notificationKind().equals("user.registered")
-                                && c.eventData().isEmpty()))
+                                && c.eventData().equals(Map.of("sourceEventKey", eventKey))))
                         .isTrue());
     }
 

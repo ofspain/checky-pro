@@ -70,7 +70,8 @@ class AuthEventConsumerTest {
         consumer.onEmailRequested(emailRequestedJson(accountUuid, "verify_email", "tok-1",
                 "a@example.com", occurredAt));
 
-        verify(notificationDispatcher).dispatch(accountUuid, "verify_email", Map.of("token", "tok-1"));
+        verify(notificationDispatcher).dispatch(accountUuid, "verify_email",
+                Map.of("token", "tok-1", "sourceEventKey", accountUuid + ":verify_email:" + occurredAt));
     }
 
     @Test
@@ -81,7 +82,8 @@ class AuthEventConsumerTest {
         consumer.onEmailRequested(emailRequestedJson(accountUuid, "password_reset", "tok-2",
                 "a@example.com", occurredAt));
 
-        verify(notificationDispatcher).dispatch(accountUuid, "password_reset", Map.of("token", "tok-2"));
+        verify(notificationDispatcher).dispatch(accountUuid, "password_reset",
+                Map.of("token", "tok-2", "sourceEventKey", accountUuid + ":password_reset:" + occurredAt));
     }
 
     @Test
@@ -92,7 +94,8 @@ class AuthEventConsumerTest {
         consumer.onUserLifecycle(lifecycleJson(accountUuid, "ACTIVE", "a@example.com",
                 "user.registered", occurredAt));
 
-        verify(notificationDispatcher).dispatch(accountUuid, "user.registered", Map.of());
+        verify(notificationDispatcher).dispatch(accountUuid, "user.registered",
+                Map.of("sourceEventKey", accountUuid + ":user.registered:" + occurredAt));
     }
 
     /** Kimi Phase 8 Finding #1: pins the exact idempotency key format for the email-requested
@@ -229,7 +232,8 @@ class AuthEventConsumerTest {
         consumer.onUserLifecycle(lifecycleJson(accountUuid, "SUSPENDED", "a@example.com",
                 "user.registered", occurredAt));
 
-        verify(notificationDispatcher).dispatch(accountUuid, "user.registered", Map.of());
+        verify(notificationDispatcher).dispatch(accountUuid, "user.registered",
+                Map.of("sourceEventKey", accountUuid + ":user.registered:" + occurredAt));
     }
 
     /** The converse of the above: {@code status=ACTIVE} alone must never trigger dispatch when
@@ -255,9 +259,11 @@ class AuthEventConsumerTest {
         when(contactProjectionUpdater.upsertEmail(any(), any(), any())).thenReturn(false);
         UUID accountUuid = UUID.randomUUID();
 
+        Instant occurredAt = Instant.parse("2026-01-01T00:00:00Z");
         consumer.onEmailRequested(emailRequestedJson(accountUuid, "verify_email", "tok",
-                "a@example.com", Instant.parse("2026-01-01T00:00:00Z")));
+                "a@example.com", occurredAt));
 
-        verify(notificationDispatcher).dispatch(accountUuid, "verify_email", Map.of("token", "tok"));
+        verify(notificationDispatcher).dispatch(accountUuid, "verify_email",
+                Map.of("token", "tok", "sourceEventKey", accountUuid + ":verify_email:" + occurredAt));
     }
 }

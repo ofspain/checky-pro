@@ -36,6 +36,12 @@ import java.util.UUID;
  * {@code Instant}'s own {@code toString()} (ISO-8601 UTC) - stable and byte-identical across
  * redeliveries of the same payload, payload-only (never Kafka's own offset/partition, which isn't
  * stable across rebalance).</p>
+ *
+ * <p>T11's own required extension: the same {@code eventKey} used for {@code IdempotencyGuard} is
+ * also placed into {@code eventData} under {@code "sourceEventKey"} - {@code NotificationDispatcher.dispatch}'s
+ * own frozen signature carries no dedicated event-key parameter, and
+ * {@code delivery_log.source_event_key} has no other source (T11 Phase 0/1's own resolved
+ * finding).</p>
  */
 @Component
 public class AuthEventConsumer {
@@ -83,7 +89,8 @@ public class AuthEventConsumer {
         if (notificationKind == null) {
             return;
         }
-        notificationDispatcher.dispatch(event.accountUuid(), notificationKind, Map.of("token", event.token()));
+        notificationDispatcher.dispatch(event.accountUuid(), notificationKind,
+                Map.of("token", event.token(), "sourceEventKey", eventKey));
     }
 
     /**
@@ -109,7 +116,7 @@ public class AuthEventConsumer {
         if (!"user.registered".equals(event.eventType())) {
             return;
         }
-        notificationDispatcher.dispatch(event.accountUuid(), "user.registered", Map.of());
+        notificationDispatcher.dispatch(event.accountUuid(), "user.registered", Map.of("sourceEventKey", eventKey));
     }
 
     /**
