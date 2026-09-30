@@ -206,15 +206,15 @@ class T01SkeletonRegressionTest {
      * the bare Application class - a premature config/entity class added in that task would not
      * fail any other test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads
      * one named file. T03 ended the bare-skeleton era (7 files); T04 added 4 more; T05 added 3
-     * more; T06 added 5 more; T08 added 3 more; T09 adds 3 more: {@code Template}/
-     * {@code TemplateRenderer}/{@code TemplateRepository} (versioned rendering, L9). T09's own
-     * frozen brief did not name this file in its own "Files to Modify" list - the same recurring
-     * gap T04/T05/T06/T08 each hit in turn - fixed here as a required, disclosed deviation (flagged
-     * in Phase 6's own implementation notes) rather than left to break the build. This list is
-     * updated to name all 26 explicitly rather than loosened to "at least N files" - an
-     * unnamed-count assertion would silently tolerate a stray file no task ever authorized. */
+     * more; T06 added 5 more; T08 added 3 more; T09 added 3 more; T10 adds 1 more:
+     * {@code SecretSafeLogging} (redaction utility, L4/R15). T10's own frozen brief explicitly
+     * names this file in its own "Files to Modify" list (Kimi Phase 3 Finding #8) - the same
+     * recurring gap T04/T05/T06/T08/T09 each hit in turn, this time anticipated rather than
+     * discovered mid-implementation. This list is updated to name all 27 explicitly rather than
+     * loosened to "at least N files" - an unnamed-count assertion would silently tolerate a stray
+     * file no task ever authorized. */
     @Test
-    void noExtraProductionClassesExistBeyondT09sOwnAuthorizedSet() throws IOException {
+    void noExtraProductionClassesExistBeyondT10sOwnAuthorizedSet() throws IOException {
         Path mainSourceDir = Path.of("src/main/java/com/themistra/notification");
 
         try (Stream<Path> files = Files.walk(mainSourceDir)) {
@@ -228,6 +228,7 @@ class T01SkeletonRegressionTest {
                     "common/ClockConfig.java",
                     "common/PublicEndpoints.java",
                     "common/ResourceServerConfig.java",
+                    "common/SecretSafeLogging.java",
                     "common/config/EmailProperties.java",
                     "common/config/InappProperties.java",
                     "common/config/LinkProperties.java",
