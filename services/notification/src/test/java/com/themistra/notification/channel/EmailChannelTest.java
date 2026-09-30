@@ -1,8 +1,13 @@
 package com.themistra.notification.channel;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.themistra.notification.common.config.EmailProperties;
 import com.themistra.notification.template.TemplateRenderer;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.util.UUID;
 
@@ -23,6 +28,28 @@ class EmailChannelTest {
     private final EmailTransport emailTransport = mock(EmailTransport.class);
     private final EmailProperties emailProperties = new EmailProperties("no-reply@checky.pro", "fake");
     private final EmailChannel channel = new EmailChannel(emailTransport, emailProperties);
+
+    private ch.qos.logback.classic.Logger logbackLogger;
+    private ListAppender<ILoggingEvent> logAppender;
+
+    /** Kimi Phase 11 Gap #5: the static source-scan guard below proves the log statement's own
+     * *source text* never references {@code recipient}, but not that the *runtime-formatted log
+     * event* excludes it - a future refactor could introduce a differently-named variable holding
+     * the same value. This attaches a real Logback {@link ListAppender} (already on the classpath
+     * via spring-boot-starter, no new test dependency needed) and inspects the actual formatted
+     * message text. */
+    @BeforeEach
+    void attachLogCapture() {
+        logbackLogger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(EmailChannel.class);
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        logbackLogger.addAppender(logAppender);
+    }
+
+    @AfterEach
+    void detachLogCapture() {
+        logbackLogger.detachAppender(logAppender);
+    }
 
     private static TemplateRenderer.RenderedMessage message() {
         return new TemplateRenderer.RenderedMessage("Verify your email", "Visit the link", 1);
@@ -119,5 +146,25 @@ class EmailChannelTest {
 
         assertThat(logStatement).doesNotContain("recipient");
         assertThat(logStatement).contains("accountUuid").contains("messageId");
+    }
+
+    /** Kimi Phase 11 Gap #5: the runtime counterpart to the static guard above - proves the actual
+     * formatted log event, not just the source text, excludes the recipient's own email address and
+     * any rendered content. */
+    @Test
+    void successLogEventContainsNeitherTheRecipientAddressNorRenderedContentAtRuntime() {
+        UUID accountUuid = UUID.randomUUID();
+        when(emailTransport.send(any())).thenReturn("mid-1");
+        TemplateRenderer.RenderedMessage message = new TemplateRenderer.RenderedMessage(
+                "Reset your password", "Visit https://example.com/reset?token=raw-secret-token", 1);
+
+        channel.send(accountUuid, "victim@example.com", message);
+
+        assertThat(logAppender.list).hasSize(1);
+        String formatted = logAppender.list.get(0).getFormattedMessage();
+        assertThat(formatted).doesNotContain("victim@example.com");
+        assertThat(formatted).doesNotContain("Reset your password");
+        assertThat(formatted).doesNotContain("raw-secret-token");
+        assertThat(formatted).contains(accountUuid.toString()).contains("mid-1");
     }
 }

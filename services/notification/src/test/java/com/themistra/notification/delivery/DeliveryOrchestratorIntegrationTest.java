@@ -1,10 +1,13 @@
 package com.themistra.notification.delivery;
 
+import com.themistra.notification.channel.FakeEmailTransport;
 import com.themistra.notification.channel.NotificationChannel;
+import com.themistra.notification.common.config.EmailProperties;
 import com.themistra.notification.preference.ContactProjectionUpdater;
 import com.themistra.notification.template.TemplateRenderer;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -108,6 +111,21 @@ class DeliveryOrchestratorIntegrationTest {
 
     @Autowired
     private TemplateRenderer templateRenderer;
+
+    @Autowired
+    private FakeEmailTransport fakeEmailTransport;
+
+    @Autowired
+    private EmailProperties emailProperties;
+
+    /** Kimi Phase 11 Gap #1: {@code FakeEmailTransport} is a Spring singleton shared across every
+     * test in this class - without clearing it, an assertion on its own captured messages would be
+     * polluted by whichever earlier test happened to run first (JUnit does not reset Spring's own
+     * singleton beans between test methods). */
+    @BeforeEach
+    void clearFakeEmailTransport() {
+        fakeEmailTransport.clear();
+    }
 
     private static void insertChannelPreference(UUID accountUuid, String category, String channel, boolean enabled)
             throws SQLException {
@@ -296,6 +314,38 @@ class DeliveryOrchestratorIntegrationTest {
         TemplateRenderer.RenderedMessage rendered = templateRenderer.render("user.welcome", "EMAIL", renderData);
 
         assertThat(rendered.body()).contains("Ada Lovelace");
+    }
+
+    /** Kimi Phase 11 Gap #1: the single most load-bearing T12 scenario - proving a real dispatched
+     * event results in a real (fake-sent) captured email, not merely a {@code SENT} delivery_log
+     * row. Every other test in this class already exercises this same path implicitly, but none of
+     * them inspected {@code FakeEmailTransport.sentMessages()} until now. */
+    @Test
+    void dispatchCapturesARealSentEmailWithCorrectFields() {
+        UUID accountUuid = UUID.randomUUID();
+        contactProjectionUpdater.upsertEmail(accountUuid, "captured@example.com", Instant.parse("2026-01-01T00:00:00Z"));
+
+        orchestrator.dispatch(accountUuid, "verify_email", Map.of("token", "tok-captured", "sourceEventKey", "real-key-9"));
+
+        assertThat(fakeEmailTransport.sentMessages()).hasSize(1);
+        var captured = fakeEmailTransport.sentMessages().get(0);
+        assertThat(captured.accountUuid()).isEqualTo(accountUuid);
+        assertThat(captured.to()).isEqualTo("captured@example.com");
+        assertThat(captured.from()).isEqualTo(emailProperties.from());
+        assertThat(captured.subject()).isEqualTo("Verify your Themistra account");
+        assertThat(captured.body()).contains("token=tok-captured");
+    }
+
+    /** Kimi Phase 11 Gap #9: no test booted the real context and asserted {@code EmailProperties}
+     * binds from the real {@code application.properties} file's own actual values - every other
+     * proof was either a synthetic {@code ApplicationContextRunner} value (T03's own
+     * {@code EmailPropertiesTest}) or only implicit (the fact this whole class's own context boots
+     * at all already requires a valid {@code transport} value to exist, per
+     * {@code EmailTransportStartupValidation}). This names the real, current default explicitly. */
+    @Test
+    void emailPropertiesBindsFromTheRealApplicationPropertiesFile() {
+        assertThat(emailProperties.from()).isEqualTo("no-reply@checky.pro");
+        assertThat(emailProperties.transport()).isEqualTo("fake");
     }
 
     private static Connection adminConnection() throws SQLException {

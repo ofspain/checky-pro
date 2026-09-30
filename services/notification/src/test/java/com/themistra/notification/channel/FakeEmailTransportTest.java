@@ -129,4 +129,48 @@ class FakeEmailTransportTest {
         assertThat(sent).hasSize(threadCount);
         assertThat(sent.stream().map(EmailMessage::to).distinct()).hasSize(threadCount);
     }
+
+    /** Kimi Phase 11 Gap #7: the test above only proves no message is lost across *distinct*
+     * recipients - it never exercises {@code findMostRecentByRecipient} racing against concurrent
+     * writes to the *same* key. {@code CopyOnWriteArrayList}'s own documented contract already
+     * guarantees a consistent snapshot per iteration, so this is an empirical confirmation of that
+     * contract, not a search for a bug the contract doesn't already rule out. */
+    @Test
+    void findMostRecentByRecipientNeverThrowsOrReturnsAPartiallyConstructedMessageUnderConcurrentSendsToTheSameRecipient()
+            throws InterruptedException {
+        String recipient = "same-recipient@example.com";
+        int threadCount = 16;
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<String> subjects = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        for (int i = 0; i < threadCount; i++) {
+            String subject = "subject-" + i;
+            subjects.add(subject);
+            pool.submit(() -> {
+                ready.countDown();
+                try {
+                    start.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                transport.send(new EmailMessage(UUID.randomUUID(), recipient, "no-reply@checky.pro", subject, "body"));
+            });
+        }
+        ready.await();
+        start.countDown();
+        pool.shutdown();
+        boolean finishedCleanly = pool.awaitTermination(10, TimeUnit.SECONDS);
+
+        assertThat(finishedCleanly).as("all threads must finish without hanging").isTrue();
+        assertThat(transport.sentMessages()).hasSize(threadCount);
+
+        EmailMessage mostRecent = transport.findMostRecentByRecipient(recipient)
+                .orElseThrow(() -> new AssertionError("expected a captured message"));
+        assertThat(mostRecent.to()).isEqualTo(recipient);
+        assertThat(mostRecent.subject()).isIn(subjects);
+        assertThat(mostRecent.from()).isEqualTo("no-reply@checky.pro");
+        assertThat(mostRecent.body()).isEqualTo("body");
+    }
 }
