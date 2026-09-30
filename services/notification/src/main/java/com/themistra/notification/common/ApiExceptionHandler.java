@@ -18,6 +18,13 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * since Spring 6/Boot 3) rather than hand-rolling a body the way {@code ResourceServerConfig}'s own
  * servlet-level entry-point/denied-handler do - a different Spring subsystem (MVC exception
  * resolution vs. a raw filter-chain handler), same output shape.</p>
+ *
+ * <p>The generic fallback catches {@code RuntimeException}, not {@code Exception} (Kimi Phase 8
+ * Finding #3, self-review Finding #2) - a blanket {@code Exception} handler would take precedence
+ * over Spring's own default handling for framework-level, checked {@code ServletException}
+ * subtypes (verified directly: {@code NoResourceFoundException}, {@code
+ * HttpRequestMethodNotSupportedException}), turning an ordinary 404/405 for an unrelated,
+ * mistyped request into a generic 500 instead.</p>
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -41,8 +48,8 @@ public class ApiExceptionHandler {
                 "The authenticated token's own subject claim is not a valid account identifier.");
     }
 
-    @ExceptionHandler(Exception.class)
-    public ProblemDetail handleUnexpected(Exception e) {
+    @ExceptionHandler(RuntimeException.class)
+    public ProblemDetail handleUnexpected(RuntimeException e) {
         log.error("Unexpected error handling an in-app API request", e);
         return ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR,
                 "An unexpected error occurred.");

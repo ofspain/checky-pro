@@ -68,10 +68,19 @@ public class InappStreamRegistry {
         }
     }
 
+    /**
+     * Kimi Phase 8 Finding #4: removes the emitter, then atomically removes the account's own map
+     * entry too if it is now empty - otherwise every account that ever connects leaves a permanent,
+     * empty list behind, an unbounded memory leak. {@link ConcurrentHashMap#computeIfPresent} locks
+     * per-key, so this can never race with a concurrent {@link #register} call for the same account
+     * (which uses {@code computeIfAbsent} on the same key) - either the new emitter is added before
+     * this remapping runs (the list is non-empty, the key survives) or after (a fresh list is
+     * created for the next connection), never interleaved.
+     */
     private void deregister(UUID accountUuid, SseEmitter emitter) {
-        List<SseEmitter> emitters = emittersByAccount.get(accountUuid);
-        if (emitters != null) {
+        emittersByAccount.computeIfPresent(accountUuid, (key, emitters) -> {
             emitters.remove(emitter);
-        }
+            return emitters.isEmpty() ? null : emitters;
+        });
     }
 }

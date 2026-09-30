@@ -207,13 +207,15 @@ class T01SkeletonRegressionTest {
      * fail any other test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads
      * one named file. T03 ended the bare-skeleton era (7 files); T04 added 4 more; T05 added 3
      * more; T06 added 5 more; T08 added 3 more; T09 added 3 more; T10 added 1 more; T11 added 6
-     * more and removed 1; T12 added 8 more and removed 1; T13 adds 7 more
+     * more and removed 1; T12 added 8 more and removed 1; T13 adds 8 more
      * ({@code channel/InAppChannel.java}, {@code inapp/{InappNotification,
-     * InappNotificationRepository,InappStreamRegistry,InappStreamController,InappReadController}},
-     * {@code common/ApiExceptionHandler.java}) and removes 1
-     * ({@code channel/NoOpInAppChannel.java}, replaced by {@code InAppChannel} as the real
-     * {@code IN_APP} {@code NotificationChannel} implementation - pre-authorized since T11's own
-     * Javadoc). This list is updated to name all 45 explicitly rather than loosened to "at least N
+     * InappNotificationRepository,InappNotificationAppender,InappStreamRegistry,
+     * InappStreamController,InappReadController}}, {@code common/ApiExceptionHandler.java}) and
+     * removes 1 ({@code channel/NoOpInAppChannel.java}, replaced by {@code InAppChannel} as the
+     * real {@code IN_APP} {@code NotificationChannel} implementation - pre-authorized since T11's
+     * own Javadoc). {@code InappNotificationAppender} was added at Phase 9 (Kimi Phase 8 Finding
+     * #1/self-review Finding #1 - the sanctioned gateway that fixed a real L11 violation), not at
+     * Phase 6. This list is updated to name all 46 explicitly rather than loosened to "at least N
      * files" - an unnamed-count assertion would silently tolerate a stray file no task ever
      * authorized. */
     @Test
@@ -259,6 +261,7 @@ class T01SkeletonRegressionTest {
                     "delivery/DeliveryLogRepository.java",
                     "delivery/DeliveryOrchestrator.java",
                     "inapp/InappNotification.java",
+                    "inapp/InappNotificationAppender.java",
                     "inapp/InappNotificationRepository.java",
                     "inapp/InappReadController.java",
                     "inapp/InappStreamController.java",

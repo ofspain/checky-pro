@@ -6,16 +6,15 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * {@code public}, unlike every sibling repository in this module ({@code TemplateRepository},
+ * Package-private, matching every sibling repository in this module ({@code TemplateRepository},
  * {@code ChannelPreferenceRepository}, {@code ProcessedEventRepository},
- * {@code DeliveryLogRepository} - all package-private, consumed only from within their own
- * package). This is a distinct case, not an inconsistency: {@code InAppChannel} (package
- * {@code channel}) is a genuine, non-test, production consumer needing direct write access, and no
- * same-package wrapper class (mirroring {@code ContactProjectionUpdater}'s own role for
- * {@code ContactProjectionRepository}) was authorized for this task. This is the first repository
- * in this module with a real cross-package consumer.
+ * {@code DeliveryLogRepository}). This was briefly {@code public} at Phase 6 to let
+ * {@code InAppChannel} (package {@code channel}) call it directly - a genuine L11 violation
+ * (Kimi Phase 8 Finding #1, self-review Finding #1), fixed at Phase 9 by introducing
+ * {@link InappNotificationAppender} as the sanctioned same-package gateway. Consumed only from
+ * within this package now (this repository itself, plus {@code InappReadController}).
  */
-public interface InappNotificationRepository extends JpaRepository<InappNotification, Long> {
+interface InappNotificationRepository extends JpaRepository<InappNotification, Long> {
 
     List<InappNotification> findByAccountUuidAndReadAtIsNullOrderByCreatedAtDesc(UUID accountUuid);
 }
