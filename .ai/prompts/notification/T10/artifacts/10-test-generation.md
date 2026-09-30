@@ -52,3 +52,53 @@ re-ran clean (5/5).
 
 `mvn -pl services/notification clean verify` — 192 tests, 0 failures. No production code left
 modified in this phase (the mutation above was reverted before the final verification run).
+
+## Addendum (post Phase 11) — 6 of 7 gaps fixed with real code changes; 1 already satisfied
+
+Kimi's Phase 11 review raised 7 gaps. All verified against source before acting — **Gaps #2 and #3
+turned out to be real, live bugs in the scan's own logic**, not merely hypothetical edge cases:
+a direct grep of the real codebase found `TemplateRenderer.computeLinkPlaceholders`'s own local
+variable `String token = eventData.get("token")` (Gap #2 — a local variable, not a field, that the
+original scan's field-name regex could not distinguish from a real sensitive field) and confirmed
+`TemplateRenderer.java` genuinely has two type declarations, the outer class and the nested
+`RenderedMessage` record (Gap #3 — the original scan checked whichever `toString()` appeared first
+in the file, regardless of which type actually owned the sensitive-looking match). Both were
+already accidentally passing before this addendum (two wrongs cancelling out — the local variable
+false-positive happened to be checked against `RenderedMessage`'s own safe `toString()`), which is
+exactly the kind of latent, coincidental correctness a real fix — not just documentation — closes
+properly. Rewrote `SensitiveFieldsHaveSafeToStringTest`'s own scanning logic (192 tests → 199 total):
+
+- **Gap #1** (no permanent negative-proof that the scan catches real leaks, only a one-time manual
+  mutation test) — **already satisfied, no new action**: the existing synthetic-fixture tests
+  (`scanCatchesAToStringThatStillPrintsTheSensitiveField`,
+  `scanCatchesARecordWithASensitiveComponentAndNoExplicitToString`) already call the exact same
+  shared scanning logic the real-codebase test uses, so a future regression in that logic fails
+  those permanent tests immediately — re-confirmed by re-running the real-file mutation test after
+  this addendum's own rewrite (still caught, see below).
+- **Gap #2** (local variables mistaken for fields) — **fixed**: `FIELD_DECLARATION_PATTERN` now
+  requires a leading access modifier (`private`/`protected`/`public`); a separate
+  `RECORD_COMPONENT_PATTERN` requires a leading `(`/`,`. Added
+  `scanIgnoresALocalVariableThatHappensToShareASensitiveName`. Multi-field declarations
+  (`String token, secret;`) and non-`String` secret types (`byte[] password`) remain disclosed,
+  unfixed limitations (neither occurs anywhere in this codebase today, verified).
+- **Gap #3** (wrong type's `toString()` checked in a multi-type file) — **fixed**: each sensitive
+  match is now scoped to its own nearest-enclosing type (the span between the nearest preceding
+  type declaration and the next one), not the whole file. Added
+  `scanChecksEachTypesOwnToStringNotTheFirstOneInTheFile` and
+  `scanDoesNotFalselyFlagATypeWhoseSensitiveFieldIsSafelyExcludedEvenWhenAnotherTypeInTheSameFileIsAlsoSafe`.
+- **Gap #4** (comment-mentioned names) — **fixed**: `stripComments` removes `//` and `/* */`
+  content before any pattern runs. Added `scanIgnoresSensitiveNamesMentionedOnlyInComments`.
+- **Gap #5** (`redact()` with an internal `=` in the value) — added
+  `redactMasksTheFullValueEvenWhenItContainsAnEqualsSign`.
+- **Gap #6** (no record-shaped positive fixture) — added
+  `scanAcceptsARecordWithAnExplicitToStringThatExcludesTheSensitiveComponent`.
+- **Gap #7** (no `IN_APP`-channel integration coverage) — added
+  `redactsTheRealTokenFromARealRenderedInAppVerificationBody`.
+
+**Re-verification of the original Phase 10 mutation test after the rewrite**: re-added the same
+real `token=` reference to `EmailRequestedEvent.toString()`'s own body, re-ran
+`SensitiveFieldsHaveSafeToStringTest`: exactly 1 test failed (the real-codebase scan), confirming
+the rewritten logic still catches this real regression. Reverted; `git status -s` on the file empty
+afterward; full class re-ran clean (10/10).
+
+**Verification:** `mvn -pl services/notification clean verify` — 199 tests, 0 failures.

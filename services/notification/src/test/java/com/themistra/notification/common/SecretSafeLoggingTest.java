@@ -75,6 +75,14 @@ class SecretSafeLoggingTest {
         assertThat(SecretSafeLogging.redact("token=&next=value")).isEqualTo("token=***&next=value");
     }
 
+    /** Kimi Phase 11 Gap #5: the value character class permits {@code =} (only {@code &} and
+     * whitespace terminate a value), so a Base64-padded or otherwise {@code =}-containing token
+     * is masked in full, not truncated at the first internal {@code =}. */
+    @Test
+    void redactMasksTheFullValueEvenWhenItContainsAnEqualsSign() {
+        assertThat(SecretSafeLogging.redact("token=a=b&next=value")).isEqualTo("token=***&next=value");
+    }
+
     /** Kimi Phase 8 Finding #4 (AC6): the sole constructor exists only to prevent instantiation. */
     @Test
     void cannotBeInstantiated() throws NoSuchMethodException {
