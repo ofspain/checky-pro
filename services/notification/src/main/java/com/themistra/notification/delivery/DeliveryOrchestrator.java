@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -40,6 +41,20 @@ import java.util.stream.Collectors;
  * {@code delivery_log} row this method writes rolls back together with everything else if the
  * external caller's own transaction later rolls back for an unrelated reason (e.g. a Kafka
  * redelivery scenario), avoiding a duplicate dispute-log entry for the same redelivered event.</p>
+ *
+ * <p>Also resolves {@code displayName} via {@link ContactProjectionUpdater#findDisplayName} and
+ * merges it into the render data passed to {@link TemplateRenderer#render} (Kimi Phase 8
+ * Finding #2) - {@code display_name} is always {@code null} today (no data source exists anywhere
+ * in {@code auth-service}'s own domain), so this only completes the wiring for a future data
+ * source, it does not fix the underlying missing-data problem.</p>
+ *
+ * <p>If a failure occurs before the per-channel loop even starts (e.g.
+ * {@code contactProjectionUpdater.findEmail} itself throwing), the outer catch now records a
+ * best-effort {@code FAILED} row for each of {@link #LAUNCH_CHANNELS} rather than none at all
+ * (Kimi Phase 8 Finding #4), so R11's own "every delivery attempt" guarantee still holds for
+ * pre-loop failures. That fallback save has its own inner safety net in case {@code save} itself
+ * throws (e.g. a genuinely null {@code sourceEventKey}, Finding #6) - falling back to a synthetic
+ * key and, failing that, a log-only record.</p>
  */
 @Component
 public class DeliveryOrchestrator implements NotificationDispatcher {
@@ -93,6 +108,7 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
     @Override
     @Transactional
     public void dispatch(UUID accountUuid, String notificationKind, Map<String, String> eventData) {
+        String sourceEventKey = eventData == null ? null : eventData.get("sourceEventKey");
         try {
             NotificationMapping mapping = notificationKind == null ? null : NOTIFICATION_MAPPINGS.get(notificationKind);
             if (mapping == null) {
@@ -100,15 +116,37 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
                 return;
             }
 
-            String sourceEventKey = eventData.get("sourceEventKey");
             String email = contactProjectionUpdater.findEmail(accountUuid).orElse(null);
+            // Kimi Phase 8 Finding #2: display_name is always null today (no data source exists
+            // anywhere in auth's own domain, T05's own already-disclosed limitation) - wired
+            // through regardless so a future task that finally populates it needs no further
+            // plumbing change here.
+            String displayName = contactProjectionUpdater.findDisplayName(accountUuid).orElse(null);
+            Map<String, String> renderData = new HashMap<>(eventData == null ? Map.of() : eventData);
+            if (displayName != null) {
+                renderData.put("displayName", displayName);
+            }
 
             for (String channel : LAUNCH_CHANNELS) {
-                dispatchOneChannel(accountUuid, email, sourceEventKey, eventData, mapping, channel);
+                dispatchOneChannel(accountUuid, email, sourceEventKey, renderData, mapping, channel);
             }
         } catch (Exception e) {
+            // Kimi Phase 8 Finding #4: a failure before any channel is attempted (e.g. findEmail
+            // itself throwing) would otherwise leave R11's own "every attempt" guarantee unmet -
+            // record one best-effort row per launch channel rather than none at all. This save
+            // attempt has its own inner safety net, since sourceEventKey could itself be the
+            // reason the outer block failed (e.g. genuinely null - Finding #6).
             log.error("Unexpected failure in dispatch for accountUuid={}, notificationKind={}",
                     accountUuid, notificationKind, e);
+            for (String channel : LAUNCH_CHANNELS) {
+                try {
+                    save(accountUuid, null, channel, sourceEventKey == null ? "unknown:" + accountUuid : sourceEventKey,
+                            null, null, "FAILED", e.getMessage());
+                } catch (Exception saveFailure) {
+                    log.error("Unable to record fallback FAILED row for accountUuid={}, channel={}",
+                            accountUuid, channel, saveFailure);
+                }
+            }
         }
     }
 

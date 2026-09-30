@@ -29,7 +29,11 @@ public class NoOpEmailChannel implements NotificationChannel {
 
     @Override
     public void send(UUID accountUuid, String recipient, TemplateRenderer.RenderedMessage message) {
-        log.info("Email dispatch (no-op): accountUuid={}, recipient={}, message={}",
-                accountUuid, recipient, message);
+        // Kimi Phase 8 Finding #5: DEBUG, not INFO - a temporary no-op placeholder should not
+        // generate production-volume log lines for every real dispatch.
+        if (log.isDebugEnabled()) {
+            log.debug("Email dispatch (no-op): accountUuid={}, recipient={}, message={}",
+                    accountUuid, recipient, message);
+        }
     }
 }

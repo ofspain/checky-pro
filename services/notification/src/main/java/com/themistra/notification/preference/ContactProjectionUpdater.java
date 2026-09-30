@@ -47,9 +47,24 @@ public class ContactProjectionUpdater {
      * recipient's own real email address for {@code delivery_log.recipient} (EMAIL channel) and to
      * pass to {@code NotificationChannel.send}. Absent (no lifecycle/email event has been consumed
      * for this account yet) is a legitimate, expected case, not an error - the caller decides what
-     * to do with an empty result.
+     * to do with an empty result. {@code readOnly = true} (Kimi Phase 8 Finding #8) documents the
+     * read-only intent explicitly, rather than relying on Spring Data's own default.
      */
+    @Transactional(readOnly = true)
     public Optional<String> findEmail(UUID accountUuid) {
         return repository.findById(accountUuid).map(ContactProjection::getEmail);
+    }
+
+    /**
+     * T11 Kimi Phase 8 Finding #2: {@code display_name} is always {@code null} today - no data
+     * source for it exists anywhere in {@code auth-service}'s own domain (verified directly since
+     * T05, unchanged). This method completes the *wiring* so a future task that finally adds a
+     * real display-name source needs no further plumbing change here or in
+     * {@code DeliveryOrchestrator} - it does not, and cannot, fix the underlying missing-data
+     * problem itself.
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> findDisplayName(UUID accountUuid) {
+        return repository.findById(accountUuid).map(ContactProjection::getDisplayName);
     }
 }
