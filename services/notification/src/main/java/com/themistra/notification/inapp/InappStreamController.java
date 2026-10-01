@@ -39,11 +39,20 @@ public class InappStreamController {
     }
 
     private static UUID accountUuidFrom(Jwt jwt) {
+        // Kimi Phase 11 Gap #10: a null/blank sub claim previously reached UUID.fromString(null),
+        // which throws NullPointerException, not IllegalArgumentException - uncaught here, it fell
+        // through to ApiExceptionHandler's own generic 500 handler instead of this endpoint's own
+        // intended 400. Checked explicitly first, so both a missing and a malformed claim map to
+        // the exact same, correct response.
+        String subject = jwt.getSubject();
+        if (subject == null || subject.isBlank()) {
+            throw new ApiExceptionHandler.InvalidSubjectClaimException("sub claim is missing");
+        }
         try {
-            return UUID.fromString(jwt.getSubject());
+            return UUID.fromString(subject);
         } catch (IllegalArgumentException e) {
             throw new ApiExceptionHandler.InvalidSubjectClaimException(
-                    "sub claim is not a valid UUID: " + jwt.getSubject());
+                    "sub claim is not a valid UUID: " + subject);
         }
     }
 }

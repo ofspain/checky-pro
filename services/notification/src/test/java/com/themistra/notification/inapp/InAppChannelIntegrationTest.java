@@ -153,6 +153,30 @@ class InAppChannelIntegrationTest {
         assertThat(forB).isEmpty();
     }
 
+    /** Kimi Phase 11 Gap #4: no test ever proved
+     * {@code findByAccountUuidAndReadAtIsNullOrderByCreatedAtDesc}'s own {@code ReadAtIsNull}
+     * clause actually excludes a row whose {@code read_at} is set - a regression in the method
+     * name/Spring Data query derivation would otherwise pass every existing test silently, since
+     * none of them ever populate a non-null {@code read_at} value. No application write path sets
+     * {@code read_at} today (marking read is out of this task's own scope), so it is set directly
+     * via JDBC here - the only way to exercise this against a real row. */
+    @Test
+    void excludesANotificationThatHasAlreadyBeenRead() throws SQLException {
+        UUID accountUuid = UUID.randomUUID();
+        orchestrator.dispatch(accountUuid, "user.registered", Map.of("sourceEventKey", "inapp-key-6"));
+        UUID notificationUuid = repository.findByAccountUuidAndReadAtIsNullOrderByCreatedAtDesc(accountUuid)
+                .get(0).getNotificationUuid();
+
+        try (Connection admin = adminConnection();
+             java.sql.PreparedStatement update = admin.prepareStatement(
+                     "UPDATE notifications.inapp_notifications SET read_at = now() WHERE notification_uuid = ?::uuid")) {
+            update.setString(1, notificationUuid.toString());
+            update.execute();
+        }
+
+        assertThat(readController.unread(jwtFor(accountUuid))).isEmpty();
+    }
+
     /** R16 named test - real end-to-end: a real dispatched event, after its own transaction commits,
      * pushes to a real, registered {@link InappStreamRegistry} with the correct account/event
      * name/view. The registry is a Mockito spy (real behavior, observable), not a mock - proving

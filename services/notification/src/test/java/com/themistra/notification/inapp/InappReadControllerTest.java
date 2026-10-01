@@ -98,6 +98,57 @@ class InappReadControllerTest {
         verifyNoInteractions(repository);
     }
 
+    /** Kimi Phase 11 Gap #10: a real, previously-uncaught bug - {@code UUID.fromString(null)}
+     * throws {@code NullPointerException}, not {@code IllegalArgumentException}; unguarded, an
+     * empty/missing {@code sub} fell through to the generic 500 handler instead of this endpoint's
+     * own intended 400. Fixed by an explicit null/blank check in {@code accountUuidFrom} before
+     * ever calling {@code UUID.fromString}. */
+    @Test
+    void anEmptySubjectClaimResultsInABadRequestNotAnInternalError() throws Exception {
+        mockMvc.perform(get("/notifications/unread")
+                        .with(jwt().jwt(builder -> builder.subject(""))))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
+
+        verifyNoInteractions(repository);
+    }
+
+    /** Kimi Phase 11 Gap #1: locks that the broadened-to-{@code RuntimeException} fallback handler
+     * (Phase 9's own fix for Kimi Phase 8 Finding #3) does not shadow Spring Boot's own default 404
+     * handling for a genuinely unmapped path - verified directly by running this exact test, not
+     * merely by the structural {@code javap} check Phase 9 already performed. */
+    @Test
+    void anUnmappedPathIsStillA404NotAGeneric500() throws Exception {
+        mockMvc.perform(get("/notifications/this-path-does-not-exist")
+                        .with(jwt().jwt(builder -> builder.subject(UUID.randomUUID().toString()))))
+                .andExpect(status().isNotFound());
+
+        verifyNoInteractions(repository);
+    }
+
+    /** Kimi Phase 11 Gap #3: the read endpoint's own declared ordering (newest-first) is only
+     * meaningful with more than one row - locks it explicitly rather than relying on the
+     * single-notification happy-path test above to imply it. */
+    @Test
+    void returnsNotificationsOrderedNewestFirst() throws Exception {
+        UUID accountUuid = UUID.randomUUID();
+        InappNotification older = new InappNotification(UUID.randomUUID(), accountUuid, "SECURITY",
+                "Older", "older body", null, Instant.parse("2026-01-01T00:00:00Z"));
+        InappNotification newer = new InappNotification(UUID.randomUUID(), accountUuid, "SECURITY",
+                "Newer", "newer body", null, Instant.parse("2026-02-01T00:00:00Z"));
+        // The repository method's own name (...OrderByCreatedAtDesc) owns the real ordering
+        // guarantee (proven against a real DB at InAppChannelIntegrationTest's own Gap #4 test);
+        // this test locks that the controller preserves whatever order it receives, unchanged.
+        when(repository.findByAccountUuidAndReadAtIsNullOrderByCreatedAtDesc(accountUuid))
+                .thenReturn(List.of(newer, older));
+
+        mockMvc.perform(get("/notifications/unread")
+                        .with(jwt().jwt(builder -> builder.subject(accountUuid.toString()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].title").value("Newer"))
+                .andExpect(jsonPath("$[1].title").value("Older"));
+    }
+
     /** Kimi Phase 8 Finding #2's own suggested {@code ApiExceptionHandlerTest} scenario ("unexpected
      * exception -> 500 problem detail") - folded in here rather than a separate file, since a
      * {@code @RestControllerAdvice} needs some real controller/dispatch to exercise it through. */

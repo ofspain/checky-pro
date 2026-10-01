@@ -72,6 +72,33 @@ class InappStreamControllerTest {
         verifyNoInteractions(streamRegistry);
     }
 
+    /** Kimi Phase 11 Gap #10: a real, previously-uncaught bug - {@code UUID.fromString(null)}
+     * throws {@code NullPointerException}, not {@code IllegalArgumentException}; unguarded, an
+     * empty/missing {@code sub} fell through to the generic 500 handler instead of this endpoint's
+     * own intended 400. Fixed by an explicit null/blank check in {@code accountUuidFrom} before
+     * ever calling {@code UUID.fromString}. */
+    @Test
+    void anEmptySubjectClaimResultsInABadRequestNotAnInternalError() throws Exception {
+        mockMvc.perform(get("/notifications/stream")
+                        .with(jwt().jwt(builder -> builder.subject(""))))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
+
+        verifyNoInteractions(streamRegistry);
+    }
+
+    /** Kimi Phase 11 Gap #1: locks that the broadened-to-{@code RuntimeException} fallback handler
+     * (Phase 9's own fix for Kimi Phase 8 Finding #3) does not shadow Spring Boot's own default 404
+     * handling for a genuinely unmapped path. */
+    @Test
+    void anUnmappedPathIsStillA404NotAGeneric500() throws Exception {
+        mockMvc.perform(get("/notifications/this-path-does-not-exist")
+                        .with(jwt().jwt(builder -> builder.subject(UUID.randomUUID().toString()))))
+                .andExpect(status().isNotFound());
+
+        verifyNoInteractions(streamRegistry);
+    }
+
     @Test
     void neverRegistersForAnyAccountOtherThanTheCallersOwn() throws Exception {
         UUID callerAccountUuid = UUID.randomUUID();

@@ -127,4 +127,62 @@ class InappStreamRegistryTest {
             assertThat(state).as("account %s must be registered", accountUuid).containsKey(accountUuid);
         }
     }
+
+    /** Kimi Phase 11 Gap #6: interleaves {@link InappStreamRegistry#register} and
+     * {@link InappStreamRegistry#push} on the *same* account from concurrent threads - a race
+     * between adding a new emitter and iterating the list to push could theoretically drop a
+     * registration or throw, given {@code CopyOnWriteArrayList}'s own snapshot-iteration semantics
+     * are what this test empirically confirms hold under real concurrent load, not merely trusted
+     * by reading the JDK's own documented contract. */
+    @Test
+    void concurrentRegisterAndPushOnTheSameAccountNeverThrowsAndLosesNoRegistration() throws Exception {
+        UUID accountUuid = UUID.randomUUID();
+        int registerCount = 16;
+        int pushCount = 16;
+        ExecutorService pool = Executors.newFixedThreadPool(registerCount + pushCount);
+        CountDownLatch ready = new CountDownLatch(registerCount + pushCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Throwable> failures = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        for (int i = 0; i < registerCount; i++) {
+            pool.submit(() -> {
+                ready.countDown();
+                await(start);
+                try {
+                    registry.register(accountUuid);
+                } catch (Throwable t) {
+                    failures.add(t);
+                }
+            });
+        }
+        for (int i = 0; i < pushCount; i++) {
+            pool.submit(() -> {
+                ready.countDown();
+                await(start);
+                try {
+                    registry.push(accountUuid, "notification", "payload");
+                } catch (Throwable t) {
+                    failures.add(t);
+                }
+            });
+        }
+        ready.await();
+        start.countDown();
+        pool.shutdown();
+        boolean finishedCleanly = pool.awaitTermination(10, TimeUnit.SECONDS);
+
+        assertThat(finishedCleanly).as("all threads must finish without hanging").isTrue();
+        assertThat(failures).as("neither register nor push may ever throw").isEmpty();
+        assertThat(emittersByAccount(registry).get(accountUuid))
+                .as("all %s registered emitters must still be present - none dropped by a concurrent push", registerCount)
+                .hasSize(registerCount);
+    }
+
+    private static void await(CountDownLatch start) {
+        try {
+            start.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
 }
