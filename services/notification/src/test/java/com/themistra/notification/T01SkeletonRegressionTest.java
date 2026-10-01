@@ -93,9 +93,9 @@ class T01SkeletonRegressionTest {
                 .doesNotContain("oauth2-authorization-server");
         // Kimi Phase 8 Finding #4: guards against blindly copying auth-specific dependencies this
         // task's own "shared subset only" scope excludes.
-        assertThat(pom).as("ShedLock is not needed until a scheduled job exists (task 14)")
-                .doesNotContain("shedlock-spring")
-                .doesNotContain("shedlock-provider-jdbc-template");
+        assertThat(pom).as("T14 added the first scheduled job (RetryScheduler), ShedLock-guarded")
+                .contains("shedlock-spring")
+                .contains("shedlock-provider-jdbc-template");
         assertThat(pom).as("rate limiting is an auth-specific concern (T31/R41), not this task's")
                 .doesNotContain("bucket4j");
         assertThat(pom).as("no OpenAPI YAML contract exists for this service yet")
@@ -196,10 +196,10 @@ class T01SkeletonRegressionTest {
         assertThat(code).contains("SpringApplication.run(NotificationServiceApplication.class, args);");
         assertThat(code).as("T03 added the first @ConfigurationProperties classes to scan")
                 .contains("@ConfigurationPropertiesScan");
-        assertThat(code).as("no scheduled job exists yet")
-                .doesNotContain("@EnableScheduling");
-        assertThat(code).as("no ShedLock-guarded job exists yet")
-                .doesNotContain("@EnableSchedulerLock");
+        assertThat(code).as("T14 added the first scheduled job (RetryScheduler)")
+                .contains("@EnableScheduling");
+        assertThat(code).as("T14's own scheduled job is ShedLock-guarded")
+                .contains("@EnableSchedulerLock");
     }
 
     /** Kimi Phase 11 Gap 5: T01's own frozen brief "Out" scope excluded any production class beyond
@@ -207,19 +207,18 @@ class T01SkeletonRegressionTest {
      * fail any other test, since {@link #applicationClassIsBareWithOnlyTheMainMethod()} only reads
      * one named file. T03 ended the bare-skeleton era (7 files); T04 added 4 more; T05 added 3
      * more; T06 added 5 more; T08 added 3 more; T09 added 3 more; T10 added 1 more; T11 added 6
-     * more and removed 1; T12 added 8 more and removed 1; T13 adds 8 more
-     * ({@code channel/InAppChannel.java}, {@code inapp/{InappNotification,
-     * InappNotificationRepository,InappNotificationAppender,InappStreamRegistry,
-     * InappStreamController,InappReadController}}, {@code common/ApiExceptionHandler.java}) and
-     * removes 1 ({@code channel/NoOpInAppChannel.java}, replaced by {@code InAppChannel} as the
-     * real {@code IN_APP} {@code NotificationChannel} implementation - pre-authorized since T11's
-     * own Javadoc). {@code InappNotificationAppender} was added at Phase 9 (Kimi Phase 8 Finding
-     * #1/self-review Finding #1 - the sanctioned gateway that fixed a real L11 violation), not at
-     * Phase 6. This list is updated to name all 46 explicitly rather than loosened to "at least N
-     * files" - an unnamed-count assertion would silently tolerate a stray file no task ever
-     * authorized. */
+     * more and removed 1; T12 added 8 more and removed 1; T13 added 8 more and removed 1
+     * ({@code channel/NoOpInAppChannel.java}, replaced by {@code InAppChannel}); T14 adds 4 more
+     * ({@code common/config/ShedLockConfig.java} - the {@code LockProvider} bean
+     * {@code RetryScheduler}'s own {@code @SchedulerLock} needs, a small, necessary addition beyond
+     * the Phase 5 plan's own named files, mirroring how every prior task's own "exact Maven
+     * coordinates confirmed during implementation" note anticipated similarly small wiring details;
+     * {@code delivery/DeliveryRetry.java}, {@code delivery/DeliveryRetryRepository.java},
+     * {@code delivery/RetryScheduler.java}) and removes none. This list is updated to name all 50
+     * explicitly rather than loosened to "at least N files" - an unnamed-count assertion would
+     * silently tolerate a stray file no task ever authorized. */
     @Test
-    void noExtraProductionClassesExistBeyondT13sOwnAuthorizedSet() throws IOException {
+    void noExtraProductionClassesExistBeyondT14sOwnAuthorizedSet() throws IOException {
         Path mainSourceDir = Path.of("src/main/java/com/themistra/notification");
 
         try (Stream<Path> files = Files.walk(mainSourceDir)) {
@@ -250,6 +249,7 @@ class T01SkeletonRegressionTest {
                     "common/config/LinkPropertiesStartupValidation.java",
                     "common/config/RetryProperties.java",
                     "common/config/SesClientConfig.java",
+                    "common/config/ShedLockConfig.java",
                     "consumer/AuthEventConsumer.java",
                     "consumer/IdempotencyGuard.java",
                     "consumer/NotificationDispatcher.java",
@@ -260,6 +260,9 @@ class T01SkeletonRegressionTest {
                     "delivery/DeliveryLog.java",
                     "delivery/DeliveryLogRepository.java",
                     "delivery/DeliveryOrchestrator.java",
+                    "delivery/DeliveryRetry.java",
+                    "delivery/DeliveryRetryRepository.java",
+                    "delivery/RetryScheduler.java",
                     "inapp/InappNotification.java",
                     "inapp/InappNotificationAppender.java",
                     "inapp/InappNotificationRepository.java",

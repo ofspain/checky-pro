@@ -43,14 +43,20 @@ class NotificationBaselineMigrationIntegrationTest {
     private static final List<String> GRANTED_TABLES = List.of("delivery_log");
     // T02's own literal scope grants only delivery_log; T04's own V4 additionally grants
     // processed_events, T05's own V5 grants contact_projection, T08's own V6 grants
-    // channel_preferences, T09's own V7 grants templates, and T13's own V8 grants
-    // inapp_notifications (all five tested separately below - none fit
-    // assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own delivery_log-shaped assumptions,
-    // and channel_preferences'/templates' own grants are SELECT-only, unlike the others).
-    // delivery_retry and shedlock each get their own grant migration in the task that first needs
-    // runtime access to them (mirroring crypto-service's own incremental-grant pattern) - they are
-    // therefore expected to remain fully inaccessible to notification_app as of this task.
-    private static final List<String> UNGRANTED_TABLES = List.of("delivery_retry", "shedlock");
+    // channel_preferences, T09's own V7 grants templates, T13's own V8 grants
+    // inapp_notifications, and T14's own V10/V11 grant delivery_retry/shedlock (all seven tested
+    // separately below - none fit assertInsertAndSelectSucceedUpdateAndDeleteAreDenied's own
+    // delivery_log-shaped assumptions, and channel_preferences'/templates' own grants are
+    // SELECT-only, unlike the others; delivery_retry's own grant is the first in this module to
+    // include UPDATE/DELETE, and shedlock's own is INSERT/UPDATE only, no SELECT).
+    //
+    // T14's own V10/V11 grant the last two tables that had ever been fully ungranted
+    // (delivery_retry, shedlock) - there is no longer any table in this schema with zero grant to
+    // notification_app, so the UNGRANTED_TABLES list/its own dedicated test
+    // (notificationAppHasNoAccessAtAllToTablesOutsideAc2Scope) and its three now-fully-dead helper
+    // methods (noWhereUpdateStatementFor/noWhereDeleteStatementFor/minimalInsertFixtureFor) are
+    // removed entirely here, rather than left testing an empty set - mirrors exactly how T13 removed
+    // inapp_notifications' own 3 stale switch branches when its grant landed.
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -173,7 +179,8 @@ class NotificationBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+            assertThat(succeededVersions).containsExactly(
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11");
         }
     }
 
@@ -519,78 +526,97 @@ class NotificationBaselineMigrationIntegrationTest {
         }
     }
 
+    /** T14's own V10 grant - the first table in this module where notification_app needs the full
+     * read/write/update/delete lifecycle, since delivery_retry is a genuine mutable scheduling
+     * queue (DeliveryOrchestrator inserts, RetryScheduler selects/updates/deletes), not a log. */
     @Test
-    void notificationAppHasNoAccessAtAllToTablesOutsideAc2Scope() throws SQLException {
+    void notificationAppCanInsertSelectUpdateAndDeleteOnDeliveryRetry() throws SQLException {
         try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
-            for (String table : UNGRANTED_TABLES) {
-                try (Statement statement = app.createStatement()) {
-                    assertThatThrownBy(() -> statement.executeQuery("SELECT * FROM notifications." + table))
-                            .as("SELECT on %s must be denied for notification_app (not AC2's one named table)", table)
-                            .isInstanceOf(SQLException.class)
-                            .hasMessageContaining("permission denied");
+            try (PreparedStatement insert = app.prepareStatement(
+                    "INSERT INTO notifications.delivery_retry "
+                            + "(source_event_key, channel, notification_kind, event_data_json, attempt, next_attempt_at) "
+                            + "VALUES ('it-delivery-retry', 'EMAIL', 'verify_email', '{}', 1, now())")) {
+                insert.execute();
+            }
+
+            try (PreparedStatement select = app.prepareStatement(
+                    "SELECT count(*) FROM notifications.delivery_retry WHERE source_event_key = ?")) {
+                select.setString(1, "it-delivery-retry");
+                try (ResultSet resultSet = select.executeQuery()) {
+                    resultSet.next();
+                    assertThat(resultSet.getInt(1))
+                            .as("SELECT must see the row notification_app just inserted")
+                            .isEqualTo(1);
                 }
-                // Kimi Phase 8 Finding #2: SELECT-only denial doesn't prove "no access at all" - a
-                // regression granting INSERT (but not SELECT) on an ungranted table would pass the
-                // check above while violating least-privilege. Proves INSERT is denied too.
-                try (Statement statement = app.createStatement()) {
-                    assertThatThrownBy(() -> statement.execute(minimalInsertFixtureFor(table)))
-                            .as("INSERT on %s must be denied for notification_app (not AC2's one named table)", table)
-                            .isInstanceOf(SQLException.class)
-                            .hasMessageContaining("permission denied");
-                }
-                // Kimi Phase 11 Gap #3: SELECT+INSERT denial doesn't prove UPDATE/DELETE are denied
-                // too - a regression granting only those (without SELECT/INSERT) would still pass
-                // the two checks above. The WHERE predicate targets a row that doesn't exist; Postgres
-                // checks table-level privilege before any row is matched, so denial fires regardless.
-                try (Statement statement = app.createStatement()) {
-                    assertThatThrownBy(() -> statement.execute(noWhereUpdateStatementFor(table)))
-                            .as("UPDATE on %s must be denied for notification_app (not AC2's one named table)", table)
-                            .isInstanceOf(SQLException.class)
-                            .hasMessageContaining("permission denied");
-                }
-                try (Statement statement = app.createStatement()) {
-                    assertThatThrownBy(() -> statement.execute(noWhereDeleteStatementFor(table)))
-                            .as("DELETE on %s must be denied for notification_app (not AC2's one named table)", table)
-                            .isInstanceOf(SQLException.class)
-                            .hasMessageContaining("permission denied");
-                }
+            }
+
+            try (PreparedStatement update = app.prepareStatement(
+                    "UPDATE notifications.delivery_retry SET attempt = 2 WHERE source_event_key = ?")) {
+                update.setString(1, "it-delivery-retry");
+                assertThatCode(update::execute)
+                        .as("UPDATE on delivery_retry must be permitted for notification_app")
+                        .doesNotThrowAnyException();
+            }
+
+            try (PreparedStatement delete = app.prepareStatement(
+                    "DELETE FROM notifications.delivery_retry WHERE source_event_key = ?")) {
+                delete.setString(1, "it-delivery-retry");
+                assertThatCode(delete::execute)
+                        .as("DELETE on delivery_retry must be permitted for notification_app")
+                        .doesNotThrowAnyException();
             }
         }
     }
 
-    // Deliberately no WHERE clause: an UPDATE/DELETE predicate referencing a column would be denied
-    // as soon as Postgres needs SELECT to evaluate it, even if UPDATE/DELETE were mistakenly granted
-    // on the table - masking exactly the regression this check exists to catch. A mutation test
-    // (temporarily granting UPDATE on notifications.templates in V2, confirming this test then fails
-    // with no exception thrown, then reverting) caught this the first time these fixtures had a
-    // WHERE clause and proved the fix; both revert cleanly since these run against an ephemeral
-    // Testcontainers instance discarded after the test.
-    private static String noWhereUpdateStatementFor(String table) {
-        return switch (table) {
-            case "delivery_retry" -> "UPDATE notifications.delivery_retry SET attempt = 2";
-            case "shedlock" -> "UPDATE notifications.shedlock SET locked_by = 'x'";
-            default -> throw new IllegalArgumentException("no UPDATE fixture for " + table);
-        };
-    }
+    /** T14's own V11 grant - matches exactly what ShedLock's own JDBC-template provider issues
+     * (confirmed against its own source): INSERT, UPDATE, and SELECT - the latter confirmed
+     * empirically necessary too, not merely assumed from the provider's own code: Postgres requires
+     * SELECT on any column read by an UPDATE's own WHERE predicate (both the plain {@code UPDATE}
+     * and the {@code INSERT ... ON CONFLICT DO UPDATE} the provider issues have one), even though
+     * the provider never runs a standalone SELECT of its own. No DELETE - a lock row is only ever
+     * extended or allowed to expire. */
+    @Test
+    void notificationAppCanInsertSelectAndUpdateButNotDeleteOnShedlock() throws SQLException {
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
+            try (PreparedStatement insert = app.prepareStatement(
+                    "INSERT INTO notifications.shedlock (name, lock_until, locked_at, locked_by) "
+                            + "VALUES ('it-shedlock', now(), now(), 'it')")) {
+                assertThatCode(insert::execute)
+                        .as("INSERT on shedlock must be permitted for notification_app")
+                        .doesNotThrowAnyException();
+            }
 
-    private static String noWhereDeleteStatementFor(String table) {
-        return switch (table) {
-            case "delivery_retry" -> "DELETE FROM notifications.delivery_retry";
-            case "shedlock" -> "DELETE FROM notifications.shedlock";
-            default -> throw new IllegalArgumentException("no DELETE fixture for " + table);
-        };
-    }
+            try (PreparedStatement select = app.prepareStatement(
+                    "SELECT count(*) FROM notifications.shedlock WHERE name = 'it-shedlock'")) {
+                try (ResultSet resultSet = select.executeQuery()) {
+                    resultSet.next();
+                    assertThat(resultSet.getInt(1))
+                            .as("SELECT must see the row notification_app just inserted")
+                            .isEqualTo(1);
+                }
+            }
 
-    private static String minimalInsertFixtureFor(String table) {
-        return switch (table) {
-            case "delivery_retry" -> "INSERT INTO notifications.delivery_retry "
-                    + "(source_event_key, channel, attempt, next_attempt_at) "
-                    + "VALUES ('it-denied', 'EMAIL', 1, now())";
-            case "shedlock" -> "INSERT INTO notifications.shedlock "
-                    + "(name, lock_until, locked_at, locked_by) "
-                    + "VALUES ('it-denied', now(), now(), 'it')";
-            default -> throw new IllegalArgumentException("no INSERT fixture for " + table);
-        };
+            try (PreparedStatement update = app.prepareStatement(
+                    "UPDATE notifications.shedlock SET locked_by = 'it-2' WHERE name = 'it-shedlock'")) {
+                assertThatCode(update::execute)
+                        .as("UPDATE on shedlock must be permitted for notification_app")
+                        .doesNotThrowAnyException();
+            }
+
+            try (Statement statement = app.createStatement()) {
+                assertThatThrownBy(() -> statement.execute(
+                        "DELETE FROM notifications.shedlock WHERE name = 'it-shedlock'"))
+                        .as("DELETE on shedlock must be denied for notification_app")
+                        .isInstanceOf(SQLException.class)
+                        .hasMessageContaining("permission denied");
+            }
+        }
+
+        try (Connection admin = adminConnection();
+             PreparedStatement cleanup = admin.prepareStatement(
+                     "DELETE FROM notifications.shedlock WHERE name = 'it-shedlock'")) {
+            cleanup.execute();
+        }
     }
 
     /** Kimi Phase 11 Gap #1: {@code T01SkeletonRegressionTest}'s own

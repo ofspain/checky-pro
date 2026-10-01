@@ -1,7 +1,9 @@
 package com.themistra.notification.delivery;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.notification.channel.NotificationChannel;
 import com.themistra.notification.common.SecretSafeLogging;
+import com.themistra.notification.common.config.RetryProperties;
 import com.themistra.notification.consumer.NotificationDispatcher;
 import com.themistra.notification.preference.ContactProjectionUpdater;
 import com.themistra.notification.preference.PreferenceResolver;
@@ -12,6 +14,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +62,17 @@ import java.util.stream.Collectors;
  * their own inner safety net in case {@code save} itself throws (e.g. a genuinely null
  * {@code sourceEventKey}, Finding #6) - falling back to a synthetic key and, failing that, a
  * log-only record.</p>
+ *
+ * <p><strong>T14 (bounded retry, L7, R12/R13):</strong> {@link #attemptSend} is the one shared
+ * classification helper both the original dispatch path and {@link #replay} call - a
+ * {@code channelBean.send} failure is permanent ({@code IllegalArgumentException} - deterministic,
+ * retrying changes nothing) or transient (everything else). A transient failure below
+ * {@code retryProperties.maxAttempts()} schedules a bounded-backoff retry; one that would exceed it
+ * writes a terminal {@code DEAD_LETTERED} row instead - evaluated on every attempt, including the
+ * very first, so a {@code maxAttempts=1} configuration dead-letters immediately rather than
+ * scheduling a retry it would instantly exhaust. {@link #replay} re-checks preferences (a channel
+ * disabled since the original attempt is honored, not overridden) and re-renders, since nothing
+ * durable stores the originally-rendered message.</p>
  */
 @Component
 public class DeliveryOrchestrator implements NotificationDispatcher {
@@ -89,21 +103,36 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
             "payment.finalized", new NotificationMapping("payment.finalized", "payment.finalized", "PAYMENT"),
             "receipt.issued", new NotificationMapping("receipt.issued", "receipt.issued", "PAYMENT"));
 
+    /** T14's own 5-outcome classification result, returned by {@link #attemptSend} and
+     * {@link #replay} - {@code RetryScheduler} decides what to do with its own {@code DeliveryRetry}
+     * row purely from this value, never by re-deriving it from the {@code delivery_log} row. */
+    enum DeliveryOutcome {
+        SENT, SUPPRESSED, PERMANENT_FAILURE, TRANSIENT_FAILURE, TRANSIENT_EXHAUSTED
+    }
+
     private final PreferenceResolver preferenceResolver;
     private final TemplateRenderer templateRenderer;
     private final ContactProjectionUpdater contactProjectionUpdater;
     private final DeliveryLogRepository deliveryLogRepository;
+    private final DeliveryRetryRepository deliveryRetryRepository;
+    private final RetryProperties retryProperties;
+    private final ObjectMapper objectMapper;
     private final Clock clock;
     private final Map<String, NotificationChannel> channelsByName;
 
     public DeliveryOrchestrator(PreferenceResolver preferenceResolver, TemplateRenderer templateRenderer,
                                  ContactProjectionUpdater contactProjectionUpdater,
-                                 DeliveryLogRepository deliveryLogRepository, Clock clock,
+                                 DeliveryLogRepository deliveryLogRepository,
+                                 DeliveryRetryRepository deliveryRetryRepository,
+                                 RetryProperties retryProperties, ObjectMapper objectMapper, Clock clock,
                                  List<NotificationChannel> channels) {
         this.preferenceResolver = preferenceResolver;
         this.templateRenderer = templateRenderer;
         this.contactProjectionUpdater = contactProjectionUpdater;
         this.deliveryLogRepository = deliveryLogRepository;
+        this.deliveryRetryRepository = deliveryRetryRepository;
+        this.retryProperties = retryProperties;
+        this.objectMapper = objectMapper;
         this.clock = clock;
         this.channelsByName = channels.stream()
                 .collect(Collectors.toMap(NotificationChannel::channel, channel -> channel));
@@ -132,20 +161,22 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
             }
 
             for (String channel : LAUNCH_CHANNELS) {
-                dispatchOneChannel(accountUuid, email, sourceEventKey, renderData, mapping, channel);
+                dispatchOneChannel(accountUuid, email, sourceEventKey, notificationKind, renderData, mapping, channel);
             }
         } catch (Exception e) {
             // Kimi Phase 8 Finding #4: a failure before any channel is attempted (e.g. findEmail
             // itself throwing) would otherwise leave R11's own "every attempt" guarantee unmet -
             // record one best-effort row per launch channel rather than none at all. This save
             // attempt has its own inner safety net, since sourceEventKey could itself be the
-            // reason the outer block failed (e.g. genuinely null - Finding #6).
+            // reason the outer block failed (e.g. genuinely null - Finding #6). A pre-loop failure
+            // like this one is never classified transient/permanent (T14) - it never reached a real
+            // channel send attempt, so there is nothing a retry would be replaying.
             log.error("Unexpected failure in dispatch for accountUuid={}, notificationKind={}",
                     accountUuid, notificationKind, e);
             for (String channel : LAUNCH_CHANNELS) {
                 try {
                     save(accountUuid, null, channel, sourceEventKey == null ? "unknown:" + accountUuid : sourceEventKey,
-                            null, null, "FAILED", e.getMessage());
+                            null, null, (short) 1, "FAILED", e.getMessage());
                 } catch (Exception saveFailure) {
                     log.error("Unable to record fallback FAILED row for accountUuid={}, channel={}",
                             accountUuid, channel, saveFailure);
@@ -154,7 +185,7 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
         }
     }
 
-    private void dispatchOneChannel(UUID accountUuid, String email, String sourceEventKey,
+    private void dispatchOneChannel(UUID accountUuid, String email, String sourceEventKey, String notificationKind,
                                      Map<String, String> eventData, NotificationMapping mapping, String channel) {
         try {
             String templateName = "EMAIL".equals(channel) ? mapping.emailTemplateName() : mapping.inAppTemplateName();
@@ -165,13 +196,13 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
 
             boolean enabled = preferenceResolver.resolve(accountUuid, mapping.category(), channel);
             if (!enabled) {
-                save(accountUuid, recipient, channel, sourceEventKey, null, null, "SUPPRESSED", null);
+                save(accountUuid, recipient, channel, sourceEventKey, null, null, (short) 1, "SUPPRESSED", null);
                 return;
             }
 
             if ("EMAIL".equals(channel) && email == null) {
                 save(accountUuid, null, channel, sourceEventKey, templateName, null,
-                        "FAILED", "no recipient email on file");
+                        (short) 1, "FAILED", "no recipient email on file");
                 return;
             }
 
@@ -179,23 +210,21 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
             try {
                 message = templateRenderer.render(templateName, channel, eventData);
             } catch (Exception e) {
-                save(accountUuid, recipient, channel, sourceEventKey, templateName, null, "FAILED", e.getMessage());
+                save(accountUuid, recipient, channel, sourceEventKey, templateName, null, (short) 1, "FAILED", e.getMessage());
                 return;
             }
 
             NotificationChannel channelBean = channelsByName.get(channel);
             if (channelBean == null) {
                 save(accountUuid, recipient, channel, sourceEventKey, templateName, message.version(),
-                        "FAILED", "no channel bean registered for " + channel);
+                        (short) 1, "FAILED", "no channel bean registered for " + channel);
                 return;
             }
 
-            try {
-                channelBean.send(accountUuid, recipient, mapping.category(), message);
-                save(accountUuid, recipient, channel, sourceEventKey, templateName, message.version(), "SENT", null);
-            } catch (Exception e) {
-                save(accountUuid, recipient, channel, sourceEventKey, templateName, message.version(),
-                        "FAILED", e.getMessage());
+            DeliveryOutcome outcome = attemptSend(accountUuid, recipient, channel, sourceEventKey, templateName,
+                    message.version(), mapping.category(), channelBean, message, (short) 1);
+            if (outcome == DeliveryOutcome.TRANSIENT_FAILURE) {
+                scheduleFirstRetry(accountUuid, channel, sourceEventKey, notificationKind, eventData);
             }
         } catch (Exception e) {
             // Kimi Phase 11 Gap #1/#5: a failure not already converted to a FAILED row above (e.g.
@@ -203,11 +232,11 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
             // throwing - most plausibly a NOT NULL violation from a missing sourceEventKey,
             // Finding #6) must still leave a best-effort record, mirroring dispatch's own outer
             // fallback (Finding #4) exactly, including its synthetic-key handling and inner safety
-            // net.
+            // net. Never classified transient/permanent (T14) - it never reached a real channel send.
             log.error("Unexpected failure dispatching channel={} for accountUuid={}", channel, accountUuid, e);
             try {
                 save(accountUuid, null, channel, sourceEventKey == null ? "unknown:" + accountUuid : sourceEventKey,
-                        null, null, "FAILED", e.getMessage());
+                        null, null, (short) 1, "FAILED", e.getMessage());
             } catch (Exception saveFailure) {
                 log.error("Unable to record fallback FAILED row for accountUuid={}, channel={}",
                         accountUuid, channel, saveFailure);
@@ -215,10 +244,132 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
         }
     }
 
+    /**
+     * T14's own one shared classification helper - the sole place a {@code channelBean.send}
+     * failure is turned into a {@link DeliveryLog} row and a {@link DeliveryOutcome}. Called by both
+     * the original dispatch path ({@code attemptNumber=1}) and {@link #replay}. Never throws -
+     * {@code IllegalArgumentException} is permanent (deterministic validation failure, identical on
+     * every retry); any other exception is transient, bounded by {@code retryProperties.maxAttempts()}
+     * evaluated against {@code attemptNumber} itself, so even the very first attempt dead-letters
+     * immediately under a {@code maxAttempts=1} configuration rather than scheduling a retry that
+     * would instantly exhaust.
+     */
+    private DeliveryOutcome attemptSend(UUID accountUuid, String recipient, String channel, String sourceEventKey,
+                                         String templateName, Integer templateVersion, String category,
+                                         NotificationChannel channelBean, TemplateRenderer.RenderedMessage message,
+                                         short attemptNumber) {
+        try {
+            channelBean.send(accountUuid, recipient, category, message);
+            save(accountUuid, recipient, channel, sourceEventKey, templateName, templateVersion,
+                    attemptNumber, "SENT", null);
+            return DeliveryOutcome.SENT;
+        } catch (IllegalArgumentException e) {
+            save(accountUuid, recipient, channel, sourceEventKey, templateName, templateVersion,
+                    attemptNumber, "FAILED", e.getMessage());
+            return DeliveryOutcome.PERMANENT_FAILURE;
+        } catch (Exception e) {
+            int nextAttemptNumber = attemptNumber + 1;
+            if (nextAttemptNumber > retryProperties.maxAttempts()) {
+                save(accountUuid, recipient, channel, sourceEventKey, templateName, templateVersion,
+                        attemptNumber, "DEAD_LETTERED", e.getMessage());
+                return DeliveryOutcome.TRANSIENT_EXHAUSTED;
+            }
+            save(accountUuid, recipient, channel, sourceEventKey, templateName, templateVersion,
+                    attemptNumber, "FAILED", e.getMessage());
+            return DeliveryOutcome.TRANSIENT_FAILURE;
+        }
+    }
+
+    /** T14: the very first retry row for a channel/event, inserted only when {@link #attemptSend}
+     * (called with {@code attemptNumber=1}) returns {@code TRANSIENT_FAILURE}. Best-effort - a
+     * serialization failure here is logged, never thrown; the {@code FAILED} {@link DeliveryLog} row
+     * {@code attemptSend} already wrote stands on its own either way (R11's guarantee is unaffected). */
+    private void scheduleFirstRetry(UUID accountUuid, String channel, String sourceEventKey,
+                                     String notificationKind, Map<String, String> eventData) {
+        try {
+            String eventDataJson = objectMapper.writeValueAsString(eventData == null ? Map.of() : eventData);
+            Instant nextAttemptAt = clock.instant().plusSeconds(retryProperties.initialBackoffSeconds());
+            deliveryRetryRepository.save(new DeliveryRetry(sourceEventKey, accountUuid, channel, notificationKind,
+                    eventDataJson, (short) 1, nextAttemptAt, clock.instant()));
+        } catch (Exception e) {
+            log.error("Unable to schedule a retry for accountUuid={}, channel={}, sourceEventKey={}",
+                    accountUuid, channel, sourceEventKey, e);
+        }
+    }
+
+    /**
+     * T14: replays exactly one channel's own delivery attempt, called only by {@code RetryScheduler}
+     * for a due {@code DeliveryRetry} row. Re-resolves the recipient and re-checks preferences
+     * (Kimi Phase 3 Finding #3) - state may have changed since the original attempt - then re-renders
+     * (nothing durable stores the originally-rendered message) before delegating to the same
+     * {@link #attemptSend} the original dispatch path uses. Every early-return guard here writes its
+     * own terminal {@code delivery_log} row classified {@code PERMANENT_FAILURE}: a guard failure
+     * (unknown mapping, still-missing recipient, a broken template, a missing channel bean) is never
+     * itself "a channel delivery fails" in R12's own sense - out of this task's retry scope, mirroring
+     * the original dispatch path's own identical, unretried guard failures.
+     */
+    DeliveryOutcome replay(UUID accountUuid, String channel, String notificationKind, String sourceEventKey,
+                           Map<String, String> eventData, short attemptsAlreadyMade) {
+        short attemptNumber = (short) (attemptsAlreadyMade + 1);
+        NotificationMapping mapping = NOTIFICATION_MAPPINGS.get(notificationKind);
+        if (mapping == null) {
+            save(accountUuid, null, channel, sourceEventKey, null, null, attemptNumber, "FAILED",
+                    "unknown notification kind on replay: " + notificationKind);
+            return DeliveryOutcome.PERMANENT_FAILURE;
+        }
+
+        String templateName = "EMAIL".equals(channel) ? mapping.emailTemplateName() : mapping.inAppTemplateName();
+        String recipient = "EMAIL".equals(channel)
+                ? contactProjectionUpdater.findEmail(accountUuid).orElse(null)
+                : accountUuid.toString();
+
+        boolean enabled = preferenceResolver.resolve(accountUuid, mapping.category(), channel);
+        if (!enabled) {
+            save(accountUuid, recipient, channel, sourceEventKey, null, null, attemptNumber, "SUPPRESSED", null);
+            return DeliveryOutcome.SUPPRESSED;
+        }
+
+        if ("EMAIL".equals(channel) && recipient == null) {
+            save(accountUuid, null, channel, sourceEventKey, templateName, null, attemptNumber, "FAILED",
+                    "no recipient email on file");
+            return DeliveryOutcome.PERMANENT_FAILURE;
+        }
+
+        TemplateRenderer.RenderedMessage message;
+        try {
+            message = templateRenderer.render(templateName, channel, eventData);
+        } catch (Exception e) {
+            save(accountUuid, recipient, channel, sourceEventKey, templateName, null, attemptNumber, "FAILED",
+                    e.getMessage());
+            return DeliveryOutcome.PERMANENT_FAILURE;
+        }
+
+        NotificationChannel channelBean = channelsByName.get(channel);
+        if (channelBean == null) {
+            save(accountUuid, recipient, channel, sourceEventKey, templateName, message.version(), attemptNumber,
+                    "FAILED", "no channel bean registered for " + channel);
+            return DeliveryOutcome.PERMANENT_FAILURE;
+        }
+
+        return attemptSend(accountUuid, recipient, channel, sourceEventKey, templateName, message.version(),
+                mapping.category(), channelBean, message, attemptNumber);
+    }
+
+    /** T14 (Kimi Phase 3 Finding #7): {@code RetryScheduler}'s own poison-pill path - a
+     * {@code delivery_retry} row whose {@code event_data_json} cannot be deserialized can never be
+     * replayed, so it is dead-lettered directly rather than ever calling {@link #replay}. Kept here,
+     * not on {@code RetryScheduler}, so the one {@link SecretSafeLogging}-redacting {@code save}
+     * helper is never duplicated. */
+    void recordUnrecoverableFailure(UUID accountUuid, String channel, String sourceEventKey, short attempt,
+                                     String detail) {
+        save(accountUuid, null, channel, sourceEventKey, null, null, attempt, "DEAD_LETTERED", detail);
+    }
+
     private void save(UUID accountUuid, String recipient, String channel, String sourceEventKey,
-                       String templateName, Integer templateVersion, String outcome, String errorDetail) {
+                       String templateName, Integer templateVersion, short attempt, String outcome,
+                       String errorDetail) {
         String redactedErrorDetail = errorDetail == null ? null : SecretSafeLogging.redact(errorDetail);
         deliveryLogRepository.save(new DeliveryLog(accountUuid, recipient, channel, sourceEventKey,
-                templateName, templateVersion, outcome, redactedErrorDetail, clock.instant()));
+                templateName, templateVersion, attempt, outcome, redactedErrorDetail, clock.instant()));
     }
 }

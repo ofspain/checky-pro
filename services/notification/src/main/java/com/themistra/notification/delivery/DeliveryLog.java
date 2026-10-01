@@ -17,8 +17,9 @@ import java.util.UUID;
  * entity in this module, this one is genuinely constructed and persisted by application code, not
  * read-only.
  *
- * <p>{@code attempt} is always {@code 1} here - incrementing it for a real retry is task 14's own
- * scope ({@code DeliveryRetry}/{@code RetryScheduler}), not this task's.</p>
+ * <p>{@code attempt} is a real constructor parameter (T14) - the original attempt is always
+ * {@code 1}; a replay (see {@code DeliveryOrchestrator.replay}) passes the real, incremented
+ * number. Was hardcoded to {@code 1} before T14, per this class's own now-resolved Javadoc note.</p>
  */
 @Entity
 @Table(name = "delivery_log", schema = "notifications")
@@ -63,7 +64,7 @@ public class DeliveryLog {
     }
 
     public DeliveryLog(UUID accountUuid, String recipient, String channel, String sourceEventKey,
-                        String templateName, Integer templateVersion, String outcome,
+                        String templateName, Integer templateVersion, short attempt, String outcome,
                         String errorDetail, Instant createdAt) {
         this.accountUuid = accountUuid;
         this.recipient = recipient;
@@ -71,7 +72,7 @@ public class DeliveryLog {
         this.sourceEventKey = sourceEventKey;
         this.templateName = templateName;
         this.templateVersion = templateVersion;
-        this.attempt = 1;
+        this.attempt = attempt;
         this.outcome = outcome;
         this.errorDetail = errorDetail;
         this.createdAt = createdAt;

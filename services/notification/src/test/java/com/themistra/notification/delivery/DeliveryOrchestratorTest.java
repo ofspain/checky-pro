@@ -1,7 +1,9 @@
 package com.themistra.notification.delivery;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.notification.channel.NotificationChannel;
 import com.themistra.notification.common.SecretSafeLogging;
+import com.themistra.notification.common.config.RetryProperties;
 import com.themistra.notification.preference.ContactProjectionUpdater;
 import com.themistra.notification.preference.PreferenceResolver;
 import com.themistra.notification.template.TemplateRenderer;
@@ -53,6 +55,11 @@ class DeliveryOrchestratorTest {
     private final TemplateRenderer templateRenderer = mock(TemplateRenderer.class);
     private final ContactProjectionUpdater contactProjectionUpdater = mock(ContactProjectionUpdater.class);
     private final DeliveryLogRepository deliveryLogRepository = mock(DeliveryLogRepository.class);
+    private final DeliveryRetryRepository deliveryRetryRepository = mock(DeliveryRetryRepository.class);
+    // Real, concrete values (not mocked) - maxAttempts=3 gives transient-failure tests real
+    // exhaustion-boundary room; a real ObjectMapper is a stateless utility, not a collaborator.
+    private final RetryProperties retryProperties = new RetryProperties(3, 30, 3600, 30);
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private final NotificationChannel emailChannel = mock(NotificationChannel.class);
     private final NotificationChannel inAppChannel = mock(NotificationChannel.class);
 
@@ -63,7 +70,8 @@ class DeliveryOrchestratorTest {
         when(emailChannel.channel()).thenReturn("EMAIL");
         when(inAppChannel.channel()).thenReturn("IN_APP");
         orchestrator = new DeliveryOrchestrator(preferenceResolver, templateRenderer, contactProjectionUpdater,
-                deliveryLogRepository, CLOCK, List.of(emailChannel, inAppChannel));
+                deliveryLogRepository, deliveryRetryRepository, retryProperties, objectMapper, CLOCK,
+                List.of(emailChannel, inAppChannel));
     }
 
     private static TemplateRenderer.RenderedMessage message(int version) {
@@ -280,7 +288,8 @@ class DeliveryOrchestratorTest {
     @Test
     void missingChannelBeanRecordsFailedRowWithTheAlreadyRenderedTemplateVersionAndSkipsSend() {
         DeliveryOrchestrator emailOnlyOrchestrator = new DeliveryOrchestrator(preferenceResolver, templateRenderer,
-                contactProjectionUpdater, deliveryLogRepository, CLOCK, List.of(emailChannel));
+                contactProjectionUpdater, deliveryLogRepository, deliveryRetryRepository, retryProperties,
+                objectMapper, CLOCK, List.of(emailChannel));
         UUID accountUuid = UUID.randomUUID();
         when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
         when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
@@ -577,5 +586,190 @@ class DeliveryOrchestratorTest {
 
         long mappingEntryCount = source.lines().filter(line -> line.contains("new NotificationMapping(")).count();
         assertThat(mappingEntryCount).as("exactly 7 entries, no more, no fewer").isEqualTo(7);
+    }
+
+    // --- T14 (R12/R13, L7): transient channel-send failure schedules a bounded retry ----------
+
+    @Test
+    void transientChannelSendFailureInsertsAFirstRetryRowAtAttemptOneWithTheCorrectBackoff() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(2));
+        when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
+        org.mockito.Mockito.doThrow(new RuntimeException("ses throttled")).when(emailChannel).send(any(), any(), any(), any());
+
+        orchestrator.dispatch(accountUuid, "verify_email", Map.of("token", "tok-1", "sourceEventKey", "key-18"));
+
+        var captor = forClass(DeliveryRetry.class);
+        verify(deliveryRetryRepository).save(captor.capture());
+        DeliveryRetry retry = captor.getValue();
+        assertThat(retry.getAccountUuid()).isEqualTo(accountUuid);
+        assertThat(retry.getChannel()).isEqualTo("EMAIL");
+        assertThat(retry.getSourceEventKey()).isEqualTo("key-18");
+        assertThat(retry.getNotificationKind()).isEqualTo("verify_email");
+        assertThat(retry.getAttempt()).isEqualTo((short) 1);
+        assertThat(retry.getNextAttemptAt()).isEqualTo(FIXED_INSTANT.plusSeconds(30));
+        assertThat(retry.getCreatedAt()).isEqualTo(FIXED_INSTANT);
+        assertThat(retry.getEventDataJson()).contains("tok-1").contains("key-18");
+    }
+
+    @Test
+    void permanentChannelSendFailureNeverInsertsARetryRow() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
+        when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("blank recipient"))
+                .when(emailChannel).send(any(), any(), any(), any());
+
+        orchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "key-19"));
+
+        verifyNoInteractions(deliveryRetryRepository);
+    }
+
+    /** AC14 (pinned semantics): a maxAttempts=1 configuration must dead-letter a transient failure
+     * on the very first attempt, never scheduling a retry it would instantly exhaust. */
+    @Test
+    void transientFailureWithMaxAttemptsOfOneDeadLettersImmediatelyWithNoRetryRow() {
+        DeliveryOrchestrator singleAttemptOrchestrator = new DeliveryOrchestrator(preferenceResolver, templateRenderer,
+                contactProjectionUpdater, deliveryLogRepository, deliveryRetryRepository,
+                new RetryProperties(1, 30, 3600, 30), objectMapper, CLOCK, List.of(emailChannel, inAppChannel));
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
+        when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
+        org.mockito.Mockito.doThrow(new RuntimeException("db down")).when(emailChannel).send(any(), any(), any(), any());
+
+        singleAttemptOrchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "key-20"));
+
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository, times(2)).save(captor.capture());
+        DeliveryLog emailRow = captor.getAllValues().stream()
+                .filter(r -> "EMAIL".equals(r.getChannel())).findFirst().orElseThrow();
+        assertThat(emailRow.getOutcome()).isEqualTo("DEAD_LETTERED");
+        assertThat(emailRow.getAttempt()).isEqualTo((short) 1);
+        verifyNoInteractions(deliveryRetryRepository);
+    }
+
+    // --- T14: DeliveryOrchestrator.replay's own 5-outcome classification -----------------------
+
+    @Test
+    void replaySuccessWritesASentRowAtTheIncrementedAttemptAndReturnsSent() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "EMAIL")).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(4));
+
+        DeliveryOrchestrator.DeliveryOutcome outcome = orchestrator.replay(accountUuid, "EMAIL", "verify_email",
+                "key-21", Map.of("sourceEventKey", "key-21"), (short) 1);
+
+        assertThat(outcome).isEqualTo(DeliveryOrchestrator.DeliveryOutcome.SENT);
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getAttempt()).isEqualTo((short) 2);
+        assertThat(captor.getValue().getOutcome()).isEqualTo("SENT");
+        verify(emailChannel).send(eq(accountUuid), eq("a@example.com"), eq("SECURITY"), eq(message(4)));
+    }
+
+    /** AC11 (Kimi Phase 3 Finding #3): a channel disabled since the original attempt is honored on
+     * replay, not overridden - the retry stops, it does not force a send against current preference. */
+    @Test
+    void replayHonorsAPreferenceDisabledSinceTheOriginalAttemptAndReturnsSuppressed() {
+        UUID accountUuid = UUID.randomUUID();
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "EMAIL")).thenReturn(false);
+
+        DeliveryOrchestrator.DeliveryOutcome outcome = orchestrator.replay(accountUuid, "EMAIL", "verify_email",
+                "key-22", Map.of("sourceEventKey", "key-22"), (short) 1);
+
+        assertThat(outcome).isEqualTo(DeliveryOrchestrator.DeliveryOutcome.SUPPRESSED);
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getOutcome()).isEqualTo("SUPPRESSED");
+        verifyNoInteractions(templateRenderer);
+        verify(emailChannel, never()).send(any(), any(), any(), any());
+    }
+
+    @Test
+    void replayOfATransientFailureBelowMaxAttemptsReturnsTransientFailure() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "EMAIL")).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
+        org.mockito.Mockito.doThrow(new RuntimeException("still down")).when(emailChannel).send(any(), any(), any(), any());
+
+        DeliveryOrchestrator.DeliveryOutcome outcome = orchestrator.replay(accountUuid, "EMAIL", "verify_email",
+                "key-23", Map.of("sourceEventKey", "key-23"), (short) 1);
+
+        assertThat(outcome).isEqualTo(DeliveryOrchestrator.DeliveryOutcome.TRANSIENT_FAILURE);
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getAttempt()).isEqualTo((short) 2);
+        assertThat(captor.getValue().getOutcome()).isEqualTo("FAILED");
+    }
+
+    @Test
+    void replayAtTheFinalAllowedAttemptDeadLettersAndReturnsTransientExhausted() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "EMAIL")).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
+        org.mockito.Mockito.doThrow(new RuntimeException("still down")).when(emailChannel).send(any(), any(), any(), any());
+
+        // retryProperties.maxAttempts() == 3; attemptsAlreadyMade=2 -> this replay is attempt 3, the last one.
+        DeliveryOrchestrator.DeliveryOutcome outcome = orchestrator.replay(accountUuid, "EMAIL", "verify_email",
+                "key-24", Map.of("sourceEventKey", "key-24"), (short) 2);
+
+        assertThat(outcome).isEqualTo(DeliveryOrchestrator.DeliveryOutcome.TRANSIENT_EXHAUSTED);
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getAttempt()).isEqualTo((short) 3);
+        assertThat(captor.getValue().getOutcome()).isEqualTo("DEAD_LETTERED");
+    }
+
+    @Test
+    void replayOfAPermanentFailureReturnsPermanentFailureAndStopsRetrying() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "EMAIL")).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("now invalid")).when(emailChannel).send(any(), any(), any(), any());
+
+        DeliveryOrchestrator.DeliveryOutcome outcome = orchestrator.replay(accountUuid, "EMAIL", "verify_email",
+                "key-25", Map.of("sourceEventKey", "key-25"), (short) 1);
+
+        assertThat(outcome).isEqualTo(DeliveryOrchestrator.DeliveryOutcome.PERMANENT_FAILURE);
+    }
+
+    @Test
+    void replayWithAnUnknownNotificationKindWritesFailedAndReturnsPermanentFailure() {
+        UUID accountUuid = UUID.randomUUID();
+
+        DeliveryOrchestrator.DeliveryOutcome outcome = orchestrator.replay(accountUuid, "EMAIL", "does.not.exist",
+                "key-26", Map.of("sourceEventKey", "key-26"), (short) 1);
+
+        assertThat(outcome).isEqualTo(DeliveryOrchestrator.DeliveryOutcome.PERMANENT_FAILURE);
+        verifyNoInteractions(preferenceResolver, templateRenderer);
+        verify(emailChannel, never()).send(any(), any(), any(), any());
+        verify(inAppChannel, never()).send(any(), any(), any(), any());
+    }
+
+    @Test
+    void recordUnrecoverableFailureWritesADeadLetteredRowAtTheGivenAttempt() {
+        UUID accountUuid = UUID.randomUUID();
+
+        orchestrator.recordUnrecoverableFailure(accountUuid, "EMAIL", "key-27", (short) 3, "unreadable json");
+
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository).save(captor.capture());
+        DeliveryLog row = captor.getValue();
+        assertThat(row.getOutcome()).isEqualTo("DEAD_LETTERED");
+        assertThat(row.getAttempt()).isEqualTo((short) 3);
+        assertThat(row.getErrorDetail()).isEqualTo("unreadable json");
     }
 }

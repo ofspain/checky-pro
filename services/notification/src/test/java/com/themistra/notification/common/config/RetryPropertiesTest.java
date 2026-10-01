@@ -26,13 +26,15 @@ class RetryPropertiesTest {
         contextRunner.withPropertyValues(
                         "themistra.notification.retry.max-attempts=5",
                         "themistra.notification.retry.initial-backoff-seconds=30",
-                        "themistra.notification.retry.max-backoff-seconds=3600")
+                        "themistra.notification.retry.max-backoff-seconds=3600",
+                        "themistra.notification.retry.scheduler-interval-seconds=30")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     RetryProperties props = context.getBean(RetryProperties.class);
                     assertThat(props.maxAttempts()).isEqualTo(5);
                     assertThat(props.initialBackoffSeconds()).isEqualTo(30);
                     assertThat(props.maxBackoffSeconds()).isEqualTo(3600);
+                    assertThat(props.schedulerIntervalSeconds()).isEqualTo(30);
                 });
     }
 
@@ -41,7 +43,8 @@ class RetryPropertiesTest {
         contextRunner.withPropertyValues(
                         "themistra.notification.retry.max-attempts=0",
                         "themistra.notification.retry.initial-backoff-seconds=30",
-                        "themistra.notification.retry.max-backoff-seconds=3600")
+                        "themistra.notification.retry.max-backoff-seconds=3600",
+                        "themistra.notification.retry.scheduler-interval-seconds=30")
                 .run(context -> assertThat(context).hasFailed());
     }
 
@@ -50,7 +53,21 @@ class RetryPropertiesTest {
         contextRunner.withPropertyValues(
                         "themistra.notification.retry.max-attempts=5",
                         "themistra.notification.retry.initial-backoff-seconds=0",
-                        "themistra.notification.retry.max-backoff-seconds=3600")
+                        "themistra.notification.retry.max-backoff-seconds=3600",
+                        "themistra.notification.retry.scheduler-interval-seconds=30")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    /** T14: {@code schedulerIntervalSeconds} is independently validated too - a separate concern
+     * (how often {@code RetryScheduler} polls) from the other three fields (the backoff-between-
+     * attempts policy), with no cross-field relationship to either of them. */
+    @Test
+    void failsWhenSchedulerIntervalSecondsIsNonPositive() {
+        contextRunner.withPropertyValues(
+                        "themistra.notification.retry.max-attempts=5",
+                        "themistra.notification.retry.initial-backoff-seconds=30",
+                        "themistra.notification.retry.max-backoff-seconds=3600",
+                        "themistra.notification.retry.scheduler-interval-seconds=0")
                 .run(context -> assertThat(context).hasFailed());
     }
 
@@ -59,7 +76,8 @@ class RetryPropertiesTest {
         contextRunner.withPropertyValues(
                         "themistra.notification.retry.max-attempts=5",
                         "themistra.notification.retry.initial-backoff-seconds=30",
-                        "themistra.notification.retry.max-backoff-seconds=10")
+                        "themistra.notification.retry.max-backoff-seconds=10",
+                        "themistra.notification.retry.scheduler-interval-seconds=30")
                 .run(context -> assertThat(context.getStartupFailure())
                         .rootCause().isInstanceOf(IllegalStateException.class)
                         .hasMessageContaining("max-backoff-seconds")
@@ -72,7 +90,8 @@ class RetryPropertiesTest {
         contextRunner.withPropertyValues(
                         "themistra.notification.retry.max-attempts=5",
                         "themistra.notification.retry.initial-backoff-seconds=30",
-                        "themistra.notification.retry.max-backoff-seconds=30")
+                        "themistra.notification.retry.max-backoff-seconds=30",
+                        "themistra.notification.retry.scheduler-interval-seconds=30")
                 .run(context -> assertThat(context).hasNotFailed());
     }
 }

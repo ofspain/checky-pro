@@ -84,6 +84,21 @@
       <artifactId>spring-kafka</artifactId>
     </dependency>
 
+    <!-- Bounded retry (T14, L7, agents.md): ShedLock guards RetryScheduler so only one replica's
+         sweep runs at a time. shedlock table already exists (V1); the JDBC-template provider's own
+         real SQL (confirmed by reading net.javacrumbs.shedlock:shedlock-sql-support's own source,
+         not assumed) matches it exactly, no custom column-name config needed. -->
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-spring</artifactId>
+      <version>7.9.0</version>
+    </dependency>
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-provider-jdbc-template</artifactId>
+      <version>7.9.0</version>
+    </dependency>
+
     <!-- Email transport (O2/Q2): Amazon SES via the modern v2 client -->
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
