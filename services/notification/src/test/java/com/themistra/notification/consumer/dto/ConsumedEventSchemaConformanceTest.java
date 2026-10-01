@@ -10,7 +10,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * T15 (R19) - the literal {@code package.md} §8 named test. The substance R19 describes was
@@ -104,5 +108,63 @@ class ConsumedEventSchemaConformanceTest {
             case "array" -> node.isArray();
             default -> throw new IllegalArgumentException("unsupported JSON Schema type: " + declaredType);
         };
+    }
+
+    // --- Phase 10: regression guards for the checking mechanism itself, not only its happy path ---
+    // Neither real schema today exercises anything but matchesJsonSchemaType's own "string" branch,
+    // and shouldConformToConsumedEventSchemas above only ever exercises the fully-conformant case -
+    // if either check were silently removed or broken, nothing would fail. These tests close that
+    // gap directly, with no real schema file needed for the negative-path proof.
+
+    @Test
+    void matchesJsonSchemaTypeAcceptsEveryDeclaredJsonSchemaType() {
+        assertThat(matchesJsonSchemaType(objectMapper.valueToTree("x"), "string")).isTrue();
+        assertThat(matchesJsonSchemaType(objectMapper.valueToTree(1), "integer")).isTrue();
+        assertThat(matchesJsonSchemaType(objectMapper.valueToTree(1.5), "number")).isTrue();
+        assertThat(matchesJsonSchemaType(objectMapper.valueToTree(true), "boolean")).isTrue();
+        assertThat(matchesJsonSchemaType(objectMapper.valueToTree(List.of(1, 2)), "array")).isTrue();
+        assertThat(matchesJsonSchemaType(objectMapper.valueToTree(new ArbitraryObject("x")), "object")).isTrue();
+    }
+
+    @Test
+    void matchesJsonSchemaTypeRejectsAMismatchedNode() {
+        assertThat(matchesJsonSchemaType(objectMapper.valueToTree(1), "string")).isFalse();
+        assertThat(matchesJsonSchemaType(objectMapper.valueToTree("x"), "integer")).isFalse();
+    }
+
+    @Test
+    void matchesJsonSchemaTypeThrowsForAnUnrecognizedDeclaredType() {
+        assertThatThrownBy(() -> matchesJsonSchemaType(objectMapper.valueToTree("x"), "null"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("null");
+    }
+
+    /** Proves the mechanism `shouldConformToConsumedEventSchemas` relies on actually catches a real
+     * drift in all three ways it claims to (AC1) - a missing required field, an undeclared field,
+     * and a type mismatch, all three in one deliberately-broken, synthetic (no real schema file
+     * needed) payload/schema pair. Uses a real, non-throwing {@link SoftAssertions} instance
+     * directly (not {@code assertSoftly}) so the collected errors can be inspected without the test
+     * itself failing. */
+    @Test
+    void assertConformsToSchemaCatchesAMissingRequiredFieldAnUndeclaredFieldAndATypeMismatch() throws IOException {
+        JsonNode schema = objectMapper.readTree(
+                "{\"required\":[\"a\",\"b\"],\"properties\":{\"a\":{\"type\":\"string\"},\"b\":{\"type\":\"integer\"}}}");
+        JsonNode serialized = objectMapper.readTree("{\"a\":123,\"c\":\"extra\"}");
+
+        SoftAssertions softly = new SoftAssertions();
+        assertConformsToSchema(softly, serialized, schema, "synthetic-test-schema.json");
+
+        List<Throwable> errors = softly.errorsCollected();
+        assertThat(errors).hasSize(3);
+        assertThat(errors).anySatisfy(e -> assertThat(e).hasMessageContaining("required field 'b'"));
+        assertThat(errors).anySatisfy(e -> assertThat(e).hasMessageContaining("serialized field 'c'"));
+        assertThat(errors).anySatisfy(e -> assertThat(e).hasMessageContaining(
+                "serialized field 'a' type matches schema declared type 'string'"));
+    }
+
+    /** A trivial, locally-defined record purely so {@code objectMapper.valueToTree} has something
+     * that serializes to a genuine JSON object, without depending on either real DTO's own current
+     * shape for this unrelated type-check proof. */
+    private record ArbitraryObject(String value) {
     }
 }
