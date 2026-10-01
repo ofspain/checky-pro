@@ -677,6 +677,46 @@ class DeliveryOrchestratorTest {
         verify(emailChannel).send(eq(accountUuid), eq("a@example.com"), eq("SECURITY"), eq(message(4)));
     }
 
+    /** Phase 8 Finding #3: replay re-resolves displayName fresh (not only email), mirroring the
+     * original dispatch path's own merge - previously only email was re-resolved. */
+    @Test
+    void replayResolvesDisplayNameFreshAndMergesItIntoRenderData() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.of("Ada Lovelace"));
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "EMAIL")).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
+
+        orchestrator.replay(accountUuid, "EMAIL", "verify_email", "key-28",
+                Map.of("token", "tok-1", "sourceEventKey", "key-28"), (short) 1);
+
+        var captor = forClass(Map.class);
+        verify(templateRenderer).render(eq("email.verify"), eq("EMAIL"), captor.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, String> renderData = captor.getValue();
+        assertThat(renderData)
+                .containsEntry("displayName", "Ada Lovelace")
+                .containsEntry("token", "tok-1")
+                .containsEntry("sourceEventKey", "key-28");
+    }
+
+    /** Phase 8 Finding #4: structural, not behavioral - no real `NOTIFICATION_MAPPINGS` entry has a
+     * null template for either channel (confirmed: all 7 entries supply both), so this guard cannot
+     * be exercised through any real `notificationKind` today. Mirrors
+     * `notificationMappingsTableContainsExactlyTheSevenVerbatimEntries`'s own established precedent
+     * for asserting a real, source-level invariant that has no reachable behavioral test. */
+    @Test
+    void replayGuardsAgainstANullTemplateNameMirroringDispatchOneChannel() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/themistra/notification/delivery/DeliveryOrchestrator.java"));
+        String replayBody = source.substring(source.indexOf("DeliveryOutcome replay("));
+
+        assertThat(replayBody)
+                .as("replay must guard a null templateName before resolving a recipient or rendering, "
+                        + "mirroring dispatchOneChannel's own identical guard")
+                .contains("if (templateName == null) {");
+    }
+
     /** AC11 (Kimi Phase 3 Finding #3): a channel disabled since the original attempt is honored on
      * replay, not overridden - the retry stops, it does not force a send against current preference. */
     @Test

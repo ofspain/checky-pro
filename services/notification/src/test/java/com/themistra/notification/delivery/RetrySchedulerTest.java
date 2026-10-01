@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.notification.common.config.RetryProperties;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -177,5 +180,21 @@ class RetrySchedulerTest {
         scheduler.sweep();
 
         verify(retryRepository).delete(goodRow);
+    }
+
+    /** Phase 8 Finding #5: structural, not behavioral - {@code DeliveryOutcome} has exactly 5 real
+     * values today, so a 6th cannot be fabricated through Mockito to exercise this branch directly.
+     * Confirms the defensive {@code default} arm exists in source, mirroring
+     * {@code DeliveryOrchestratorTest.replayGuardsAgainstANullTemplateNameMirroringDispatchOneChannel}'s
+     * own identical structural-test precedent for an otherwise-unreachable defensive branch. */
+    @Test
+    void processOneSwitchHasADefaultArmGuardingAFutureUnhandledOutcome() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/themistra/notification/delivery/RetryScheduler.java"));
+
+        assertThat(source)
+                .as("the switch over DeliveryOutcome must have a default arm, since a switch "
+                        + "statement (unlike an expression) is not compiler-checked for exhaustiveness")
+                .contains("default -> throw new IllegalStateException(");
     }
 }

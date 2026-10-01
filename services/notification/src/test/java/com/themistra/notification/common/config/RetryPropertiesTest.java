@@ -48,6 +48,29 @@ class RetryPropertiesTest {
                 .run(context -> assertThat(context).hasFailed());
     }
 
+    /** Phase 8 Finding #1/#2: closes both the {@code short}-column overflow risk and the
+     * backoff formula's own bit-shift wraparound at the source - a value this high can never be
+     * configured in the first place. */
+    @Test
+    void failsWhenMaxAttemptsExceedsSixtyTwo() {
+        contextRunner.withPropertyValues(
+                        "themistra.notification.retry.max-attempts=63",
+                        "themistra.notification.retry.initial-backoff-seconds=30",
+                        "themistra.notification.retry.max-backoff-seconds=3600",
+                        "themistra.notification.retry.scheduler-interval-seconds=30")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void succeedsWhenMaxAttemptsEqualsSixtyTwo() {
+        contextRunner.withPropertyValues(
+                        "themistra.notification.retry.max-attempts=62",
+                        "themistra.notification.retry.initial-backoff-seconds=30",
+                        "themistra.notification.retry.max-backoff-seconds=3600",
+                        "themistra.notification.retry.scheduler-interval-seconds=30")
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
     @Test
     void failsWhenInitialBackoffIsNonPositive() {
         contextRunner.withPropertyValues(

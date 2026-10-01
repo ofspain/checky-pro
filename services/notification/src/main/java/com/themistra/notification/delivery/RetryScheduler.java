@@ -99,6 +99,10 @@ public class RetryScheduler {
                 retry.reschedule(newAttempt, computeNextAttemptAt(newAttempt));
                 retryRepository.save(retry);
             }
+            // Phase 8 Finding #5: a switch statement (unlike a switch expression) is not
+            // compiler-checked for exhaustiveness - without this, a future 6th DeliveryOutcome
+            // value would silently fall through, leaving the row neither deleted nor rescheduled.
+            default -> throw new IllegalStateException("unhandled DeliveryOutcome: " + outcome);
         }
     }
 

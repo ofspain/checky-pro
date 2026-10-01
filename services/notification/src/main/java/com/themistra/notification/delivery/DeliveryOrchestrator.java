@@ -319,6 +319,13 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
         }
 
         String templateName = "EMAIL".equals(channel) ? mapping.emailTemplateName() : mapping.inAppTemplateName();
+        if (templateName == null) {
+            // Phase 8 Finding #4: mirrors dispatchOneChannel's own identical guard - unreachable in
+            // practice today (every current NOTIFICATION_MAPPINGS entry has both templates, and a
+            // retry row for this channel could only exist if the original attempt already passed
+            // this same check), kept for consistency if a future mapping ever omits one channel.
+            return DeliveryOutcome.PERMANENT_FAILURE;
+        }
         String recipient = "EMAIL".equals(channel)
                 ? contactProjectionUpdater.findEmail(accountUuid).orElse(null)
                 : accountUuid.toString();
@@ -335,9 +342,18 @@ public class DeliveryOrchestrator implements NotificationDispatcher {
             return DeliveryOutcome.PERMANENT_FAILURE;
         }
 
+        // Phase 8 Finding #3: re-resolves displayName fresh on replay too, mirroring dispatch's own
+        // merge - previously only email was re-resolved, leaving replay's own rendered content
+        // using whatever (always-null today) displayName snapshot the original attempt captured.
+        String displayName = contactProjectionUpdater.findDisplayName(accountUuid).orElse(null);
+        Map<String, String> renderData = new HashMap<>(eventData == null ? Map.of() : eventData);
+        if (displayName != null) {
+            renderData.put("displayName", displayName);
+        }
+
         TemplateRenderer.RenderedMessage message;
         try {
-            message = templateRenderer.render(templateName, channel, eventData);
+            message = templateRenderer.render(templateName, channel, renderData);
         } catch (Exception e) {
             save(accountUuid, recipient, channel, sourceEventKey, templateName, null, attemptNumber, "FAILED",
                     e.getMessage());
