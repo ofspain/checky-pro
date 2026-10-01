@@ -615,6 +615,49 @@ class DeliveryOrchestratorTest {
         assertThat(retry.getEventDataJson()).contains("tok-1").contains("key-18");
     }
 
+    /** AC5 (L5): the transient-failure classification and retry-scheduling path must be
+     * channel-agnostic - proven here with {@code inAppChannel} throwing, mirroring the EMAIL-only
+     * coverage above exactly, to close the gap that every other retry-scheduling test in this class
+     * only ever exercised the EMAIL channel. */
+    @Test
+    void transientInAppChannelSendFailureAlsoSchedulesARetry() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
+        when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
+        org.mockito.Mockito.doThrow(new RuntimeException("db down")).when(inAppChannel).send(any(), any(), any(), any());
+
+        orchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "key-18b"));
+
+        var captor = forClass(DeliveryRetry.class);
+        verify(deliveryRetryRepository).save(captor.capture());
+        assertThat(captor.getValue().getChannel()).isEqualTo("IN_APP");
+        assertThat(captor.getValue().getAttempt()).isEqualTo((short) 1);
+    }
+
+    /** Boundary: both channels failing transiently on the same dispatch schedules two independent
+     * retry rows, each with its own channel/backoff - neither interferes with the other. */
+    @Test
+    void bothChannelsFailingTransientlyScheduleTwoIndependentRetryRows() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
+        when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
+        org.mockito.Mockito.doThrow(new RuntimeException("smtp down")).when(emailChannel).send(any(), any(), any(), any());
+        org.mockito.Mockito.doThrow(new RuntimeException("db down")).when(inAppChannel).send(any(), any(), any(), any());
+
+        orchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "key-18c"));
+
+        var captor = forClass(DeliveryRetry.class);
+        verify(deliveryRetryRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues().stream().map(DeliveryRetry::getChannel))
+                .containsExactlyInAnyOrder("EMAIL", "IN_APP");
+    }
+
     @Test
     void permanentChannelSendFailureNeverInsertsARetryRow() {
         UUID accountUuid = UUID.randomUUID();
