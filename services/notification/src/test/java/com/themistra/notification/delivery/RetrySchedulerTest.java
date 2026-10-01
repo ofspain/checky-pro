@@ -2,9 +2,11 @@ package com.themistra.notification.delivery;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.notification.common.config.RetryProperties;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -25,11 +27,21 @@ import static org.mockito.Mockito.when;
 
 /**
  * Mocked {@link DeliveryOrchestrator}/{@link DeliveryRetryRepository}, no Spring context, no
- * Docker. {@code sweep}'s own real timing/ShedLock behavior is proven at the integration level
- * ({@code RetrySchedulerIntegrationTest}); this class proves {@code processOne}'s own per-row
- * decision logic given a known {@code DeliveryOrchestrator.DeliveryOutcome} - the backoff formula
- * (pinned semantics) is exercised indirectly through the real {@code reschedule} mutation it
- * produces, not via reflection into the private {@code computeNextAttemptAt}.
+ * Docker. This class proves {@code processOne}'s own per-row decision logic given a known
+ * {@code DeliveryOrchestrator.DeliveryOutcome} - the backoff formula (pinned semantics) is
+ * exercised indirectly through the real {@code reschedule} mutation it produces, not via
+ * reflection into the private {@code computeNextAttemptAt}.
+ *
+ * <p>Phase 11 Gap #1 (a real documentation bug, caught and fixed here): this Javadoc previously
+ * claimed {@code sweep}'s own real {@code @Scheduled}/ShedLock timing was "proven at the
+ * integration level (`RetrySchedulerIntegrationTest`)" - that file never existed. No real-time,
+ * Awaitility-based proof of the actual scheduled firing exists in this suite, by deliberate choice
+ * (Phase 5's own plan judged a live multi-replica ShedLock contention test disproportionate, since
+ * nothing in this codebase runs multiple real instances in CI) - {@link #sweepLockAnnotationIsPresentWithANonEmptyName}
+ * is the structural proof AC6 actually needs, and
+ * {@code DeliveryOrchestratorIntegrationTest.sweepOnlyProcessesDueRowsOrderedOldestFirst} proves the
+ * real repository query/ordering against a real Postgres instance by calling {@code sweep()}
+ * directly rather than waiting on real elapsed time.</p>
  */
 class RetrySchedulerTest {
 
@@ -109,6 +121,11 @@ class RetrySchedulerTest {
         scheduler.processOne(retry);
 
         verify(retryRepository, never()).delete(any());
+        // Phase 11 Gap #3: retry is detached (fetched outside processOne's own transaction in a
+        // real sweep) - mutating it alone, without this explicit save/merge, is exactly the real
+        // bug a prior integration test caught (see RetryScheduler.processOne's own comment). This
+        // assertion is the regression guard that specific bug never had until now.
+        verify(retryRepository).save(retry);
         assertThat(retry.getAttempt()).isEqualTo((short) 2);
         assertThat(retry.getNextAttemptAt()).isEqualTo(FIXED_INSTANT.plusSeconds(60));
     }
@@ -123,6 +140,7 @@ class RetrySchedulerTest {
 
         scheduler.processOne(retry);
 
+        verify(retryRepository).save(retry);
         assertThat(retry.getAttempt()).isEqualTo((short) 4);
         assertThat(retry.getNextAttemptAt()).isEqualTo(FIXED_INSTANT.plusSeconds(240));
     }
@@ -196,5 +214,19 @@ class RetrySchedulerTest {
                 .as("the switch over DeliveryOutcome must have a default arm, since a switch "
                         + "statement (unlike an expression) is not compiler-checked for exhaustiveness")
                 .contains("default -> throw new IllegalStateException(");
+    }
+
+    /** Phase 11 Gap #2: AC6 requires {@code sweep} itself to be ShedLock-guarded - the only
+     * pre-existing coverage (`T01SkeletonRegressionTest`) checked `@EnableSchedulerLock` on the
+     * application class, never the annotation on this actual method. A missing/misconfigured
+     * `@SchedulerLock` here would let two replicas run overlapping sweeps undetected. */
+    @Test
+    void sweepLockAnnotationIsPresentWithANonEmptyName() throws NoSuchMethodException {
+        Method sweep = RetryScheduler.class.getMethod("sweep");
+        SchedulerLock lock = sweep.getAnnotation(SchedulerLock.class);
+
+        assertThat(lock).as("sweep() must be @SchedulerLock-guarded (AC6)").isNotNull();
+        assertThat(lock.name()).isNotBlank();
+        assertThat(lock.lockAtMostFor()).isNotBlank();
     }
 }

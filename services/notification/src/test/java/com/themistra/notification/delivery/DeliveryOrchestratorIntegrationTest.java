@@ -120,6 +120,14 @@ class DeliveryOrchestratorIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", () -> "notification_app");
         registry.add("spring.datasource.password", () -> NOTIFICATION_APP_PASSWORD);
+        // Phase 11 Gap #4, found empirically: the real @Scheduled RetryScheduler.sweep() fires once
+        // immediately at context startup regardless of the configured interval (Spring's own
+        // default fixedDelayString behavior), then holds its ShedLock for at least 10s
+        // (lockAtLeastFor) - any test calling processOne in a tight loop within that window would
+        // otherwise be racing a real background sweep over the same rows. Pushed far out so the
+        // real scheduler's own only firing happens once, harmlessly, at startup before any test's
+        // own rows exist.
+        registry.add("themistra.notification.retry.scheduler-interval-seconds", () -> "999999");
     }
 
     @BeforeAll
@@ -478,6 +486,47 @@ class DeliveryOrchestratorIntegrationTest {
         assertThat(deliveryRetryRepository.findAll().stream().anyMatch(r -> accountUuid.equals(r.getAccountUuid())))
                 .as("no retry row must survive past exhaustion")
                 .isFalse();
+    }
+
+    /** Phase 11 Gaps #4/#5, combined - both concern the same real repository query, so both are
+     * proven directly against it rather than through {@code sweep()} itself. An earlier draft of
+     * this test called {@code retryScheduler.sweep()} directly and was genuinely flaky: Spring's
+     * {@code @Scheduled} fires once immediately at context startup regardless of the configured
+     * interval, and ShedLock's own {@code lockAtLeastFor="10s"} holds that lock for a minimum of 10
+     * seconds afterward - a fast-running test calling {@code sweep()} again within that window is
+     * silently skipped (ShedLock's own documented behavior when a lock is already held), not a bug
+     * in production code. Proving the real query directly - the actual mechanism that determines
+     * what {@code processOne} ever sees - sidesteps that timing hazard entirely while still proving
+     * both that a not-due row is excluded and that due rows come back oldest-first. {@code sweep}'s
+     * own ShedLock-guarding is proven structurally instead (see
+     * {@code RetrySchedulerTest.sweepLockAnnotationIsPresentWithANonEmptyName}), consistent with
+     * Phase 5's own judgment that a live timing-based proof is disproportionate here. */
+    @Test
+    void dueRowsQueryExcludesAFutureRowAndReturnsDueRowsOldestFirst() {
+        UUID olderAccountUuid = UUID.randomUUID();
+        UUID newerAccountUuid = UUID.randomUUID();
+        UUID notDueAccountUuid = UUID.randomUUID();
+        // Inserted newer-first, deliberately out of expected-result order.
+        DeliveryRetry newerRow = new DeliveryRetry("sweep-key-newer", newerAccountUuid, "EMAIL", "verify_email",
+                "{}", (short) 1, FixedClockConfig.FIXED_INSTANT.minusSeconds(30), FixedClockConfig.FIXED_INSTANT);
+        DeliveryRetry olderRow = new DeliveryRetry("sweep-key-older", olderAccountUuid, "EMAIL", "verify_email",
+                "{}", (short) 1, FixedClockConfig.FIXED_INSTANT.minusSeconds(60), FixedClockConfig.FIXED_INSTANT);
+        DeliveryRetry notDueRow = new DeliveryRetry("sweep-key-not-due", notDueAccountUuid, "IN_APP", "verify_email",
+                "{}", (short) 1, FixedClockConfig.FIXED_INSTANT.plusSeconds(3600), FixedClockConfig.FIXED_INSTANT);
+        deliveryRetryRepository.save(newerRow);
+        deliveryRetryRepository.save(olderRow);
+        deliveryRetryRepository.save(notDueRow);
+
+        List<DeliveryRetry> due = deliveryRetryRepository
+                .findByNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc(FixedClockConfig.FIXED_INSTANT);
+        List<DeliveryRetry> ourRows = due.stream()
+                .filter(r -> olderAccountUuid.equals(r.getAccountUuid()) || newerAccountUuid.equals(r.getAccountUuid())
+                        || notDueAccountUuid.equals(r.getAccountUuid()))
+                .toList();
+
+        assertThat(ourRows).extracting(DeliveryRetry::getAccountUuid)
+                .as("the not-due row must be excluded, and the two due rows must come back oldest-first")
+                .containsExactly(olderAccountUuid, newerAccountUuid);
     }
 
     private static Connection adminConnection() throws SQLException {

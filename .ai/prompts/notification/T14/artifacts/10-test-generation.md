@@ -65,3 +65,61 @@ changed in this phase.
 
 `mvn -pl services/notification clean verify` — 348 tests, 0 failures, 0 errors (346 after Phase 9 +
 2 new in this phase). No production code was modified in this phase.
+
+## Addendum (post Phase 11) — 1 real documentation bug, 9 real coverage gaps, all closed
+
+Kimi's Phase 11 review raised 10 gaps. All verified against actual source before acting — every one
+was real, not overstated. No production code changed; the closures below were all testing-side, and
+one (Gap #4) uncovered a genuine test-design flaw (not a production bug) along the way.
+
+- **Gap #1** (a real documentation bug): `RetrySchedulerTest`'s own Javadoc claimed a
+  `RetrySchedulerIntegrationTest` file existed proving `sweep`'s real `@Scheduled`/ShedLock timing —
+  it never did. **Fixed**: the false claim removed, replaced with an honest statement of what's
+  actually proven and why a live timing-based test is deliberately not attempted (Phase 5's own
+  judgment, unchanged).
+- **Gap #2** (no structural proof of `@SchedulerLock` on `sweep`) — **fixed**: added
+  `RetrySchedulerTest.sweepLockAnnotationIsPresentWithANonEmptyName` (reflection-based, asserts the
+  annotation and a non-blank `name`/`lockAtMostFor`).
+- **Gap #3** (reschedule test never verified `retryRepository.save(retry)`) — **fixed, closes a real
+  regression-guard hole**: the exact detached-entity bug Phase 6 found and fixed had no test that
+  would catch its own reintroduction. Added `verify(retryRepository).save(retry)` to both reschedule
+  tests in `RetrySchedulerTest`.
+- **Gaps #4/#5** (no test proves the real due-rows query filters/orders correctly) — **fixed, after
+  a real design correction**: an initial attempt called `retryScheduler.sweep()` directly and was
+  genuinely flaky — Spring's `@Scheduled` fires once immediately at context startup regardless of
+  the configured interval, and ShedLock's own `lockAtLeastFor="10s"` held that lock for a minimum of
+  10 seconds afterward, silently skipping a fast-running test's own second `sweep()` call within
+  that window (ShedLock's own documented behavior, not a bug). Redesigned to prove the real
+  repository query directly instead —
+  `DeliveryOrchestratorIntegrationTest.dueRowsQueryExcludesAFutureRowAndReturnsDueRowsOldestFirst` —
+  which is deterministic and proves the exact mechanism that determines what `processOne` ever sees.
+  Also added a `themistra.notification.retry.scheduler-interval-seconds` override for this whole
+  test class (pushed far out) so no future test in it can be affected by the same real background
+  firing.
+- **Gap #6** (replay's other guards - missing email, render failure, missing channel bean - were
+  untested) — **fixed**: added `replayWithMissingEmailWritesFailedAndReturnsPermanentFailure`,
+  `replayWithRenderFailureWritesFailedAndReturnsPermanentFailure`,
+  `replayWithMissingChannelBeanWritesFailedAndReturnsPermanentFailure` to `DeliveryOrchestratorTest`.
+- **Gap #7** (no test proves one channel succeeding doesn't interfere with the other's own retry) —
+  **fixed**: added
+  `oneChannelSucceedingWhileTheOtherFailsTransientlyStillSchedulesOnlyTheFailingChannelsRetry`.
+- **Gap #8** (`recordUnrecoverableFailure`'s redaction was never proven, only a non-secret-shaped
+  detail was tested) — **fixed**: added
+  `recordUnrecoverableFailureRedactsASecretShapedDetailBeforePersistence`.
+- **Gap #9** (`scheduleFirstRetry`'s serialization-failure handling was untested) — **fixed**: added
+  `aSerializationFailureWhileSchedulingTheFirstRetryNeverPropagatesAndInsertsNoRow` (a mocked,
+  throwing `ObjectMapper` wired into a dedicated orchestrator instance).
+- **Gap #10** (every `replay` test used EMAIL, none proved IN_APP) — **fixed**: added
+  `replaySuccessForInAppChannelWritesSentRowWithAccountUuidAsRecipient`.
+
+**Files touched this addendum:**
+- `delivery/RetrySchedulerTest.java` — Javadoc fix (Gap #1); +1 test (Gap #2); +2 assertions on
+  existing tests (Gap #3).
+- `delivery/DeliveryOrchestratorTest.java` — +8 tests (Gaps #6 ×3, #7, #8, #9, #10, plus one fixed
+  wrong assumption in the Gap #10 test itself, caught by a real test failure — `replay` resolves
+  `displayName` for every channel, not only EMAIL, so `contactProjectionUpdater` does see one
+  interaction even for an IN_APP replay).
+- `delivery/DeliveryOrchestratorIntegrationTest.java` — +1 net test (Gaps #4/#5, after replacing a
+  flaky first attempt); a `scheduler-interval-seconds` property override for the whole class.
+
+**Verification:** `mvn -pl services/notification clean verify` — 357 tests, 0 failures, 0 errors.

@@ -842,6 +842,109 @@ class DeliveryOrchestratorTest {
         verify(inAppChannel, never()).send(any(), any(), any(), any());
     }
 
+    // --- Phase 11 Gap #6: replay's other guards (only unknown-kind/preference were covered) -----
+
+    @Test
+    void replayWithMissingEmailWritesFailedAndReturnsPermanentFailure() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "EMAIL")).thenReturn(true);
+
+        DeliveryOrchestrator.DeliveryOutcome outcome = orchestrator.replay(accountUuid, "EMAIL", "verify_email",
+                "key-29", Map.of("sourceEventKey", "key-29"), (short) 1);
+
+        assertThat(outcome).isEqualTo(DeliveryOrchestrator.DeliveryOutcome.PERMANENT_FAILURE);
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getErrorDetail()).isEqualTo("no recipient email on file");
+        verifyNoInteractions(templateRenderer);
+        verify(emailChannel, never()).send(any(), any(), any(), any());
+    }
+
+    @Test
+    void replayWithRenderFailureWritesFailedAndReturnsPermanentFailure() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "EMAIL")).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any()))
+                .thenThrow(new IllegalArgumentException("no template for name=email.verify, channel=EMAIL"));
+
+        DeliveryOrchestrator.DeliveryOutcome outcome = orchestrator.replay(accountUuid, "EMAIL", "verify_email",
+                "key-30", Map.of("sourceEventKey", "key-30"), (short) 1);
+
+        assertThat(outcome).isEqualTo(DeliveryOrchestrator.DeliveryOutcome.PERMANENT_FAILURE);
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getOutcome()).isEqualTo("FAILED");
+        verify(emailChannel, never()).send(any(), any(), any(), any());
+    }
+
+    @Test
+    void replayWithMissingChannelBeanWritesFailedAndReturnsPermanentFailure() {
+        DeliveryOrchestrator emailOnlyOrchestrator = new DeliveryOrchestrator(preferenceResolver, templateRenderer,
+                contactProjectionUpdater, deliveryLogRepository, deliveryRetryRepository, retryProperties,
+                objectMapper, CLOCK, List.of(emailChannel));
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "IN_APP")).thenReturn(true);
+        when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
+
+        DeliveryOrchestrator.DeliveryOutcome outcome = emailOnlyOrchestrator.replay(accountUuid, "IN_APP",
+                "verify_email", "key-31", Map.of("sourceEventKey", "key-31"), (short) 1);
+
+        assertThat(outcome).isEqualTo(DeliveryOrchestrator.DeliveryOutcome.PERMANENT_FAILURE);
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getErrorDetail()).isEqualTo("no channel bean registered for IN_APP");
+    }
+
+    // --- Phase 11 Gap #7: one channel succeeding must not interfere with the other's own retry ---
+
+    @Test
+    void oneChannelSucceedingWhileTheOtherFailsTransientlyStillSchedulesOnlyTheFailingChannelsRetry() {
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
+        when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
+        org.mockito.Mockito.doThrow(new RuntimeException("db down")).when(inAppChannel).send(any(), any(), any(), any());
+
+        orchestrator.dispatch(accountUuid, "verify_email", Map.of("sourceEventKey", "key-32"));
+
+        var logCaptor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository, times(2)).save(logCaptor.capture());
+        DeliveryLog emailRow = logCaptor.getAllValues().stream()
+                .filter(r -> "EMAIL".equals(r.getChannel())).findFirst().orElseThrow();
+        assertThat(emailRow.getOutcome()).isEqualTo("SENT");
+
+        var retryCaptor = forClass(DeliveryRetry.class);
+        verify(deliveryRetryRepository).save(retryCaptor.capture());
+        assertThat(retryCaptor.getValue().getChannel()).isEqualTo("IN_APP");
+    }
+
+    // --- Phase 11 Gap #10: replay for IN_APP specifically, not only EMAIL -----------------------
+
+    @Test
+    void replaySuccessForInAppChannelWritesSentRowWithAccountUuidAsRecipient() {
+        UUID accountUuid = UUID.randomUUID();
+        when(preferenceResolver.resolve(accountUuid, "SECURITY", "IN_APP")).thenReturn(true);
+        when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
+
+        DeliveryOrchestrator.DeliveryOutcome outcome = orchestrator.replay(accountUuid, "IN_APP", "verify_email",
+                "key-33", Map.of("sourceEventKey", "key-33"), (short) 1);
+
+        assertThat(outcome).isEqualTo(DeliveryOrchestrator.DeliveryOutcome.SENT);
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getRecipient()).isEqualTo(accountUuid.toString());
+        verify(inAppChannel).send(eq(accountUuid), eq(accountUuid.toString()), eq("SECURITY"), eq(message(1)));
+        // IN_APP's own recipient never goes through findEmail - unlike findDisplayName (resolved
+        // unconditionally for every channel, mirroring dispatch's own identical behavior), email
+        // resolution is EMAIL-specific.
+        verify(contactProjectionUpdater, never()).findEmail(any());
+    }
+
     @Test
     void recordUnrecoverableFailureWritesADeadLetteredRowAtTheGivenAttempt() {
         UUID accountUuid = UUID.randomUUID();
@@ -854,5 +957,45 @@ class DeliveryOrchestratorTest {
         assertThat(row.getOutcome()).isEqualTo("DEAD_LETTERED");
         assertThat(row.getAttempt()).isEqualTo((short) 3);
         assertThat(row.getErrorDetail()).isEqualTo("unreadable json");
+    }
+
+    /** Phase 11 Gap #8: the pre-existing test above used a non-secret-shaped detail, giving zero
+     * evidence redaction (AC8) actually happens - a removed `SecretSafeLogging.redact()` call would
+     * still pass it. */
+    @Test
+    void recordUnrecoverableFailureRedactsASecretShapedDetailBeforePersistence() {
+        UUID accountUuid = UUID.randomUUID();
+        String leaky = "parse failed near token=abc123";
+
+        orchestrator.recordUnrecoverableFailure(accountUuid, "EMAIL", "key-34", (short) 3, leaky);
+
+        var captor = forClass(DeliveryLog.class);
+        verify(deliveryLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getErrorDetail()).isEqualTo(SecretSafeLogging.redact(leaky));
+        assertThat(captor.getValue().getErrorDetail()).doesNotContain("abc123");
+    }
+
+    /** Phase 11 Gap #9: scheduleFirstRetry's own best-effort contract - a serialization failure
+     * must never propagate out of dispatch, and must never leave a retry row behind either. */
+    @Test
+    void aSerializationFailureWhileSchedulingTheFirstRetryNeverPropagatesAndInsertsNoRow() throws Exception {
+        ObjectMapper throwingObjectMapper = mock(ObjectMapper.class);
+        when(throwingObjectMapper.writeValueAsString(any()))
+                .thenThrow(mock(com.fasterxml.jackson.core.JsonProcessingException.class));
+        DeliveryOrchestrator throwingMapperOrchestrator = new DeliveryOrchestrator(preferenceResolver,
+                templateRenderer, contactProjectionUpdater, deliveryLogRepository, deliveryRetryRepository,
+                retryProperties, throwingObjectMapper, CLOCK, List.of(emailChannel, inAppChannel));
+        UUID accountUuid = UUID.randomUUID();
+        when(contactProjectionUpdater.findEmail(accountUuid)).thenReturn(Optional.of("a@example.com"));
+        when(contactProjectionUpdater.findDisplayName(accountUuid)).thenReturn(Optional.empty());
+        when(preferenceResolver.resolve(eq(accountUuid), anyString(), anyString())).thenReturn(true);
+        when(templateRenderer.render(eq("email.verify"), eq("EMAIL"), any())).thenReturn(message(1));
+        when(templateRenderer.render(eq("user.verify"), eq("IN_APP"), any())).thenReturn(message(1));
+        org.mockito.Mockito.doThrow(new RuntimeException("smtp down")).when(emailChannel).send(any(), any(), any(), any());
+
+        assertThatCode(() -> throwingMapperOrchestrator.dispatch(accountUuid, "verify_email",
+                Map.of("sourceEventKey", "key-35"))).doesNotThrowAnyException();
+
+        verifyNoInteractions(deliveryRetryRepository);
     }
 }
