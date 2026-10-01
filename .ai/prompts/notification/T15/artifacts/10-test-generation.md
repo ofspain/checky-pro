@@ -42,3 +42,34 @@ changed in this phase.
 
 `mvn -pl services/notification clean verify` — 362 tests, 0 failures, 0 errors (358 + 4 new). No
 production code was modified in this phase.
+
+## Addendum (post Phase 11) — 1 claim re-confirmed, 3 gaps acknowledged with no change needed
+
+Kimi's Phase 11 review raised 4 items. No production or test code changed in this addendum.
+
+- **Gap #1** (Kimi's own sandbox lacks Maven, so it could not itself confirm the "362 tests, 0
+  failures" claim above) — **re-confirmed, not a real gap**: this claim was never merely asserted -
+  `mvn -pl services/notification clean verify` was actually run, with real tool output, at Phase 6
+  (358 tests), Phase 9 (358, after the `SoftAssertions` fix), and Phase 10 (362, after the new
+  regression-guard tests). Re-run once more, fresh, immediately upon receiving this finding:
+  `Tests run: 362, Failures: 0, Errors: 0, Skipped: 0`, with no remaining uncertainty. Kimi's own
+  review environment lacking `mvn` is a real limitation of that sandbox, not evidence the claim
+  itself was ever unverified by the agent that made it.
+- **Gap #2** (no test proves `shouldConformToConsumedEventSchemas` itself genuinely wires
+  `SoftAssertions` through, as opposed to the helper merely supporting it when called directly) —
+  **acknowledged, no test added**, for the exact reason Kimi's own text gives: "somewhat artificial
+  and low value given the implementation is a single block; acceptable to leave as a manual
+  code-review item." The method is four lines and directly readable; duplicating the Phase 10
+  synthetic test's own already-proven `SoftAssertions`-collects-multiple-errors mechanism at the
+  named-test level would add a test whose only purpose is re-proving code already proven, coupled
+  to the real DTOs in a way the Phase 10 synthetic test deliberately avoided.
+- **Gap #3** (no synthetic happy-path test for `assertConformsToSchema` alone) — **acknowledged, no
+  test added**, matching Kimi's own "low priority — the named test already exercises the happy
+  path" assessment exactly. The real named test's own happy path is strictly more rigorous than a
+  synthetic stand-in would be (it exercises the real schemas, not a hand-built approximation).
+- **Gap #4** (no test exercises a schema with `additionalProperties: true`) — **acknowledged, no
+  test added**, matching Kimi's own conclusion exactly: "This is a deliberate consumer-side
+  guarantee, not a bug. No action required."
+
+**Verification:** `mvn -pl services/notification clean verify` — 362 tests, 0 failures, 0 errors
+(unchanged from Phase 10 - this addendum made no code changes).
