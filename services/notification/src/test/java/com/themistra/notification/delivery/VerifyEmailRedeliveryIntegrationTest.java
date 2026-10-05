@@ -137,11 +137,14 @@ class VerifyEmailRedeliveryIntegrationTest {
         kafkaTemplate.send("auth.email.requested", accountUuid.toString(), json);
 
         await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->
-                assertThat(processedEventExists(eventKey)).isTrue());
+                assertThat(processedEventExists(eventKey))
+                        .as("the produced event must be recorded in processed_events")
+                        .isTrue());
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
                 assertThat(fakeEmailTransport.sentMessages().stream()
                         .filter(message -> accountUuid.equals(message.accountUuid()))
                         .count())
+                        .as("verify_email must result in exactly one captured email")
                         .isEqualTo(1));
         await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
                 assertThat(deliveryLogRowsFor(accountUuid))
