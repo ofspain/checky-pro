@@ -165,6 +165,11 @@ class VerifyEmailRedeliveryIntegrationTest {
                     .as("the EMAIL row must record the real recipient address")
                     .extracting(DeliveryLogRow::recipient)
                     .containsExactly("e2e@example.com");
+            assertThat(rows)
+                    .filteredOn(row -> "IN_APP".equals(row.channel()))
+                    .as("the IN_APP row must record the account UUID as its own recipient")
+                    .extracting(DeliveryLogRow::recipient)
+                    .containsExactly(accountUuid.toString());
         });
 
         kafkaTemplate.send("auth.email.requested", accountUuid.toString(), json);
