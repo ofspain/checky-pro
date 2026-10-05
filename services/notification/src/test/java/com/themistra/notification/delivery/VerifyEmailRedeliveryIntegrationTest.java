@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import com.themistra.notification.channel.EmailMessage;
 import com.themistra.notification.channel.FakeEmailTransport;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -142,12 +143,17 @@ class VerifyEmailRedeliveryIntegrationTest {
                 assertThat(processedEventExists(eventKey))
                         .as("the produced event must be recorded in processed_events")
                         .isTrue());
-        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(fakeEmailTransport.sentMessages().stream()
-                        .filter(message -> accountUuid.equals(message.accountUuid()))
-                        .count())
-                        .as("verify_email must result in exactly one captured email")
-                        .isEqualTo(1));
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            List<EmailMessage> captured = fakeEmailTransport.sentMessages().stream()
+                    .filter(message -> accountUuid.equals(message.accountUuid()))
+                    .toList();
+            assertThat(captured)
+                    .as("verify_email must result in exactly one captured email, addressed to the"
+                            + " real recipient")
+                    .hasSize(1)
+                    .extracting(EmailMessage::to)
+                    .containsExactly("e2e@example.com");
+        });
         await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
             List<DeliveryLogRow> rows = deliveryLogRowsFor(accountUuid);
             assertThat(rows)
