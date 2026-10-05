@@ -189,6 +189,7 @@ class ArchitectureTest {
         assertThatThrownBy(() -> shouldPreventCrossModuleEntityImports.check(unmappedEntityOnly))
                 .as("an @Entity outside every FEATURE_MODULES entry must fail loudly, not be silently unenforced")
                 .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueUnmappedEntity")
                 .hasMessageContaining("does not reside in any module listed in FEATURE_MODULES");
     }
 
