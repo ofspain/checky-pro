@@ -51,3 +51,45 @@ elsewhere in this file); one real gap found and deliberately left open, disclose
 services/notification clean verify` — 368 tests, 0 failures, 0 errors (unchanged count — this
 phase only strengthened an existing assertion, added no new test method). No production code was
 modified in this phase.
+
+## Addendum (post Phase 11) — 6 gaps raised, all verified, no code change needed
+
+Kimi's Phase 11 review raised 6 gaps. Every factual claim was checked directly against source
+before disposition (not accepted on word) — all 6 held up accurately this time, no citation errors.
+No production or test code changed in this addendum.
+
+- **Gap 1** (Kimi's own sandbox lacks Maven, so it could not itself confirm the "368 tests, 0
+  failures" claim) — **re-confirmed, not a real gap**: this claim was never merely asserted - `mvn
+  -pl services/notification clean verify` was actually run, with real tool output, at Phase 6 (368),
+  Phase 9 (368, after the `RestTemplate` assertion fix), and Phase 10 (368, after the
+  `RogueUnmappedEntity` assertion fix). Re-run once more, fresh, immediately upon receiving this
+  finding: `Tests run: 368, Failures: 0, Errors: 0` (full aggregate), `Tests run: 6, Failures: 0`
+  (`ArchitectureTest` alone) — no remaining uncertainty.
+- **Gap 2** (`featureModuleOf`'s `startsWith` branch untested) — **re-confirmed as the same,
+  already-disclosed gap this phase's own main text already covers**; Kimi's own assessment agrees
+  with the disposition already given (accept, no fix).
+- **Gap 3** (no negative proof for the sibling-service-package half of L2) — **verified directly**:
+  `services/notification/pom.xml` has no dependency on `services/auth`, `services/crypto`, or
+  `services/payment` — confirmed by direct `grep`, no such artifact coordinate exists anywhere in
+  the file. No compiling fixture is possible; already disclosed in the frozen brief (Finding #4). No
+  change.
+- **Gap 4** (no negative-proof test for L8) — **verified directly**: re-read `services/auth`'s own
+  `ArchitectureTest.java` around its identical `shouldEnforcePublicEndpointAllowlist` rule in full;
+  confirmed it has only the canary (`shouldEnforcePublicEndpointAllowlistIsCheckedDuringStandardBuild`),
+  no negative-proof test anywhere in that file. Matches both this task's own frozen-brief precedent
+  (Finding #5) and Kimi's own claim exactly. No change.
+- **Gap 5** (only one of four banned HTTP-client packages is exercised) — **acknowledged, no test
+  added**, for the exact reason Kimi's own text gives: the rule is a package-pattern match, so
+  proving the mechanism works for one package proves it for all four; adding three more fixtures
+  for the same mechanism would be gold-plating.
+- **Gap 6** (independent verification of the Surefire `@ArchTest` bug claim) — **already addressed
+  in Phase 9's own resolution** (Finding 4): the claim was independently, empirically verified
+  before Kimi's own review (three isolated repro classes, plus Surefire's own exact forked
+  classpath fed directly into the real JUnit Platform `Launcher` API outside Surefire — see Phase 6
+  notes and the `surefire-archtest-field-bug` memory). Kimi's own sandbox lacking `mvn` is a
+  limitation of that sandbox, not evidence the claim itself was unverified. The repo-wide
+  issue/ADR suggestion remains deferred, per the user's own explicit instruction to scope this
+  task's fix to notification only.
+
+**Verification:** `mvn -pl services/notification clean verify` — 368 tests, 0 failures, 0 errors
+(unchanged from Phase 10 — this addendum made no code changes).
