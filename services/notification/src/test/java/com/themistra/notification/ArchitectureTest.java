@@ -203,6 +203,7 @@ class ArchitectureTest {
         assertThatThrownBy(() -> shouldMakeNoSynchronousCrossServiceCall.check(violatingClasses))
                 .as("a class depending on a synchronous HTTP client package must fail this rule")
                 .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("RogueHttpClientUser");
+                .hasMessageContaining("RogueHttpClientUser")
+                .hasMessageContaining("RestTemplate");
     }
 }
