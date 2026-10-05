@@ -108,17 +108,19 @@ class VerifyEmailRedeliveryIntegrationTest {
         }
     }
 
-    private record DeliveryLogRow(String channel, String outcome) {}
+    private record DeliveryLogRow(String channel, String outcome, String recipient, String sourceEventKey) {}
 
     private static List<DeliveryLogRow> deliveryLogRowsFor(UUID accountUuid) throws SQLException {
         try (Connection admin = adminConnection();
              PreparedStatement statement = admin.prepareStatement(
-                     "SELECT channel, outcome FROM notifications.delivery_log WHERE account_uuid = ?")) {
+                     "SELECT channel, outcome, recipient, source_event_key FROM notifications.delivery_log"
+                             + " WHERE account_uuid = ?")) {
             statement.setObject(1, accountUuid);
             try (ResultSet resultSet = statement.executeQuery()) {
                 List<DeliveryLogRow> rows = new ArrayList<>();
                 while (resultSet.next()) {
-                    rows.add(new DeliveryLogRow(resultSet.getString("channel"), resultSet.getString("outcome")));
+                    rows.add(new DeliveryLogRow(resultSet.getString("channel"), resultSet.getString("outcome"),
+                            resultSet.getString("recipient"), resultSet.getString("source_event_key")));
                 }
                 return rows;
             }
@@ -146,13 +148,24 @@ class VerifyEmailRedeliveryIntegrationTest {
                         .count())
                         .as("verify_email must result in exactly one captured email")
                         .isEqualTo(1));
-        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
-                assertThat(deliveryLogRowsFor(accountUuid))
-                        .as("verify_email must write one EMAIL and one IN_APP row, both SENT")
-                        .hasSize(2)
-                        .allSatisfy(row -> assertThat(row.outcome()).isEqualTo("SENT"))
-                        .extracting(DeliveryLogRow::channel)
-                        .containsExactlyInAnyOrder("EMAIL", "IN_APP"));
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            List<DeliveryLogRow> rows = deliveryLogRowsFor(accountUuid);
+            assertThat(rows)
+                    .as("verify_email must write one EMAIL and one IN_APP row, both SENT, both"
+                            + " correlated to the source event key")
+                    .hasSize(2)
+                    .allSatisfy(row -> {
+                        assertThat(row.outcome()).isEqualTo("SENT");
+                        assertThat(row.sourceEventKey()).isEqualTo(eventKey);
+                    })
+                    .extracting(DeliveryLogRow::channel)
+                    .containsExactlyInAnyOrder("EMAIL", "IN_APP");
+            assertThat(rows)
+                    .filteredOn(row -> "EMAIL".equals(row.channel()))
+                    .as("the EMAIL row must record the real recipient address")
+                    .extracting(DeliveryLogRow::recipient)
+                    .containsExactly("e2e@example.com");
+        });
 
         kafkaTemplate.send("auth.email.requested", accountUuid.toString(), json);
 
