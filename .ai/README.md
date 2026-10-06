@@ -15,10 +15,11 @@ It contains **no application code** and never edits the specs — only the frame
 - **`prompts/<service>/T##/`** — the prompt set for one task: `00-…` through `13-…`, a `README.md`,
   and an `artifacts/` output directory.
 
-## Services (118 tasks total)
+## Services (290 tasks total)
 
 - [`auth`](prompts/auth/) — 40 tasks (spec: `spec/auth-service/`)
 - [`crypto`](prompts/crypto/) — 29 tasks (spec: `spec/crypto-service/`)
+- [`frontend`](prompts/frontend/) — 172 tasks (spec: `spec/frontend/`)
 - [`notification`](prompts/notification/) — 20 tasks (spec: `spec/notification-service/`)
 - [`payment`](prompts/payment/) — 29 tasks (spec: `spec/payment-service/`)
 
