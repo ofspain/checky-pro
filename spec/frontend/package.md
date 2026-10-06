@@ -203,6 +203,57 @@ their own named tests.
 **Notification stream**
 - `streamNeverPlacesTokenInUrlAndReopensAfterRenewal` → R59
 
+**Phase 1b — Unit-level tests (added with the decomposition of `tasks.md`)**
+- `invoiceAmountRenderedAsDecimalStringOnly` → R31
+- `underpaymentDiscrepancyShown` → R31
+- `overpaymentDiscrepancyShown` → R31
+- `expiredInvoiceShownAsExpired` → R31
+- `invoiceDetailOpensFromList` → R31
+- `invoiceCreateSubmitsThroughGeneratedClient` → R31
+- `paymentForwardPathRendersInOrder` → R32
+- `reorgSeenToWatchingShownTruthfully` → R32
+- `heldFromAnyStateShown` → R32
+- `heldNeverLabelledPending` → R32
+- `paymentStateUpdatesWithoutReload` → R32
+- `finalizedShowsReceiptPendingCopy` → R33
+- `receiptShowsVerifiableFieldsAtAttested` → R34
+- `receiptNeverCachedClientSide` → R34
+- `walletMonitoringStateShown` → R38
+- `confirmationCountShownAgainstRequired` → R39
+- `addressPoisoningWarningOnReceipt` → R55
+- `notificationArrivesInList` → R35
+- `streamDropShowsReconnectingState` → R35
+- `streamReopensAfterRenewal` → R59
+- `exportRequestScopedToMerchant` → R36
+- `historyAmountsAreDecimalStrings` → R36
+- `amountScalingUsesNoNumberType` → R37
+- `zeroDecimalTokenShowsWholeAmount` → R37
+- `oidcRoundTripEndToEnd` → L1
+- `phase1ScreensPassAccessibilityChecks` → L11
+
+**Phase 2–5 — Unit-level tests (added with the decomposition of `tasks.md`)**
+- `evidenceUploadShowsProgress` → R40
+- `evidenceFailureHidesServerInternals` → R40
+- `analysisShowsFieldsWithIntegrity` → R41
+- `collectedEvidenceLabelledAsCollected` → R42
+- `stillNeededEvidenceMarkedAsUploadNeeded` → R42
+- `evidenceGraphRendersNodesAndEdges` → R43
+- `narrativeShownWithGraph` → R43
+- `claimShowsItsEvidence` → R44
+- `claimantStatementSeparatedFromFacts` → R44
+- `aiTextVisuallyDistinctFromFacts` → R45
+- `narrativeShowsConfidenceAndRecommendation` → R45
+- `timelineMissingEventNotInferred` → R46
+- `walletSignalShowsSource` → R48
+- `passportMetricShowsValueWithWindow` → R49
+- `counterpartyGraphRendersRelationships` → R50
+- `fraudAlertShowsEvidence` → R51
+- `confirmedAndSuspectedVisuallyDistinct` → R51
+- `portalKeyShownExactlyOnce` → R53
+- `capabilityLinkIdIsUnguessable` → R54
+- `capabilityLinkExposesNoPii` → R54
+- `capabilityLinkNotCached` → R54
+
 **Phases 2–5** — named tests for R40–R54 are authored when each phase's contracts close (Q4, Q11):
 - `evidenceUploadShowsSafeFailures` → R40
 - `analysisLabelsLowConfidenceAgainstContractThreshold` → R41
