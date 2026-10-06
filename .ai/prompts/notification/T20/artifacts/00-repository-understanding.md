@@ -45,3 +45,9 @@ This is a judgment about the spec's own status, so it belongs to you, not to me.
 
 No spec file has been modified. The `spec/` directory is read-only for every task except this
 one, and this one's own gate is not yet satisfied.
+
+## Decision
+
+**User chose: hold until payment-service unblocks.** The spec stays `DRAFT`, version `0.1`. T20 is
+held, not complete. It resumes once `spec/payment-service/package.md` reaches `READY FOR IMPL` and the
+payment half of Q7 can be validated against a real consumer. This matches the T07 and T17 precedent.
