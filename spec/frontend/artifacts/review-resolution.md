@@ -58,3 +58,34 @@ refresh-token claim), converted into an owner-verifiable question (Q5) instead o
 ## Remaining items for the author
 
 See `package.md` §11 (Q1–Q12). A phase stays DRAFT while its blockers are open. No blocker from the review is left unrecorded.
+
+## Second adversarial pass — dispositions
+
+Second pass: fresh-context reviewer (Opus), same brief. Every finding was checked against source before acceptance. All 15
+findings were ACCEPTED. The first finding was verified directly: `TotpAuthenticationProvider` (auth T20) is built, and it refuses
+unenrolled MERCHANT and ADMIN accounts with the wrong-password error without enrolling them. The package had wrongly said T20 was
+not built.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | First-login enrollment described as built inside SAS (Blocker) | ACCEPTED. L5, R10, Q10, Q13 rewritten. Bootstrap path left open as Q13. |
+| 2 | R27 role matrix contradicted auth.yaml (Major) | ACCEPTED. Derived operation by operation from `bearerAuth`. One test per operation. |
+| 3 | L4 carve-out overrode an `[ALL]` rule without an ADR (Major) | ACCEPTED. Carve-out removed. Admin status view blocked on Q14. |
+| 4 | Refresh-family dependency and D-012 misquoted (Major) | ACCEPTED. D-012 quoted verbatim. R18, R19, R22 blocked on Q5. Backend R39 cite dropped. |
+| 5 | Revoke and reset do not end SAS sessions (Major) | ACCEPTED. R15 limited to this device. Q15 asks the backend. |
+| 6 | Service-worker denylist missed the end-session path (Major) | ACCEPTED. Added `/connect/logout`, `/logout`, `/error`. R57 and test added. |
+| 7 | SPA routes collided with backend prefixes (Major) | ACCEPTED. All SPA routes under `/app`. Exact list in `design.md` §4c (PROPOSED, Q6). |
+| 8 | SSE stream could leak a token into a URL (Major) | ACCEPTED. R59 and O7 added. Blocked on Q3. |
+| 9 | Address-poisoning flag not displayed (Major) | ACCEPTED. R55 added, blocked on Q2. |
+| 10 | HELD entry paths misread (Minor) | ACCEPTED. R56 added. HELD may be entered from any state. Q2 now depends on payment-service Q1. |
+| 11 | Blocker IDs disagreed across files (Minor) | ACCEPTED. R24 and R25 use Q12. Q5 added to the Phase 1a row. |
+| 12 | Storage rules contradicted each other (Minor) | ACCEPTED. Stale O1 reference removed from `agents.md`. L16 carve-out moved into `agents.md`. PII excluded from R29. Test renamed to cover all storage. |
+| 13 | Tests mapped to unrelated requirements; L17 and L10 untested (Minor) | ACCEPTED. R57 and R58 added with their own tests. Stale mappings removed. |
+| 14 | Several EARS requirements untestable (Minor) | ACCEPTED. R10 restated as SPA behaviour. R41 threshold tied to contract. R46 event order given. R30 limited to SPA-observable copy. |
+| 15 | Rollout service-worker policy inconsistent (Minor) | ACCEPTED. One worker-wide policy (prompt-to-reload). Rollback uses a remote denylist with forced reload. |
+
+**Not re-reviewed.** These revisions were not put through a third adversarial pass. The prompt requires one whenever blocker or major
+items remain shipped, and the first-pass blockers were fixed in this round. Any reviewer should start from this table.
+
+**Parser checks after revision**: 59 requirements, no duplicate IDs, every requirement has a named test. 44 tasks, each carrying cites.
+No dangling R or L references. `generate.py --check` discovers `frontend` with 44 tasks.
