@@ -260,16 +260,19 @@ class DeliveryLogDisputeGradeIntegrationTest {
                 .hasSize(2)
                 .extracting(LogRow::outcome)
                 .containsExactlyInAnyOrder("FAILED", "SENT");
-        assertThat(emailRows.stream().map(LogRow::attempt).distinct().count())
-                .as("the two EMAIL attempts must be distinguishable by attempt number")
-                .isEqualTo(2);
         assertThat(emailRows)
-                .as("each attempt must carry recipient, timestamp and, because a message was rendered, a template version")
+                .as("the two EMAIL attempts must form the append-only sequence 1 then 2")
+                .extracting(LogRow::attempt)
+                .containsExactlyInAnyOrder((short) 1, (short) 2);
+        assertThat(emailRows)
+                .as("each EMAIL attempt must carry the real recipient and a timestamp")
                 .allSatisfy(r -> {
                     assertThat(r.recipient()).isEqualTo("ac2@example.com");
                     assertThat(r.createdAt()).isNotNull();
-                    assertThat(r.templateVersion()).isNotNull();
                 });
+        assertThat(rows)
+                .as("every rendered row, EMAIL and IN_APP alike, must record its template version")
+                .allSatisfy(r -> assertThat(r.templateVersion()).isNotNull());
     }
 
     @Test
@@ -286,6 +289,9 @@ class DeliveryLogDisputeGradeIntegrationTest {
                 .anySatisfy(r -> {
                     assertThat(r.channel()).isEqualTo("EMAIL");
                     assertThat(r.outcome()).isEqualTo("SUPPRESSED");
+                    assertThat(r.templateVersion())
+                            .as("a SUPPRESSED row is written before rendering, so it has no template version")
+                            .isNull();
                 });
         assertThat(rows)
                 .as("the opted-in IN_APP channel must still produce its own row")
