@@ -140,6 +140,53 @@ their own named tests.
 - `sasNavigationBypassesServiceWorker` → R57
 - `endSessionNavigationBypassesServiceWorker` → R57
 
+**Phase 1a — Unit-level tests (added with the decomposition of `tasks.md`)**
+- `reusedRefreshOrFailedRenewalTriggersCleanReauth` → R22
+- `shellBuildsAndMounts` → L13
+- `routesResolveUnderAppPrefixOnly` → L14
+- `generatedClientCompiles` → R20
+- `lintRejectsHandWrittenBackendFetch` → L6
+- `serviceWorkerUpdateWaitsForReload` → R57
+- `pkceVerifierMeetsRfc7636` → R6
+- `authorizeRequestsExactlyTheDeclaredScopes` → R20
+- `callbackValidatesNonce` → R7
+- `emailVerifiedClaimIsNotAccountState` → R20
+- `passwordResetFailureUsesSameUniformMessage` → R15
+- `registrationAcceptsTwelveAndOneTwentyEightCodePoints` → R1
+- `passwordLengthCountsCodePoints` → R1
+- `noClientSideBreachLookup` → R17
+- `identityErrorsIdenticalAcrossTokenStates` → R30
+- `sessionListShowsDeviceLabel` → R18
+- `sessionListShowsFallbackLabel` → R18
+- `sessionListShowsRotatedAt` → R18
+- `revokeOneSessionRemovesIt` → R18
+- `revokeAllSessionsRemovesAll` → R18
+- `silentReauthAfterRevokeAllFails` → R15
+- `enrollmentBeginShowsProvisioningUriAndQr` → R11
+- `enrollmentConfirmRequiresLiveCode` → R11
+- `recoveryCodesNeverPersistedClientSide` → R11
+- `recoveryCodesRequireAcknowledgement` → R11
+- `privilegedBootstrapPathEnrollsWithoutEnrollmentHint` → R10
+- `apiKeyNotRedisplayedAfterDismiss` → R24
+- `apiKeyRevokeCallsDeleteAfterConfirm` → R26
+- `adminAreaHiddenFromOtherRoles` → R27
+- `adminOperation_adminGetAccount_matchesRoleMatrix` → R27
+- `adminOperation_adminDeleteAccount_matchesRoleMatrix` → R27
+- `adminOperation_adminActivateAccount_matchesRoleMatrix` → R27
+- `adminOperation_adminSuspendAccount_matchesRoleMatrix` → R27
+- `adminOperation_adminReinstateAccount_matchesRoleMatrix` → R27
+- `adminOperation_adminUnlockAccount_matchesRoleMatrix` → R27
+- `adminOperation_getEffectiveRoles_matchesRoleMatrix` → R27
+- `adminOperation_assignRole_matchesRoleMatrix` → R27
+- `adminOperation_removeRole_matchesRoleMatrix` → R27
+- `adminOperation_assignRoleTemplate_matchesRoleMatrix` → R27
+- `adminOperation_removeRoleTemplate_matchesRoleMatrix` → R27
+- `adminOperation_createRole_matchesRoleMatrix` → R27
+- `adminOperation_listRoles_matchesRoleMatrix` → R27
+- `adminOperation_createRoleTemplate_matchesRoleMatrix` → R27
+- `adminOperation_listRoleTemplates_matchesRoleMatrix` → R27
+- `adminOperation_listAuditEvents_matchesRoleMatrix` → R27
+
 **Phase 1b — Payment verification**
 - `invoiceListShowsStatesAndDecimalStringAmounts` → R31
 - `stateMachineShowsReorgReversalsTruthfully` → R32
