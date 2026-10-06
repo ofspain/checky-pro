@@ -33,3 +33,24 @@ against the database's own clock or allow a tolerance.
 - `DeliveryLogDisputeGradeIntegrationTest` — 4/4 pass with the TRUNCATE check.
 - Full suite: two consecutive clean runs, 373 tests, 0 failures, 0 errors, exit 0. One earlier run
   hit the separate intermittent T08 timestamp flake described above.
+
+## Addendum (post Phase 11) — 4 gaps raised, verified, no further code change
+
+Kimi's Phase 11 review raised 4 gaps. Each was checked against source or a real run.
+
+- **Gap 1** (Maven unavailable in Kimi's sandbox) — **re-confirmed with a fresh run**, not a real gap:
+  `mvn -pl services/notification clean verify` exit 0, 373 tests, 0 failures, 0 errors, run again for
+  this phase.
+- **Gap 2** (AC5 static scan is textual and partial) — **already disclosed** in Phase 7 and Phase 9;
+  AC1 carries the authoritative guarantee. No change.
+- **Gap 3** (intermittent `PreferenceResolverIntegrationTest` timestamp flake) — **already recorded
+  above** as a follow-up outside T19's scope. Kimi's reasoning that T19 does not touch
+  `channel_preferences` matches the separate-database setup. No change.
+- **Gap 4** (no live test for other destructive DDL) — **verified and dispositioned**: the grant list
+  Kimi cites matches `V2__notification_app_role_and_grants.sql` exactly (CONNECT, schema USAGE,
+  sequence USAGE/SELECT, INSERT/SELECT on `delivery_log`). V2 also states that table owners bypass
+  GRANT/REVOKE, which is why the proof must connect as `notification_app` and not the migration owner.
+  Testing every denied DDL operation is disproportionate, since the granted set is explicit.
+  No change.
+
+**Verification:** `mvn -pl services/notification clean verify` — 373 tests, 0 failures, 0 errors, exit 0.
