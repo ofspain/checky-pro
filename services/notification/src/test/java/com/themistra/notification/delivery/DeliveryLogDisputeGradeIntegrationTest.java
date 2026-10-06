@@ -224,6 +224,15 @@ class DeliveryLogDisputeGradeIntegrationTest {
                     .isEqualTo("42501");
         }
 
+        try (Connection app = notificationAppConnection();
+             Statement truncate = app.createStatement()) {
+            assertThatThrownBy(() -> truncate.execute("TRUNCATE notifications.delivery_log"))
+                    .as("TRUNCATE empties the whole log without any DELETE, so it must be denied too")
+                    .isInstanceOf(PSQLException.class)
+                    .extracting(e -> ((PSQLException) e).getSQLState())
+                    .isEqualTo("42501");
+        }
+
         assertThat(deliveryLogRowsFor(sourceEventKey))
                 .as("the rejected UPDATE and DELETE must leave the row exactly as written")
                 .hasSize(2)
