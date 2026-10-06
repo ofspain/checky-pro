@@ -345,3 +345,45 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
 
 **Per-phase status**: Phase 1a is `DRAFT` (Q1, Q5, Q6, Q12, Q13, Q14, Q15). Phase 1b is `DRAFT` (Q2, Q3). Phases 2–5 are `DRAFT` (Q4).
 Items Q7 to Q11 are decisions the author can make without backend work, and they do not block the auth gate's contracts.
+
+## 12. Execution handoff — for an agent who starts implementation later
+
+**Status of this package.** Specification only. No frontend code exists, and no generated execution prompts are committed.
+Execution is deferred until `spec/payment-service` is fixed and its contracts exist. This section tells the agent what it must read
+and what it must not assume.
+
+**Read in this order.**
+1. `agents.md`: the platform rules, all tagged `[ALL]`. These override any feature spec.
+2. `package.md` §0 and §11: the phase status and the open questions Q1–Q15. Each unit's blocker is listed there.
+3. `requirements.md`: R1–R59, in EARS form. Each requirement names the backend requirement or contract it depends on.
+4. `design.md`: §4a locks (L1–L18), §4b open decisions (O1–O7), and §4c verbatim contract paths and the `/app` route set.
+5. `tasks.md`: 172 units. Each unit names one test in §8 and cites its requirements. Units marked "Blocked on Qn" must not start
+   until that question closes.
+6. `artifacts/review-resolution.md`: both adversarial review passes, with every disposition. The second pass was not re-reviewed.
+7. Backend context the spec relies on: `contracts/api/auth.yaml`, `contracts/api/token-claims.md`,
+   `services/auth/docs/architecture/auth-decisions.md` (especially D-012 and D-025), and `spec/auth-service/requirements.md`.
+8. For Phase 1b onwards: `spec/payment-service/` and its design open question Q1.
+
+**What is decided and what is not.**
+- Decided (confirmed by the author): public OIDC/PKCE client; SAS-hosted login; enumeration-safe uniform copy with no lockout timers;
+  React, TypeScript, Vite, React Router, TanStack Query, Zustand, vite-plugin-pwa, Vitest, Playwright; "Checky Pro" as the displayed
+  name; auth gate before payments; the single-package layout.
+- Not decided: the privileged-account bootstrap (Q13); the admin status view (Q14); whether SAS issues refresh tokens to `checky-spa`
+  (Q5); session revocation semantics (Q15); the design system, i18n, analytics, and env key names (Q6–Q9); the payments and
+  notifications contracts (Q2, Q3); Phases 2–5 contracts (Q4).
+- Known facts that differ from earlier drafts: the SAS MFA step (auth T20) is built and refuses unenrolled MERCHANT and ADMIN accounts
+  with wrong-password copy. The self-service MFA endpoints (auth T19) are not built and not in `auth.yaml`.
+
+**Process an executing agent must follow** (the 14-phase pipeline, as in `.ai/`). Start from Phase 0 for one unit at a time. Human
+approval gates are Phases 4 and 9. Adversarial review runs in Phases 3, 8, and 11 with a different model, not the implementing agent.
+Never advance a phase without its artifact, and never skip the approval gate. Verify each reviewer's claims against source before
+accepting them.
+
+**Regenerating the execution prompts.** `.ai/generate.py` builds `.ai/prompts/frontend/` from this package. Its only mode is a full
+regenerate. Before running it, do a read-only comparison of the existing services' output against disk. At spec-authoring time the
+four existing services matched byte-for-byte, so only the frontend folder changed. Generated READMEs list every test that shares a
+requirement ID, which is broader than the unit's own test. The unit's own test is named in its task line.
+
+**Before starting any unit.** Check the blockers for that unit, check the current state of `spec/payment-service` if the unit is a
+Phase 1b or later unit, and re-verify any contract path against the live `contracts/` tree, since contracts may have changed since this
+spec was written.
