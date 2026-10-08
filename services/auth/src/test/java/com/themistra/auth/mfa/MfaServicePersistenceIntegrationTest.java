@@ -29,13 +29,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Mirrors {@link MfaPersistenceIntegrationTest}'s structure and {@code breach-check.enabled=false}
  * workaround for the same pre-existing, out-of-scope defect.
  *
- * <p><strong>Known status (T18 Phase 5/10, inherited from T17):</strong> this suite combines
- * {@code Account} and {@code mfa} entities in one persistence unit — exactly the combination
- * {@link MfaPersistenceIntegrationTest} is already blocked on by an undiagnosed Hibernate
- * {@code existsByEmail} byte-array conversion defect (see the
- * {@code docker-testcontainers-handshake-issue} follow-up). This class is written and intended to
- * pass once that defect is fixed; it is not expected to run green today, and that is a
- * pre-existing, explicitly out-of-scope condition, not a defect introduced by this task.</p>
+ * <p><strong>Status note (T19 Phase 7, correcting a stale claim):</strong> this class's Javadoc
+ * previously said it was "not expected to run green today" due to a then-undiagnosed Hibernate
+ * {@code existsByEmail} byte-array conversion defect combining {@code Account} and {@code mfa}
+ * entities. That defect was resolved 2026-08-06/08/09 (see the
+ * {@code docker-testcontainers-handshake-issue} memory) — confirmed directly this phase by
+ * actually running this class: all tests pass against real Docker. The claim was simply never
+ * updated after the fix landed; corrected here rather than left to mislead a future reader.</p>
  */
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
@@ -171,6 +171,97 @@ class MfaServicePersistenceIntegrationTest {
         }
 
         assertThat(first ^ second).as("exactly one of the two concurrent confirms must succeed").isTrue();
+        Long accountId = mfaEnrollmentRepository.findAccountIdByUuid(accountUuid).orElseThrow();
+        assertThat(recoveryCodeRepository.findByAccountId(accountId)).hasSize(10);
+    }
+
+    @Test // R49 — full regenerate happy path against a real DB: every old code becomes genuinely
+          // unusable (verifyRecoveryCode rejects it), every new code is genuinely usable once
+    void regenerateRecoveryCodesInvalidatesOldCodesAndPersistsTenGenuinelyUsableNewOnes() {
+        UUID accountUuid = registerAndActivate("mfa-e2e-regenerate@example.com");
+        MfaService.BeginEnrollResult begun = mfaService.beginEnroll(accountUuid);
+        MfaService.ConfirmResult confirmed =
+                mfaService.confirm(accountUuid, referenceGenerateCode(begun.secret(), Instant.now()));
+        String oldCode = confirmed.recoveryCodes().get(0);
+
+        String regenerateCode = referenceGenerateCode(begun.secret(), Instant.now());
+        MfaService.RegenerateRecoveryCodesResult regenerated =
+                mfaService.regenerateRecoveryCodes(accountUuid, "correct-horse-battery", regenerateCode);
+
+        assertThat(regenerated.recoveryCodes()).hasSize(10);
+        assertThat(regenerated.recoveryCodes()).doesNotContainAnyElementsOf(confirmed.recoveryCodes());
+        assertThatThrownBy(() -> mfaService.verifyRecoveryCode(accountUuid, oldCode))
+                .as("an old recovery code must be genuinely rejected after regenerate, not just absent from the returned list")
+                .isInstanceOf(InvalidRecoveryCodeException.class);
+        assertThatCode(() -> mfaService.verifyRecoveryCode(accountUuid, regenerated.recoveryCodes().get(0)))
+                .as("a new recovery code must be genuinely usable")
+                .doesNotThrowAnyException();
+    }
+
+    /**
+     * R49 — characterizes a real race {@link #regenerateRecoveryCodes} has no explicit guard
+     * against, unlike {@link #confirm}'s atomic {@code confirmIfUnconfirmed}: the method is an
+     * unconditional read-check-delete-insert cycle, not a conditional update, since there is no
+     * single "enrollment" row whose version a conditional update could check — recovery codes are
+     * a set, and this task introduces no schema change to version that set (frozen brief). Two
+     * concurrent regenerate calls for the same account, both presenting the same still-valid TOTP
+     * code, can both pass verification and both attempt delete+insert.
+     *
+     * <p>Phase 7 self-review initially hypothesized this would silently succeed twice, leaving a
+     * caller holding already-stale "returned" codes. <strong>Empirically false</strong> — running
+     * this test revealed the real behavior is actually safer: Hibernate's own first-level session
+     * tracking on {@code recoveryCodeRepository.deleteByAccountId} throws {@code
+     * ObjectOptimisticLockingFailureException} for whichever transaction loses the race (the rows
+     * it loaded to delete no longer exist by the time it tries), rolling that entire transaction
+     * back — including its own audit write. The losing caller gets an opaque 500 (no specific
+     * handler for this exception; falls through to the generic catch-all, R46-safe, no detail
+     * leaked), not corrupted or silently stale data. Disclosed in artifacts/07-self-review.md,
+     * judged low severity (requires the account's own valid password+TOTP code used twice
+     * concurrently; a disable-vs-regenerate interleaving is closed by the same mechanism, since
+     * the loser's entire transaction — audit included — rolls back rather than partially
+     * applying) and left as a known, accepted limitation rather than adding retry/backoff logic
+     * this task's own scope doesn't call for.</p>
+     */
+    @Test
+    void concurrentRegenerateRecoveryCodesCallsResultInExactlyOneSuccessAndTenRecoveryCodes() throws Exception {
+        UUID accountUuid = registerAndActivate("mfa-e2e-concurrent-regenerate@example.com");
+        MfaService.BeginEnrollResult begun = mfaService.beginEnroll(accountUuid);
+        mfaService.confirm(accountUuid, referenceGenerateCode(begun.secret(), Instant.now()));
+        String code = referenceGenerateCode(begun.secret(), Instant.now());
+
+        java.util.concurrent.CountDownLatch bothReady = new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.Callable<Boolean> attempt = () -> {
+            bothReady.countDown();
+            go.await();
+            try {
+                mfaService.regenerateRecoveryCodes(accountUuid, "correct-horse-battery", code);
+                return true;
+            } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+                return false;
+            }
+        };
+
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        boolean first;
+        boolean second;
+        try {
+            java.util.concurrent.Future<Boolean> a = executor.submit(attempt);
+            java.util.concurrent.Future<Boolean> b = executor.submit(attempt);
+            bothReady.await();
+            go.countDown();
+            first = a.get();
+            second = b.get();
+        } finally {
+            executor.shutdown();
+        }
+
+        assertThat(first ^ second)
+                .as("exactly one of the two concurrent regenerate calls succeeds; the other's "
+                        + "entire transaction (including its own audit write) rolls back via "
+                        + "ObjectOptimisticLockingFailureException, rather than both silently "
+                        + "succeeding with one caller holding already-stale codes")
+                .isTrue();
         Long accountId = mfaEnrollmentRepository.findAccountIdByUuid(accountUuid).orElseThrow();
         assertThat(recoveryCodeRepository.findByAccountId(accountId)).hasSize(10);
     }
