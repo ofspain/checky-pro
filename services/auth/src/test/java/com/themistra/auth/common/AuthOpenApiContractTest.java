@@ -114,6 +114,35 @@ class AuthOpenApiContractTest {
         }
     }
 
+    /**
+     * T19 Phase 11 Gap 2 (Kimi): a regression guard for the exact fix Phase 9 applied — the four
+     * MFA operations must each declare {@code security: [{bearerAuth: []}]} explicitly, not rely
+     * on the file's own ambiguous convention (every other authenticated endpoint in this file
+     * omits an explicit {@code security:} key entirely, relying on the absence of a document-root
+     * default {@code security:} plus the absence of {@code security: []} to imply "authenticated,"
+     * a pre-existing ambiguity this test deliberately does not try to fix service-wide — Kimi's own
+     * broader suggestion ("every non-public route") is out of this task's scope; this guards only
+     * the four routes T19 itself owns and already corrected once).
+     */
+    @Test
+    void mfaOperationsDeclareExplicitBearerAuthSecurity() throws Exception {
+        JsonNode authYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
+        JsonNode paths = authYaml.get("paths");
+        List<Route> mfaRoutes = List.of(
+                new Route("POST", "/accounts/me/mfa/totp"),
+                new Route("DELETE", "/accounts/me/mfa/totp"),
+                new Route("POST", "/accounts/me/mfa/totp/confirm"),
+                new Route("POST", "/accounts/me/mfa/recovery-codes"));
+
+        for (Route route : mfaRoutes) {
+            JsonNode operation = paths.get(route.path()).get(route.method().toLowerCase(Locale.ROOT));
+            JsonNode security = operation.get("security");
+            assertThat(security).as("%s declares a security: block", route).isNotNull();
+            assertThat(security.isArray() && security.size() == 1).as("%s security is a single-entry list", route).isTrue();
+            assertThat(security.get(0).has("bearerAuth")).as("%s security entry is bearerAuth", route).isTrue();
+        }
+    }
+
     @Test
     void everyComponentSchemaMatchesItsRealDtoShape() throws Exception {
         JsonNode authYaml = yamlMapper.readTree(Files.readString(CONTRACT_PATH));
