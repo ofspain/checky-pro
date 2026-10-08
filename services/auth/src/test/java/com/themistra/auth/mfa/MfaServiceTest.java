@@ -407,6 +407,134 @@ class MfaServiceTest {
         verifyNoInteractions(passwordEncoder, mfaEnrollmentRepository, totpVerifier);
     }
 
+    // ---- regenerateRecoveryCodes (R49) ----
+
+    @Test
+    void regenerateRecoveryCodesRecordsRegenerateFailedAuditAndThrowsOnWrongPassword() {
+        stubActiveAccount();
+        when(accountService.findLoginView(EMAIL))
+                .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.ACTIVE)));
+        when(passwordEncoder.matches("wrong", "hash")).thenReturn(false);
+
+        assertThatThrownBy(() -> service.regenerateRecoveryCodes(ACCOUNT_UUID, "wrong", "123456"))
+                .isInstanceOf(MfaCurrentPasswordMismatchException.class);
+
+        ArgumentCaptor<RecordAuditEventRequest> captor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("mfa.recovery_codes_regenerate_failed");
+        assertThat(captor.getValue().outcome()).isEqualTo(AuditOutcome.FAILURE);
+        verify(recoveryCodeRepository, never()).deleteByAccountId(any());
+        verify(recoveryCodeRepository, never()).save(any());
+    }
+
+    @Test // mirrors disableTreatsMissingLoginViewAsPasswordMismatch's own precedent
+    void regenerateRecoveryCodesTreatsMissingLoginViewAsPasswordMismatch() {
+        stubActiveAccount();
+        when(accountService.findLoginView(EMAIL)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.regenerateRecoveryCodes(ACCOUNT_UUID, "whatever", "123456"))
+                .isInstanceOf(MfaCurrentPasswordMismatchException.class);
+    }
+
+    @Test
+    void regenerateRecoveryCodesThrowsWhenNoConfirmedEnrollmentExists() {
+        stubActiveAccount();
+        when(accountService.findLoginView(EMAIL))
+                .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.ACTIVE)));
+        when(passwordEncoder.matches("correct", "hash")).thenReturn(true);
+        when(mfaEnrollmentRepository.findByAccountIdAndTypeAndConfirmedAtIsNotNull(ACCOUNT_ID, MfaEnrollment.Type.TOTP))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.regenerateRecoveryCodes(ACCOUNT_UUID, "correct", "123456"))
+                .isInstanceOf(MfaNotEnrolledException.class);
+        verify(recoveryCodeRepository, never()).deleteByAccountId(any());
+    }
+
+    @Test
+    void regenerateRecoveryCodesRecordsMfaFailedAndThrowsOnWrongCodeWithoutMutating() {
+        stubActiveAccount();
+        when(accountService.findLoginView(EMAIL))
+                .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.ACTIVE)));
+        when(passwordEncoder.matches("correct", "hash")).thenReturn(true);
+        MfaEnrollment confirmed = confirmedEnrollment();
+        when(mfaEnrollmentRepository.findByAccountIdAndTypeAndConfirmedAtIsNotNull(ACCOUNT_ID, MfaEnrollment.Type.TOTP))
+                .thenReturn(Optional.of(confirmed));
+        byte[] secret = {2};
+        when(mfaSeedEncryption.decrypt(confirmed.getSecretEncrypted())).thenReturn(secret);
+        when(totpVerifier.verify(secret, "000000", NOW)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.regenerateRecoveryCodes(ACCOUNT_UUID, "correct", "000000"))
+                .isInstanceOf(InvalidTotpCodeException.class);
+
+        ArgumentCaptor<RecordAuditEventRequest> captor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("mfa.failed");
+        verify(recoveryCodeRepository, never()).deleteByAccountId(any());
+        verify(recoveryCodeRepository, never()).save(any());
+    }
+
+    @Test
+    void regenerateRecoveryCodesDeletesOldCodesGeneratesTenNewOnesAndRecordsSuccessAudit() {
+        stubActiveAccount();
+        when(accountService.findLoginView(EMAIL))
+                .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.ACTIVE)));
+        when(passwordEncoder.matches("correct", "hash")).thenReturn(true);
+        MfaEnrollment confirmed = confirmedEnrollment();
+        when(mfaEnrollmentRepository.findByAccountIdAndTypeAndConfirmedAtIsNotNull(ACCOUNT_ID, MfaEnrollment.Type.TOTP))
+                .thenReturn(Optional.of(confirmed));
+        byte[] secret = {2};
+        when(mfaSeedEncryption.decrypt(confirmed.getSecretEncrypted())).thenReturn(secret);
+        when(totpVerifier.verify(secret, "123456", NOW)).thenReturn(true);
+
+        MfaService.RegenerateRecoveryCodesResult result =
+                service.regenerateRecoveryCodes(ACCOUNT_UUID, "correct", "123456");
+
+        assertThat(result.recoveryCodes()).hasSize(10);
+        assertThat(result.recoveryCodes()).doesNotHaveDuplicates();
+        result.recoveryCodes().forEach(code -> assertThat(code).hasSize(43).matches("^[A-Za-z0-9_-]{43}$"));
+        verify(recoveryCodeRepository).deleteByAccountId(ACCOUNT_ID);
+        ArgumentCaptor<RecoveryCode> captor = ArgumentCaptor.forClass(RecoveryCode.class);
+        verify(recoveryCodeRepository, times(10)).save(captor.capture());
+        for (int i = 0; i < 10; i++) {
+            assertThat(captor.getAllValues().get(i).getAccountId()).isEqualTo(ACCOUNT_ID);
+            assertThat(captor.getAllValues().get(i).getCodeHash())
+                    .isEqualTo(Hashing.sha256(result.recoveryCodes().get(i)));
+        }
+        ArgumentCaptor<RecordAuditEventRequest> auditCaptor = ArgumentCaptor.forClass(RecordAuditEventRequest.class);
+        verify(auditService).record(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().eventType()).isEqualTo("mfa.recovery_codes_regenerated");
+        assertThat(auditCaptor.getValue().outcome()).isEqualTo(AuditOutcome.SUCCESS);
+    }
+
+    @Test
+    void regenerateRecoveryCodesRejectsNonActiveAccount() {
+        stubAccountWithStatus(AccountStatus.LOCKED);
+
+        assertThatThrownBy(() -> service.regenerateRecoveryCodes(ACCOUNT_UUID, "x", "123456"))
+                .isInstanceOf(InvalidAccountStateException.class);
+        verifyNoInteractions(passwordEncoder, mfaEnrollmentRepository, totpVerifier);
+    }
+
+    @Test
+    void regenerateRecoveryCodesResultToStringNeverLeaksRecoveryCodes() {
+        stubActiveAccount();
+        when(accountService.findLoginView(EMAIL))
+                .thenReturn(Optional.of(new LoginView(ACCOUNT_UUID, "hash", AccountStatus.ACTIVE)));
+        when(passwordEncoder.matches("correct", "hash")).thenReturn(true);
+        MfaEnrollment confirmed = confirmedEnrollment();
+        when(mfaEnrollmentRepository.findByAccountIdAndTypeAndConfirmedAtIsNotNull(ACCOUNT_ID, MfaEnrollment.Type.TOTP))
+                .thenReturn(Optional.of(confirmed));
+        byte[] secret = {2};
+        when(mfaSeedEncryption.decrypt(confirmed.getSecretEncrypted())).thenReturn(secret);
+        when(totpVerifier.verify(secret, "123456", NOW)).thenReturn(true);
+
+        MfaService.RegenerateRecoveryCodesResult result =
+                service.regenerateRecoveryCodes(ACCOUNT_UUID, "correct", "123456");
+
+        assertThat(result.toString()).isEqualTo("RegenerateRecoveryCodesResult[REDACTED]");
+        result.recoveryCodes().forEach(code -> assertThat(result.toString()).doesNotContain(code));
+    }
+
     // ---- verifyRecoveryCode (R25/R29) ----
 
     @Test

@@ -160,6 +160,71 @@ paths:
         '204':
           description: Session revoked (idempotent — 204 even if already revoked)
 
+  /accounts/me/mfa/totp:
+    post:
+      summary: Begin TOTP MFA enrollment for the authenticated caller
+      operationId: beginMfaTotpEnrollment
+      responses:
+        '201':
+          description: >
+            The provisioning URI, for a QR code or manual entry. Never includes the raw secret
+            separately — it is already encoded inside the URI.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeginEnrollResponse'
+    delete:
+      summary: Disable TOTP MFA for the authenticated caller
+      operationId: disableMfaTotp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordAndTotpRequest'
+      responses:
+        '204':
+          description: MFA disabled
+
+  /accounts/me/mfa/totp/confirm:
+    post:
+      summary: Confirm a pending TOTP enrollment for the authenticated caller
+      operationId: confirmMfaTotpEnrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpCodeRequest'
+      responses:
+        '200':
+          description: >
+            The 10 single-use recovery codes. Returned exactly once and never retrievable again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodesResponse'
+
+  /accounts/me/mfa/recovery-codes:
+    post:
+      summary: Regenerate the authenticated caller's recovery codes
+      operationId: regenerateMfaRecoveryCodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordAndTotpRequest'
+      responses:
+        '200':
+          description: >
+            10 new single-use recovery codes, replacing every existing one. Returned exactly
+            once and never retrievable again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodesResponse'
+
   /admin/accounts/{accountUuid}:
     get:
       summary: Get any account by UUID (admin)
@@ -618,6 +683,43 @@ components:
         rotatedAt:
           type: string
           format: date-time
+
+    BeginEnrollResponse:
+      type: object
+      required: [provisioningUri]
+      properties:
+        provisioningUri:
+          type: string
+          description: An otpauth:// URI carrying the Base32-encoded secret. Never returned separately.
+
+    TotpCodeRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          maxLength: 20
+
+    PasswordAndTotpRequest:
+      type: object
+      required: [currentPassword, code]
+      properties:
+        currentPassword:
+          type: string
+          maxLength: 128
+        code:
+          type: string
+          maxLength: 20
+
+    RecoveryCodesResponse:
+      type: object
+      required: [recoveryCodes]
+      properties:
+        recoveryCodes:
+          type: array
+          items:
+            type: string
+          description: Returned exactly once. Never retrievable again after this response.
 
     CreateApiKeyRequest:
       type: object

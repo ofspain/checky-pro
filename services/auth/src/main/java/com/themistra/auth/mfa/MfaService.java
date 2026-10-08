@@ -177,6 +177,51 @@ public class MfaService {
     }
 
     /**
+     * Regenerates every recovery code (R49): requires both the current password and a valid TOTP
+     * code, by direct symmetry with {@link #disable}. A wrong password records
+     * {@code mfa.recovery_codes_regenerate_failed} and mutates nothing — its own specific event
+     * name, mirroring {@code disable}'s own {@code mfa.disable_failed} split (a wrong *password* is
+     * not a TOTP/recovery-code verification failure, so it is never {@code mfa.failed}, R29's own
+     * literal scope). A wrong code records the generic {@code mfa.failed} (R29) and mutates nothing.
+     * On success: every existing recovery code is deleted, 10 new ones are generated exactly as
+     * {@link #confirm} already does, and the new raw codes are returned — their only appearance in
+     * plaintext, same guarantee as {@link #confirm}'s own (R49).
+     */
+    @Transactional
+    public RegenerateRecoveryCodesResult regenerateRecoveryCodes(
+            UUID accountUuid, String currentPassword, String submittedCode) {
+        AccountResponse account = requireActiveAccount(accountUuid, "regenerate recovery codes");
+        Long accountId = resolveAccountId(accountUuid);
+
+        LoginView loginView = accountService.findLoginView(account.email()).orElse(null);
+        if (loginView == null || !passwordEncoder.matches(currentPassword, loginView.passwordHash())) {
+            recordAudit("mfa.recovery_codes_regenerate_failed", AuditOutcome.FAILURE, accountUuid);
+            throw new MfaCurrentPasswordMismatchException();
+        }
+
+        MfaEnrollment enrollment = mfaEnrollmentRepository
+                .findByAccountIdAndTypeAndConfirmedAtIsNotNull(accountId, MfaEnrollment.Type.TOTP)
+                .orElseThrow(MfaNotEnrolledException::new);
+
+        byte[] secret = mfaSeedEncryption.decrypt(enrollment.getSecretEncrypted());
+        if (!totpVerifier.verify(secret, submittedCode, clock.instant())) {
+            recordAudit("mfa.failed", AuditOutcome.FAILURE, accountUuid);
+            throw new InvalidTotpCodeException();
+        }
+
+        recoveryCodeRepository.deleteByAccountId(accountId);
+        Instant now = clock.instant();
+        List<String> rawCodes = new ArrayList<>(RECOVERY_CODE_COUNT);
+        for (int i = 0; i < RECOVERY_CODE_COUNT; i++) {
+            String rawCode = generateRawRecoveryCode();
+            recoveryCodeRepository.save(RecoveryCode.create(accountId, Hashing.sha256(rawCode), now));
+            rawCodes.add(rawCode);
+        }
+        recordAudit("mfa.recovery_codes_regenerated", AuditOutcome.SUCCESS, accountUuid);
+        return new RegenerateRecoveryCodesResult(List.copyOf(rawCodes));
+    }
+
+    /**
      * Redeems a single-use recovery code (R25/R29), for task 20's login-time use. No
      * account-status precondition here (unlike begin/confirm/disable) — the caller (a future login
      * flow) already establishes account usability before this is ever reached. Returns normally on
@@ -284,6 +329,22 @@ public class MfaService {
         @Override
         public String toString() {
             return "ConfirmResult[REDACTED]";
+        }
+    }
+
+    /**
+     * @param recoveryCodes the 10 new raw codes; returned exactly once, never re-derivable
+     *                       afterward. Kept distinct from {@link ConfirmResult} (identical shape
+     *                       today) because the two operations are semantically different —
+     *                       first-time enrollment vs. replacement of existing codes — and a shared
+     *                       type would invite the two to be conflated at a call site.
+     */
+    public record RegenerateRecoveryCodesResult(List<String> recoveryCodes) {
+
+        /** Overridden so the raw codes can never leak via a default record {@code toString()}. */
+        @Override
+        public String toString() {
+            return "RegenerateRecoveryCodesResult[REDACTED]";
         }
     }
 }

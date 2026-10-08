@@ -83,6 +83,18 @@ See [`tasks.md`](tasks.md).
 
 The existing tests (`ArchitectureTest`, account/authz/audit/token integration tests) must keep passing. The following new or strengthened tests are required.
 
+> **T19 Phase 6 finding, disclosed not silently fixed:** fixing this task's own three flagged lines
+> (`shouldReturnTotpProvisioningUriOnEnrollmentBegin`, `shouldConfirmTotpEnrollmentAndReturnSingleUseRecoveryCodes`,
+> `shouldRequirePasswordAndTotpToDisableMfa`, now R22/R23/R28) revealed the same off-by-N drift between
+> a named test and its cited R# recurs far more widely in this list than Phase 1–4's own review caught
+> — e.g. `shouldRequireMfaEnrollmentForMerchantAdminBeforeAuthorization` (currently → R21, real text is
+> R24's), `shouldIssueTokenWithOtpAmrAndAcrAfterMfa` (→ R23, real text is R26's),
+> `shouldCreateApiKeyAndShowPlaintextExactlyOnce` (→ R27, `ApiKeyController`'s own Javadoc says R30).
+> Likely cause: an earlier insertion shifted every requirement after some point without updating this
+> table. **Out of scope for T19** — the frozen brief authorized fixing only the three MFA lines above;
+> re-deriving every line's correct mapping is a larger, dedicated audit a future task should own, not
+> something to absorb unilaterally here. Left as-is except the four lines this task's own scope covers.
+
 - `shouldReturnSameAcknowledgementForDuplicateAndNewRegistration` → R1 / R2
 - `shouldEmitVerifyEmailEventOnRegistration` → R3
 - `shouldActivateAccountWithValidVerificationToken` → R4
@@ -97,13 +109,14 @@ The existing tests (`ArchitectureTest`, account/authz/audit/token integration te
 - `shouldResetLockoutCounterOnSuccessfulLogin` → R16
 - `shouldUnlockAccountViaAdminEndpoint` → R17
 - `shouldReturnIndistinguishableResponseForLockedAndBadCredentials` → R18
-- `shouldReturnTotpProvisioningUriOnEnrollmentBegin` → R19
-- `shouldConfirmTotpEnrollmentAndReturnSingleUseRecoveryCodes` → R20
-- `shouldRequireMfaEnrollmentForMerchantAdminBeforeAuthorization` → R21
-- `shouldRequireValidTotpOrRecoveryCodeWhenMfaIsEnrolled` → R22
-- `shouldIssueTokenWithOtpAmrAndAcrAfterMfa` → R23
-- `shouldIssueTokenWithPwdAmrWhenMfaNotRequired` → R24
-- `shouldRequirePasswordAndTotpToDisableMfa` → R25
+- `shouldReturnTotpProvisioningUriOnEnrollmentBegin` → R22
+- `shouldConfirmTotpEnrollmentAndReturnSingleUseRecoveryCodes` → R23
+- `shouldRequireMfaEnrollmentForMerchantAdminBeforeAuthorization` → R21 <!-- T19 Phase 6: not corrected — out of this task's scope, see note below -->
+- `shouldRequireValidTotpOrRecoveryCodeWhenMfaIsEnrolled` → R22 <!-- T19 Phase 6: not corrected — out of this task's scope, see note below -->
+- `shouldIssueTokenWithOtpAmrAndAcrAfterMfa` → R23 <!-- T19 Phase 6: not corrected — out of this task's scope, see note below -->
+- `shouldIssueTokenWithPwdAmrWhenMfaNotRequired` → R24 <!-- T19 Phase 6: not corrected — out of this task's scope, see note below -->
+- `shouldRequirePasswordAndTotpToDisableMfa` → R28
+- `shouldRegenerateRecoveryCodesWithPasswordAndTotp` → R49
 - `shouldCreateApiKeyAndShowPlaintextExactlyOnce` → R27
 - `shouldExchangeValidApiKeyForMerchantJwt` → R28
 - `shouldRejectRevokedOrUnknownApiKeyWithUniform401` → R29

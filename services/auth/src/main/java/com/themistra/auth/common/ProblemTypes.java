@@ -38,6 +38,17 @@ public final class ProblemTypes {
      * which happens inside the same request), password-reset confirmation, or the
      * {@code /oauth2/token} refresh_token grant. */
     public static final URI RATE_LIMIT_EXCEEDED = URI.create(BASE + "rate-limit-exceeded");
+    /** {@code POST /accounts/me/mfa/totp} (R22, T19) — the caller already has a confirmed TOTP
+     * enrollment; enroll again only after disabling the existing one. */
+    public static final URI MFA_ALREADY_ENROLLED = URI.create(BASE + "mfa-already-enrolled");
+    /** {@code DELETE /accounts/me/mfa/totp} and {@code POST /accounts/me/mfa/recovery-codes}
+     * (R28/R49, T19) — no confirmed TOTP enrollment exists to disable or regenerate codes for. */
+    public static final URI MFA_NOT_ENROLLED = URI.create(BASE + "mfa-not-enrolled");
+    /** {@code POST /accounts/me/mfa/totp/confirm}, {@code DELETE /accounts/me/mfa/totp}, and
+     * {@code POST /accounts/me/mfa/recovery-codes} (R23/R28/R29/R49, T19) — the submitted TOTP code
+     * was rejected. 401 here means "the second credential was rejected," not "not logged in"; the
+     * caller is already authenticated. */
+    public static final URI MFA_INVALID_CODE = URI.create(BASE + "mfa-invalid-code");
 
     private ProblemTypes() {
     }

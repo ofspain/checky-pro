@@ -29,6 +29,11 @@ import com.themistra.auth.authz.dto.CreateRoleRequest;
 import com.themistra.auth.authz.dto.CreateRoleTemplateRequest;
 import com.themistra.auth.authz.dto.RoleResponse;
 import com.themistra.auth.authz.dto.RoleTemplateResponse;
+import com.themistra.auth.mfa.MfaController;
+import com.themistra.auth.mfa.dto.BeginEnrollResponse;
+import com.themistra.auth.mfa.dto.PasswordAndTotpRequest;
+import com.themistra.auth.mfa.dto.RecoveryCodesResponse;
+import com.themistra.auth.mfa.dto.TotpCodeRequest;
 import com.themistra.auth.token.dto.SessionResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotatedElementUtils;
@@ -74,7 +79,8 @@ class AuthOpenApiContractTest {
             AdminAccountRoleController.class,
             AdminRoleController.class,
             AdminRoleTemplateController.class,
-            AdminAuditController.class);
+            AdminAuditController.class,
+            MfaController.class);
 
     private final ObjectMapper objectMapper = new ObjectMapper()
             .findAndRegisterModules()
@@ -382,6 +388,10 @@ class AuthOpenApiContractTest {
         m.put(new Route("POST", "/admin/role-templates"), ExpectedSchema.ref("RoleTemplateResponse"));
         m.put(new Route("GET", "/admin/role-templates"), ExpectedSchema.arrayOfRef("RoleTemplateResponse"));
         m.put(new Route("GET", "/admin/audit"), ExpectedSchema.ref("AuditEventPage"));
+        m.put(new Route("POST", "/accounts/me/mfa/totp"), ExpectedSchema.ref("BeginEnrollResponse"));
+        m.put(new Route("POST", "/accounts/me/mfa/totp/confirm"), ExpectedSchema.ref("RecoveryCodesResponse"));
+        m.put(new Route("DELETE", "/accounts/me/mfa/totp"), ExpectedSchema.none());
+        m.put(new Route("POST", "/accounts/me/mfa/recovery-codes"), ExpectedSchema.ref("RecoveryCodesResponse"));
         return m;
     }
 
@@ -400,6 +410,9 @@ class AuthOpenApiContractTest {
         m.put(new Route("POST", "/api-keys"), ExpectedSchema.ref("CreateApiKeyRequest"));
         m.put(new Route("POST", "/admin/roles"), ExpectedSchema.ref("CreateRoleRequest"));
         m.put(new Route("POST", "/admin/role-templates"), ExpectedSchema.ref("CreateRoleTemplateRequest"));
+        m.put(new Route("POST", "/accounts/me/mfa/totp/confirm"), ExpectedSchema.ref("TotpCodeRequest"));
+        m.put(new Route("DELETE", "/accounts/me/mfa/totp"), ExpectedSchema.ref("PasswordAndTotpRequest"));
+        m.put(new Route("POST", "/accounts/me/mfa/recovery-codes"), ExpectedSchema.ref("PasswordAndTotpRequest"));
         return m;
     }
 
@@ -479,6 +492,10 @@ class AuthOpenApiContractTest {
                         1L, Instant.parse("2026-07-13T00:00:00Z"), "login.failed", AuditOutcome.FAILURE,
                         UUID.randomUUID(), UUID.randomUUID(), "203.0.113.7", "hash", "trace-id", Map.of())),
                 PageRequest.of(0, 50, Sort.by(Sort.Direction.DESC, "occurredAt")), 1));
+        instances.put("BeginEnrollResponse", new BeginEnrollResponse("otpauth://totp/Checky:example"));
+        instances.put("TotpCodeRequest", new TotpCodeRequest("123456"));
+        instances.put("PasswordAndTotpRequest", new PasswordAndTotpRequest("correct-horse-battery", "123456"));
+        instances.put("RecoveryCodesResponse", new RecoveryCodesResponse(List.of("code-one", "code-two")));
 
         return instances;
     }
