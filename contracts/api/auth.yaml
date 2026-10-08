@@ -164,6 +164,8 @@ paths:
     post:
       summary: Begin TOTP MFA enrollment for the authenticated caller
       operationId: beginMfaTotpEnrollment
+      security:
+        - bearerAuth: []
       responses:
         '201':
           description: >
@@ -176,6 +178,8 @@ paths:
     delete:
       summary: Disable TOTP MFA for the authenticated caller
       operationId: disableMfaTotp
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -190,6 +194,8 @@ paths:
     post:
       summary: Confirm a pending TOTP enrollment for the authenticated caller
       operationId: confirmMfaTotpEnrollment
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -209,6 +215,8 @@ paths:
     post:
       summary: Regenerate the authenticated caller's recovery codes
       operationId: regenerateMfaRecoveryCodes
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:

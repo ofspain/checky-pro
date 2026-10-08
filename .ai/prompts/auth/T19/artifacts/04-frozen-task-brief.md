@@ -2,6 +2,20 @@ STATUS: FROZEN
 
 # auth · T19 · Phase 4 — Frozen Task Brief
 
+> **Addendum (Phase 9, 2026-10-08) — one post-freeze deviation, disclosed, not a rewrite of the
+> text below.** This brief's own `MfaExceptionHandler` mapping (inherited unchanged from Phase 2)
+> says `MfaCurrentPasswordMismatchException` → `403 Forbidden`, new `ProblemTypes.MFA_PASSWORD_MISMATCH`.
+> Phase 5 found, before any code was written, that `AccountExceptionHandler` already maps the
+> identical semantic (`/accounts/me/password`'s own wrong-password case) to **400 Bad Request**
+> via the existing `ProblemTypes.CURRENT_PASSWORD_MISMATCH` — a stable, published problem type
+> cannot mean 400 in one place and 403 in another, so Phase 6 implemented 400 + the reused type,
+> not this brief's original 403 + a new type. Disclosed in `05-implementation-plan.md` and
+> `06-implementation.md` at the time; flagged by Kimi's Phase 8 review (Finding 1) as a frozen-brief
+> vs. shipped-code contradiction worth recording explicitly rather than leaving only in later
+> phases' artifacts — this note is that record. Only 3 `ProblemTypes` constants were added, not 4
+> (no `MFA_PASSWORD_MISMATCH`), for the same reason. See `09-review-resolution.md` for the full
+> disposition. The original brief text below is left exactly as frozen, for history.
+
 ## Phase 3 findings — dispositions
 
 All 10 findings verified directly against actual source before disposition. 9 are **ACCEPTED**. 1
