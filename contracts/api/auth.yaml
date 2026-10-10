@@ -755,13 +755,19 @@ components:
 
     ApiKeyMetadata:
       type: object
-      required: [keyUuid, name, scopes, createdAt]
+      required: [keyUuid, name, prefix, scopes, createdAt]
       properties:
         keyUuid:
           type: string
           format: uuid
         name:
           type: string
+        prefix:
+          type: string
+          description: >
+            The non-secret ck_live_xxxx lookup handle (L7). Never the credential itself — only
+            the part already seen once at creation, letting a caller with more than one key tell
+            them apart in this list.
         scopes:
           type: array
           items:

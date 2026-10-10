@@ -126,10 +126,13 @@ class ApiKeyCrudIntegrationTest {
         JsonNode beforeRevoke = readJson(get(bearer, "/api-keys"));
         assertThat(beforeRevoke).hasSize(1);
         assertThat(beforeRevoke.get(0).get("revokedAt").isNull()).isTrue();
-        // Kimi Phase 11 Gap 3: exactly these seven fields on a list item - no plaintextKey, no
-        // keyHash, and nothing dropped either (AC5/AC6).
+        // Kimi Phase 11 Gap 3: exactly these eight fields on a list item - no plaintextKey, no
+        // keyHash, and nothing dropped either (AC5/AC6). `prefix` added per the frontend spec's
+        // own Q12(c), closed: the non-secret ck_live_xxxx lookup handle was stored but never
+        // exposed, leaving a caller with more than one key no way to tell them apart in the list.
         assertThat(beforeRevoke.get(0).fieldNames()).toIterable().containsExactlyInAnyOrder(
-                "keyUuid", "name", "scopes", "createdAt", "lastUsedAt", "expiresAt", "revokedAt");
+                "keyUuid", "name", "prefix", "scopes", "createdAt", "lastUsedAt", "expiresAt", "revokedAt");
+        assertThat(beforeRevoke.get(0).get("prefix").asText()).matches("^ck_live_[A-Za-z0-9]{24}$");
 
         ResponseEntity<String> deleteResponse = delete(bearer, "/api-keys/" + keyUuid);
         assertThat(deleteResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);

@@ -240,7 +240,7 @@ public class ApiKeyService {
     }
 
     private ApiKeyMetadata toMetadata(ApiKey apiKey) {
-        return new ApiKeyMetadata(apiKey.getKeyUuid(), apiKey.getName(), apiKey.getScopes(),
+        return new ApiKeyMetadata(apiKey.getKeyUuid(), apiKey.getName(), apiKey.getPrefix(), apiKey.getScopes(),
                 apiKey.getCreatedAt(), apiKey.getLastUsedAt(), apiKey.getExpiresAt(), apiKey.getRevokedAt());
     }
 
@@ -264,8 +264,15 @@ public class ApiKeyService {
         }
     }
 
-    /** No hash/secret field by construction — this record cannot leak key material. */
-    public record ApiKeyMetadata(UUID keyUuid, String name, List<String> scopes, Instant createdAt,
+    /**
+     * No hash/secret field by construction — this record cannot leak key material.
+     *
+     * @param prefix the non-secret {@code ck_live_xxxx} lookup handle (L7) — safe to expose; it is
+     *               never the credential itself, only the part a caller already sees once at
+     *               creation and would otherwise have no way to tell their own keys apart by in a
+     *               list (frontend spec Q12(c), closed).
+     */
+    public record ApiKeyMetadata(UUID keyUuid, String name, String prefix, List<String> scopes, Instant createdAt,
                                   Instant lastUsedAt, Instant expiresAt, Instant revokedAt) {
     }
 

@@ -336,7 +336,11 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   ship, and in which phase. Either one requires an ADR amending L14.
 - Q12. **Auth contract additions (blocks R5's consistency, R23, R24, R25).** (a) Backend R6 requires a signed-in caller for
   resend-verification, but `auth.yaml` declares it public with `security: []`. (b) `Retry-After` and a 429 response are undocumented.
-  (c) The key-prefix field and the MFA-not-confirmed problem type are undocumented. Owner action: reconcile (a), and add or confirm (b)
+  (c) ~~The key-prefix field and~~ the MFA-not-confirmed problem type are undocumented. **(c)'s key-prefix half resolved
+  (2026-10-08): `ApiKeyMetadata.prefix` added** (`ApiKeyService.java`, `auth.yaml`, real HTTP shape asserted in
+  `ApiKeyCrudIntegrationTest`) — the non-secret `ck_live_xxxx` lookup handle was stored but never exposed in the list
+  response, leaving a caller with more than one key no way to tell them apart. (a) and (b), and (c)'s MFA-problem-type half,
+  remain open. Owner action: reconcile (a), and add or confirm (b)
   and (c).
 - Q13. **Privileged-account bootstrap (blocks R10's enrollment path, R11 for MERCHANT and ADMIN, and task 19).** T20 refuses an
   unenrolled MERCHANT or ADMIN with the wrong-password error and does not enroll them. T19 is not built. Options: (a) enroll while

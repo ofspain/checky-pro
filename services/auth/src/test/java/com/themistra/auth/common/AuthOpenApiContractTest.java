@@ -504,7 +504,7 @@ class AuthOpenApiContractTest {
                 UUID.randomUUID(), "ck_live_abcdefghijklmnopqrstuvwx.secretsecretsecretsecretsecretsecret",
                 "my merchant key", Instant.parse("2026-07-13T00:00:00Z")));
         instances.put("ApiKeyMetadata", new ApiKeyService.ApiKeyMetadata(
-                UUID.randomUUID(), "my merchant key", List.of("merchant.api"),
+                UUID.randomUUID(), "my merchant key", "ck_live_abcdefghijklmnopqrstuvwx", List.of("merchant.api"),
                 Instant.parse("2026-07-13T00:00:00Z"), null, null, null));
         instances.put("ApiKeyTokenResponse", ApiKeyTokenResponse.of("signed.jwt.value", 600));
         instances.put("CreateRoleRequest", new CreateRoleRequest("ROLE_EXAMPLE", "an example role"));

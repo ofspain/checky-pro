@@ -104,7 +104,7 @@ will be decomposed after this granularity is accepted.
 74. **Create blocked without MFA.** Without confirmed MFA, creation shows fixed copy. Verifies `apiKeyCreationRejectedWithoutMfaShowsFixedCopy`. Cites R24. Blocked on Q12.
 75. **Plaintext shown once.** The `ck_live_` key is shown exactly once with an acknowledgement. Verifies `apiKeyIsShownExactlyOnceWithAcknowledgement`. Cites R24.
 76. **Key not redisplayed.** After the user dismisses the key, it cannot be displayed again. Verifies `apiKeyNotRedisplayedAfterDismiss`. Cites R24.
-77. **List shows contract fields.** The list shows `name`, `scopes`, `createdAt`, `lastUsedAt`, `expiresAt`, and `revokedAt`. Verifies `apiKeyListShowsOnlyContractFieldsAndNeverSecrets`. Cites R25.
+77. **List shows contract fields.** The list shows `name`, `prefix`, `scopes`, `createdAt`, `lastUsedAt`, `expiresAt`, and `revokedAt`. Verifies `apiKeyListShowsOnlyContractFieldsAndNeverSecrets`. Cites R25.
 78. **List never shows a secret.** No secret field is rendered anywhere in the list. Verifies `apiKeyListShowsOnlyContractFieldsAndNeverSecrets`. Cites R25.
 79. **Revoke needs confirmation.** Revoke requires an explicit confirmation step. Verifies `apiKeyRevokeRequiresConfirmation`. Cites R26.
 80. **Revoke calls DELETE.** Confirmed revoke calls `DELETE /api-keys/{keyUuid}`. Verifies `apiKeyRevokeCallsDeleteAfterConfirm`. Cites R26.

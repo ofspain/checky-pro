@@ -312,8 +312,8 @@ class ApiKeyControllerTest {
         controller = new ApiKeyController(apiKeyService, apiKeyTokenIssuer);
         Authentication authentication = authenticationFor(ACCOUNT_UUID);
         List<ApiKeyService.ApiKeyMetadata> keys = List.of(
-                new ApiKeyService.ApiKeyMetadata(UUID.randomUUID(), "key one", List.of("merchant.api"),
-                        Instant.now(), null, null, null));
+                new ApiKeyService.ApiKeyMetadata(UUID.randomUUID(), "key one", "ck_live_abcdefghijklmnopqrstuvwx",
+                        List.of("merchant.api"), Instant.now(), null, null, null));
         when(apiKeyService.list(ACCOUNT_UUID)).thenReturn(keys);
 
         List<ApiKeyService.ApiKeyMetadata> result = controller.list(authentication);

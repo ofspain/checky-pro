@@ -70,8 +70,9 @@ does not yet exist; they are blocked by the `Q#` shown.
   MFA is not confirmed, THEN the SPA SHALL show fixed copy directing the user to enrollment. On success it SHALL show the
   `ck_live_` key exactly once with a copy action and an acknowledgement. The rejection problem type is PROPOSED and blocked on Q12.
   (backend R30)
-- R25. WHEN the SPA lists API keys, THEN it SHALL show `name`, `scopes`, `createdAt`, `lastUsedAt`, `expiresAt`, and `revokedAt`
-  from `ApiKeyMetadata`, and SHALL never display secret material. A visible key prefix is PROPOSED and blocked on Q12. (backend R34)
+- R25. WHEN the SPA lists API keys, THEN it SHALL show `name`, `prefix`, `scopes`, `createdAt`, `lastUsedAt`, `expiresAt`, and
+  `revokedAt` from `ApiKeyMetadata`, and SHALL never display secret material. **`prefix` resolved (2026-10-08, Q12(c)):**
+  `ApiKeyMetadata` now carries the non-secret `ck_live_xxxx` lookup handle. (backend R34)
 - R26. WHEN a user revokes an API key, THEN the SPA SHALL require confirmation and then call `DELETE /api-keys/{keyUuid}`.
   (backend R35)
 - R27. WHEN an authenticated user holds a role, THEN the SPA SHALL offer exactly the operations below for that role, and each
