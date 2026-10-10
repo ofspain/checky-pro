@@ -6,7 +6,7 @@
 | Version | `0.2` |
 | Author (senior/owner) | `<name>` |
 | Implementer | `TBD` |
-| Status | `READY FOR IMPL` |
+| Status | `READY FOR IMPL` for tasks 1–29 (all built and verified). **Task 30 added 2026-10-10, NOT yet built** — a small, scoped on-demand tx-hash lookup endpoint (R29, L16), discovered as a real prerequisite while authoring `spec/intelligence-service`'s own spec. Does not reopen tasks 1–29. |
 | Target repo / service | `services/crypto` (**CODEOWNERS-protected**) |
 | Skills to load | `spec-authoring`, `code-review` |
 | Standing rules | [`agents.md`](agents.md) in this directory is authoritative for `services/crypto` (distilled from `ARCHITECTURE.md`, `docs/service-languages.pdf`, `SECURITY-THREAT-MODEL.md`, the ADRs, and the sibling `spec/auth-service`). This spec references it and does not restate or override it except where §4a says so explicitly. |

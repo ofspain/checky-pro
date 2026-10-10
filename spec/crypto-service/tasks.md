@@ -51,3 +51,7 @@ Execute in order. Each task leaves the module buildable and the test suite green
 27. **Run full suite.** `mvn -pl services/crypto verify` must pass; Docker image builds from repo root.
 28. **Threat-model closure.** Verify each `SECURITY-THREAT-MODEL.md` row (#1–#6) has a corresponding passing test; confirm no non-attest path can reach `kms:Sign` and no single-provider fact is ever emitted.
 29. **Bump spec status.** Once §11 questions (esp. Q1, Q2, Q3, Q7) are closed and tests pass, change this spec from `DRAFT` to `READY FOR IMPL` and version to `0.2`.
+
+## Phase 2 prerequisite (added 2026-10-10, discovered authoring `spec/intelligence-service`)
+
+30. **On-demand tx-hash lookup endpoint (R29, L16).** Implement `GET /internal/v1/transactions/{chain}/{txHash}`, reusing `ChainAdapter.getTx` + the existing `QuorumEvaluator` with no new verification logic. Add a contract test confirming the response shape matches §4c exactly and a unit test confirming 2-of-3 disagreement still yields `HELD`, never an auto-resolved value. CODEOWNERS review required (agents.md). **Not yet built** — this task exists only as a spec entry; task 29's own "Bump spec status" line does not cover it, since it was added after that bump. `package.md`'s own status line discloses this explicitly.

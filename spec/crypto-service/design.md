@@ -17,6 +17,7 @@
 - L13. **Secrets discipline.** No provider API key, DB credential, or KMS key ARN is committed. External Secrets Operator injects them; validated `@ConfigurationProperties` fail startup on missing/invalid config in non-local profiles (`ARCHITECTURE.md` §8; auth `target-design.md` §16).
 - L14. **Sidecars are translation-only.** Any TS sidecar observes and translates one chain into the adapter/quorum contract; it holds no quorum authority, no signing access, and no business state (`docs/service-languages.pdf` §3.2). The Java core treats sidecar output as one more provider answer subject to quorum.
 - L15. **Module boundaries.** Package-by-feature under `com.themistra.crypto`; no feature module imports another feature module's entity. Shared plumbing lives in `common`. Enforced by ArchUnit, mirroring the auth service.
+- L16. **On-demand tx-hash lookup (R29, new, added 2026-10-10) reuses `ChainAdapter.getTx` + `QuorumEvaluator` exactly — no new verification logic, no bypass of the 2-of-3 rule (L1).** This is a new trigger (synchronous, on-demand) onto already-existing, already-locked logic, not a new verification pathway. A `HELD` outcome here follows L2 identically — never auto-resolved, never resolved in any caller's favor. Not yet built.
 
 ## 4b. OPEN decisions — implementer/Claude MAY propose
 
@@ -78,6 +79,11 @@ POST /internal/v1/attest       (scope internal.crypto:write)
 
 GET  /.well-known/themistra-verification-keys    (public)
   200: { keys: [ { kid, kmsKeyId, alg, publicKeyPem } ] }   // (R24; alg per Q7)
+
+GET  /internal/v1/transactions/{chain}/{txHash}   (scope internal.crypto:write; R29, L16, NOT YET BUILT)
+  200: { chain, txHash, existence: "AGREED"|"HELD", confirmations, tokenContractAddress,
+         fromAddress, toAddress, amount, outcome: "AGREED"|"HELD"|"UNKNOWN_TOKEN" }
+  404: problem+json   // all 3 providers agree the hash does not exist
 ```
 `expectedAmount` and any monetary value are **decimal strings in token base units, never JSON numbers**.
 
