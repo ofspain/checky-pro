@@ -101,7 +101,7 @@ will be decomposed after this granularity is accepted.
 
 ## Phase 1 — Auth & account: API keys
 
-74. **Create blocked without MFA.** Without confirmed MFA, creation shows fixed copy. Verifies `apiKeyCreationRejectedWithoutMfaShowsFixedCopy`. Cites R24. Blocked on Q12.
+74. **Create blocked without MFA.** Without confirmed MFA, creation shows fixed copy. Verifies `apiKeyCreationRejectedWithoutMfaShowsFixedCopy`. Cites R24.
 75. **Plaintext shown once.** The `ck_live_` key is shown exactly once with an acknowledgement. Verifies `apiKeyIsShownExactlyOnceWithAcknowledgement`. Cites R24.
 76. **Key not redisplayed.** After the user dismisses the key, it cannot be displayed again. Verifies `apiKeyNotRedisplayedAfterDismiss`. Cites R24.
 77. **List shows contract fields.** The list shows `name`, `prefix`, `scopes`, `createdAt`, `lastUsedAt`, `expiresAt`, and `revokedAt`. Verifies `apiKeyListShowsOnlyContractFieldsAndNeverSecrets`. Cites R25.

@@ -19,7 +19,7 @@ surfaces without rewriting the shell.
 
 | Phase | Slice | Status |
 |---|---|---|
-| Phase 1a | Auth and account gatekeeper | DRAFT. Q1 (MFA endpoints) and Q13 (privileged bootstrap) resolved 2026-10-08. Blocked on Q5 (refresh tokens), Q12 (contract additions), Q14 (admin status view), Q15 (session revocation semantics). Q6 and Q10 confirm the route and placement decisions. |
+| Phase 1a | Auth and account gatekeeper | DRAFT. Q1, Q10, Q12, Q13 resolved (2026-10-08/10). Blocked on Q5 (refresh tokens), Q14 (admin status view), Q15 (session revocation semantics). Q6 (env keys/routes) still needs owner confirmation. |
 | Phase 1b | Payment verification and invoicing | DRAFT. Q3 (notification stream) resolved 2026-10-08. Blocked on Q2. |
 | Phase 2 | Intelligence engine | DRAFT. Blocked on Q4. |
 | Phase 3 | AI-assisted dispute resolution | DRAFT. Blocked on Q4. |
@@ -331,18 +331,29 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
 - Q7. **Design system (O2).** Owner action: choose the component approach. Blocks visual implementation, not the contracts.
 - Q8. **i18n approach (O3).** Owner action: choose the catalogue library and the locale-fallback rule.
 - Q9. **Analytics (O4).** Owner action: confirm none at launch, or name a vendor for privacy review.
-- Q10. **Confirm the L5 consequence.** Owner action: confirm that the SPA never performs first-login enrollment, given that T20 refuses
-  rather than enrolls.
+- Q10. **Confirm the L5 consequence.** ~~Owner action: confirm that the SPA never performs first-login enrollment, given that T20
+  refuses rather than enrolls.~~ **Resolved (2026-10-10), as a direct consequence of L5/D-031's own resolution**: the SPA never
+  performs first-login enrollment — enrollment always happens while an account holds only `USER`, before promotion, so a
+  privileged account reaching login already has a confirmed enrollment by construction. Closed.
 - Q11. **Capability links (R54) and public routes.** Owner action: decide whether the payer invoice view and the shareable trust passport
   ship, and in which phase. Either one requires an ADR amending L14.
-- Q12. **Auth contract additions (blocks R5's consistency, R23, R24, R25).** (a) Backend R6 requires a signed-in caller for
-  resend-verification, but `auth.yaml` declares it public with `security: []`. (b) `Retry-After` and a 429 response are undocumented.
-  (c) ~~The key-prefix field and~~ the MFA-not-confirmed problem type are undocumented. **(c)'s key-prefix half resolved
-  (2026-10-08): `ApiKeyMetadata.prefix` added** (`ApiKeyService.java`, `auth.yaml`, real HTTP shape asserted in
-  `ApiKeyCrudIntegrationTest`) — the non-secret `ck_live_xxxx` lookup handle was stored but never exposed in the list
-  response, leaving a caller with more than one key no way to tell them apart. (a) and (b), and (c)'s MFA-problem-type half,
-  remain open. Owner action: reconcile (a), and add or confirm (b)
-  and (c).
+- Q12. **Auth contract additions (blocks R5's consistency, R23, R24, R25).** All three parts now closed (2026-10-10).
+  (a) ~~Backend R6 requires a signed-in caller for resend-verification, but `auth.yaml` declares it public with
+  `security: []`.~~ **Resolved: `auth.yaml` and the real code were both already correct** — `AccountController.resendVerification`
+  takes no `Authentication` parameter and is listed in `PublicEndpoints`; it is deliberately public and email-identified,
+  an explicit, human-approved deviation T06's own Phase 0 artifact already disclosed (mirrors R12/R13's shape — no token
+  exists yet for an unauthenticated caller to present). It was `requirements.md`'s own R6 *text* that was stale, saying
+  "an authenticated caller" — fixed directly in `spec/auth-service/requirements.md`. No contract or code change needed.
+  (b) ~~`Retry-After` and a 429 response are undocumented.~~ **Resolved: consistent with this repo's own, already
+  three-times-confirmed convention** (`auth.yaml`/`crypto-internal.yaml`/`notifications.yaml` all document only success
+  responses — see auth T19 Phase 4/9/11's own repeated, re-verified disposition of the identical question). Not an
+  oversight; documenting it here would make this one case inconsistent with every other endpoint in the same file.
+  (c) ~~the MFA-not-confirmed problem type [is] undocumented.~~ **Resolved: this problem type does not exist, and the
+  premise was wrong.** `TotpAuthenticationProvider`'s rejection (R24) throws a plain `BadCredentialsException`, handled
+  by Spring Security's own form-login failure flow (`/login?error`) — never an RFC 9457 JSON response. There is nothing
+  to document because `auth.yaml` already explicitly excludes SAS's own protocol/login surface from its scope (its own
+  stated R47/T33 scope note). (The key-prefix half of (c) was separately resolved 2026-10-08:
+  `ApiKeyMetadata.prefix` added.) Closed.
 - Q13. **Privileged-account bootstrap (blocks R10's enrollment path, R11 for MERCHANT and ADMIN, and task 19).**
   ~~T20 refuses an unenrolled MERCHANT or ADMIN with the wrong-password error and does not enroll them. T19 is not
   built. Options: (a) enroll while the account holds USER, before MERCHANT is granted, by an admin-controlled step;
@@ -362,7 +373,7 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   If the SAS session cookie survives, a revoked device can silently re-authenticate. Owner action: decide whether revoke-all and
   password reset must also end SAS HTTP sessions, and specify the backend behaviour.
 
-**Per-phase status**: Phase 1a is `DRAFT` (Q5, Q6, Q12, Q14, Q15 — Q1, Q13 resolved). Phase 1b is `DRAFT` (Q2 — Q3 resolved). Phases 2–5 are `DRAFT` (Q4).
+**Per-phase status**: Phase 1a is `DRAFT` (Q5, Q6, Q14, Q15 — Q1, Q10, Q12, Q13 resolved). Phase 1b is `DRAFT` (Q2 — Q3 resolved). Phases 2–5 are `DRAFT` (Q4).
 Items Q7 to Q11 are decisions the author can make without backend work, and they do not block the auth gate's contracts.
 
 ## 12. Execution handoff — for an agent who starts implementation later
