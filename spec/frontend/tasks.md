@@ -198,52 +198,67 @@ deleted and renumbered.
 136. **Enumeration gate.** Identity errors stay indistinguishable across account states. Verifies `identityErrorsIndistinguishableAcrossAccountStates`. Cites L4.
 137. **Bundle gate.** No secret or non-public key is in the production bundle. Verifies `bundleContainsNoSecretEnvKeys`. Cites L10.
 
-## Phase 2 — Intelligence engine (DRAFT, blocked on Q4)
+## Phases 2–5 (DEFERRED — out of MVP scope, decided 2026-10-10)
 
-138. **Upload progress.** An evidence upload shows progress. Verifies `evidenceUploadShowsProgress`. Cites R40. Blocked on Q4.
-139. **Upload failure reason.** A failed upload shows a safe reason. Verifies `evidenceUploadShowsSafeFailures`. Cites R40. Blocked on Q4.
-140. **Upload failure hides internals.** A failed upload shows no server internals. Verifies `evidenceFailureHidesServerInternals`. Cites R40. Blocked on Q4.
-141. **Fields beside integrity.** Extracted fields show beside the integrity assessment. Verifies `analysisShowsFieldsWithIntegrity`. Cites R41. Blocked on Q4.
-142. **Low confidence labelled.** A result below the contract threshold is labelled. Verifies `analysisLabelsLowConfidenceAgainstContractThreshold`. Cites R41. Blocked on Q4.
-143. **Transaction-hash collection.** Entering a transaction hash starts collection. Verifies `txHashCollectsEvidenceAndMarksUploadNeeded`. Cites R42. Blocked on Q4.
-144. **Collected evidence labelled.** Auto-collected evidence is labelled as collected. Verifies `collectedEvidenceLabelledAsCollected`. Cites R42. Blocked on Q4.
-145. **Still-needed evidence.** Items still needed are marked as upload-needed. Verifies `stillNeededEvidenceMarkedAsUploadNeeded`. Cites R42. Blocked on Q4.
-146. **Graph nodes and edges.** The evidence graph renders its nodes and edges. Verifies `evidenceGraphRendersNodesAndEdges`. Cites R43. Blocked on Q4.
-147. **Partial analysis marked.** Partial analysis is marked partial. Verifies `evidenceGraphMarksPartialAnalysis`. Cites R43. Blocked on Q4.
-148. **Narrative beside graph.** The narrative shows alongside the graph. Verifies `narrativeShownWithGraph`. Cites R43. Blocked on Q4.
+The product owner decided directly: the current drive is an MVP, and Intelligence (Phase 2),
+Dispute Resolution (Phase 3), Reputation (Phase 4), and Fraud Intelligence (Phase 5) are not MVP
+surfaces. Units 138–169 below are kept, unchanged, as a forward reference only — no Phase 1a or
+Phase 1b unit depends on them, and none of them is started under this spec revision. They are not
+renumbered or removed, so a later revision can resume from here without an ID collision. See
+`requirements.md`'s own banner above its Phase 2 section and `package.md` §11 Q4.
 
-## Phase 3 — Dispute resolution (DRAFT, blocked on Q4)
+## Phase 2 — Intelligence engine (DEFERRED, see banner above)
 
-149. **Claim status.** Each claim shows supported, contradicted, or incomplete. Verifies `claimStatusShownForEachClaim`. Cites R44. Blocked on Q4.
-150. **Claim evidence.** Each claim shows its evidence. Verifies `claimShowsItsEvidence`. Cites R44. Blocked on Q4.
-151. **Statement apart from facts.** The claimant statement is separated from blockchain facts. Verifies `claimantStatementSeparatedFromFacts`. Cites R44. Blocked on Q4.
-152. **Narrative sections.** The narrative sections render in their declared order. Verifies `narrativeKeepsAiTextDistinct`. Cites R45. Blocked on Q4.
-153. **AI text distinct.** AI-generated text is visually distinct from verified facts. Verifies `aiTextVisuallyDistinctFromFacts`. Cites R45. Blocked on Q4.
-154. **Confidence and recommendation.** The narrative shows confidence and the recommended resolution. Verifies `narrativeShowsConfidenceAndRecommendation`. Cites R45. Blocked on Q4.
-155. **Timeline order.** Timeline events render in the declared order. Verifies `timelineShowsEventsInDeclaredOrder`. Cites R46. Blocked on Q4.
-156. **Missing event not inferred.** A missing timeline event is shown absent, never inferred. Verifies `timelineMissingEventNotInferred`. Cites R46. Blocked on Q4.
-157. **Smart-contract failure observed.** A contract failure is labelled observed, not inferred. Verifies `smartContractFailureMarkedObservedNotInferred`. Cites R47. Blocked on Q4.
+138. **Upload progress.** An evidence upload shows progress. Verifies `evidenceUploadShowsProgress`. Cites R40. Deferred (out of MVP scope, 2026-10-10).
+139. **Upload failure reason.** A failed upload shows a safe reason. Verifies `evidenceUploadShowsSafeFailures`. Cites R40. Deferred (out of MVP scope, 2026-10-10).
+140. **Upload failure hides internals.** A failed upload shows no server internals. Verifies `evidenceFailureHidesServerInternals`. Cites R40. Deferred (out of MVP scope, 2026-10-10).
+141. **Fields beside integrity.** Extracted fields show beside the integrity assessment. Verifies `analysisShowsFieldsWithIntegrity`. Cites R41. Deferred (out of MVP scope, 2026-10-10).
+142. **Low confidence labelled.** A result below the contract threshold is labelled. Verifies `analysisLabelsLowConfidenceAgainstContractThreshold`. Cites R41. Deferred (out of MVP scope, 2026-10-10).
+143. **Transaction-hash collection.** Entering a transaction hash starts collection. Verifies `txHashCollectsEvidenceAndMarksUploadNeeded`. Cites R42. Deferred (out of MVP scope, 2026-10-10).
+144. **Collected evidence labelled.** Auto-collected evidence is labelled as collected. Verifies `collectedEvidenceLabelledAsCollected`. Cites R42. Deferred (out of MVP scope, 2026-10-10).
+145. **Still-needed evidence.** Items still needed are marked as upload-needed. Verifies `stillNeededEvidenceMarkedAsUploadNeeded`. Cites R42. Deferred (out of MVP scope, 2026-10-10).
+146. **Graph nodes and edges.** The evidence graph renders its nodes and edges. Verifies `evidenceGraphRendersNodesAndEdges`. Cites R43. Deferred (out of MVP scope, 2026-10-10).
+147. **Partial analysis marked.** Partial analysis is marked partial. Verifies `evidenceGraphMarksPartialAnalysis`. Cites R43. Deferred (out of MVP scope, 2026-10-10).
+148. **Narrative beside graph.** The narrative shows alongside the graph. Verifies `narrativeShownWithGraph`. Cites R43. Deferred (out of MVP scope, 2026-10-10).
 
-## Phase 4 — Reputation & trust (DRAFT, blocked on Q4)
+## Phase 3 — Dispute resolution (DEFERRED, see banner above)
 
-158. **Signals not only a score.** The wallet profile shows contributing signals. Verifies `walletProfileShowsSignalsNotOnlyScore`. Cites R48. Blocked on Q4.
-159. **Signal source.** Each signal shows its source. Verifies `walletSignalShowsSource`. Cites R48. Blocked on Q4.
-160. **Passport metric window.** Each passport metric shows its source window. Verifies `trustPassportShowsSourceWindows`. Cites R49. Blocked on Q4.
-161. **Metric value with window.** A metric shows its value and window together. Verifies `passportMetricShowsValueWithWindow`. Cites R49. Blocked on Q4.
-162. **Counterparty relationships.** The behaviour graph renders its relationships. Verifies `counterpartyGraphRendersRelationships`. Cites R50. Blocked on Q4.
-163. **Cluster evidence.** Each cluster shows its evidence. Verifies `counterpartyGraphShowsClusterEvidence`. Cites R50. Blocked on Q4.
+149. **Claim status.** Each claim shows supported, contradicted, or incomplete. Verifies `claimStatusShownForEachClaim`. Cites R44. Deferred (out of MVP scope, 2026-10-10).
+150. **Claim evidence.** Each claim shows its evidence. Verifies `claimShowsItsEvidence`. Cites R44. Deferred (out of MVP scope, 2026-10-10).
+151. **Statement apart from facts.** The claimant statement is separated from blockchain facts. Verifies `claimantStatementSeparatedFromFacts`. Cites R44. Deferred (out of MVP scope, 2026-10-10).
+152. **Narrative sections.** The narrative sections render in their declared order. Verifies `narrativeKeepsAiTextDistinct`. Cites R45. Deferred (out of MVP scope, 2026-10-10).
+153. **AI text distinct.** AI-generated text is visually distinct from verified facts. Verifies `aiTextVisuallyDistinctFromFacts`. Cites R45. Deferred (out of MVP scope, 2026-10-10).
+154. **Confidence and recommendation.** The narrative shows confidence and the recommended resolution. Verifies `narrativeShowsConfidenceAndRecommendation`. Cites R45. Deferred (out of MVP scope, 2026-10-10).
+155. **Timeline order.** Timeline events render in the declared order. Verifies `timelineShowsEventsInDeclaredOrder`. Cites R46. Deferred (out of MVP scope, 2026-10-10).
+156. **Missing event not inferred.** A missing timeline event is shown absent, never inferred. Verifies `timelineMissingEventNotInferred`. Cites R46. Deferred (out of MVP scope, 2026-10-10).
+157. **Smart-contract failure observed.** A contract failure is labelled observed, not inferred. Verifies `smartContractFailureMarkedObservedNotInferred`. Cites R47. Deferred (out of MVP scope, 2026-10-10).
 
-## Phase 5 — Fraud intelligence & institutional API (DRAFT, blocked on Q4)
+## Phase 4 — Reputation & trust (DEFERRED, see banner above)
 
-164. **Alert classification.** Each alert shows its classification. Verifies `fraudAlertDistinguishesConfirmedFromSuspected`. Cites R51. Blocked on Q4.
-165. **Alert evidence.** Each alert shows its evidence. Verifies `fraudAlertShowsEvidence`. Cites R51. Blocked on Q4.
-166. **Confirmed and suspected distinct.** Confirmed and suspected alerts are visually distinct. Verifies `confirmedAndSuspectedVisuallyDistinct`. Cites R51. Blocked on Q4.
-167. **Cross-chain chains.** A cross-chain relationship shows the chains involved. Verifies `crossChainRelationshipShowsLinkingEvidence`. Cites R52. Blocked on Q4.
-168. **Portal key shown once.** A portal key is shown exactly once. Verifies `portalKeyShownExactlyOnce`. Cites R53. Blocked on Q4.
-169. **Portal plaintext-once rule.** The portal applies the plaintext-once rule to every key. Verifies `apiPortalKeysFollowPlaintextOnceRule`. Cites R53. Blocked on Q4.
+158. **Signals not only a score.** The wallet profile shows contributing signals. Verifies `walletProfileShowsSignalsNotOnlyScore`. Cites R48. Deferred (out of MVP scope, 2026-10-10).
+159. **Signal source.** Each signal shows its source. Verifies `walletSignalShowsSource`. Cites R48. Deferred (out of MVP scope, 2026-10-10).
+160. **Passport metric window.** Each passport metric shows its source window. Verifies `trustPassportShowsSourceWindows`. Cites R49. Deferred (out of MVP scope, 2026-10-10).
+161. **Metric value with window.** A metric shows its value and window together. Verifies `passportMetricShowsValueWithWindow`. Cites R49. Deferred (out of MVP scope, 2026-10-10).
+162. **Counterparty relationships.** The behaviour graph renders its relationships. Verifies `counterpartyGraphRendersRelationships`. Cites R50. Deferred (out of MVP scope, 2026-10-10).
+163. **Cluster evidence.** Each cluster shows its evidence. Verifies `counterpartyGraphShowsClusterEvidence`. Cites R50. Deferred (out of MVP scope, 2026-10-10).
 
-## Cross-phase — Capability links (DRAFT, blocked on Q11)
+## Phase 5 — Fraud intelligence & institutional API (DEFERRED, see banner above)
 
-170. **Unguessable identifier.** A capability link uses an unguessable identifier. Verifies `capabilityLinkIdIsUnguessable`. Cites R54. Blocked on Q11.
-171. **No PII on link.** A capability link exposes no PII. Verifies `capabilityLinkExposesNoPii`. Cites R54. Blocked on Q11.
-172. **Link not cached.** A capability link is never cached. Verifies `capabilityLinkNotCached`. Cites R54, R57. Blocked on Q11.
+164. **Alert classification.** Each alert shows its classification. Verifies `fraudAlertDistinguishesConfirmedFromSuspected`. Cites R51. Deferred (out of MVP scope, 2026-10-10).
+165. **Alert evidence.** Each alert shows its evidence. Verifies `fraudAlertShowsEvidence`. Cites R51. Deferred (out of MVP scope, 2026-10-10).
+166. **Confirmed and suspected distinct.** Confirmed and suspected alerts are visually distinct. Verifies `confirmedAndSuspectedVisuallyDistinct`. Cites R51. Deferred (out of MVP scope, 2026-10-10).
+167. **Cross-chain chains.** A cross-chain relationship shows the chains involved. Verifies `crossChainRelationshipShowsLinkingEvidence`. Cites R52. Deferred (out of MVP scope, 2026-10-10).
+168. **Portal key shown once.** A portal key is shown exactly once. Verifies `portalKeyShownExactlyOnce`. Cites R53. Deferred (out of MVP scope, 2026-10-10).
+169. **Portal plaintext-once rule.** The portal applies the plaintext-once rule to every key. Verifies `apiPortalKeysFollowPlaintextOnceRule`. Cites R53. Deferred (out of MVP scope, 2026-10-10).
+
+## Cross-phase — Capability links (DRAFT, narrowed 2026-10-10)
+
+**Narrowed 2026-10-10:** R54 named two possible capability links — a payer invoice view and a
+shareable trust passport. The trust-passport half is moot for this spec revision now that Phase 4
+(Reputation) is deferred (see the Phase 2–5 banner above); only the payer-invoice-view half
+remains live, and it stays tied to Q2 (payment-service), not Q4. These three units apply to
+whichever capability link is eventually built under this narrowed scope.
+
+170. **Unguessable identifier.** A capability link uses an unguessable identifier. Verifies `capabilityLinkIdIsUnguessable`. Cites R54. Blocked on Q11 (payer-invoice-view half only; Q2).
+171. **No PII on link.** A capability link exposes no PII. Verifies `capabilityLinkExposesNoPii`. Cites R54. Blocked on Q11 (payer-invoice-view half only; Q2).
+172. **Link not cached.** A capability link is never cached. Verifies `capabilityLinkNotCached`. Cites R54, R57. Blocked on Q11 (payer-invoice-view half only; Q2).

@@ -134,47 +134,60 @@ does not yet exist; they are blocked by the `Q#` shown.
   neutral "on hold, no receipt issued" state that reveals no compliance reason. `HELD` may be entered from any state. (payment-service
   design §4 transition table, R20) Blocked on Q2.
 
-## Phase 2 — Intelligence engine
+## Phases 2–5 (DEFERRED — out of MVP scope, decided 2026-10-10)
+
+**The product owner decided directly: the current drive is an MVP, and Intelligence (Phase 2),
+Dispute Resolution (Phase 3), Reputation (Phase 4), and Fraud Intelligence (Phase 5) are clearly
+not MVP surfaces — descoped from this spec revision.** R40–R53 below are kept, unchanged, as a
+forward reference only: no Phase 1a or Phase 1b requirement depends on them, and Q4 (their own
+former blocker, "no contracts exist") is now moot rather than closed — these phases are out of
+scope regardless of whether a contract later exists. They are not renumbered or deleted so a later
+spec revision can resume from here without an ID collision. See `package.md` §11 Q4 and
+`tasks.md`'s matching banner before its own Phase 2 section.
+
+## Phase 2 — Intelligence engine (deferred, see banner above)
 
 - R40. WHEN a user uploads an evidence file, THEN the SPA SHALL show upload progress and surface failure reasons without server
-  internals. Blocked on Q4.
+  internals. Deferred (out of MVP scope, 2026-10-10).
 - R41. WHEN evidence has been analysed, THEN the SPA SHALL show the extracted fields beside the integrity assessment, and SHALL label
-  results as low confidence when the contract's confidence field falls below the threshold it defines. Blocked on Q4.
+  results as low confidence when the contract's confidence field falls below the threshold it defines. Deferred (out of MVP scope, 2026-10-10).
 - R42. WHEN a user enters a transaction hash, THEN the SPA SHALL show the automatically collected evidence and mark anything still
-  needed as a user upload. Blocked on Q4.
+  needed as a user upload. Deferred (out of MVP scope, 2026-10-10).
 - R43. WHEN related evidence is correlated, THEN the SPA SHALL show the evidence graph and narrative, and SHALL mark partial analysis
-  as partial. Blocked on Q4.
+  as partial. Deferred (out of MVP scope, 2026-10-10).
 
-## Phase 3 — Dispute resolution
+## Phase 3 — Dispute resolution (deferred, see banner above)
 
 - R44. WHEN a dispute is opened, THEN the SPA SHALL show each claim as supported, contradicted, or incomplete, with the evidence behind
-  it. Blocked on Q4.
+  it. Deferred (out of MVP scope, 2026-10-10).
 - R45. WHEN a dispute narrative is shown, THEN the SPA SHALL present the timeline, verified facts, conflicting and supporting evidence,
-  confidence, and recommended resolution, and SHALL keep AI-generated text visibly distinct from verified facts. Blocked on Q4.
+  confidence, and recommended resolution, and SHALL keep AI-generated text visibly distinct from verified facts. Deferred (out of MVP scope, 2026-10-10).
 - R46. WHEN a transaction timeline is shown, THEN the SPA SHALL show these events in this order when present: transaction created,
-  network propagation, block inclusion, each confirmation, smart-contract execution, merchant acknowledgement. Blocked on Q4.
+  network propagation, block inclusion, each confirmation, smart-contract execution, merchant acknowledgement. Deferred (out of MVP scope, 2026-10-10).
 - R47. WHEN a dispute involves a smart contract, THEN the SPA SHALL show the contract execution evidence and mark any failure as
-  observed, not inferred. Blocked on Q4.
+  observed, not inferred. Deferred (out of MVP scope, 2026-10-10).
 
-## Phase 4 — Reputation & trust
+## Phase 4 — Reputation & trust (deferred, see banner above)
 
-- R48. WHEN a wallet reputation profile is viewed, THEN the SPA SHALL show the contributing signals, not only a score. Blocked on Q4.
-- R49. WHEN a merchant Trust Passport is viewed, THEN the SPA SHALL show each metric with its source window. Blocked on Q4.
-- R50. WHEN the counterparty behaviour graph is viewed, THEN the SPA SHALL show relationships and cluster evidence. Blocked on Q4.
+- R48. WHEN a wallet reputation profile is viewed, THEN the SPA SHALL show the contributing signals, not only a score. Deferred (out of MVP scope, 2026-10-10).
+- R49. WHEN a merchant Trust Passport is viewed, THEN the SPA SHALL show each metric with its source window. Deferred (out of MVP scope, 2026-10-10).
+- R50. WHEN the counterparty behaviour graph is viewed, THEN the SPA SHALL show relationships and cluster evidence. Deferred (out of MVP scope, 2026-10-10).
 
-## Phase 5 — Fraud intelligence & institutional API
+## Phase 5 — Fraud intelligence & institutional API (deferred, see banner above)
 
 - R51. WHEN a fraud alert is shown, THEN the SPA SHALL show its classification and evidence, and SHALL distinguish confirmed from
-  suspected. Blocked on Q4.
+  suspected. Deferred (out of MVP scope, 2026-10-10).
 - R52. WHEN a cross-chain relationship is shown, THEN the SPA SHALL present the chains involved and the evidence linking them.
-  Blocked on Q4.
-- R53. WHERE an institution uses the API portal, THEN the SPA SHALL apply the plaintext-once rule of R24 to portal keys. Blocked on Q4.
+  Deferred (out of MVP scope, 2026-10-10).
+- R53. WHERE an institution uses the API portal, THEN the SPA SHALL apply the plaintext-once rule of R24 to portal keys. Deferred (out of MVP scope, 2026-10-10).
 
 ## Cross-phase — Platform properties
 
-- R54. WHERE a payer or the public is granted a capability link (a payer invoice view or a shareable trust passport), THEN the SPA
-  SHALL serve it only through an unguessable identifier, SHALL expose no PII, and SHALL NOT cache it. Requires an ADR amending L14.
-  Blocked on Q11.
+- R54. WHERE a payer or the public is granted a capability link, THEN the SPA SHALL serve it only through an unguessable
+  identifier, SHALL expose no PII, and SHALL NOT cache it. Requires an ADR amending L14. **Narrowed (2026-10-10):**
+  originally named two possible links — a payer invoice view and a shareable trust passport. The trust-passport half is
+  moot now that Phase 4 (Reputation) is deferred (see the Phases 2–5 banner above); only the payer-invoice-view half
+  remains live, tied to Q2 (payment-service). Blocked on Q11 (payer-invoice-view half only).
 - R57. WHEN a navigation request targets an identity or backend path (`/oauth2/`, `/connect/logout`, `/login`, `/logout`, `/error`,
   `/.well-known/`, `/userinfo`, `/accounts`, `/api-keys`, `/admin`, `/api/`), THEN the service worker SHALL NOT answer it from cache
   and SHALL NOT serve the application shell. (L17)

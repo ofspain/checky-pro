@@ -78,7 +78,10 @@ Scope tags: `[ALL]` platform-level, enduring across every phase. `[P1]`…`[P5]`
 - O4. **Analytics.** **Resolved (2026-10-10): none at launch**, confirming the default already stated here. Any future
   vendor needs a privacy review against L3 and agents.md.
 - O5. **Privileged bootstrap path.** ~~Open, see L5 and Q13.~~ **Resolved 2026-10-08 — see L5 and `auth-decisions.md` D-031.**
-- O6. **[P2]–[P5] rendering.** Not chosen. The choice must not force a route-architecture change (L12).
+- O6. **[P2]–[P5] rendering.** **Deferred (2026-10-10): Phases 2–5 are out of MVP scope** (decided
+  directly by the product owner — `requirements.md`'s Phases 2–5 banner, `package.md` §11 Q4). This
+  decision is not needed for the current spec revision; if these phases are ever revisited, the
+  choice still must not force a route-architecture change (L12).
 - O7. **Notification stream authentication.** ~~A browser `EventSource` cannot set an `Authorization` header. Options: (a) a
   fetch-based stream reader with an `Authorization` header, as a named exception to L6; (b) a short-lived stream ticket issued by
   the backend. The token must never appear in a URL. The transport is decided by the notification service (O3, Q3). Blocked on
@@ -135,8 +138,8 @@ Scope tags: `[ALL]` platform-level, enduring across every phase. `[P1]`…`[P5]`
 - Public: `/app/sign-in`, `/app/callback`, `/app/register`, `/app/register/sent`, `/app/verify`, `/app/resend-verification`,
   `/app/reset/request`, `/app/reset`, `/app/signed-out`.
 - Authenticated: `/app/home`, `/app/account`, `/app/account/sessions`, `/app/account/mfa`, `/app/api-keys`, `/app/admin`,
-  `/app/invoices`, `/app/payments`, `/app/notifications`; and in later phases `/app/evidence`, `/app/disputes`, `/app/reputation`,
-  `/app/fraud`.
+  `/app/invoices`, `/app/payments`, `/app/notifications`. `/app/evidence`, `/app/disputes`, `/app/reputation`, `/app/fraud` are
+  reserved names for Phases 2–5, **deferred, out of MVP scope (2026-10-10)** — not part of this spec revision's route set.
 
 **Requested scopes**: `openid profile email`.
 
@@ -172,11 +175,11 @@ frontend/
 │   │   ├── payments/         state machine, receipts, history      [P1] (R32–R34, R36–R37, R56)
 │   │   ├── wallets/          monitoring setup, unknown token       [P1] (R38–R39; Q2)
 │   │   ├── notifications/    stream, reconnect                     [P1] (R35, R59; Q3, O7)
-│   │   ├── evidence/         upload, analysis, graph, tx-hash      [P2] (R40–R43)
-│   │   ├── disputes/         claims, narratives, timeline          [P3] (R44–R47)
-│   │   ├── reputation/       wallet profile, passport, graph       [P4] (R48–R50)
-│   │   ├── fraud/            alerts, cross-chain, API portal       [P5] (R51–R53)
-│   │   └── links/            capability links                      (R54; Q11)
+│   │   ├── evidence/         upload, analysis, graph, tx-hash      [P2] (R40–R43) — DEFERRED, out of MVP scope (2026-10-10)
+│   │   ├── disputes/         claims, narratives, timeline          [P3] (R44–R47) — DEFERRED, out of MVP scope (2026-10-10)
+│   │   ├── reputation/       wallet profile, passport, graph       [P4] (R48–R50) — DEFERRED, out of MVP scope (2026-10-10)
+│   │   ├── fraud/            alerts, cross-chain, API portal       [P5] (R51–R53) — DEFERRED, out of MVP scope (2026-10-10)
+│   │   └── links/            capability links (payer-invoice-view half only, now)  (R54; Q11)
 │   ├── i18n/                 catalogue                             (L11, O3)
 │   └── pwa/                  service worker, denylist              (L17, R57)
 ├── e2e/                      Playwright                            (L13)

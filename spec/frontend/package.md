@@ -6,9 +6,10 @@
 | Version | `0.2` |
 | Author (senior/owner) | `<name>` |
 | Implementer | `TBD` |
-| Status | `DRAFT` (least-advanced phase governs; per-phase status in §11). **Phase 1a itself is spec-complete** — every one
+| Status | `DRAFT` (least-advanced **in-scope** phase governs; per-phase status in §11). **Phase 1a itself is spec-complete** — every one
 of its own open questions is resolved; execution remains deliberately deferred (`agents.md`'s own process rule, pending
-`spec/payment-service`), not blocked on anything left undecided. |
+`spec/payment-service`), not blocked on anything left undecided. **Phases 2–5 are `DEFERRED` (2026-10-10, out of MVP
+scope) and do not govern this field** — only Phase 1a/1b status does. |
 | Target repo / service | `frontend/` |
 | Skills to load | `spec-authoring` (`references/frontend.md`), `code-review` |
 | Standing rules | [`agents.md`](agents.md) in this directory is authoritative. This spec references it and does not restate or override it. |
@@ -16,17 +17,20 @@ of its own open questions is resolved; execution remains deliberately deferred (
 ## 0. TL;DR
 
 A React and TypeScript mobile-first PWA, served from one origin behind the edge, with all SPA routes under `/app`. The auth and
-account gate ships first. Phase 1 payment verification follows and is the first marketable slice. Phases 2 to 5 add consumers and
-surfaces without rewriting the shell.
+account gate ships first. Phase 1 payment verification follows and is the first marketable slice. **The current drive is an
+MVP (decided directly by the product owner, 2026-10-10): Phases 2–5 (Intelligence, Dispute Resolution, Reputation, Fraud
+Intelligence) are explicitly out of scope for this spec revision** — they are not MVP surfaces. `L12`'s own phase-additivity
+rule (later phases consume, never rewrite, the Phase 1 shell) still governs if/when they are ever revisited; nothing about
+the Phase 1a/1b shell or routing was built or specced with an assumption that precludes resuming them later.
 
 | Phase | Slice | Status |
 |---|---|---|
 | Phase 1a | Auth and account gatekeeper | **SPEC COMPLETE** (2026-10-10). Every own open question (Q1, Q5, Q6, Q10, Q12, Q13, Q14, Q15) resolved. Execution is still deliberately deferred per `agents.md`'s own process rule, pending `spec/payment-service`. |
 | Phase 1b | Payment verification and invoicing | DRAFT. Q3 (notification stream) resolved 2026-10-08. Blocked on Q2. |
-| Phase 2 | Intelligence engine | DRAFT. Blocked on Q4. |
-| Phase 3 | AI-assisted dispute resolution | DRAFT. Blocked on Q4. |
-| Phase 4 | Reputation and trust | DRAFT. Blocked on Q4. |
-| Phase 5 | Fraud intelligence and institutional API | DRAFT. Blocked on Q4. |
+| Phase 2 | Intelligence engine | **DEFERRED — out of MVP scope (2026-10-10).** Not blocked on Q4 anymore; simply not part of this spec revision. |
+| Phase 3 | AI-assisted dispute resolution | **DEFERRED — out of MVP scope (2026-10-10).** |
+| Phase 4 | Reputation and trust | **DEFERRED — out of MVP scope (2026-10-10).** |
+| Phase 5 | Fraud intelligence and institutional API | **DEFERRED — out of MVP scope (2026-10-10).** |
 
 ## 1. Context & why now
 
@@ -41,10 +45,9 @@ rule for privileged accounts, and enumeration-safe copy.
   password reset and change, session list and revocation, merchant API keys, and role-matrix admin actions. R1–R30.
 - **Phase 1b**: invoices, the payment state machine, receipts, wallet monitoring setup, address-poisoning warnings, in-app
   notifications, and history and exports. R31–R39, R55, R56.
-- **Phases 2–5**: evidence, disputes, reputation, and fraud surfaces. R40–R53. Each is specified to the Phase 1 standard and gated
-  on its own contracts.
 - **Platform properties**: service-worker boundaries (R57), bundle secret rule (R58), and the notification stream (R59).
-- **Cross-phase**: capability links (R54), which need an ADR before any build.
+- **Cross-phase**: capability links (R54, narrowed 2026-10-10 to the payer-invoice-view half only), which need an ADR before any
+  build.
 
 **Out:**
 - Native mobile applications.
@@ -55,6 +58,11 @@ rule for privileged accounts, and enumeration-safe copy.
 - Backend requirements with no UI surface: the per-account rate-limit backstop (backend R42), the cleanup job (backend R40), and
   the audit mirror topics (backend R44, R45). They belong to `spec/auth-service/`.
 - Any backend code, contract, or endpoint.
+- **Phases 2–5: evidence, disputes, reputation, and fraud surfaces (R40–R53).** **Decided directly by the product owner
+  (2026-10-10): explicitly out of scope for the current MVP drive.** These were previously listed as "in scope, gated on
+  contracts"; the gating question (Q4) is now moot rather than closed — out of scope regardless of whether a contract
+  later exists. R40–R53, their named tests, and `tasks.md` units 138–169 are kept, unchanged, as a forward reference only.
+  The shareable-trust-passport half of R54 goes with Phase 4's own deferral (see R54's own narrowing note).
 
 ## 3. Requirements — acceptance criteria (EARS)
 
@@ -234,7 +242,8 @@ their own named tests.
 - `oidcRoundTripEndToEnd` → L1
 - `phase1ScreensPassAccessibilityChecks` → L11
 
-**Phase 2–5 — Unit-level tests (added with the decomposition of `tasks.md`)**
+**Phase 2–5 — Unit-level tests (DEFERRED, out of MVP scope, 2026-10-10 — kept as a forward reference; the three
+`capabilityLink*` tests below stay live under R54's narrowed, payer-invoice-view-only scope)**
 - `evidenceUploadShowsProgress` → R40
 - `evidenceFailureHidesServerInternals` → R40
 - `analysisShowsFieldsWithIntegrity` → R41
@@ -257,7 +266,8 @@ their own named tests.
 - `capabilityLinkExposesNoPii` → R54
 - `capabilityLinkNotCached` → R54
 
-**Phases 2–5** — named tests for R40–R54 are authored when each phase's contracts close (Q4, Q11):
+**Phases 2–5** — named tests for R40–R53 (DEFERRED, out of MVP scope, 2026-10-10 — kept unwritten/unauthored as a forward
+reference, not pending on Q4 closing since Q4 is now moot by scope):
 - `evidenceUploadShowsSafeFailures` → R40
 - `analysisLabelsLowConfidenceAgainstContractThreshold` → R41
 - `txHashCollectsEvidenceAndMarksUploadNeeded` → R42
@@ -272,7 +282,9 @@ their own named tests.
 - `fraudAlertDistinguishesConfirmedFromSuspected` → R51
 - `crossChainRelationshipShowsLinkingEvidence` → R52
 - `apiPortalKeysFollowPlaintextOnceRule` → R53
-- `capabilityLinkUsesUnguessableIdNoPiiNoCache` → R54
+
+(`capabilityLinkUsesUnguessableIdNoPiiNoCache` → R54 stays live, same as the other `capabilityLink*` tests above — R54's
+payer-invoice-view half is not deferred, only its trust-passport half.)
 
 ## 9. Verification checklist — implementer self-checks before raising PR
 
@@ -320,8 +332,12 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   now exists, documenting both real endpoints (`GET /notifications/stream`, `GET /notifications/unread`), each
   Bearer-JWT-authenticated with no specific scope. O7's stream-authentication option is resolved to a fetch-based reader
   carrying the real `Authorization` header (see `design.md` O7) — no ticket endpoint, no token in a URL. Closed.
-- Q4. **Phase 2–5 APIs (block R40–R53).** No contracts exist. Owner action: supply each phase's surface when its backend spec is
-  authored.
+- Q4. **Phase 2–5 APIs (block R40–R53).** ~~No contracts exist. Owner action: supply each phase's surface when its backend spec
+  is authored.~~ **Moot (2026-10-10), not closed by a contract landing — closed by scope.** The product owner decided
+  directly: Phases 2–5 are explicitly out of scope for the current MVP drive (`new_features.md`'s own Phase 2–5 split),
+  regardless of `spec/intelligence-service` now existing on the backend side for Phase 2 — a backend spec existing does
+  not reopen this frontend scope decision. R40–R53 and `tasks.md` units 138–169 stay written, unchanged, as a forward
+  reference for a later spec revision. Closed (as moot), not pending.
 - Q5. **Refresh-token issuance to the public client (blocks R18's refresh families, the reuse half of R22, and R19's revoke).**
   D-012 selects a rotating refresh token through the OIDC client. The seeder grants the refresh-token grant with
   `reuseRefreshTokens(false)`. No auth prompt verifies that SAS issues a refresh token to `checky-spa`, a client registered with
@@ -343,8 +359,10 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   refuses rather than enrolls.~~ **Resolved (2026-10-10), as a direct consequence of L5/D-031's own resolution**: the SPA never
   performs first-login enrollment — enrollment always happens while an account holds only `USER`, before promotion, so a
   privileged account reaching login already has a confirmed enrollment by construction. Closed.
-- Q11. **Capability links (R54) and public routes.** Owner action: decide whether the payer invoice view and the shareable trust passport
-  ship, and in which phase. Either one requires an ADR amending L14.
+- Q11. **Capability links (R54) and public routes.** ~~Owner action: decide whether the payer invoice view and the shareable
+  trust passport ship, and in which phase. Either one requires an ADR amending L14.~~ **Narrowed (2026-10-10):** the
+  shareable-trust-passport half is moot now that Phase 4 (Reputation) is deferred (Q4). Only the payer-invoice-view half
+  remains open, tied to Q2/payment-service — still requires an ADR amending L14 if/when it ships. Not closed; narrowed.
 - Q12. **Auth contract additions (blocks R5's consistency, R23, R24, R25).** All three parts now closed (2026-10-10).
   (a) ~~Backend R6 requires a signed-in caller for resend-verification, but `auth.yaml` declares it public with
   `security: []`.~~ **Resolved: `auth.yaml` and the real code were both already correct** — `AccountController.resendVerification`
@@ -392,8 +410,10 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
 
 **Per-phase status**: Phase 1a is `DRAFT` — every one of its own blockers (Q1, Q5, Q6, Q10, Q12, Q13, Q14, Q15) is now
 resolved (2026-10-08/10); Q15's own backend improvement is a tracked follow-up, not a Phase 1a blocker. Phase 1b is `DRAFT`
-(Q2 — Q3 resolved). Phases 2–5 are `DRAFT` (Q4).
-Q7-Q9 resolved 2026-10-10 (design system, i18n, analytics). Q11 (capability links) remains open, tied to payment-service.
+(Q2 — Q3 resolved). **Phases 2–5 are `DEFERRED` (2026-10-10) — explicitly out of MVP scope, decided directly by the product
+owner; Q4 is moot rather than pending.**
+Q7-Q9 resolved 2026-10-10 (design system, i18n, analytics). Q11 (capability links) is narrowed to its payer-invoice-view
+half only, still tied to payment-service (Q2); its trust-passport half is moot along with Phase 4.
 
 ## 12. Execution handoff — for an agent who starts implementation later
 
@@ -424,8 +444,10 @@ and what it must not assume.
   2026-10-10 — should also end the real SAS session, not yet built, `auth-decisions.md` D-032); the design system, i18n, analytics,
   and env keys (Q6–Q9, 2026-10-10 — Tailwind + headless components, `react-i18next` English-only, none at launch, proposed names
   confirmed).
-- Not decided: the payments contract (Q2); Phases 2–5 contracts (Q4); capability links / the payer invoice view and shareable
-  trust passport (Q11, tied to Q2/payment-service).
+- Not decided: the payments contract (Q2); capability links / the payer invoice view (Q11, tied to Q2/payment-service).
+- **Decided out of scope (2026-10-10): Phases 2–5 (Intelligence, Dispute Resolution, Reputation, Fraud Intelligence) —
+  the product owner's own direct MVP-scoping decision.** Q4 is moot rather than pending; R40–R53 and `tasks.md` units
+  138–169 are kept as a forward reference only. The shareable-trust-passport half of R54/Q11 is moot along with Phase 4.
 - Known facts that differ from earlier drafts: the SAS MFA step (auth T20) is built and refuses unenrolled MERCHANT and ADMIN accounts
   with wrong-password copy. **Updated 2026-10-08:** the self-service MFA endpoints (auth T19, Q1) are now built and documented in
   `auth.yaml`; the notification stream (Q3) is now documented in the new `contracts/api/notifications.yaml`, authenticated via a
