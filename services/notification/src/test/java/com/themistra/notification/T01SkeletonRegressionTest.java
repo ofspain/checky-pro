@@ -98,8 +98,14 @@ class T01SkeletonRegressionTest {
                 .contains("shedlock-provider-jdbc-template");
         assertThat(pom).as("rate limiting is an auth-specific concern (T31/R41), not this task's")
                 .doesNotContain("bucket4j");
-        assertThat(pom).as("no OpenAPI YAML contract exists for this service yet")
-                .doesNotContain("jackson-dataformat-yaml");
+        // Frontend spec's own Q3: contracts/api/notifications.yaml now exists (the first OpenAPI
+        // contract for this service, documenting the already-built in-app stream/read endpoints,
+        // R16/R17), parsed by NotificationOpenApiContractTest - mirrors auth-service's and
+        // crypto-service's own identical addition for their own first contract file. This T01-era
+        // assertion's premise ("no contract exists yet") is no longer true; updated rather than left
+        // to assert a fact this repo has since outgrown.
+        assertThat(pom).as("notifications.yaml now exists; this dependency parses it")
+                .contains("jackson-dataformat-yaml");
     }
 
     private record Coordinate(String groupId, String artifactId) {

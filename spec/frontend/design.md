@@ -60,9 +60,17 @@ Scope tags: `[ALL]` platform-level, enduring across every phase. `[P1]`…`[P5]`
 - O4. **Analytics.** Default none at launch (Q9). Any vendor needs a privacy review against L3 and agents.md.
 - O5. **Privileged bootstrap path.** Open, see L5 and Q13.
 - O6. **[P2]–[P5] rendering.** Not chosen. The choice must not force a route-architecture change (L12).
-- O7. **Notification stream authentication.** A browser `EventSource` cannot set an `Authorization` header. Options: (a) a
+- O7. **Notification stream authentication.** ~~A browser `EventSource` cannot set an `Authorization` header. Options: (a) a
   fetch-based stream reader with an `Authorization` header, as a named exception to L6; (b) a short-lived stream ticket issued by
-  the backend. The token must never appear in a URL. The transport is decided by the notification service (O3, Q3). Blocked on Q3.
+  the backend. The token must never appear in a URL. The transport is decided by the notification service (O3, Q3). Blocked on
+  Q3.~~ **Resolved (2026-10-08): option (a).** The transport is confirmed SSE, already built
+  (`services/notification` `InappStreamController`, `GET /notifications/stream`) — no backend ticket endpoint exists, and building
+  one would be new backend work disproportionate to this already-closed question. The real, already-shipped mechanism is a
+  standard `Authorization: Bearer <access_token>` header validated by the resource-server chain, identical to every other
+  backend call — so the SPA opens this stream with a fetch-based reader (not the native `EventSource`, which cannot set
+  headers), carrying the same in-memory access token the generated client already attaches, and reopens the stream after a
+  token renewal exactly as R59 requires. No ticket endpoint, no token in the URL. See
+  `contracts/api/notifications.yaml` for the documented contract.
 
 ## 4c. VERBATIM — routes, contracts, and fixed identifiers
 

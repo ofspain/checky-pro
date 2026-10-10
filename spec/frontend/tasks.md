@@ -90,13 +90,13 @@ will be decomposed after this granularity is accepted.
 
 ## Phase 1 — Auth & account: MFA (voluntary)
 
-66. **Enrollment shows URI and QR.** Beginning enrollment shows the `otpauth://` URI and a QR code. Verifies `enrollmentBeginShowsProvisioningUriAndQr`. Cites R11. Blocked on Q1.
-67. **Confirm needs a live code.** Confirmation succeeds only with a valid live code. Verifies `enrollmentConfirmRequiresLiveCode`. Cites R11. Blocked on Q1.
-68. **Recovery codes shown once.** The 10 recovery codes appear exactly once. Verifies `voluntaryEnrollmentShowsRecoveryCodesExactlyOnce`. Cites R11. Blocked on Q1.
-69. **Recovery codes not persisted.** Recovery codes are never written to any storage. Verifies `recoveryCodesNeverPersistedClientSide`. Cites R11, L3. Blocked on Q1.
-70. **Acknowledgement required.** The user must acknowledge the recovery codes before continuing. Verifies `recoveryCodesRequireAcknowledgement`. Cites R11. Blocked on Q1.
-71. **Disable needs password and code.** Disabling MFA requires the current password and a valid TOTP. Verifies `disableMfaRequiresPasswordAndCode`. Cites R12. Blocked on Q1.
-72. **Regenerate shows once.** Regenerated recovery codes show exactly once. Verifies `regenerateRecoveryCodesShowsOnce`. Cites R13. Blocked on Q1.
+66. **Enrollment shows URI and QR.** Beginning enrollment shows the `otpauth://` URI and a QR code. Verifies `enrollmentBeginShowsProvisioningUriAndQr`. Cites R11.
+67. **Confirm needs a live code.** Confirmation succeeds only with a valid live code. Verifies `enrollmentConfirmRequiresLiveCode`. Cites R11.
+68. **Recovery codes shown once.** The 10 recovery codes appear exactly once. Verifies `voluntaryEnrollmentShowsRecoveryCodesExactlyOnce`. Cites R11.
+69. **Recovery codes not persisted.** Recovery codes are never written to any storage. Verifies `recoveryCodesNeverPersistedClientSide`. Cites R11, L3.
+70. **Acknowledgement required.** The user must acknowledge the recovery codes before continuing. Verifies `recoveryCodesRequireAcknowledgement`. Cites R11.
+71. **Disable needs password and code.** Disabling MFA requires the current password and a valid TOTP. Verifies `disableMfaRequiresPasswordAndCode`. Cites R12.
+72. **Regenerate shows once.** Regenerated recovery codes show exactly once. Verifies `regenerateRecoveryCodesShowsOnce`. Cites R13.
 73. **Privileged bootstrap path.** The chosen path for unenrolled MERCHANT and ADMIN accounts works and shows no enrollment hint. Verifies `privilegedBootstrapPathEnrollsWithoutEnrollmentHint`. Cites R10, L5. Blocked on Q13.
 
 ## Phase 1 — Auth & account: API keys
@@ -168,9 +168,9 @@ will be decomposed after this granularity is accepted.
 
 ## Phase 1 — Payment verification & invoicing: notifications
 
-123. **Notification arrives in list.** An arriving notification appears in the list. Verifies `notificationArrivesInList`. Cites R35. Blocked on Q3.
-124. **Reconnecting state.** A dropped stream shows a reconnecting state. Verifies `streamDropShowsReconnectingState`. Cites R35. Blocked on Q3.
-125. **No duplicates on resume.** Resuming the stream shows no duplicate items. Verifies `notificationsReconnectWithoutDuplicates`. Cites R35. Blocked on Q3.
+123. **Notification arrives in list.** An arriving notification appears in the list. Verifies `notificationArrivesInList`. Cites R35.
+124. **Reconnecting state.** A dropped stream shows a reconnecting state. Verifies `streamDropShowsReconnectingState`. Cites R35.
+125. **No duplicates on resume.** Resuming the stream shows no duplicate items. Verifies `notificationsReconnectWithoutDuplicates`. Cites R35.
 126. **Stream auth without token in URL.** The stream authenticates per the chosen option and never places a token in a URL. Verifies `streamNeverPlacesTokenInUrlAndReopensAfterRenewal`. Cites R59, L6. Blocked on Q3 and O7.
 127. **Stream reopens after renewal.** The stream reopens after a successful renewal. Verifies `streamReopensAfterRenewal`. Cites R59, L18. Blocked on Q3 and O7.
 

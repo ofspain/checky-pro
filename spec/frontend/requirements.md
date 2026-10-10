@@ -167,6 +167,7 @@ does not yet exist; they are blocked by the `Q#` shown.
   and SHALL NOT serve the application shell. (L17)
 - R58. WHEN the production bundle is built, THEN it SHALL contain no secret value and no environment key outside the public
   configuration list in `design.md` §4c. (L10)
-- R59. WHEN the SPA opens the in-app notification stream, THEN it SHALL authenticate the stream with an `Authorization` header or a
-  short-lived stream ticket, SHALL NEVER place a token in a URL, and SHALL reopen the stream after a successful renewal. The choice
-  is open (O7) and blocked on Q3. (L6 exception scope; notification service O3)
+- R59. WHEN the SPA opens the in-app notification stream, THEN it SHALL authenticate the stream with an `Authorization` header,
+  SHALL NEVER place a token in a URL, and SHALL reopen the stream after a successful renewal. **Resolved (2026-10-08, O7):** a
+  fetch-based stream reader, not the native `EventSource` (which cannot set headers) — see `design.md` O7 and
+  `contracts/api/notifications.yaml`. (L6 exception scope; notification service O3, resolved SSE)

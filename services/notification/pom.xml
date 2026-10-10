@@ -161,6 +161,11 @@
       <version>4.2.2</version>
       <scope>test</scope>
     </dependency>
+
+    <!-- Parses contracts/api/notifications.yaml for NotificationOpenApiContractTest; version
+         managed by Spring Boot's own dependency BOM, matching services/auth's and
+         services/crypto's identical addition. -->
+    <dependency><groupId>com.fasterxml.jackson.dataformat</groupId><artifactId>jackson-dataformat-yaml</artifactId><scope>test</scope></dependency>
   </dependencies>
 
   <build>

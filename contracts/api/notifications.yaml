@@ -1,0 +1,78 @@
+openapi: 3.0.3
+info:
+  title: notification-service API
+  description: >
+    The in-app notification surface exposed to authenticated recipients (R16, R17). Scoped to
+    success responses only, mirroring auth.yaml's and crypto-internal.yaml's own identical R47
+    precedent — error responses are a cross-cutting shape (common.ApiExceptionHandler) not
+    specific to any one endpoint and are out of this contract's scope.
+  version: "1.0"
+servers:
+  - url: /
+
+paths:
+  /notifications/stream:
+    get:
+      summary: Open a real-time stream of the authenticated recipient's own in-app notifications
+      operationId: streamOwnNotifications
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: >
+            A long-lived Server-Sent Events connection (R16), rejected for an unauthenticated
+            caller. Scoped to the token's own sub claim — accepts no client-supplied account
+            identifier anywhere in its own path or parameters. Only notifications pushed after the
+            connection is established are sent; there is no Last-Event-ID backfill — use
+            GET /notifications/unread for that. Each event is named "notification"; its data field
+            is one InAppNotification JSON object.
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/InAppNotification'
+
+  /notifications/unread:
+    get:
+      summary: List the authenticated recipient's own unread in-app notifications
+      operationId: listOwnUnreadNotifications
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: >
+            The caller's unread notifications, newest first (R17; empty array if none). Scoped the
+            same way as the stream endpoint — never another account's notifications.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InAppNotification'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    InAppNotification:
+      type: object
+      required: [notificationUuid, category, title, body, createdAt]
+      properties:
+        notificationUuid:
+          type: string
+          format: uuid
+        category:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        link:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time

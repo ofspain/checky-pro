@@ -19,8 +19,8 @@ surfaces without rewriting the shell.
 
 | Phase | Slice | Status |
 |---|---|---|
-| Phase 1a | Auth and account gatekeeper | DRAFT. Blocked on Q1 (MFA endpoints), Q5 (refresh tokens), Q12 (contract additions), Q13 (privileged bootstrap), Q14 (admin status view), Q15 (session revocation semantics). Q6 and Q10 confirm the route and placement decisions. |
-| Phase 1b | Payment verification and invoicing | DRAFT. Blocked on Q2 and Q3. |
+| Phase 1a | Auth and account gatekeeper | DRAFT. Q1 (MFA endpoints) resolved 2026-10-08 (T19 built). Blocked on Q5 (refresh tokens), Q12 (contract additions), Q13 (privileged bootstrap), Q14 (admin status view), Q15 (session revocation semantics). Q6 and Q10 confirm the route and placement decisions. |
+| Phase 1b | Payment verification and invoicing | DRAFT. Q3 (notification stream) resolved 2026-10-08. Blocked on Q2. |
 | Phase 2 | Intelligence engine | DRAFT. Blocked on Q4. |
 | Phase 3 | AI-assisted dispute resolution | DRAFT. Blocked on Q4. |
 | Phase 4 | Reputation and trust | DRAFT. Blocked on Q4. |
@@ -299,17 +299,24 @@ their own named tests.
 
 Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when its own blockers are closed.
 
-- Q1. **MFA self-service contract and T19 (blocks R11–R13 and the Phase 1a MFA screens).** `accounts/me/mfa/totp` (enroll),
+- Q1. **MFA self-service contract and T19 (blocks R11–R13 and the Phase 1a MFA screens).** ~~`accounts/me/mfa/totp` (enroll),
   `…/confirm`, `DELETE accounts/me/mfa/totp`, and `accounts/me/mfa/recovery-codes` are specified (backend R22, R23, R28; auth T19) but
   are not in `contracts/api/auth.yaml` and not built. T20 (the SAS MFA step) is built. Owner action: confirm T19's delivery, then paste
-  or confirm the contract.
+  or confirm the contract.~~ **Resolved (2026-10-08): T19 is built, all 14 phases.** All four endpoints
+  (`POST .../totp`, `POST .../totp/confirm`, `DELETE .../totp`, `POST .../recovery-codes`, the last covering the new R49)
+  are implemented and documented in `contracts/api/auth.yaml` with explicit `security: [bearerAuth]`. 90 tests green,
+  including real HTTP integration tests for every named path and failure path. Closed.
 - Q2. **Payments contract and payment-service Q1 (blocks R31–R39, R55, R56).** `contracts/api/payments.yaml` does not exist.
   `spec/payment-service` defines invoice endpoints and the invoice states `OPEN`, `PAID`, `UNDERPAID`, `OVERPAID`, `EXPIRED`, `HELD`,
   but payment-service's own design O1 marks those outcomes as proposed, pending its Q1. Owner action: close payment-service Q1, then
   author or supply `payments.yaml`.
-- Q3. **Notification stream and transport (blocks R35, R59, O7).** `contracts/api/notifications.yaml` does not exist, and the transport
-  and authentication are decided in `spec/notification-service` O3 and Q3. Owner action: confirm the SSE choice and the stream
-  authentication option (O7).
+- Q3. **Notification stream and transport (blocks R35, R59, O7).** ~~`contracts/api/notifications.yaml` does not exist, and the
+  transport and authentication are decided in `spec/notification-service` O3 and Q3. Owner action: confirm the SSE choice and the
+  stream authentication option (O7).~~ **Resolved (2026-10-08).** The transport is SSE, already built
+  (`InappStreamController`, task 13) — `notification-service` design.md O3 updated to record this. `contracts/api/notifications.yaml`
+  now exists, documenting both real endpoints (`GET /notifications/stream`, `GET /notifications/unread`), each
+  Bearer-JWT-authenticated with no specific scope. O7's stream-authentication option is resolved to a fetch-based reader
+  carrying the real `Authorization` header (see `design.md` O7) — no ticket endpoint, no token in a URL. Closed.
 - Q4. **Phase 2–5 APIs (block R40–R53).** No contracts exist. Owner action: supply each phase's surface when its backend spec is
   authored.
 - Q5. **Refresh-token issuance to the public client (blocks R18's refresh families, the reuse half of R22, and R19's revoke).**
@@ -343,7 +350,7 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   If the SAS session cookie survives, a revoked device can silently re-authenticate. Owner action: decide whether revoke-all and
   password reset must also end SAS HTTP sessions, and specify the backend behaviour.
 
-**Per-phase status**: Phase 1a is `DRAFT` (Q1, Q5, Q6, Q12, Q13, Q14, Q15). Phase 1b is `DRAFT` (Q2, Q3). Phases 2–5 are `DRAFT` (Q4).
+**Per-phase status**: Phase 1a is `DRAFT` (Q5, Q6, Q12, Q13, Q14, Q15 — Q1 resolved). Phase 1b is `DRAFT` (Q2 — Q3 resolved). Phases 2–5 are `DRAFT` (Q4).
 Items Q7 to Q11 are decisions the author can make without backend work, and they do not block the auth gate's contracts.
 
 ## 12. Execution handoff — for an agent who starts implementation later
@@ -362,17 +369,20 @@ and what it must not assume.
 6. `artifacts/review-resolution.md`: both adversarial review passes, with every disposition. The second pass was not re-reviewed.
 7. Backend context the spec relies on: `contracts/api/auth.yaml`, `contracts/api/token-claims.md`,
    `services/auth/docs/architecture/auth-decisions.md` (especially D-012 and D-025), and `spec/auth-service/requirements.md`.
-8. For Phase 1b onwards: `spec/payment-service/` and its design open question Q1.
+8. For Phase 1b onwards: `spec/payment-service/` and its design open question Q1; also
+   `contracts/api/notifications.yaml` and `spec/notification-service/design.md` O3 (resolved: SSE).
 
 **What is decided and what is not.**
 - Decided (confirmed by the author): public OIDC/PKCE client; SAS-hosted login; enumeration-safe uniform copy with no lockout timers;
   React, TypeScript, Vite, React Router, TanStack Query, Zustand, vite-plugin-pwa, Vitest, Playwright; "Checky Pro" as the displayed
   name; auth gate before payments; the single-package layout.
 - Not decided: the privileged-account bootstrap (Q13); the admin status view (Q14); whether SAS issues refresh tokens to `checky-spa`
-  (Q5); session revocation semantics (Q15); the design system, i18n, analytics, and env key names (Q6–Q9); the payments and
-  notifications contracts (Q2, Q3); Phases 2–5 contracts (Q4).
+  (Q5); session revocation semantics (Q15); the design system, i18n, analytics, and env key names (Q6–Q9); the payments contract
+  (Q2); Phases 2–5 contracts (Q4).
 - Known facts that differ from earlier drafts: the SAS MFA step (auth T20) is built and refuses unenrolled MERCHANT and ADMIN accounts
-  with wrong-password copy. The self-service MFA endpoints (auth T19) are not built and not in `auth.yaml`.
+  with wrong-password copy. **Updated 2026-10-08:** the self-service MFA endpoints (auth T19, Q1) are now built and documented in
+  `auth.yaml`; the notification stream (Q3) is now documented in the new `contracts/api/notifications.yaml`, authenticated via a
+  fetch-based reader carrying a standard `Authorization` header (O7, resolved).
 
 **Process an executing agent must follow** (the 14-phase pipeline, as in `.ai/`). Start from Phase 0 for one unit at a time. Human
 approval gates are Phases 4 and 9. Adversarial review runs in Phases 3, 8, and 11 with a different model, not the implementing agent.
