@@ -42,27 +42,37 @@ does not yet exist; they are blocked by the `Q#` shown.
   `POST /accounts/password-reset-request` and SHALL show the same uniform acknowledgement. (backend R12)
 - R15. WHEN a visitor submits a reset token with a new password, THEN the SPA SHALL call `POST /accounts/password-reset`. On
   success it SHALL tell the user to sign in again on this device. The SPA SHALL NOT claim that other devices are signed out,
-  because backend R14 revokes refresh-token families only (Q15). On any failure it SHALL show the uniform failure of R4.
-  (backend R14, R15)
+  because backend R14 revokes refresh-token families only and (for a `checky-spa` login specifically) no family even exists
+  to revoke. **Decided, not yet built (2026-10-10, Q15, `auth-decisions.md` D-032):** the product owner chose to eventually
+  make the cross-device claim true — password-reset and revoke-all should also end the real SAS session — but this needs new
+  backend work (Spring Session plus a by-principal invalidation path) this spec does not assume exists yet. This requirement
+  keeps its current, accurate wording until that work lands; it is not retroactively marked satisfied. On any failure it
+  SHALL show the uniform failure of R4. (backend R14, R15)
 - R16. WHEN a signed-in user changes their password, THEN the SPA SHALL require the current password and a new password that
   meets policy. (backend R11)
 - R17. WHEN the server rejects a new password for breach or policy, THEN the SPA SHALL display the server's message as returned.
   The SPA SHALL NOT perform a client-side breach lookup. (backend R8, R9)
-- R18. WHEN a signed-in user views sessions, THEN the SPA SHALL list each session with its `deviceLabel` (or a neutral fallback
-  label when it is null), `createdAt`, and `rotatedAt`, and SHALL offer revoke-one and revoke-all. The session list depends on
-  refresh-token families, so it is blocked on Q5. (backend R36, R37, R38; `auth.yaml` SessionResponse)
-- R19. WHEN the user signs out, THEN the SPA SHALL call `/oauth2/revoke` for any token it holds, SHALL clear in-memory token
-  state, and SHALL end the SAS session through the OIDC end-session endpoint with a `post_logout_redirect_uri` from the
-  allowlist. The end-session navigation is served by SAS, not the SPA shell (R57). The `/oauth2/revoke` behaviour depends on Q5.
-  (agents.md sign-out rule)
+- R18. ~~WHEN a signed-in user views sessions, THEN the SPA SHALL list each session with its `deviceLabel` (or a neutral
+  fallback label when it is null), `createdAt`, and `rotatedAt`, and SHALL offer revoke-one and revoke-all. The session list
+  depends on refresh-token families, so it is blocked on Q5.~~ **Removed (2026-10-10, Q5 resolved).** No session/family row
+  is ever created for `checky-spa` logins — `ReuseDetectingAuthorizationService` only tracks a family when an authorization
+  carries a refresh token, and this client is never issued one (confirmed empirically). `GET /accounts/me/sessions` would
+  return empty for every SPA-originated login; a session-list screen has nothing real to show. Removed from Phase 1a's
+  scope rather than built against data that cannot exist for this client.
+- R19. WHEN the user signs out, THEN the SPA SHALL clear in-memory token state and end the SAS session through the OIDC
+  end-session endpoint with a `post_logout_redirect_uri` from the allowlist. **Revised (2026-10-10, Q5 resolved):** no
+  `/oauth2/revoke` call — the SPA holds no refresh token to revoke for this client. The end-session navigation is served by
+  SAS, not the SPA shell (R57). (agents.md sign-out rule)
 - R20. WHEN the SPA needs profile data, THEN it SHALL read it from `/userinfo` (scopes `openid profile email`) and account status
   from `GET /accounts/me`, and SHALL NOT read PII or verification state from the access token. (backend R48; `token-claims.md`)
 - R21. WHEN an API call returns 401, THEN the client boundary SHALL run at most one renewal per tab, SHALL share that renewal among
-  parallel 401s and sibling tabs, and on failure SHALL route to clean re-auth without an error loop. The renewal mechanism is
-  per D-012 and is blocked on Q5 for any refresh-token step. (agents.md client boundary; L18)
+  parallel 401s and sibling tabs, and on failure SHALL route to clean re-auth without an error loop. **Renewal mechanism
+  resolved (2026-10-10, Q5):** silent re-authentication via `/oauth2/authorize` on the existing SAS session cookie, not a
+  refresh-token grant — confirmed empirically, no refresh token is issued to this client. (agents.md client boundary; L18)
 - R22. IF renewal fails or the session is no longer valid, THEN the SPA SHALL transition to clean re-auth, SHALL NOT show a
-  half-authenticated screen, and SHALL show neutral copy. Sign-out SHALL propagate to every open tab. Refresh-token reuse
-  detection is part of Q5 and is not assumed here. (agents.md identity rules; L18)
+  half-authenticated screen, and SHALL show neutral copy. Sign-out SHALL propagate to every open tab. **Refresh-token reuse
+  detection removed (2026-10-10, Q5 resolved)** — there is no refresh token issued to this client to rotate or detect reuse
+  of. (agents.md identity rules; L18)
 - R23. WHEN an SPA-originated call returns HTTP 429, THEN the SPA SHALL show fixed, generic waiting copy with no countdown or
   interval, SHALL NOT replay non-idempotent POST requests automatically, and SHALL resume only on user action. Rate-limit responses
   from the SAS-hosted pages are out of SPA scope. The `Retry-After` header is not in `auth.yaml` and is blocked on Q12.
@@ -83,8 +93,9 @@ does not yet exist; they are blocked by the `Q#` shown.
     `createRole`, `listRoles`, `createRoleTemplate`, `listRoleTemplates`, `listAuditEvents`.
   - COMPLIANCE: `adminSuspendAccount`, `adminReinstateAccount`, `adminUnlockAccount`, `listAuditEvents`.
   - Any other role SHALL NOT see the admin area.
-  The status view for `adminGetAccount` (ADMIN only) is blocked on Q14, because it conflicts with L4. Lookup is by `accountUuid`,
-  since no search operation exists.
+  **Resolved (2026-10-10, Q14, `auth-decisions.md` D-033):** the status view for `adminGetAccount` (ADMIN only) ships —
+  it is a scoped carve-out from L4, not a conflict with it (see L4's own updated text). Lookup is by `accountUuid`, since
+  no search operation exists.
 - R28. WHILE a visitor is unauthenticated, THE SPA SHALL serve only the public routes listed verbatim in `design.md` §4c and SHALL
   redirect any other route to the sign-in start. (agents.md; design L14)
 - R29. IF the session expires during a task, THEN the SPA SHALL keep only non-sensitive form input in sessionStorage with a

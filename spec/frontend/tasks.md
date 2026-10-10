@@ -43,9 +43,9 @@ will be decomposed after this granularity is accepted.
 31. **Account status from accounts/me.** Account status is read from `GET /accounts/me`. Verifies `profileIsReadFromUserinfoAndAccountStatusFromMe`. Cites R20.
 32. **email_verified is not account state.** The access-token `email_verified` claim never drives verification UI. Verifies `emailVerifiedClaimIsNotAccountState`. Cites R20.
 33. **Clean re-auth on failed renewal.** A failed renewal routes to re-auth with no half-session. Verifies `failedRenewalTriggersCleanReauthWithoutHalfSession`. Cites R22.
-34. **Reuse detection path.** A reused refresh token routes to clean re-auth. Verifies `reusedRefreshOrFailedRenewalTriggersCleanReauth`. Cites R22. Blocked on Q5.
-35. **Sign-out revokes and clears.** Sign-out calls `/oauth2/revoke` for held tokens and clears memory. Verifies `signOutRevokesTokensClearsMemoryAndEndsSasSession`. Cites R19.
-36. **Sign-out ends the SAS session.** Sign-out calls the end-session endpoint with an allowlisted `post_logout_redirect_uri`. Verifies `signOutRevokesTokensClearsMemoryAndEndsSasSession`. Cites R19.
+34. ~~**Reuse detection path.** A reused refresh token routes to clean re-auth. Verifies `reusedRefreshOrFailedRenewalTriggersCleanReauth`.~~ **Removed (2026-10-10, Q5 resolved)** — no refresh token is issued to this client, so there is nothing to reuse or detect. Cites R22.
+35. **Sign-out clears memory.** Sign-out clears in-memory token state. Verifies `signOutClearsMemoryAndEndsSasSession`. Cites R19.
+36. **Sign-out ends the SAS session.** Sign-out calls the end-session endpoint with an allowlisted `post_logout_redirect_uri`. Verifies `signOutClearsMemoryAndEndsSasSession`. Cites R19.
 37. **Signed-out landing.** After sign-out the user lands on `/app/signed-out`. Verifies `publicRouteSetIsExactlyTheDeclaredSet`. Cites R19, L14.
 38. **Sign-out then sign-in requires credentials.** After sign-out, sign-in shows the password step. Verifies `signOutThenSignInRequiresCredentials`. Cites R19. Blocked on Q15.
 39. **Sign-out propagates to every tab.** Signing out in one tab signs out all open tabs. Verifies `signOutPropagatesToAllTabs`. Cites R22, L18.
@@ -81,12 +81,20 @@ will be decomposed after this granularity is accepted.
 
 ## Phase 1 — Auth & account: sessions
 
-60. **Device label shown.** Each session shows its device label. Verifies `sessionListShowsDeviceLabel`. Cites R18. Blocked on Q5.
-61. **Fallback label when null.** A null device label shows the neutral fallback. Verifies `sessionListShowsFallbackLabel`. Cites R18. Blocked on Q5.
-62. **Rotation time shown.** Each session shows `rotatedAt`. Verifies `sessionListShowsRotatedAt`. Cites R18. Blocked on Q5.
-63. **Revoke one.** Revoking one session removes it from the list. Verifies `revokeOneSessionRemovesIt`. Cites R18. Blocked on Q5.
-64. **Revoke all.** Revoking all sessions removes every session. Verifies `revokeAllSessionsRemovesAll`. Cites R18. Blocked on Q5, Q15.
-65. **Silent re-auth after revoke-all fails.** After revoke-all, a silent re-auth does not restore the session. Verifies `silentReauthAfterRevokeAllFails`. Cites R15, R18. Blocked on Q15.
+**Removed in full (2026-10-10, Q5 resolved).** `SessionService.list`/`revokeOne`/`revokeAll` are entirely
+`RefreshTokenFamily`-backed (`familyRepository.findByPrincipalNameAndRevokedAtIsNull`), and no family row is ever
+created for a `checky-spa` login (confirmed empirically — no refresh token is issued to this client, and
+`ReuseDetectingAuthorizationService.trackRefreshTokenIfPresent` creates a family only when one is present). This is
+not only "no list to show": revoke-one and revoke-all have nothing to act on for an SPA-originated login either. The
+6 units originally here are cut from Phase 1a's scope — kept below, struck through, for traceability rather than
+deleted and renumbered.
+
+60. ~~**Device label shown.** Each session shows its device label. Verifies `sessionListShowsDeviceLabel`.~~ **Removed, see above.** Cites R18.
+61. ~~**Fallback label when null.** A null device label shows the neutral fallback. Verifies `sessionListShowsFallbackLabel`.~~ **Removed, see above.** Cites R18.
+62. ~~**Rotation time shown.** Each session shows `rotatedAt`. Verifies `sessionListShowsRotatedAt`.~~ **Removed, see above.** Cites R18.
+63. ~~**Revoke one.** Revoking one session removes it from the list. Verifies `revokeOneSessionRemovesIt`.~~ **Removed, see above.** Cites R18.
+64. ~~**Revoke all.** Revoking all sessions removes every session. Verifies `revokeAllSessionsRemovesAll`.~~ **Removed, see above.** Cites R18.
+65. ~~**Silent re-auth after revoke-all fails.** After revoke-all, a silent re-auth does not restore the session. Verifies `silentReauthAfterRevokeAllFails`.~~ **Removed, see above.** Cites R15, R18.
 
 ## Phase 1 — Auth & account: MFA (voluntary)
 
@@ -112,7 +120,7 @@ will be decomposed after this granularity is accepted.
 ## Phase 1 — Auth & account: admin (role matrix)
 
 81. **Admin area hidden from other roles.** Users without ADMIN or COMPLIANCE do not see the admin area. Verifies `adminAreaHiddenFromOtherRoles`. Cites R27.
-82. **adminGetAccount.** Verifies `adminOperation_adminGetAccount_matchesRoleMatrix`. Cites R27. Status view blocked on Q14.
+82. **adminGetAccount.** Verifies `adminOperation_adminGetAccount_matchesRoleMatrix`. Cites R27.
 83. **adminDeleteAccount.** Verifies `adminOperation_adminDeleteAccount_matchesRoleMatrix`. Cites R27.
 84. **adminActivateAccount.** Verifies `adminOperation_adminActivateAccount_matchesRoleMatrix`. Cites R27.
 85. **adminSuspendAccount.** Verifies `adminOperation_adminSuspendAccount_matchesRoleMatrix`. Cites R27.

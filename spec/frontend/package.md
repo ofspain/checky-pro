@@ -3,10 +3,12 @@
 | Field | Value |
 |---|---|
 | Spec ID | `FRONTEND-ROADMAP` |
-| Version | `0.1` |
+| Version | `0.2` |
 | Author (senior/owner) | `<name>` |
 | Implementer | `TBD` |
-| Status | `DRAFT` (least-advanced phase governs; per-phase status in §11) |
+| Status | `DRAFT` (least-advanced phase governs; per-phase status in §11). **Phase 1a itself is spec-complete** — every one
+of its own open questions is resolved; execution remains deliberately deferred (`agents.md`'s own process rule, pending
+`spec/payment-service`), not blocked on anything left undecided. |
 | Target repo / service | `frontend/` |
 | Skills to load | `spec-authoring` (`references/frontend.md`), `code-review` |
 | Standing rules | [`agents.md`](agents.md) in this directory is authoritative. This spec references it and does not restate or override it. |
@@ -19,7 +21,7 @@ surfaces without rewriting the shell.
 
 | Phase | Slice | Status |
 |---|---|---|
-| Phase 1a | Auth and account gatekeeper | DRAFT. Q1, Q10, Q12, Q13 resolved (2026-10-08/10). Blocked on Q5 (refresh tokens), Q14 (admin status view), Q15 (session revocation semantics). Q6 (env keys/routes) still needs owner confirmation. |
+| Phase 1a | Auth and account gatekeeper | **SPEC COMPLETE** (2026-10-10). Every own open question (Q1, Q5, Q6, Q10, Q12, Q13, Q14, Q15) resolved. Execution is still deliberately deferred per `agents.md`'s own process rule, pending `spec/payment-service`. |
 | Phase 1b | Payment verification and invoicing | DRAFT. Q3 (notification stream) resolved 2026-10-08. Blocked on Q2. |
 | Phase 2 | Intelligence engine | DRAFT. Blocked on Q4. |
 | Phase 3 | AI-assisted dispute resolution | DRAFT. Blocked on Q4. |
@@ -326,11 +328,17 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   `ClientAuthenticationMethod.NONE`. Owner action: verify against the running auth service. If refresh tokens are not issued, choose
   between a custom token generator with an ADR, or accepting the D-012 silent re-authorization model with R18 and the reuse half of R22
   removed.
-- Q6. **Environment keys and the SPA route set (design §4c).** Confirm `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID`,
-  `VITE_OIDC_REDIRECT_URI`, `VITE_API_BASE_PATH`, and the `/app/...` route list, or supply existing names.
-- Q7. **Design system (O2).** Owner action: choose the component approach. Blocks visual implementation, not the contracts.
-- Q8. **i18n approach (O3).** Owner action: choose the catalogue library and the locale-fallback rule.
-- Q9. **Analytics (O4).** Owner action: confirm none at launch, or name a vendor for privacy review.
+- Q6. **Environment keys and the SPA route set (design §4c).** **Resolved (2026-10-10): confirmed as proposed.**
+  `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID`, `VITE_OIDC_REDIRECT_URI`, `VITE_API_BASE_PATH`, and the `/app/...` route list in
+  `design.md` §4c are final. Closed.
+- Q7. **Design system (O2).** **Resolved (2026-10-10): Tailwind CSS + headless/unstyled components** (e.g. Radix UI) for
+  accessible primitives (dialogs, dropdowns, etc.). Fully custom look, no fighting a pre-themed library. Closed.
+- Q8. **i18n approach (O3).** **Resolved (2026-10-10): `react-i18next`, English-only at launch.** Every string still goes
+  through the catalogue (the existing LOCKED platform rule) so a second language later is adding a translation file, not a
+  component rewrite. Fallback rule: a missing key falls back to English, never shows a raw key to the user. Closed.
+- Q9. **Analytics (O4).** **Resolved (2026-10-10): none at launch**, matching the design's own existing default. Revisit
+  when there's an actual product need to measure something — any future vendor needs a privacy review against L3/agents.md
+  first. Closed.
 - Q10. **Confirm the L5 consequence.** ~~Owner action: confirm that the SPA never performs first-login enrollment, given that T20
   refuses rather than enrolls.~~ **Resolved (2026-10-10), as a direct consequence of L5/D-031's own resolution**: the SPA never
   performs first-login enrollment — enrollment always happens while an account holds only `USER`, before promotion, so a
@@ -365,16 +373,27 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   discipline: `RoleService.assignRole`/`assignRoleTemplate` now refuse the grant (409,
   `RoleRequiresConfirmedMfaException`) unless a confirmed TOTP enrollment already exists. Recorded as
   `auth-decisions.md` D-031. Closed.
-- Q14. **Admin status view versus the enumeration lock (blocks R27's `adminGetAccount` view).** L4 is `[ALL]` and has no carve-out.
-  Showing an account's status to an administrator is a deliberate, authenticated disclosure. Owner action: decide whether to accept an
-  ADR that scopes an authenticated ADMIN status view, or remove the status view from the SPA.
-- Q15. **Session revocation semantics (blocks R15's cross-device claim, and a named test on silent re-auth after revoke-all).** Backend
-  R14 revokes refresh-token families only. Backend R37 and R38 remove the stored authorization record, not the browser's SAS session.
-  If the SAS session cookie survives, a revoked device can silently re-authenticate. Owner action: decide whether revoke-all and
-  password reset must also end SAS HTTP sessions, and specify the backend behaviour.
+- Q14. **Admin status view versus the enumeration lock (blocks R27's `adminGetAccount` view).** ~~L4 is `[ALL]` and has no
+  carve-out. Showing an account's status to an administrator is a deliberate, authenticated disclosure. Owner action: decide
+  whether to accept an ADR that scopes an authenticated ADMIN status view, or remove the status view from the SPA.~~
+  **Resolved (2026-10-10): keep it, with a scoped ADR** (`auth-decisions.md` D-033) — L4's own text updated to apply only to
+  unauthenticated/low-trust callers; the authenticated, RBAC-gated admin status view is a deliberate disclosure outside that
+  scope, not a violation of it. No backend change (the endpoint already returns this field). Closed.
+- Q15. **Session revocation semantics.** ~~Backend R14 revokes refresh-token families only. Backend R37 and R38 remove the
+  stored authorization record, not the browser's SAS session. If the SAS session cookie survives, a revoked device can
+  silently re-authenticate. Owner action: decide whether revoke-all and password reset must also end SAS HTTP sessions, and
+  specify the backend behaviour.~~ **Decided (2026-10-10): yes, both should also end the real SAS session — but this is
+  not yet built.** Recorded as `auth-decisions.md` D-032, including a real complication discovered while investigating Q5:
+  no refresh-token family even exists for a `checky-spa` login, so the fix is not a small extension of the existing
+  family-revocation path — it needs a new, direct session-invalidation mechanism (Spring Session, not currently a
+  dependency of this service at all), tracked as an unnumbered future backend task. `requirements.md`'s own R15 keeps its
+  current, accurate (conservative) wording until that work lands. The decision itself is closed; the implementation is an
+  open, tracked follow-up, not something this spec assumes exists yet.
 
-**Per-phase status**: Phase 1a is `DRAFT` (Q5, Q6, Q14, Q15 — Q1, Q10, Q12, Q13 resolved). Phase 1b is `DRAFT` (Q2 — Q3 resolved). Phases 2–5 are `DRAFT` (Q4).
-Items Q7 to Q11 are decisions the author can make without backend work, and they do not block the auth gate's contracts.
+**Per-phase status**: Phase 1a is `DRAFT` — every one of its own blockers (Q1, Q5, Q6, Q10, Q12, Q13, Q14, Q15) is now
+resolved (2026-10-08/10); Q15's own backend improvement is a tracked follow-up, not a Phase 1a blocker. Phase 1b is `DRAFT`
+(Q2 — Q3 resolved). Phases 2–5 are `DRAFT` (Q4).
+Q7-Q9 resolved 2026-10-10 (design system, i18n, analytics). Q11 (capability links) remains open, tied to payment-service.
 
 ## 12. Execution handoff — for an agent who starts implementation later
 
@@ -399,10 +418,14 @@ and what it must not assume.
 - Decided (confirmed by the author): public OIDC/PKCE client; SAS-hosted login; enumeration-safe uniform copy with no lockout timers;
   React, TypeScript, Vite, React Router, TanStack Query, Zustand, vite-plugin-pwa, Vitest, Playwright; "Checky Pro" as the displayed
   name; auth gate before payments; the single-package layout; the privileged-account bootstrap (Q13, 2026-10-08 — enroll as USER,
-  then promote, enforced server-side, `auth-decisions.md` D-031).
-- Not decided: the admin status view (Q14); whether SAS issues refresh tokens to `checky-spa`
-  (Q5); session revocation semantics (Q15); the design system, i18n, analytics, and env key names (Q6–Q9); the payments contract
-  (Q2); Phases 2–5 contracts (Q4).
+  then promote, enforced server-side, `auth-decisions.md` D-031); refresh-token/renewal reality (Q5, 2026-10-10 — no refresh token
+  is issued to this client, confirmed empirically; silent re-auth via the SAS session cookie only, `auth-decisions.md` context in
+  D-032); the admin status view (Q14, 2026-10-10 — scoped carve-out from L4, `auth-decisions.md` D-033); session revocation (Q15,
+  2026-10-10 — should also end the real SAS session, not yet built, `auth-decisions.md` D-032); the design system, i18n, analytics,
+  and env keys (Q6–Q9, 2026-10-10 — Tailwind + headless components, `react-i18next` English-only, none at launch, proposed names
+  confirmed).
+- Not decided: the payments contract (Q2); Phases 2–5 contracts (Q4); capability links / the payer invoice view and shareable
+  trust passport (Q11, tied to Q2/payment-service).
 - Known facts that differ from earlier drafts: the SAS MFA step (auth T20) is built and refuses unenrolled MERCHANT and ADMIN accounts
   with wrong-password copy. **Updated 2026-10-08:** the self-service MFA endpoints (auth T19, Q1) are now built and documented in
   `auth.yaml`; the notification stream (Q3) is now documented in the new `contracts/api/notifications.yaml`, authenticated via a

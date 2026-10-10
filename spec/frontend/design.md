@@ -10,14 +10,20 @@ Scope tags: `[ALL]` platform-level, enduring across every phase. `[P1]`…`[P5]`
   backend R14; `RegisteredClientSeeder` registers `checky-spa` with `ClientAuthenticationMethod.NONE`)
 - L2. **[ALL] Interactive login is SAS-hosted.** Password, TOTP, and recovery-code steps run in the Spring Authorization Server
   flow. The SAS MFA step is built (auth T20, `TotpAuthenticationProvider`). Confirmed by the author.
-- L3. **[ALL] Tokens in memory only.** Access tokens are never written to storage, logs, or analytics. Renewal follows D-012 in
-  `services/auth/docs/architecture/auth-decisions.md` as written: "rotating refresh token via the OIDC client, SAS httpOnly
-  session cookie enables silent re-auth … refresh rotation + family reuse detection". Whether SAS issues that refresh token to
-  the `checky-spa` client is open (Q5). No spec depends on refresh-token behaviour until Q5 closes.
-- L4. **[ALL] Enumeration-safe UI, without carve-out.** Copy, redirects, styling, and timing are identical across unknown or
-  missing, locked, suspended, and deleted accounts and across bad, expired, and used tokens. No lockout timers. An admin
-  status view would reveal account state inside an authenticated screen. Showing it requires an ADR (Q14), and R27's status
-  view is blocked until one exists.
+- L3. **[ALL] Tokens in memory only.** Access tokens are never written to storage, logs, or analytics. **Renewal resolved
+  (2026-10-10, Q5), empirically verified against the real running auth service (not assumed from D-012's own text, which
+  reads "rotating refresh token via the OIDC client, SAS httpOnly session cookie enables silent re-auth … refresh
+  rotation + family reuse detection"):** a real `/oauth2/token` exchange for `checky-spa` issues no `refresh_token` at
+  all, and `ReuseDetectingAuthorizationService` never creates a session/family row without one. Renewal is silent
+  re-authentication only — re-opening `/oauth2/authorize` on the existing SAS session cookie, no refresh-token grant, no
+  rotation, no reuse detection, for this client. Owner decision: accept this model rather than commission new backend
+  work to force refresh-token issuance (see O1).
+- L4. **[ALL] Enumeration-safe UI for every unauthenticated or low-trust caller, without carve-out there.** Copy,
+  redirects, styling, and timing are identical across unknown or missing, locked, suspended, and deleted accounts and
+  across bad, expired, and used tokens, on every public or self-service surface. No lockout timers. **Scoped carve-out
+  resolved (2026-10-10, Q14, `auth-decisions.md` D-033):** the one authenticated, ADMIN-only, already-RBAC-gated status
+  view (`adminGetAccount`, R27) is a deliberate disclosure to a trusted operator role, not the anonymous-probing
+  scenario this rule exists to close — L4 does not extend to it.
 - L5. **[ALL] MFA-first for MERCHANT and ADMIN; bootstrap resolved 2026-10-08 (Q13 closed, auth-decisions.md D-031).**
   SAS refuses authorization to MERCHANT or ADMIN accounts without a confirmed enrollment, with the same error as a wrong
   password (backend T20). It does not enroll them. **Updated: the self-service endpoints (auth T19) are now built** —
@@ -59,11 +65,18 @@ Scope tags: `[ALL]` platform-level, enduring across every phase. `[P1]`…`[P5]`
 
 ## 4b. OPEN decisions — need sign-off before the owning phase moves to READY FOR IMPL
 
-- O1. **Refresh-token issuance to the public client.** Mechanism closed by D-012 (silent re-auth through the SAS session); whether
-  SAS issues rotating refresh tokens to `checky-spa` is open (Q5). Options if required: a custom token generator plus an ADR.
-- O2. **Design system.** Not chosen (Q7). Must meet L11.
-- O3. **i18n approach.** Not chosen (Q8). Locale fallback rule to confirm.
-- O4. **Analytics.** Default none at launch (Q9). Any vendor needs a privacy review against L3 and agents.md.
+- O1. **Refresh-token issuance to the public client.** ~~Mechanism closed by D-012 (silent re-auth through the SAS session);
+  whether SAS issues rotating refresh tokens to `checky-spa` is open (Q5). Options if required: a custom token generator
+  plus an ADR.~~ **Resolved (2026-10-10): confirmed empirically, no refresh token is issued today.** Decided directly
+  with the product owner: accept this as the real model (no new backend work) rather than commission a custom token
+  generator to force issuance. See L3 for the resulting renewal mechanism and R18/R19/R21/R22 for the requirements this
+  changes.
+- O2. **Design system.** ~~Not chosen (Q7). Must meet L11.~~ **Resolved (2026-10-10): Tailwind CSS + headless/unstyled
+  components (e.g. Radix UI) for accessible primitives.**
+- O3. **i18n approach.** ~~Not chosen (Q8). Locale fallback rule to confirm.~~ **Resolved (2026-10-10): `react-i18next`,
+  English-only at launch. Fallback rule: a missing key falls back to English, never a raw key.**
+- O4. **Analytics.** **Resolved (2026-10-10): none at launch**, confirming the default already stated here. Any future
+  vendor needs a privacy review against L3 and agents.md.
 - O5. **Privileged bootstrap path.** ~~Open, see L5 and Q13.~~ **Resolved 2026-10-08 — see L5 and `auth-decisions.md` D-031.**
 - O6. **[P2]–[P5] rendering.** Not chosen. The choice must not force a route-architecture change (L12).
 - O7. **Notification stream authentication.** ~~A browser `EventSource` cannot set an `Authorization` header. Options: (a) a

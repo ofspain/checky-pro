@@ -382,3 +382,65 @@ the three options it names was ever selected; `design.md` itself is not edited b
   reach through the service layer does not make `TotpAuthenticationProvider`'s independent
   defense-in-depth check at login any less worth proving.
 - **Reference influence:** None (reference has no MFA concept at all, gap-analysis §1).
+
+## D-032 · Revoke-all and password-reset should end the real SAS session too (resolves frontend spec Q15) — decided, not yet built
+
+- **Context:** `SessionService.list`/`revokeOne`/`revokeAll` (T28, R36-R38) and the automatic revoke-all on password
+  reset (R14) all operate on `RefreshTokenFamily` rows only. `D-031`'s own investigation (this same session)
+  established that **no family row is ever created for a `checky-spa` login at all** — not just that the SAS session
+  survives revocation, but that the SPA has no revocable session state in this subsystem in the first place. The
+  frontend spec's own R15 therefore already states the conservative, currently-true position: "the SPA SHALL NOT
+  claim that other devices are signed out" after a password reset. `package.md` Q15 asked whether this should change.
+- **Alternatives:** (a) leave it as a documented limitation — password-reset/revoke-all remain scoped to refresh-token
+  families, cross-device sign-out is never claimed; (b) add real session termination — on password-reset/revoke-all,
+  also invalidate the account's active Spring Session store entries (the actual backing store for the SAS httpOnly
+  session cookie), so a browser holding that cookie can no longer silently resume via `/oauth2/authorize`.
+- **Selected:** (b), decided directly with the product owner. **Not yet built — this decision is recorded ahead of
+  implementation, not after it**, unlike every other D-0xx entry in this log. The real fix is **not** a small
+  extension of the existing family-revocation code path (which, per the context above, the SPA never populates in
+  the first place) — it needs a new, direct mechanism: resolve the account's live Spring Session entries by
+  principal (e.g. via `FindByIndexNameSessionRepository` keyed on the authenticated username, the Spring Session
+  interface built for exactly this "invalidate all of this user's sessions" use case) and expire them, alongside the
+  existing family revocation for any client that *does* hold a refresh token (the service-to-service clients, and
+  any future client that does get one).
+- **Trade-offs:** This closes a real gap — today a revoked/reset-password device's SAS session cookie keeps working
+  until it naturally expires, letting it silently re-authenticate via `/oauth2/authorize` with no credential prompt.
+  The cost is real: **confirmed directly, not assumed — this codebase has no Spring Session dependency at all today**
+  (`grep` for `spring-session`/`SessionRepository` in `services/auth/pom.xml` finds nothing); SAS currently runs on
+  the default in-memory servlet session, which has no by-principal lookup capability and, run across ≥2 EKS replicas
+  with no shared store, is already relying on either sticky sessions or accepting some replicas not recognizing a
+  given cookie — a separate, pre-existing gap this ADR surfaces but does not fix. Adding Spring Session with a real
+  shared backing store (Redis is the natural choice already used nowhere else in this stack, or JDBC against the
+  existing Postgres instance) is therefore a prerequisite piece of infrastructure this decision depends on, not an
+  optional verification step.
+- **Impact:** None to current code — this is a decision record only. Tracked as a follow-up implementation task
+  (not numbered yet; create one in `spec/auth-service/tasks.md` when picked up). Until then, `requirements.md`'s own
+  R15 keeps its accurate, conservative wording — it is not retroactively marked satisfied.
+- **Revisit trigger:** none — this is the chosen direction; revisit only if adding Spring Session turns out to need
+  a different backing store than Redis/JDBC for some other, as-yet-undiscovered reason, which would change the
+  implementation approach, not the decision itself.
+- **Reference influence:** None (reference has no session-management concept).
+
+## D-033 · Admin status view is a scoped carve-out from L4 (resolves frontend spec Q14)
+
+- **Context:** The frontend spec's L4 is `[ALL]` LOCKED, "enumeration-safe UI, without carve-out" — copy, redirects,
+  timing identical regardless of account state, for every caller. `GET /admin/accounts/{accountUuid}` (`adminGetAccount`,
+  `security: [bearerAuth: [ADMIN]]`) already exists and already returns `AccountResponse.status`
+  (`PENDING_VERIFICATION`/`ACTIVE`/`LOCKED`/`SUSPENDED`/`DELETED`) in full — the backend endpoint was never built with
+  any enumeration-safety constraint; L4 is a frontend-only rule about the SPA's own public, unauthenticated/low-trust
+  surfaces (registration, login, verification, password reset). Showing this already-returned field to an
+  authenticated ADMIN caller in the admin console is a different disclosure than the uniform-copy rules L4 governs.
+- **Alternatives:** (a) keep L4 with zero carve-outs — the admin console never renders account status directly; (b) a
+  scoped ADR (this one) carving out the one authenticated, already-audited, ADMIN-only status view from L4's own
+  "without carve-out" framing, since L4's actual threat model (unauthenticated enumeration) does not apply to it.
+- **Selected:** (b), decided directly with the product owner. An ADMIN viewing another account's status via a real,
+  already-built, already-RBAC-gated endpoint is a deliberate, authenticated disclosure to a trusted operator role —
+  not the anonymous-probing scenario L4 exists to close. No backend change: `adminGetAccount` already returns this
+  field; the carve-out is purely a frontend-spec scoping clarification.
+- **Trade-offs:** L4's own "without carve-out" wording is now, precisely, "without carve-out for any unauthenticated
+  or low-trust caller" — the admin console is neither. This is a narrowing of L4's literal text, recorded here rather
+  than left as an implicit, undocumented exception a future reader might read as a violation.
+- **Impact:** `spec/frontend/design.md` L4 and `requirements.md` R27 updated to state the carve-out explicitly. No
+  backend or frontend code exists yet to change.
+- **Revisit trigger:** none anticipated.
+- **Reference influence:** None (reference has no admin console).

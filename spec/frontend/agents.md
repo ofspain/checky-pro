@@ -22,11 +22,15 @@ this file and records only what is specific to the feature. No spec may override
   home route, never to an arbitrary URL.
 - Interactive login (password, TOTP or recovery-code step) happens in the SAS-hosted flow. The SAS MFA step is built (auth
   T20). The SPA renders no password form. Confirmed by the author.
-- Access tokens live in memory only. The renewal mechanism is the one selected in
-  `services/auth/docs/architecture/auth-decisions.md` D-012: a PKCE public client whose renewal uses a rotating refresh
-  token via the OIDC client, with the SAS httpOnly session cookie enabling silent re-authentication. Whether SAS issues
-  that refresh token to the `checky-spa` client, which is registered with `ClientAuthenticationMethod.NONE`, is open (Q5).
-  No spec may depend on refresh-token behaviour until Q5 closes. If renewal fails, or a session is found invalid, the SPA
+- Access tokens live in memory only. **Renewal mechanism resolved (2026-10-10, Q5), empirically verified against the real
+  running auth service, not just configuration:** `checky-spa` is registered with the refresh-token grant, but a real
+  `/oauth2/token` exchange for it issues no `refresh_token` field at all — confirmed directly, not assumed from D-012's
+  own stated model. `ReuseDetectingAuthorizationService.trackRefreshTokenIfPresent` returns immediately when no refresh
+  token is present, so no session/family row is ever created for this client either. Renewal is therefore silent
+  re-authentication only: the SPA re-opens `/oauth2/authorize` (hidden iframe or a background navigation, PKCE again),
+  relying on the SAS httpOnly session cookie to resume without a credential prompt, and exchanges the returned code for
+  a fresh access token. No refresh-token grant, no token rotation, no reuse detection — there is no refresh token to
+  rotate or detect reuse of for this client. If silent re-authentication fails, or a session is found invalid, the SPA
   transitions to a clean re-auth and never leaves a half-authenticated session.
 - Sign-out ends the SAS session through the OIDC end-session endpoint with an allowlisted `post_logout_redirect_uri`, and
   clears in-memory token state. Sign-out propagates to every open tab.
@@ -43,9 +47,14 @@ this file and records only what is specific to the feature. No spec may override
 - A MERCHANT or ADMIN account must hold a confirmed TOTP enrollment before the SAS flow issues an authorization code. The
   SAS flow refuses such accounts without enrollment and returns the same error as a wrong password (backend T20). It does
   not enroll them.
-- The SPA's own enrollment wizard covers voluntary enrollment and management by an already-authenticated user. The
-  self-service enrollment endpoints (auth T19) are not built.
-- How an unenrolled privileged account gets enrolled is an open decision (Q13). No path is assumed.
+- The SPA's own enrollment wizard covers voluntary enrollment and management by an already-authenticated user. **The
+  self-service enrollment endpoints (auth T19) are now built** — `POST .../totp`, `.../confirm`, `DELETE .../totp`,
+  `POST .../recovery-codes`, all documented in `auth.yaml`.
+- **The privileged-account bootstrap path is resolved (2026-10-10, Q13, `auth-decisions.md` D-031):** an account enrolls
+  while it still holds only `USER` (the same wizard above, reachable because T19 only needs an authenticated bearer
+  token, not a privileged role) and is promoted to MERCHANT/ADMIN only afterward — enforced server-side, not just by
+  admin discipline: granting either role without a confirmed enrollment is refused (409). There is no separate
+  first-login or pre-authentication enrollment flow.
 - Recovery codes are shown exactly once.
 
 **API access (LOCKED, `[ALL]`)**
