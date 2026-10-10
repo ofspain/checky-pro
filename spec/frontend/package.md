@@ -19,7 +19,7 @@ surfaces without rewriting the shell.
 
 | Phase | Slice | Status |
 |---|---|---|
-| Phase 1a | Auth and account gatekeeper | DRAFT. Q1 (MFA endpoints) resolved 2026-10-08 (T19 built). Blocked on Q5 (refresh tokens), Q12 (contract additions), Q13 (privileged bootstrap), Q14 (admin status view), Q15 (session revocation semantics). Q6 and Q10 confirm the route and placement decisions. |
+| Phase 1a | Auth and account gatekeeper | DRAFT. Q1 (MFA endpoints) and Q13 (privileged bootstrap) resolved 2026-10-08. Blocked on Q5 (refresh tokens), Q12 (contract additions), Q14 (admin status view), Q15 (session revocation semantics). Q6 and Q10 confirm the route and placement decisions. |
 | Phase 1b | Payment verification and invoicing | DRAFT. Q3 (notification stream) resolved 2026-10-08. Blocked on Q2. |
 | Phase 2 | Intelligence engine | DRAFT. Blocked on Q4. |
 | Phase 3 | AI-assisted dispute resolution | DRAFT. Blocked on Q4. |
@@ -48,7 +48,8 @@ rule for privileged accounts, and enumeration-safe copy.
 - Native mobile applications.
 - A proprietary SPA login form. Confirmed by the author: login is SAS-hosted at launch.
 - Lockout timers and enumeration-revealing copy. Confirmed by the author: uniform copy only.
-- First-login enrollment inside the SPA. The SAS flow refuses unenrolled privileged accounts (L5). How they enroll is Q13.
+- First-login enrollment inside the SPA. The SAS flow refuses unenrolled privileged accounts (L5). How they enroll is
+  resolved (Q13, 2026-10-08): the normal USER-level self-service wizard, before promotion — not a separate first-login flow.
 - Backend requirements with no UI surface: the per-account rate-limit backstop (backend R42), the cleanup job (backend R40), and
   the audit mirror topics (backend R44, R45). They belong to `spec/auth-service/`.
 - Any backend code, contract, or endpoint.
@@ -342,10 +343,17 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   response, leaving a caller with more than one key no way to tell them apart. (a) and (b), and (c)'s MFA-problem-type half,
   remain open. Owner action: reconcile (a), and add or confirm (b)
   and (c).
-- Q13. **Privileged-account bootstrap (blocks R10's enrollment path, R11 for MERCHANT and ADMIN, and task 19).** T20 refuses an
-  unenrolled MERCHANT or ADMIN with the wrong-password error and does not enroll them. T19 is not built. Options: (a) enroll while
-  the account holds USER, before MERCHANT is granted, by an admin-controlled step; (b) a pre-authentication enrollment step in SAS
-  (new backend work); (c) admin-assisted enrollment. Owner action: choose one, and record it as an auth ADR.
+- Q13. **Privileged-account bootstrap (blocks R10's enrollment path, R11 for MERCHANT and ADMIN, and task 19).**
+  ~~T20 refuses an unenrolled MERCHANT or ADMIN with the wrong-password error and does not enroll them. T19 is not
+  built. Options: (a) enroll while the account holds USER, before MERCHANT is granted, by an admin-controlled step;
+  (b) a pre-authentication enrollment step in SAS (new backend work); (c) admin-assisted enrollment. Owner action:
+  choose one, and record it as an auth ADR.~~ **Resolved (2026-10-08): option (a), chosen directly by the product
+  owner.** T19 is now built. An account enrolls MFA while it still holds only `USER` (the SPA's own voluntary-enrollment
+  wizard, no separate bootstrap UI needed — T19's endpoints require only an authenticated bearer token, not a
+  privileged role), and only afterward is it granted MERCHANT/ADMIN. This is enforced server-side, not left to admin
+  discipline: `RoleService.assignRole`/`assignRoleTemplate` now refuse the grant (409,
+  `RoleRequiresConfirmedMfaException`) unless a confirmed TOTP enrollment already exists. Recorded as
+  `auth-decisions.md` D-031. Closed.
 - Q14. **Admin status view versus the enumeration lock (blocks R27's `adminGetAccount` view).** L4 is `[ALL]` and has no carve-out.
   Showing an account's status to an administrator is a deliberate, authenticated disclosure. Owner action: decide whether to accept an
   ADR that scopes an authenticated ADMIN status view, or remove the status view from the SPA.
@@ -354,7 +362,7 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   If the SAS session cookie survives, a revoked device can silently re-authenticate. Owner action: decide whether revoke-all and
   password reset must also end SAS HTTP sessions, and specify the backend behaviour.
 
-**Per-phase status**: Phase 1a is `DRAFT` (Q5, Q6, Q12, Q13, Q14, Q15 — Q1 resolved). Phase 1b is `DRAFT` (Q2 — Q3 resolved). Phases 2–5 are `DRAFT` (Q4).
+**Per-phase status**: Phase 1a is `DRAFT` (Q5, Q6, Q12, Q14, Q15 — Q1, Q13 resolved). Phase 1b is `DRAFT` (Q2 — Q3 resolved). Phases 2–5 are `DRAFT` (Q4).
 Items Q7 to Q11 are decisions the author can make without backend work, and they do not block the auth gate's contracts.
 
 ## 12. Execution handoff — for an agent who starts implementation later
@@ -379,8 +387,9 @@ and what it must not assume.
 **What is decided and what is not.**
 - Decided (confirmed by the author): public OIDC/PKCE client; SAS-hosted login; enumeration-safe uniform copy with no lockout timers;
   React, TypeScript, Vite, React Router, TanStack Query, Zustand, vite-plugin-pwa, Vitest, Playwright; "Checky Pro" as the displayed
-  name; auth gate before payments; the single-package layout.
-- Not decided: the privileged-account bootstrap (Q13); the admin status view (Q14); whether SAS issues refresh tokens to `checky-spa`
+  name; auth gate before payments; the single-package layout; the privileged-account bootstrap (Q13, 2026-10-08 — enroll as USER,
+  then promote, enforced server-side, `auth-decisions.md` D-031).
+- Not decided: the admin status view (Q14); whether SAS issues refresh tokens to `checky-spa`
   (Q5); session revocation semantics (Q15); the design system, i18n, analytics, and env key names (Q6–Q9); the payments contract
   (Q2); Phases 2–5 contracts (Q4).
 - Known facts that differ from earlier drafts: the SAS MFA step (auth T20) is built and refuses unenrolled MERCHANT and ADMIN accounts

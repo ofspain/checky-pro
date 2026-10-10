@@ -474,6 +474,7 @@ class EndToEndLifecycleIntegrationTest {
         String adminEmail = "e2e-admin-" + UUID.randomUUID() + "@example.com";
         AccountResponse registered = accountService.register(new RegisterAccountRequest(adminEmail, PASSWORD));
         accountService.activateEmail(registered.accountUuid(), registered.accountUuid());
+        enrollTotp(registered.accountUuid()); // D-031: enroll before granting ADMIN
         ensureRoleExists("ADMIN");
         roleService.assignRole(registered.accountUuid(), "ADMIN", null);
         return apiKeyTokenIssuer.issue(registered.accountUuid(), List.of()).accessToken();

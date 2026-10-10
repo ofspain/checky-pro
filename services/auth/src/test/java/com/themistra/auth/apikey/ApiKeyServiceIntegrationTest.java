@@ -110,11 +110,18 @@ class ApiKeyServiceIntegrationTest {
                 .isInstanceOf(ApiKeyNotAuthorizedException.class);
     }
 
-    @Test
+    @Test // D-031: RoleService.assignRole now refuses to grant MERCHANT without confirmed MFA
+          // (the normal path this test used to take), so this state - MERCHANT already held,
+          // MFA still unconfirmed - can no longer be reached through the service layer at all.
+          // Bypasses it directly, mirroring createRawApiKeyRow's own established "construct an
+          // otherwise-unreachable state via a native query" convention: this still proves
+          // ApiKeyService.create has its OWN independent defense-in-depth check, not merely
+          // relying on RoleService's gate (e.g. a role granted before D-031 existed, or restored
+          // from a backup predating it, must still be rejected here).
     void createRejectsUnconfirmedMfa() {
         UUID accountUuid = registerAndActivate("no-confirmed-mfa@example.com");
         ensureRoleExists("MERCHANT");
-        roleService.assignRole(accountUuid, "MERCHANT", accountUuid);
+        inOwnTransaction(() -> assignRoleBypassingMfaGate(accountUuid, "MERCHANT"));
 
         assertThatThrownBy(() -> apiKeyService.create(accountUuid, "key"))
                 .isInstanceOf(ApiKeyNotAuthorizedException.class);
@@ -295,10 +302,10 @@ class ApiKeyServiceIntegrationTest {
     void createAcceptsMerchantViaRoleTemplate() {
         String email = "merchant-via-template@example.com";
         UUID accountUuid = registerAndActivate(email);
+        seedConfirmedMfa(accountUuid); // D-031: enroll before granting a MERCHANT-bundling template
         ensureRoleExists("MERCHANT");
         ensureRoleTemplateExists("MERCHANT_TEMPLATE", Set.of("MERCHANT"));
         roleService.assignRoleTemplate(accountUuid, "MERCHANT_TEMPLATE", accountUuid);
-        seedConfirmedMfa(accountUuid);
 
         ApiKeyService.CreateApiKeyResult result = apiKeyService.create(accountUuid, "via template");
 
@@ -307,9 +314,9 @@ class ApiKeyServiceIntegrationTest {
 
     private UUID seedMerchantWithConfirmedMfa(String email) {
         UUID accountUuid = registerAndActivate(email);
+        seedConfirmedMfa(accountUuid); // D-031: enroll while the account still holds only USER
         ensureRoleExists("MERCHANT");
         roleService.assignRole(accountUuid, "MERCHANT", accountUuid);
-        seedConfirmedMfa(accountUuid);
         return accountUuid;
     }
 
@@ -361,6 +368,17 @@ class ApiKeyServiceIntegrationTest {
         entityManager.createNativeQuery("UPDATE api_keys SET expires_at = :expiresAt WHERE id = :id")
                 .setParameter("expiresAt", expiresAt)
                 .setParameter("id", id)
+                .executeUpdate();
+    }
+
+    /** D-031 bypass — see {@link #createRejectsUnconfirmedMfa}'s own Javadoc for why this exists
+     * instead of {@code roleService.assignRole}. */
+    private void assignRoleBypassingMfaGate(UUID accountUuid, String roleName) {
+        entityManager.createNativeQuery(
+                "INSERT INTO account_roles (account_uuid, role_id, granted_by, granted_at) "
+                        + "SELECT :accountUuid, id, :accountUuid, now() FROM roles WHERE name = :roleName")
+                .setParameter("accountUuid", accountUuid)
+                .setParameter("roleName", roleName)
                 .executeUpdate();
     }
 

@@ -7,6 +7,7 @@ import com.themistra.auth.authz.dto.CreateRoleRequest;
 import com.themistra.auth.authz.dto.CreateRoleTemplateRequest;
 import com.themistra.auth.authz.dto.RoleResponse;
 import com.themistra.auth.authz.dto.RoleTemplateResponse;
+import com.themistra.auth.mfa.MfaService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,16 +28,29 @@ import java.util.stream.Collectors;
  * Operates on account UUIDs only — never the internal account id (D-017) — so this module has
  * no dependency on the account module's entities. Assignment/removal are audited (D-024): these
  * are admin-only actions once exposed over HTTP, same reasoning as D-022's account-lifecycle scope.
+ *
+ * <p>Depends on {@link MfaService} (a cross-module service dependency, same accepted pattern as
+ * {@code ApiKeyService}'s own identical dependency, and {@code LockoutService}&rarr;
+ * {@code AccountService} before it — {@code ArchitectureTest}'s module-boundary rule constrains
+ * controller&rarr;service dependencies only, not service&rarr;service) to enforce D-031: an
+ * account cannot be granted {@code MERCHANT}/{@code ADMIN} — directly or via a template — without
+ * a confirmed TOTP enrollment already in place.</p>
  */
 @Service
 @Validated
 public class RoleService {
+
+    /** R24/D-031: the two roles SAS's login flow (T20) refuses to authenticate without a
+     * confirmed TOTP enrollment. Granting either one first would lock the account out of login
+     * entirely, with no path back in except an admin removing the role again. */
+    private static final Set<String> MFA_GATED_ROLES = Set.of("MERCHANT", "ADMIN");
 
     private final RoleRepository roleRepository;
     private final RoleTemplateRepository roleTemplateRepository;
     private final AccountRoleAssignmentRepository accountRoleAssignmentRepository;
     private final AccountRoleTemplateAssignmentRepository accountRoleTemplateAssignmentRepository;
     private final AuditService auditService;
+    private final MfaService mfaService;
     private final Clock clock;
 
     public RoleService(RoleRepository roleRepository,
@@ -44,12 +58,14 @@ public class RoleService {
                        AccountRoleAssignmentRepository accountRoleAssignmentRepository,
                        AccountRoleTemplateAssignmentRepository accountRoleTemplateAssignmentRepository,
                        AuditService auditService,
+                       MfaService mfaService,
                        Clock clock) {
         this.roleRepository = roleRepository;
         this.roleTemplateRepository = roleTemplateRepository;
         this.accountRoleAssignmentRepository = accountRoleAssignmentRepository;
         this.accountRoleTemplateAssignmentRepository = accountRoleTemplateAssignmentRepository;
         this.auditService = auditService;
+        this.mfaService = mfaService;
         this.clock = clock;
     }
 
@@ -111,6 +127,7 @@ public class RoleService {
         if (accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(accountUuid, role.getId())) {
             return; // idempotent: already assigned, nothing changed, nothing to audit
         }
+        requireConfirmedMfaIfGated(accountUuid, Set.of(roleName));
         accountRoleAssignmentRepository.save(
                 AccountRoleAssignment.of(accountUuid, role.getId(), actorUuid, clock.instant()));
         auditAssignment("role.assigned", accountUuid, actorUuid, roleName);
@@ -133,6 +150,11 @@ public class RoleService {
                 .existsByIdAccountUuidAndIdRoleTemplateId(accountUuid, template.getId())) {
             return; // idempotent
         }
+        // D-031: a template can bundle MERCHANT/ADMIN among its roles (createRoleTemplate places
+        // no restriction on which roles a template may name) - gated identically to assignRole,
+        // or this would trivially bypass that guard.
+        Set<String> bundledRoleNames = template.getRoles().stream().map(Role::getName).collect(Collectors.toSet());
+        requireConfirmedMfaIfGated(accountUuid, bundledRoleNames);
         accountRoleTemplateAssignmentRepository.save(AccountRoleTemplateAssignment.of(
                 accountUuid, template.getId(), actorUuid, clock.instant()));
         auditAssignment("role_template.assigned", accountUuid, actorUuid, templateName);
@@ -166,6 +188,18 @@ public class RoleService {
         auditService.record(new RecordAuditEventRequest(
                 eventType, AuditOutcome.SUCCESS, accountUuid, actorUuid,
                 null, null, null, Map.of("name", roleOrTemplateName)));
+    }
+
+    /** D-031: blocks granting {@code MERCHANT}/{@code ADMIN} (directly or via a template) unless
+     * the account already has a confirmed TOTP enrollment. Other roles (e.g. {@code USER},
+     * {@code COMPLIANCE}) are never gated — only the two SAS's login flow (R24) itself refuses to
+     * authenticate without one. */
+    private void requireConfirmedMfaIfGated(UUID accountUuid, Set<String> roleNames) {
+        boolean grantsGatedRole = roleNames.stream().anyMatch(MFA_GATED_ROLES::contains);
+        if (grantsGatedRole && !mfaService.hasConfirmedTotpEnrollment(accountUuid)) {
+            String gatedRoleName = roleNames.stream().filter(MFA_GATED_ROLES::contains).findFirst().orElseThrow();
+            throw new RoleRequiresConfirmedMfaException(gatedRoleName);
+        }
     }
 
     private Role requireRole(String name) {

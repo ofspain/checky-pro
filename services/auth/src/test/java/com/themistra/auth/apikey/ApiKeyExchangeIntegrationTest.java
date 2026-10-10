@@ -409,19 +409,20 @@ class ApiKeyExchangeIntegrationTest {
         return fullKey;
     }
 
+    /** D-031: enrolls MFA while the account still holds only USER, then grants MERCHANT. */
     private UUID seedMerchantWithConfirmedMfa(String email) {
         AccountResponse registered = accountService.register(new RegisterAccountRequest(email, PASSWORD));
         accountService.activateEmail(registered.accountUuid(), registered.accountUuid());
         UUID accountUuid = registered.accountUuid();
+        MfaService.BeginEnrollResult begun = mfaService.beginEnroll(accountUuid);
+        String code = referenceGenerateCode(begun.secret(), Instant.now());
+        mfaService.confirm(accountUuid, code);
         try {
             roleService.createRole(new CreateRoleRequest("MERCHANT", null));
         } catch (DuplicateRoleException e) {
             // Already created by an earlier test in this class - fine.
         }
         roleService.assignRole(accountUuid, "MERCHANT", accountUuid);
-        MfaService.BeginEnrollResult begun = mfaService.beginEnroll(accountUuid);
-        String code = referenceGenerateCode(begun.secret(), Instant.now());
-        mfaService.confirm(accountUuid, code);
         return accountUuid;
     }
 

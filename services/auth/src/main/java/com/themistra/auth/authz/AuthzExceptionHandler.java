@@ -34,4 +34,17 @@ public class AuthzExceptionHandler {
         problem.setTitle(e.getMessage());
         return problem;
     }
+
+    /** R24/D-031: reuses the same {@code ProblemTypes.INVALID_STATE} type
+     * {@code AccountExceptionHandler.onInvalidState} already uses for "this account does not
+     * permit this transition" — the identical real-world meaning, here applied to a role grant
+     * instead of an account-status change. */
+    @ExceptionHandler(RoleRequiresConfirmedMfaException.class)
+    ProblemDetail onRoleRequiresConfirmedMfa(RoleRequiresConfirmedMfaException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        problem.setType(ProblemTypes.INVALID_STATE);
+        problem.setTitle("Account does not permit this transition");
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
 }

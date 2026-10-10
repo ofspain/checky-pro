@@ -18,11 +18,17 @@ Scope tags: `[ALL]` platform-level, enduring across every phase. `[P1]`…`[P5]`
   missing, locked, suspended, and deleted accounts and across bad, expired, and used tokens. No lockout timers. An admin
   status view would reveal account state inside an authenticated screen. Showing it requires an ADR (Q14), and R27's status
   view is blocked until one exists.
-- L5. **[ALL] MFA-first for MERCHANT and ADMIN, bootstrap undecided.** SAS refuses authorization to MERCHANT or ADMIN accounts
-  without a confirmed enrollment, with the same error as a wrong password (backend T20). It does not enroll them. The SPA's
-  wizard covers voluntary enrollment and management only, and the self-service endpoints (auth T19) are not built. How an
-  unenrolled privileged account gets enrolled is open (Q13). The options are: enroll while USER before MERCHANT is granted; a
-  pre-auth enrollment step in SAS (new backend work); or admin-assisted enrollment. The decision is not made here.
+- L5. **[ALL] MFA-first for MERCHANT and ADMIN; bootstrap resolved 2026-10-08 (Q13 closed, auth-decisions.md D-031).**
+  SAS refuses authorization to MERCHANT or ADMIN accounts without a confirmed enrollment, with the same error as a wrong
+  password (backend T20). It does not enroll them. **Updated: the self-service endpoints (auth T19) are now built** —
+  `POST .../totp`, `.../confirm`, `DELETE .../totp`, `POST .../recovery-codes`, all in `auth.yaml`. The bootstrap path is
+  decided: an account enrolls while it still holds only `USER` (the SPA's own wizard, no MFA required there, reachable
+  because T19 only needs an authenticated bearer token, not a privileged role), and only afterward does an admin grant
+  MERCHANT/ADMIN — enforced in the backend, not just by admin discipline: `RoleService.assignRole`/`assignRoleTemplate`
+  now refuse to grant either role (directly or via a template) without a confirmed TOTP enrollment already in place
+  (`RoleRequiresConfirmedMfaException`, 409). The SPA's own wizard still covers only voluntary enrollment and management
+  of an already-authenticated user — there is no separate "privileged bootstrap" UI; the normal USER-level enrollment
+  flow is the bootstrap path.
 - L6. **[ALL] Generated client only.** Every backend call uses `libs/ts/api-client`, generated in CI from `contracts/api/*.yaml`.
   The single exception is the notification stream (R59, O7), which is a named exception and never carries a token in a URL.
 - L7. **[ALL] Money as decimal strings and base units.** No JS `Number` on monetary values. Base units are scaled by token
@@ -58,7 +64,7 @@ Scope tags: `[ALL]` platform-level, enduring across every phase. `[P1]`…`[P5]`
 - O2. **Design system.** Not chosen (Q7). Must meet L11.
 - O3. **i18n approach.** Not chosen (Q8). Locale fallback rule to confirm.
 - O4. **Analytics.** Default none at launch (Q9). Any vendor needs a privacy review against L3 and agents.md.
-- O5. **Privileged bootstrap path.** Open, see L5 and Q13.
+- O5. **Privileged bootstrap path.** ~~Open, see L5 and Q13.~~ **Resolved 2026-10-08 — see L5 and `auth-decisions.md` D-031.**
 - O6. **[P2]–[P5] rendering.** Not chosen. The choice must not force a route-architecture change (L12).
 - O7. **Notification stream authentication.** ~~A browser `EventSource` cannot set an `Authorization` header. Options: (a) a
   fetch-based stream reader with an `Authorization` header, as a named exception to L6; (b) a short-lived stream ticket issued by

@@ -354,13 +354,17 @@ class ApiKeyCrudIntegrationTest {
         return apiKeyTokenIssuer.issue(accountUuid, List.of("merchant.api")).accessToken();
     }
 
+    /** D-031: enrolls MFA while the account still holds only USER, then grants MERCHANT - the
+     * correct bootstrap order. Reordered from an earlier version that granted MERCHANT first,
+     * which {@code RoleService}'s new MFA gate now correctly rejects (it would have left a real
+     * account locked out of login, per R24 - exactly the bug this order avoids). */
     private UUID seedMerchantWithConfirmedMfa(String email) {
         UUID accountUuid = registerAndActivate(email);
-        ensureRoleExists("MERCHANT");
-        roleService.assignRole(accountUuid, "MERCHANT", accountUuid);
         MfaService.BeginEnrollResult begun = mfaService.beginEnroll(accountUuid);
         String code = referenceGenerateCode(begun.secret(), Instant.now());
         mfaService.confirm(accountUuid, code);
+        ensureRoleExists("MERCHANT");
+        roleService.assignRole(accountUuid, "MERCHANT", accountUuid);
         return accountUuid;
     }
 

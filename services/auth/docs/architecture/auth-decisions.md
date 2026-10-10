@@ -334,3 +334,51 @@ the three options it names was ever selected; `design.md` itself is not edited b
   count) or a concrete partner/compliance requirement.
 - **Reference influence:** None (reference has no API-key concept — merchant integrations are
   net-new, gap-analysis §1 #12).
+
+## D-031 · Privileged-account MFA bootstrap: enroll as USER, then promote (resolves frontend spec Q13)
+
+- **Context:** `TotpAuthenticationProvider` (T20, R24) refuses an unenrolled `MERCHANT`/`ADMIN`
+  account at interactive login with the identical error as a wrong password, and deliberately does
+  not enroll them — a distinct "please enroll" signal was considered and rejected (T20's own Phase
+  4 gate). `MfaService`'s self-service enrollment endpoints (T19) require an already-authenticated
+  bearer token. Put together, an account that is granted `MERCHANT`/`ADMIN` before it has a
+  confirmed TOTP enrollment has no path back into the system: it cannot log in (T20 refuses it) and
+  therefore cannot reach T19's own enrollment endpoints either. This was a real, reachable gap —
+  `RoleService.assignRole`/`assignRoleTemplate` had no precondition check at all before this
+  decision, so an admin could trigger it with an ordinary role grant.
+- **Alternatives:** (a) enroll while the account still holds only `USER` (no MFA required there),
+  then an admin grants `MERCHANT`/`ADMIN` only after a confirmed enrollment exists — zero new
+  login-flow code, enforced by a precondition on the grant itself rather than by admin discipline
+  alone; (b) a pre-authentication enrollment step inside SAS's own interactive login flow,
+  redirecting an unenrolled privileged account into enrollment mid-login instead of refusing it —
+  real new backend work inside the SAS flow, closer in size to a new task than a close-out; (c)
+  admin-assisted enrollment on the account's behalf — mechanism undefined, would need its own
+  design pass before it is buildable. Decided directly with the product owner (no written review
+  round — a process/sequencing decision, not a design requiring adversarial challenge).
+- **Selected:** (a), with the precondition enforced in code, not left to operational discipline:
+  `RoleService.assignRole` and `assignRoleTemplate` both now call
+  `MfaService.hasConfirmedTotpEnrollment` before granting `MERCHANT`/`ADMIN` — directly, or
+  bundled inside a role template — and throw `RoleRequiresConfirmedMfaException` (409,
+  `ProblemTypes.INVALID_STATE`, the same type/semantic `AccountExceptionHandler.onInvalidState`
+  already uses for "this account does not permit this transition") if it is missing. Every other
+  role (`USER`, `COMPLIANCE`, and any future non-gated role) is never checked — only the two SAS's
+  login flow itself refuses to authenticate without a confirmed enrollment.
+- **Trade-offs:** This is enforcement by construction, not merely a documented operational order —
+  the lockout this defends against (grant the role first, discover the account can never log in
+  again except via an admin un-granting the role) is now structurally unreachable through the
+  service layer, matching this codebase's existing security culture (`ApiKeyService.create`'s own
+  identical `MERCHANT` + confirmed-MFA precondition, T26). The cost is a new cross-module service
+  dependency (`RoleService` → `MfaService`, `authz` → `mfa`) — accepted as the same already-settled
+  pattern `ApiKeyService`'s own identical dependency and `LockoutService` → `AccountService` before
+  it established; `ArchitectureTest`'s module-boundary rule constrains controller→service
+  dependencies only, not service→service, by design (T35 Phase 4 D2).
+- **Impact:** `RoleService.java` (new `MfaService` dependency, new `MFA_GATED_ROLES` constant, new
+  `requireConfirmedMfaIfGated` check in both grant methods), `authz/RoleRequiresConfirmedMfaException.java`
+  (new), `authz/AuthzExceptionHandler.java` (new mapping). Several existing integration tests that
+  granted `MERCHANT`/`ADMIN` before enrolling MFA (test plumbing, not the behavior under test) were
+  reordered to enroll first; the two tests whose own literal purpose is proving T20's refusal of an
+  already-unenrolled-and-already-privileged account now construct that state directly via a native
+  insert, bypassing the new guard on purpose — `RoleService`'s own gate making that state harder to
+  reach through the service layer does not make `TotpAuthenticationProvider`'s independent
+  defense-in-depth check at login any less worth proving.
+- **Reference influence:** None (reference has no MFA concept at all, gap-analysis §1).

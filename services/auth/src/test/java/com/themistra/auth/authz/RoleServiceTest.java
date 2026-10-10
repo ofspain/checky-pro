@@ -6,6 +6,7 @@ import com.themistra.auth.authz.dto.CreateRoleRequest;
 import com.themistra.auth.authz.dto.CreateRoleTemplateRequest;
 import com.themistra.auth.authz.dto.RoleResponse;
 import com.themistra.auth.authz.dto.RoleTemplateResponse;
+import com.themistra.auth.mfa.MfaService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,6 +52,9 @@ class RoleServiceTest {
     @Mock
     private AuditService auditService;
 
+    @Mock
+    private MfaService mfaService;
+
     private RoleService service;
 
     @BeforeEach
@@ -58,7 +62,7 @@ class RoleServiceTest {
         Clock fixed = Clock.fixed(Instant.parse("2026-07-13T00:00:00Z"), ZoneOffset.UTC);
         service = new RoleService(roleRepository, roleTemplateRepository,
                 accountRoleAssignmentRepository, accountRoleTemplateAssignmentRepository,
-                auditService, fixed);
+                auditService, mfaService, fixed);
     }
 
     @Test
@@ -139,6 +143,7 @@ class RoleServiceTest {
         when(roleRepository.findByName("MERCHANT")).thenReturn(Optional.of(role));
         when(accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(ACCOUNT_UUID, 1L))
                 .thenReturn(false);
+        when(mfaService.hasConfirmedTotpEnrollment(ACCOUNT_UUID)).thenReturn(true);
 
         service.assignRole(ACCOUNT_UUID, "MERCHANT", ADMIN_UUID);
 
@@ -157,6 +162,109 @@ class RoleServiceTest {
 
         assertThatThrownBy(() -> service.assignRole(ACCOUNT_UUID, "GHOST", ADMIN_UUID))
                 .isInstanceOf(RoleNotFoundException.class);
+    }
+
+    // ===== D-031: MFA-gated role grants =====
+
+    @Test
+    void assignRoleRejectsMerchantWithoutConfirmedMfaAndDoesNotMutate() {
+        Role role = roleWithId(1L, "MERCHANT");
+        when(roleRepository.findByName("MERCHANT")).thenReturn(Optional.of(role));
+        when(accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(ACCOUNT_UUID, 1L))
+                .thenReturn(false);
+        when(mfaService.hasConfirmedTotpEnrollment(ACCOUNT_UUID)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.assignRole(ACCOUNT_UUID, "MERCHANT", ADMIN_UUID))
+                .isInstanceOf(RoleRequiresConfirmedMfaException.class);
+
+        verify(accountRoleAssignmentRepository, never()).save(any());
+        verify(auditService, never()).record(any());
+    }
+
+    @Test
+    void assignRoleRejectsAdminWithoutConfirmedMfa() {
+        Role role = roleWithId(2L, "ADMIN");
+        when(roleRepository.findByName("ADMIN")).thenReturn(Optional.of(role));
+        when(accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(ACCOUNT_UUID, 2L))
+                .thenReturn(false);
+        when(mfaService.hasConfirmedTotpEnrollment(ACCOUNT_UUID)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.assignRole(ACCOUNT_UUID, "ADMIN", ADMIN_UUID))
+                .isInstanceOf(RoleRequiresConfirmedMfaException.class);
+    }
+
+    @Test // D-031's whole point: USER/COMPLIANCE are never gated, so an account can enroll
+          // while holding one of these before ever being promoted to a gated role
+    void assignRoleNeverChecksMfaForANonGatedRole() {
+        Role role = roleWithId(3L, "USER");
+        when(roleRepository.findByName("USER")).thenReturn(Optional.of(role));
+        when(accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(ACCOUNT_UUID, 3L))
+                .thenReturn(false);
+
+        service.assignRole(ACCOUNT_UUID, "USER", ADMIN_UUID);
+
+        verify(mfaService, never()).hasConfirmedTotpEnrollment(any());
+        verify(accountRoleAssignmentRepository).save(any());
+    }
+
+    @Test
+    void assignRoleAllowsMerchantWhenConfirmedMfaExists() {
+        Role role = roleWithId(1L, "MERCHANT");
+        when(roleRepository.findByName("MERCHANT")).thenReturn(Optional.of(role));
+        when(accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(ACCOUNT_UUID, 1L))
+                .thenReturn(false);
+        when(mfaService.hasConfirmedTotpEnrollment(ACCOUNT_UUID)).thenReturn(true);
+
+        service.assignRole(ACCOUNT_UUID, "MERCHANT", ADMIN_UUID);
+
+        verify(accountRoleAssignmentRepository).save(any());
+    }
+
+    @Test // idempotent re-assignment never re-checks MFA - matches
+          // assignRoleIsIdempotentWhenAlreadyAssignedAndDoesNotAudit's own established precedent,
+          // and avoids retroactively locking out an account that lost its enrollment since
+          // the role was originally (legitimately) granted
+    void assignRoleIdempotentReassignmentNeverChecksMfa() {
+        Role role = roleWithId(1L, "MERCHANT");
+        when(roleRepository.findByName("MERCHANT")).thenReturn(Optional.of(role));
+        when(accountRoleAssignmentRepository.existsByIdAccountUuidAndIdRoleId(ACCOUNT_UUID, 1L))
+                .thenReturn(true);
+
+        service.assignRole(ACCOUNT_UUID, "MERCHANT", ADMIN_UUID);
+
+        verify(mfaService, never()).hasConfirmedTotpEnrollment(any());
+    }
+
+    @Test // a template is gated identically to a direct grant, or it would trivially bypass the
+          // guard - createRoleTemplate places no restriction on which roles a template may bundle
+    void assignRoleTemplateRejectsTemplateBundlingMerchantWithoutConfirmedMfa() {
+        RoleTemplate template = RoleTemplate.create(
+                "power-merchant", "desc", Set.of(roleWithId(1L, "MERCHANT"), roleWithId(3L, "USER")));
+        setTemplateId(template, 10L);
+        when(roleTemplateRepository.findByName("power-merchant")).thenReturn(Optional.of(template));
+        when(accountRoleTemplateAssignmentRepository
+                .existsByIdAccountUuidAndIdRoleTemplateId(ACCOUNT_UUID, 10L)).thenReturn(false);
+        when(mfaService.hasConfirmedTotpEnrollment(ACCOUNT_UUID)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.assignRoleTemplate(ACCOUNT_UUID, "power-merchant", ADMIN_UUID))
+                .isInstanceOf(RoleRequiresConfirmedMfaException.class);
+
+        verify(accountRoleTemplateAssignmentRepository, never()).save(any());
+    }
+
+    @Test
+    void assignRoleTemplateNeverChecksMfaWhenNoGatedRoleIsBundled() {
+        RoleTemplate template = RoleTemplate.create(
+                "support-tier", "desc", Set.of(roleWithId(3L, "USER"), roleWithId(4L, "COMPLIANCE")));
+        setTemplateId(template, 11L);
+        when(roleTemplateRepository.findByName("support-tier")).thenReturn(Optional.of(template));
+        when(accountRoleTemplateAssignmentRepository
+                .existsByIdAccountUuidAndIdRoleTemplateId(ACCOUNT_UUID, 11L)).thenReturn(false);
+
+        service.assignRoleTemplate(ACCOUNT_UUID, "support-tier", ADMIN_UUID);
+
+        verify(mfaService, never()).hasConfirmedTotpEnrollment(any());
+        verify(accountRoleTemplateAssignmentRepository).save(any());
     }
 
     @Test
@@ -241,6 +349,16 @@ class RoleServiceTest {
             var field = Role.class.getDeclaredField("id");
             field.setAccessible(true);
             field.set(role, id);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static void setTemplateId(RoleTemplate template, long id) {
+        try {
+            var field = RoleTemplate.class.getDeclaredField("id");
+            field.setAccessible(true);
+            field.set(template, id);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }

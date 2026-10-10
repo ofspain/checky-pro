@@ -17,6 +17,8 @@ import com.themistra.auth.authz.RoleService;
 import com.themistra.auth.authz.dto.CreateRoleRequest;
 import com.themistra.auth.mfa.MfaService;
 import com.themistra.auth.token.AuthClientsProperties;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +35,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -127,6 +131,12 @@ class SasLoginIntegrationTest {
 
     @Autowired
     private TestRestTemplate restTemplate;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     private String baseUrl;
 
@@ -227,7 +237,7 @@ class SasLoginIntegrationTest {
     void merchantWithoutMfaEnrollmentCannotLogIn() {
         UUID accountUuid = registerAndActivate("merchant-no-mfa@example.com");
         ensureRoleExists("MERCHANT");
-        roleService.assignRole(accountUuid, "MERCHANT", null);
+        assignRoleBypassingMfaGate(accountUuid, "MERCHANT");
 
         LoginAttempt attempt = attemptLogin("merchant-no-mfa@example.com", PASSWORD);
 
@@ -241,9 +251,9 @@ class SasLoginIntegrationTest {
           // alone and a wrong code both fail; a correct TOTP code succeeds.
     void merchantWithConfirmedEnrollmentRequiresCorrectTotpOrRecoveryCode() {
         UUID accountUuid = registerAndActivate("merchant-with-mfa@example.com");
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid); // D-031: enroll first
         ensureRoleExists("MERCHANT");
         roleService.assignRole(accountUuid, "MERCHANT", null);
-        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
 
         LoginAttempt passwordOnly = attemptLogin("merchant-with-mfa@example.com", PASSWORD);
         assertThat(passwordOnly.response.getHeaders().getLocation())
@@ -271,9 +281,9 @@ class SasLoginIntegrationTest {
     @Test // T20, R25 recovery-code branch, same named test as above
     void merchantCanLoginWithAnUnusedRecoveryCodeButNotWithItASecondTime() {
         UUID accountUuid = registerAndActivate("merchant-recovery@example.com");
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid); // D-031: enroll first
         ensureRoleExists("MERCHANT");
         roleService.assignRole(accountUuid, "MERCHANT", null);
-        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
         String recoveryCode = enrollment.recoveryCodes().getFirst();
 
         LoginAttempt firstUse = attemptLogin("merchant-recovery@example.com", PASSWORD, recoveryCode);
@@ -327,9 +337,9 @@ class SasLoginIntegrationTest {
           // a second login attempt immediately after the first.
     void sameValidTotpCodeCannotBeUsedTwice() {
         UUID accountUuid = registerAndActivate("merchant-no-replay@example.com");
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid); // D-031: enroll first
         ensureRoleExists("MERCHANT");
         roleService.assignRole(accountUuid, "MERCHANT", null);
-        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
         String code = referenceGenerateCode(enrollment.secret(), Instant.now());
 
         LoginAttempt first = attemptLogin("merchant-no-replay@example.com", PASSWORD, code);
@@ -350,7 +360,7 @@ class SasLoginIntegrationTest {
     void merchantWithoutEnrollmentCannotFinishAuthorizeFlow() {
         UUID accountUuid = registerAndActivate("merchant-no-mfa-authorize@example.com");
         ensureRoleExists("MERCHANT");
-        roleService.assignRole(accountUuid, "MERCHANT", null);
+        assignRoleBypassingMfaGate(accountUuid, "MERCHANT"); // D-031 bypass - see its own Javadoc
 
         FullFlowResult result = attemptFullAuthorizeFlow(
                 "merchant-no-mfa-authorize@example.com", PASSWORD, null,
@@ -371,9 +381,9 @@ class SasLoginIntegrationTest {
           // without adding coverage of anything R25/R26 don't already establish together.
     void confirmedMfaRequiresCodeToFinishAuthorizeFlow() {
         UUID accountUuid = registerAndActivate("merchant-mfa-authorize@example.com");
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid); // D-031: enroll first
         ensureRoleExists("MERCHANT");
         roleService.assignRole(accountUuid, "MERCHANT", null);
-        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
 
         FullFlowResult passwordOnly = attemptFullAuthorizeFlow(
                 "merchant-mfa-authorize@example.com", PASSWORD, null,
@@ -399,9 +409,9 @@ class SasLoginIntegrationTest {
           // deliberately left as unverified-without-running-it.
     void issuedTokenHasOtpAmrAndAcrAfterMfa() throws ParseException {
         UUID accountUuid = registerAndActivate("merchant-mfa-token@example.com");
+        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid); // D-031: enroll first
         ensureRoleExists("MERCHANT");
         roleService.assignRole(accountUuid, "MERCHANT", null);
-        SeededEnrollment enrollment = seedConfirmedTotpEnrollment(accountUuid);
         PkcePair pkce = generatePkce();
         String state = UUID.randomUUID().toString();
 
@@ -714,6 +724,24 @@ class SasLoginIntegrationTest {
         } catch (DuplicateRoleException e) {
             // Already created by an earlier test in this class - fine.
         }
+    }
+
+    /** D-031: {@code RoleService.assignRole} now refuses to grant MERCHANT/ADMIN without a
+     * confirmed TOTP enrollment already in place, so the deliberately-unenrolled-MERCHANT state
+     * this test file's own T20 tests need (the exact state R24's login-time refusal defends
+     * against) can no longer be reached through the service layer. Bypasses it directly, mirroring
+     * {@code ApiKeyServiceIntegrationTest.assignRoleBypassingMfaGate}'s own identical technique:
+     * this still proves {@code TotpAuthenticationProvider}'s own independent defense-in-depth
+     * check (R24) works, not merely that {@code RoleService} never lets the state occur in the
+     * first place — e.g. a role granted before D-031 existed must still be refused at login. */
+    private void assignRoleBypassingMfaGate(UUID accountUuid, String roleName) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                entityManager.createNativeQuery(
+                        "INSERT INTO account_roles (account_uuid, role_id, granted_by, granted_at) "
+                                + "SELECT :accountUuid, id, :accountUuid, now() FROM roles WHERE name = :roleName")
+                        .setParameter("accountUuid", accountUuid)
+                        .setParameter("roleName", roleName)
+                        .executeUpdate());
     }
 
     /** Enrolls and confirms TOTP MFA through the real {@link MfaService} (no self-service HTTP

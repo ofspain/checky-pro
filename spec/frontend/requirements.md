@@ -28,8 +28,9 @@ does not yet exist; they are blocked by the `Q#` shown.
   (backend T20, built; backend R25), and the SPA resumes at the callback once it completes.
 - R10. WHEN the SAS login fails for any reason, including a MERCHANT or ADMIN account without a confirmed enrollment, THEN the
   SPA SHALL show the same uniform sign-in failure message, with copy identical to a wrong password. The SPA SHALL NOT tell the
-  user that enrollment is required. The bootstrap path that lets a privileged account enroll is undecided and is blocked on Q13.
-  (backend R24; backend T20 `TotpAuthenticationProvider`)
+  user that enrollment is required. **Resolved (2026-10-08, Q13):** the bootstrap path is the normal USER-level
+  self-service MFA wizard (auth T19, built) — an account enrolls before an admin grants it MERCHANT/ADMIN, now enforced
+  server-side (`auth-decisions.md` D-031). (backend R24; backend T20 `TotpAuthenticationProvider`)
 - R11. WHEN an authenticated user voluntarily enrolls in TOTP, THEN the SPA SHALL show the `otpauth://` URI and QR code,
   require a live code to confirm, and then show the 10 recovery codes exactly once with an explicit acknowledgement. The SPA
   SHALL NOT store them afterwards. Blocked on Q1. (backend R22, R23)

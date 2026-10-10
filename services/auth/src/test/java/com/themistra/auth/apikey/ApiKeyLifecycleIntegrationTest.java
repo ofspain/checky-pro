@@ -242,13 +242,14 @@ class ApiKeyLifecycleIntegrationTest {
         return apiKeyTokenIssuer.issue(accountUuid, List.of("merchant.api")).accessToken();
     }
 
+    /** D-031: enrolls MFA while the account still holds only USER, then grants MERCHANT. */
     private UUID seedMerchantWithConfirmedMfa(String email) {
         UUID accountUuid = registerAndActivate(email);
-        ensureRoleExists("MERCHANT");
-        roleService.assignRole(accountUuid, "MERCHANT", accountUuid);
         MfaService.BeginEnrollResult begun = mfaService.beginEnroll(accountUuid);
         String code = referenceGenerateCode(begun.secret(), Instant.now());
         mfaService.confirm(accountUuid, code);
+        ensureRoleExists("MERCHANT");
+        roleService.assignRole(accountUuid, "MERCHANT", accountUuid);
         return accountUuid;
     }
 

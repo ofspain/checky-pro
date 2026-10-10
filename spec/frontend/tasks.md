@@ -97,7 +97,7 @@ will be decomposed after this granularity is accepted.
 70. **Acknowledgement required.** The user must acknowledge the recovery codes before continuing. Verifies `recoveryCodesRequireAcknowledgement`. Cites R11.
 71. **Disable needs password and code.** Disabling MFA requires the current password and a valid TOTP. Verifies `disableMfaRequiresPasswordAndCode`. Cites R12.
 72. **Regenerate shows once.** Regenerated recovery codes show exactly once. Verifies `regenerateRecoveryCodesShowsOnce`. Cites R13.
-73. **Privileged bootstrap path.** The chosen path for unenrolled MERCHANT and ADMIN accounts works and shows no enrollment hint. Verifies `privilegedBootstrapPathEnrollsWithoutEnrollmentHint`. Cites R10, L5. Blocked on Q13.
+73. **Privileged bootstrap path.** The chosen path for unenrolled MERCHANT and ADMIN accounts works and shows no enrollment hint. Verifies `privilegedBootstrapPathEnrollsWithoutEnrollmentHint`. Cites R10, L5.
 
 ## Phase 1 — Auth & account: API keys
 
