@@ -15,14 +15,85 @@
 - L11. **Reorg is a first-class transition, not an error.** A `chain.tx.reorged` event walks the state machine backward (L1). Because no receipt exists before `FINALIZED`, a reorg before finality never requires revoking a receipt. A reorg after `ATTESTED` is out of Phase 1 policy scope and MUST raise an ops alert and move the payment to `HELD` rather than silently rewriting an attested record — record it in §11 if it occurs.
 - L12. **Module boundaries.** Package-by-feature under `com.themistra.payment`; no feature module imports another feature module's entity class. Shared plumbing lives in `common`. Enforced by ArchUnit, mirroring the auth service.
 - L13. **Secrets discipline.** No secret, credential, DB password, or bucket/KMS identifier is committed. External Secrets Operator injects values; validated `@ConfigurationProperties` fail startup on missing/invalid config in non-local profiles (`ARCHITECTURE.md` §8; auth `target-design.md` §16).
+- L14. **One transaction per invoice (Q2, decided 2026-10-11 directly by the product owner).** An
+  invoice is satisfied by at most one on-chain transaction at launch — no partial fills. **Real
+  consequence found during this spec's own review, not assumed:** Crypto Service's `registerWatch`
+  has no auto-unregister-on-match behavior (confirmed directly against `WatchService.java` — a watch
+  stays live until this service explicitly calls `DELETE /internal/v1/watches/{watchId}`, with no
+  self-termination on a matching transaction). Without an explicit unregister, a *second* transaction
+  to the same pay-to address would still generate `chain.tx.seen` and create a second `Payment` row
+  against the same invoice — silently violating this very rule. This service therefore MUST
+  unregister the watch as soon as the invoice's first payment reaches `SEEN` (R7a) — not only on
+  `EXPIRED` (R5) — so no further matching transaction can reach this service for that invoice at all.
+  A transaction that still lands on that address after unregistration (e.g. a very close race) is
+  accepted on-chain but produces no `chain.tx.*` event this service ever receives, and is therefore
+  invisible to it by construction, not specially handled.
 
 ## 4b. OPEN decisions — implementer/Claude MAY propose
 
-- O1. **Amount-tolerance policy (Q1).** Decide how transferred amount is compared to invoice amount: exact-match-only vs a configurable tolerance band. Propose the comparison (on base units, using `token_decimals`) and the resulting `PAID`/`UNDERPAID`/`OVERPAID` invoice states. Default to exact match for stablecoins; **do not finalize until Q1 is answered.**
-- O2. **Invoice expiry TTL and post-expiry finalization (Q3).** Propose a default validity window and the behaviour when a payment finalizes after expiry (attest anyway vs `HELD` for ops). Recommend one; proceed if low-risk.
-- O3. **On-chain anchor mechanism (Q4).** The daily head anchor is a chain write; this service owns no chain access (L3). Propose routing the anchor through the Crypto Service (a new internal endpoint, e.g. `POST /anchors`) vs another mechanism, name the chain, and describe failure handling. **Blocker for R26 — do not implement until Q4 is answered.**
-- O4. **Receipt generation (Q5).** Propose the canonical signed-JSON receipt shape and the PDF rendering approach (library, template). The **signed digest is over the canonical JSON**, so pin that shape before writing the attest call.
-- O5. **Tax-export format (Q6).** Propose export formats (CSV and/or JSON) and the exact column set for tax-ready history; recommend defaults.
+- O1. **Amount-tolerance policy (Q1).** ~~Decide how transferred amount is compared to invoice amount:
+  exact-match-only vs a configurable tolerance band... **do not finalize until Q1 is answered.**~~
+  **Resolved (2026-10-11, decided directly by the product owner): exact match only.** Compare on base
+  units using `token_decimals` (never a scaled/human amount). `amount == invoice.amount` → `PAID`;
+  `amount < invoice.amount` → `UNDERPAID`; `amount > invoice.amount` → `OVERPAID`. The already-stubbed
+  config default `themistra.payment.invoice.amount-tolerance-base-units=0` (§4c) was correct as written;
+  no tolerance band is implemented in Phase 1. See R15.
+- O2. **Invoice expiry TTL and post-expiry finalization (Q3).** ~~Propose a default validity window and
+  the behaviour when a payment finalizes after expiry (attest anyway vs `HELD` for ops). Recommend one;
+  proceed if low-risk.~~ **Resolved (2026-10-11):** default TTL stays the already-stubbed 60 minutes
+  (`themistra.payment.invoice.default-ttl-minutes=60`, §4c) — low-risk, adopted as written. **Post-expiry
+  finalization, decided directly by the product owner: attest anyway, never `HELD`.** By the time a
+  payment finalizes on-chain it is real and irreversible; refusing it over a timing race is harsh to
+  both sides, and `HELD` is reserved for actual compliance hits (R20), not timing. This drives a real
+  correction to the expiry sweep (R5, revised): the sweep job SHALL only transition `OPEN → EXPIRED`
+  invoices that have **no payment row in any non-terminal state** (`CREATED`/`WATCHING`/`SEEN`/
+  `CONFIRMING`) at sweep time. An invoice with a payment already in flight is left `OPEN` past its
+  nominal expiry so that payment can still reach `FINALIZED` and be attested normally; its watch is
+  *not* unregistered by the sweep in that case.
+- O3. **On-chain anchor mechanism (Q4).** ~~The daily head anchor is a chain write; this service owns no
+  chain access (L3). Propose routing the anchor through the Crypto Service (a new internal endpoint,
+  e.g. `POST /anchors`) vs another mechanism, name the chain, and describe failure handling. **Blocker
+  for R26 — do not implement until Q4 is answered.**~~ **Resolved (2026-10-11): deferred for Phase
+  1/MVP, decided directly by the product owner.** Real finding during this spec's own review, not
+  assumed: Crypto Service has no write/broadcast capability on any chain today — confirmed directly
+  against `ChainAdapter` (`getTx`/`getTokenInfo`/`subscribeAddress`/`getFinalityStatus` are all
+  read/watch/off-chain-sign only) and the `attest` module (produces a KMS *signature*, never broadcasts
+  a transaction). Adding one would be a materially larger, slower addition than a read-only lookup
+  (crypto-service's own task 30 precedent) — a funding wallet, gas/nonce management, and new key
+  custody on a CODEOWNERS-protected service. The hash-chain ledger itself (L7, R21/R22) already gives
+  full tamper-evidence inside the database; the external daily anchor is a second, independent
+  defense-in-depth layer against an attacker who controls both the DB and the app — valuable, but not
+  core-path for Phase 1. **R26 is deferred, not built, in this revision** — tracked as an explicit,
+  disclosed follow-up (same pattern as crypto-service's own task 30 disclosure). `ledger_anchors`
+  (§4c) stays in the baseline schema (harmless, forward-provisioned) but is not written to by any
+  Phase 1 code path.
+- O4. **Receipt generation (Q5).** **Resolved (2026-10-11), proposed directly — low-risk per this
+  item's own "recommend one" guidance, no product decision needed.** Canonical JSON shape (the exact
+  fields the signature covers):
+  ```json
+  {
+    "receiptUuid": "<uuid>", "invoiceUuid": "<uuid>", "paymentUuid": "<uuid>",
+    "merchantAccountUuid": "<uuid>", "chain": "ETHEREUM|TRON", "txHash": "<hex>",
+    "tokenContractAddress": "<address>", "tokenDecimals": 6,
+    "amount": "<decimal string, base units>", "payToAddress": "<address>",
+    "fromAddress": "<address|null>", "finalizedAt": "<RFC3339>"
+  }
+  ```
+  Canonicalization: reuse the **same** canonical-JSON serializer `LedgerService`/`LedgerEntry` already
+  needs for `entry_hash` (L7) — one shared `CanonicalJson.serialize(Map<String,Object>)` utility in
+  `common/` (lexicographically sorted keys, UTF-8, no insignificant whitespace, no key omitted) — rather
+  than two independently-written canonicalizers that could silently drift apart. `receiptDigestSha256`
+  (sent to `/attest`, R19) is `SHA-256(CanonicalJson.serialize(receiptPayload))`. **PDF:** render the
+  same signed fields (plus `signature`/`kmsKeyId`/`signedAt` once attested) into a single-page layout
+  using **Apache PDFBox** (pure-Java, no native dependency, same portability reasoning as the sidecars'
+  own pure-Java preference elsewhere in this codebase) — the PDF is a human-readable rendering of the
+  already-signed JSON, never a second thing that gets signed separately.
+- O5. **Tax-export format (Q6).** **Resolved (2026-10-11), proposed directly — low-risk.** Both CSV and
+  JSON, selected by an `Accept`/query-param convention matching the rest of this platform's export
+  endpoints. Columns: `invoiceUuid, paymentUuid, receiptUuid, chain, txHash, tokenContractAddress,
+  tokenDecimals, amount (base units, decimal string), payToAddress, finalizedAt, attestedAt,
+  receiptUri`. One row per attested payment in the requested date range (by `finalizedAt`), merchant-
+  scoped (R28's own rule extends here).
 - O6. **Consumer topology.** Propose whether the four `chain.tx.*` topics are consumed by one consumer group with a type switch or one listener per event type, and the partition-key alignment (payments keyed by invoice/address vs chain event key) so ordering per payment is preserved. Recommend one; proceed if low-risk.
 
 ## 4c. VERBATIM artifacts — copy exactly, do not paraphrase
@@ -63,7 +134,7 @@ themistra.payment.crypto.watch-path=/internal/v1/watches
 themistra.payment.crypto.connect-timeout-ms=2000
 themistra.payment.crypto.read-timeout-ms=5000
 
-# --- Invoice / expiry (defaults; confirm via Q1/Q3) ---
+# --- Invoice / expiry (confirmed 2026-10-11, Q1/Q3) ---
 themistra.payment.invoice.default-ttl-minutes=60
 themistra.payment.invoice.amount-tolerance-base-units=0
 
@@ -99,7 +170,12 @@ chain.tx.reorged    -> reversal transitions (L11)
 ```
 Every consumed event carries the deterministic idempotency key `chain:txhash:eventtype`.
 
-### Crypto Service internal contract this service depends on (authoritative copy in `spec/crypto-service/design.md` §4c)
+### Crypto Service internal contract this service depends on (Q7, resolved 2026-10-11)
+
+**Confirmed by direct comparison, not assumed:** the copy below was checked field-for-field against
+the real, already-built `contracts/api/crypto-internal.yaml` — `RegisterWatchRequest`/
+`RegisterWatchResponse` and `AttestRequest`/`AttestResponse` match exactly. Authoritative; no change
+needed.
 
 ```
 POST /internal/v1/watches
@@ -210,7 +286,10 @@ CREATE TABLE ledger_entries (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Daily on-chain anchor of the ledger head (ARCHITECTURE.md §6.5). Mechanism per Q4.
+-- Daily on-chain anchor of the ledger head (ARCHITECTURE.md §6.5).
+-- DEFERRED for Phase 1/MVP (Q4, resolved 2026-10-11, O3) - kept in the baseline schema since it is
+-- harmless and forward-provisioned, but no Phase 1 code path writes to this table. R26/task 21 are
+-- not executed under this revision.
 CREATE TABLE ledger_anchors (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     head_entry_hash CHAR(64) NOT NULL,

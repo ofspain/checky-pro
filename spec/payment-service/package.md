@@ -6,7 +6,7 @@
 | Version | `0.1` |
 | Author (senior/owner) | `<name>` |
 | Implementer | `TBD` |
-| Status | `DRAFT` |
+| Status | `DRAFT` — **all of §11's open questions (Q1–Q8) are resolved as of 2026-10-11; nothing in the spec itself blocks starting the build pipeline.** Per `tasks.md` task 29's own convention (mirroring auth/crypto), the bump to `READY FOR IMPL`/`0.2` happens at the end of the 14-phase pipeline once tests pass, not at spec-closure time. |
 | Target repo / service | `services/payment` |
 | Skills to load | `spec-authoring`, `code-review` |
 | Standing rules | [`agents.md`](agents.md) in this directory is authoritative for `services/payment` (distilled from `ARCHITECTURE.md`, `docs/service-languages.pdf`, the ADRs, and the sibling `spec/auth-service`). This spec references it and does not restate or override it except where §4a says so explicitly. |
@@ -78,8 +78,10 @@ Every requirement in `requirements.md` maps to at least one named test. Unit tes
 - `shouldRejectInvoiceWithNonAllowlistedTokenReferenceShape` → R3
 - `shouldRejectInvoiceAmountThatIsZeroOrNegativeOrFloat` → R4
 - `shouldExpireInvoiceAndUnregisterWatchAfterTtl` → R5
+- `shouldNotExpireInvoiceWithPaymentInFlight` → R5 (revised, Q3)
 - `shouldTransitionCreatedToWatchingOnWatchAck` → R6
 - `shouldTransitionToSeenOnChainTxSeen` → R7
+- `shouldUnregisterWatchOnFirstSeenAndIgnoreSecondMatch` → R7a (new, Q2/L14)
 - `shouldEmitPaymentSeenOnFirstSeen` → R8
 - `shouldTransitionToConfirmingOnChainTxConfirmed` → R9
 - `shouldTransitionToFinalizedOnChainTxFinalized` → R10
@@ -98,7 +100,7 @@ Every requirement in `requirements.md` maps to at least one named test. Unit tes
 - `shouldStoreReceiptInS3ObjectLockWorm` → R23
 - `shouldTransitionToAttestedAfterReceiptStoredAndLedgerAppended` → R24
 - `shouldEmitReceiptIssuedAfterAttestation` → R25
-- `shouldAnchorLedgerHeadOnChainDaily` → R26
+- `shouldAnchorLedgerHeadOnChainDaily` → R26 — **DEFERRED (Q4, 2026-10-11), not written under this revision; see `tasks.md` task 21.**
 - `shouldExportTaxReadyHistoryForMerchantAndDateRange` → R27
 - `shouldScopeInvoiceAndReceiptReadsToOwningMerchant` → R28
 - `shouldReturnProblemJsonWithNoInternalDetailOn4xx` → R29
@@ -121,6 +123,8 @@ Every requirement in `requirements.md` maps to at least one named test. Unit tes
 - [ ] Every published event is emitted through the outbox in the same transaction as the state change; `EventTopics` maps every aggregate type.
 - [ ] `mvn -pl services/payment verify` passes (unit + integration + Testcontainers).
 - [ ] `contracts/api/payments.yaml` covers every non-internal endpoint and error response; event payloads validate against `contracts/events/payments/*`.
+- [ ] A watch is unregistered as soon as its invoice's first payment reaches `SEEN` (L14/R7a) — a test proves a second matching transaction produces no further `chain.tx.*` event this service receives.
+- [ ] **Not applicable this revision:** `shouldAnchorLedgerHeadOnChainDaily` (R26) is deferred (Q4, 2026-10-11) — do not block the PR on it, and do not silently skip disclosing that it's deferred.
 
 ## 10. Migration, rollout & rollback
 
@@ -141,11 +145,52 @@ Every requirement in `requirements.md` maps to at least one named test. Unit tes
 
 ## 11. Open questions for the author
 
-- Q1. **Amount tolerance.** What over/under-payment tolerance is acceptable before a payment is treated as satisfying an invoice — exact match only, or a configurable band (e.g. ±0 for stablecoins)? Drives R15 and the `PAID`/`UNDERPAID`/`OVERPAID` invoice states. Placeholder in `design.md` §4b-O1.
-- Q2. **Multiple / partial payments per invoice.** Can one invoice be satisfied by several transactions (partial fills), or is it strictly one tx per invoice at launch? Affects the `payment`↔`invoice` cardinality in the schema (§5).
-- Q3. **Invoice expiry TTL and behaviour.** Default invoice validity window, and what happens to a payment that finalizes *after* expiry — still attested, or `HELD` for ops? Drives R5. Placeholder in `design.md` §4b-O2.
-- Q4. **On-chain anchor mechanism.** The daily hash-chain head anchor (`ARCHITECTURE.md` §6.5) is "a cheap tx embedding the head hash." Does this service request that anchoring tx through the Crypto Service (which owns all chain writes), and on which chain? Blocker for the anchor job (R26). Placeholder in `design.md` §4b-O3.
-- Q5. **Receipt format & generator.** Receipt is "PDF/JSON" (`ARCHITECTURE.md` §5). Confirm both formats, the canonical JSON shape that gets signed, and the PDF library. Drives R19/R23.
-- Q6. **Tax-export format.** Which export formats and columns are required for "tax-ready history" (CSV, JSON, per-jurisdiction schema)? Drives R27.
-- Q7. **Attest request/response contract.** This spec assumes the Crypto Service `POST /attest` shape defined in `spec/crypto-service/design.md` §4c. Confirm it is authoritative, or paste the final signature so it can be pinned verbatim in `design.md` §4c.
+**All of Q1–Q8 are now resolved as of 2026-10-11** (Q1–Q4 by direct product-owner decision, Q5/Q6 by
+direct low-risk proposal, Q7 by source investigation, Q8 already resolved 2026-07-20). None of §11
+blocks implementation any longer — see `tasks.md` task 29.
+
+- Q1. **Amount tolerance.** ~~What over/under-payment tolerance is acceptable before a payment is
+  treated as satisfying an invoice — exact match only, or a configurable band (e.g. ±0 for
+  stablecoins)? Drives R15 and the `PAID`/`UNDERPAID`/`OVERPAID` invoice states. Placeholder in
+  `design.md` §4b-O1.~~ **Resolved (2026-10-11), decided directly by the product owner: exact match
+  only.** `amount == invoice.amount` → `PAID`; otherwise `UNDERPAID`/`OVERPAID`. No tolerance band in
+  Phase 1. See `design.md` O1, `requirements.md` R15. Closed.
+- Q2. **Multiple / partial payments per invoice.** ~~Can one invoice be satisfied by several
+  transactions (partial fills), or is it strictly one tx per invoice at launch? Affects the
+  `payment`↔`invoice` cardinality in the schema (§5).~~ **Resolved (2026-10-11), decided directly by
+  the product owner: strictly one transaction per invoice at launch.** Real consequence found while
+  closing this out, not assumed: `registerWatch` has no auto-unregister-on-match, so this service
+  must itself unregister the watch on the first `SEEN` payment to actually enforce "one tx" — not
+  just by ignoring a second match after the fact. Recorded as `design.md` L14, `requirements.md` R7a.
+  Closed.
+- Q3. **Invoice expiry TTL and behaviour.** ~~Default invoice validity window, and what happens to a
+  payment that finalizes *after* expiry — still attested, or `HELD` for ops? Drives R5. Placeholder
+  in `design.md` §4b-O2.~~ **Resolved (2026-10-11):** TTL stays the already-stubbed 60 minutes.
+  **Post-expiry finalization, decided directly by the product owner: attest anyway, never `HELD`** —
+  the expiry sweep now only expires invoices with no payment in flight (`requirements.md` R5,
+  revised; `design.md` O2). Closed.
+- Q4. **On-chain anchor mechanism.** ~~The daily hash-chain head anchor (`ARCHITECTURE.md` §6.5) is "a
+  cheap tx embedding the head hash." Does this service request that anchoring tx through the Crypto
+  Service (which owns all chain writes), and on which chain? Blocker for the anchor job (R26).
+  Placeholder in `design.md` §4b-O3.~~ **Resolved (2026-10-11): deferred for Phase 1/MVP, decided
+  directly by the product owner.** Real finding during this review: Crypto Service has no chain-
+  write/broadcast capability today (confirmed against `ChainAdapter` and the `attest` module), and
+  adding one is a materially bigger addition than this phase needs. The hash-chain ledger itself
+  (R21/R22) already gives full internal tamper-evidence; the external anchor is an explicit,
+  disclosed follow-up, not silently dropped. `design.md` O3, `requirements.md` R26,
+  `tasks.md` task 21 (skipped). Closed (as deferred).
+- Q5. **Receipt format & generator.** ~~Receipt is "PDF/JSON" (`ARCHITECTURE.md` §5). Confirm both
+  formats, the canonical JSON shape that gets signed, and the PDF library. Drives R19/R23.~~
+  **Resolved (2026-10-11), proposed directly (low-risk per this item's own guidance):** canonical
+  JSON shape pinned in `design.md` O4, signed via a shared `CanonicalJson` serializer also reused by
+  the ledger (L7) so the two canonicalizations can never silently drift apart; PDF rendered with
+  Apache PDFBox from the same signed fields. Closed.
+- Q6. **Tax-export format.** ~~Which export formats and columns are required for "tax-ready history"
+  (CSV, JSON, per-jurisdiction schema)? Drives R27.~~ **Resolved (2026-10-11), proposed directly:**
+  both CSV and JSON, column set pinned in `design.md` O5. Closed.
+- Q7. **Attest request/response contract.** ~~This spec assumes the Crypto Service `POST /attest`
+  shape defined in `spec/crypto-service/design.md` §4c. Confirm it is authoritative, or paste the
+  final signature so it can be pinned verbatim in `design.md` §4c.~~ **Resolved (2026-10-11), closed
+  by investigation, no decision needed:** compared field-for-field against the real, already-built
+  `contracts/api/crypto-internal.yaml` — matches exactly. Closed.
 - Q8. **Agents / standing-rules file.** **Resolved (2026-07-20):** `spec/payment-service/agents.md` now holds the durable rules and this spec references it. Open follow-up: whether to also seed a single repo-root `agents.md` for the platform-common section shared across all four service files (dedupe), or keep them self-contained per service.
