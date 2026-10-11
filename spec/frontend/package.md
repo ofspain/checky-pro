@@ -1,9 +1,9 @@
-# Feature Spec: Frontend — Checky Pro PWA (all phases)
+# Feature Spec: Frontend — Checky Pro PWA (MVP scope: Phase 1a + 1b; Phases 2–5 deferred)
 
 | Field | Value |
 |---|---|
 | Spec ID | `FRONTEND-ROADMAP` |
-| Version | `0.2` |
+| Version | `0.3` |
 | Author (senior/owner) | `<name>` |
 | Implementer | `TBD` |
 | Status | `DRAFT` (least-advanced **in-scope** phase governs; per-phase status in §11). **Phase 1a itself is spec-complete** — every one
@@ -37,6 +37,11 @@ the Phase 1a/1b shell or routing was built or specced with an assumption that pr
 The backend auth service is the identity issuer for the whole product, and its UI does not yet exist. Stakeholders want to see the
 product working. The auth gate is the first shippable slice, because every later phase depends on a secure session, the MFA-first
 rule for privileged accounts, and enumeration-safe copy.
+
+**MVP framing (2026-10-10):** the product owner decided directly that the current drive is an MVP, and scoped this package down to
+exactly what that MVP needs — Phase 1a (auth gate) and Phase 1b (payment verification). Phases 2–5 (Intelligence, Dispute
+Resolution, Reputation, Fraud Intelligence) are explicitly out of scope for this revision (§2, §11 Q4) and are not part of what an
+executing agent builds under this package. They remain written, unchanged, as a forward reference for a later spec revision.
 
 ## 2. Scope
 
@@ -421,13 +426,21 @@ half only, still tied to payment-service (Q2); its trust-passport half is moot a
 Execution is deferred until `spec/payment-service` is fixed and its contracts exist. This section tells the agent what it must read
 and what it must not assume.
 
+**Scope reminder for whoever starts implementation (2026-10-10):** this package's own in-scope MVP is Phase 1a + Phase 1b only.
+`tasks.md` units 138–169, marked "Deferred (out of MVP scope, 2026-10-10)", are not started under this package regardless of
+whether their own former blocker (Q4) ever closes — they are out of scope by a product decision, not by a missing contract. Do
+not "unblock and build" one of them without a new, explicit scope decision from the product owner reopening that phase. Units
+170–172 (capability links) are still live, but narrowed to R54's payer-invoice-view half only (still tied to Q2/payment-service) —
+the trust-passport half went with Phase 4's own deferral.
+
 **Read in this order.**
 1. `agents.md`: the platform rules, all tagged `[ALL]`. These override any feature spec.
 2. `package.md` §0 and §11: the phase status and the open questions Q1–Q15. Each unit's blocker is listed there.
 3. `requirements.md`: R1–R59, in EARS form. Each requirement names the backend requirement or contract it depends on.
 4. `design.md`: §4a locks (L1–L18), §4b open decisions (O1–O7), and §4c verbatim contract paths and the `/app` route set.
 5. `tasks.md`: 172 units. Each unit names one test in §8 and cites its requirements. Units marked "Blocked on Qn" must not start
-   until that question closes.
+   until that question closes. Units marked "Deferred (out of MVP scope, 2026-10-10)" (138–169) are out of scope entirely for
+   this package, by product decision — not a blocker that can close on its own.
 6. `artifacts/review-resolution.md`: both adversarial review passes, with every disposition. The second pass was not re-reviewed.
 7. Backend context the spec relies on: `contracts/api/auth.yaml`, `contracts/api/token-claims.md`,
    `services/auth/docs/architecture/auth-decisions.md` (especially D-012 and D-025), and `spec/auth-service/requirements.md`.
