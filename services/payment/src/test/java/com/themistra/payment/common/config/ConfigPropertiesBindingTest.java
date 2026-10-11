@@ -73,6 +73,71 @@ class ConfigPropertiesBindingTest {
                         .hasMessageContaining("connectTimeoutMs"));
     }
 
+    /** Phase 11 finding 2: readTimeoutMs carries the identical @Positive annotation
+     * connectTimeoutMs does above, but had no negative test of its own until now. */
+    @Test
+    void cryptoClientPropertiesFailWhenReadTimeoutIsNotPositive() {
+        new ApplicationContextRunner().withUserConfiguration(CryptoClientConfig.class)
+                .withPropertyValues(
+                        "themistra.payment.crypto.base-url=http://crypto-service",
+                        "themistra.payment.crypto.attest-path=/internal/v1/attest",
+                        "themistra.payment.crypto.watch-path=/internal/v1/watches",
+                        "themistra.payment.crypto.connect-timeout-ms=2000",
+                        "themistra.payment.crypto.read-timeout-ms=0")
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(BindValidationException.class)
+                        .hasMessageContaining("readTimeoutMs"));
+    }
+
+    /** Phase 11 finding 1: baseUrl, attestPath, and watchPath are all @NotBlank, but none had its
+     * own negative test until now - only the positive binding test and connectTimeoutMs's own
+     * failure test existed for this record. */
+    @Test
+    void cryptoClientPropertiesFailWhenBaseUrlIsBlank() {
+        new ApplicationContextRunner().withUserConfiguration(CryptoClientConfig.class)
+                .withPropertyValues(
+                        "themistra.payment.crypto.base-url=",
+                        "themistra.payment.crypto.attest-path=/internal/v1/attest",
+                        "themistra.payment.crypto.watch-path=/internal/v1/watches",
+                        "themistra.payment.crypto.connect-timeout-ms=2000",
+                        "themistra.payment.crypto.read-timeout-ms=5000")
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(BindValidationException.class)
+                        .hasMessageContaining("baseUrl"));
+    }
+
+    @Test
+    void cryptoClientPropertiesFailWhenAttestPathIsBlank() {
+        new ApplicationContextRunner().withUserConfiguration(CryptoClientConfig.class)
+                .withPropertyValues(
+                        "themistra.payment.crypto.base-url=http://crypto-service",
+                        "themistra.payment.crypto.attest-path=",
+                        "themistra.payment.crypto.watch-path=/internal/v1/watches",
+                        "themistra.payment.crypto.connect-timeout-ms=2000",
+                        "themistra.payment.crypto.read-timeout-ms=5000")
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(BindValidationException.class)
+                        .hasMessageContaining("attestPath"));
+    }
+
+    @Test
+    void cryptoClientPropertiesFailWhenWatchPathIsBlank() {
+        new ApplicationContextRunner().withUserConfiguration(CryptoClientConfig.class)
+                .withPropertyValues(
+                        "themistra.payment.crypto.base-url=http://crypto-service",
+                        "themistra.payment.crypto.attest-path=/internal/v1/attest",
+                        "themistra.payment.crypto.watch-path=",
+                        "themistra.payment.crypto.connect-timeout-ms=2000",
+                        "themistra.payment.crypto.read-timeout-ms=5000")
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(BindValidationException.class)
+                        .hasMessageContaining("watchPath"));
+    }
+
     @Test
     void invoicePropertiesBindFromValidConfiguration() {
         new ApplicationContextRunner().withUserConfiguration(InvoiceConfig.class)
@@ -99,6 +164,21 @@ class ConfigPropertiesBindingTest {
                         .hasMessageContaining("defaultTtlMinutes"));
     }
 
+    /** Phase 11 finding 3: amountToleranceBaseUnits's own @PositiveOrZero had no negative test -
+     * only defaultTtlMinutes's @Positive, above, was exercised failing. Zero itself is already
+     * covered by invoicePropertiesBindFromValidConfiguration's own positive case. */
+    @Test
+    void invoicePropertiesFailWhenAmountToleranceIsNegative() {
+        new ApplicationContextRunner().withUserConfiguration(InvoiceConfig.class)
+                .withPropertyValues(
+                        "themistra.payment.invoice.default-ttl-minutes=60",
+                        "themistra.payment.invoice.amount-tolerance-base-units=-1")
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(BindValidationException.class)
+                        .hasMessageContaining("amountToleranceBaseUnits"));
+    }
+
     @Test
     void receiptPropertiesBindFromValidConfiguration() {
         new ApplicationContextRunner().withUserConfiguration(ReceiptConfig.class)
@@ -109,6 +189,8 @@ class ConfigPropertiesBindingTest {
                     assertThat(context).hasNotFailed();
                     ReceiptProperties props = context.getBean(ReceiptProperties.class);
                     assertThat(props.bucket()).isEqualTo("local-only-fake-receipt-bucket");
+                    // Phase 11 finding 4: the other bound field was never independently asserted.
+                    assertThat(props.kmsPublicKeysUrl()).isEqualTo("http://localhost:9080/local-only-fake-verification-keys");
                 });
     }
 
@@ -140,11 +222,32 @@ class ConfigPropertiesBindingTest {
                         .hasMessageContaining("kmsPublicKeysUrl"));
     }
 
+    /** Phase 8 finding 1: rootCause()-style assertion, not a bare hasFailed() - matching every
+     * other negative test in this file, so a context failure for an unrelated reason (e.g. a
+     * broken @EnableConfigurationProperties import) is not mistaken for this field's own
+     * validation firing. */
     @Test
     void receiptPropertiesFailWhenBucketIsMissingEntirely() {
         new ApplicationContextRunner().withUserConfiguration(ReceiptConfig.class)
                 .withPropertyValues("themistra.payment.receipt.kms-public-keys-url=http://localhost:9080/local-only-fake-verification-keys")
-                .run(context -> assertThat(context).hasFailed());
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(BindValidationException.class)
+                        .hasMessageContaining("bucket"));
+    }
+
+    /** Phase 8 finding 4: the symmetric "missing entirely" test receiptPropertiesFailWhenBucketIsMissingEntirely
+     * already has - kms-public-keys-url is the other genuinely required field and deserves the
+     * same coverage; a prefix typo or accidental rename would otherwise be caught only by the
+     * blank-value test, not a missing-property one. */
+    @Test
+    void receiptPropertiesFailWhenKmsPublicKeysUrlIsMissingEntirely() {
+        new ApplicationContextRunner().withUserConfiguration(ReceiptConfig.class)
+                .withPropertyValues("themistra.payment.receipt.bucket=local-only-fake-receipt-bucket")
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(BindValidationException.class)
+                        .hasMessageContaining("kmsPublicKeysUrl"));
     }
 
     @Test

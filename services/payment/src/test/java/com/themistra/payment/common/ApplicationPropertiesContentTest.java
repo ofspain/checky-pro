@@ -21,6 +21,17 @@ class ApplicationPropertiesContentTest {
     private static final Path APPLICATION_SOURCE =
             Path.of("src/main/java/com/themistra/payment/PaymentServiceApplication.java");
 
+    /** AC3 (Phase 8 finding 3): the resource-server JWT properties are present. The @WebMvcTest
+     * security slice (ResourceServerConfigTest/PublicEndpointsTest) never loads a real
+     * JwtDecoder, so these two properties could be removed without breaking any behavioral test
+     * even though AC3 depends on them - a source-text guard closes that gap. */
+    @Test
+    void resourceServerJwtPropertiesArePresent() throws IOException {
+        String properties = Files.readString(APPLICATION_PROPERTIES);
+        assertThat(properties).contains("spring.security.oauth2.resourceserver.jwt.jwk-set-uri=");
+        assertThat(properties).contains("spring.security.oauth2.resourceserver.jwt.issuer-uri=");
+    }
+
     /** AC2: PaymentServiceApplication carries @ConfigurationPropertiesScan - also covered by
      * T01SkeletonRegressionTest's own updated assertion; kept here too since it is this task's
      * own acceptance criterion, not just a T01 regression guard. */
