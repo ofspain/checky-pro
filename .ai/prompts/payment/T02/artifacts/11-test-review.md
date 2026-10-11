@@ -56,6 +56,47 @@ Scope: T02 only. Recommendations only — no rewrite.
 
 ---
 
+---
+
+## Resolution (applied directly — no dedicated gate after Phase 11 in this pipeline)
+
+All 7 findings verified against real source before disposition — a clean batch this round, none
+factually wrong. All 7 applied, each either mutation-verified directly or confirmed via a real
+first-run failure before the fix:
+
+1. **V2 idempotency via real re-execution:** added
+   `v2sOwnSqlIsIdempotentWhenReExecutedDirectlyNotJustSkippedByFlyway`, mirroring
+   `notification-service`'s own identically-purposed test exactly.
+2. **Granted-table privilege types:** added `grantedTablesHaveExactlyInsertAndSelectPrivilegesNoMore`.
+   Mutation: split the grant so `ledger_entries` got only `SELECT` → **1 failure** (this new test
+   specifically). Reverted.
+3. **No hardcoded database name:** added `v2NeverHardcodesTheDatabaseName`. Mutation: hardcoded
+   `'checky'` in place of `current_database()` → the real migration itself failed in `@BeforeAll`
+   (this Testcontainers database is never named `checky`) — an even stronger real-world
+   confirmation than the text-scan alone would have given. Reverted.
+4. **Ungranted-table denial beyond SELECT:** extended
+   `paymentAppHasNoAccessAtAllToTablesOutsideAc3Scope` to also attempt INSERT/UPDATE/DELETE on
+   each of the seven ungranted tables. Required a per-table column map (`anyRealColumnOf`) since
+   `id` doesn't exist on `processed_events`/`shedlock` — caught and fixed before the first run,
+   not after a failure.
+5. **L6 DB-level check:** added
+   `amountColumnsAreNumericSeventyEightZeroAndNoFloatingPointTypeExistsAnywhere`. Mutation: widened
+   `invoices.amount` to `NUMERIC(78, 2)` → **2 failures** (this new test, and — independently —
+   the byte-for-byte test). Reverted.
+6. **Fragile seed helpers:** rewrote both `seedPaymentAsAdmin`/`seedReceiptAsAdmin` to use
+   `RETURNING id` instead of `ORDER BY id DESC LIMIT 1`. Caught a real, separate consequence while
+   implementing this: the original helper's hardcoded `tx_hash` literal would have collided with
+   the real `UNIQUE (chain, tx_hash)` constraint once a second test method (finding 1's new test)
+   called it against the same class-shared Testcontainers instance — fixed by generating a unique
+   `tx_hash` per call.
+7. **V1 structural invariant:** added `v1ContainsNoRoleOrGrantStatements`, independent of the
+   byte-for-byte check.
+
+**Final state:** `mvn -pl services/payment test` → 25/25 passing (17 schema + 8 from T01) after
+all seven fixes and the one additional fix (tx_hash uniqueness) discovered while implementing them.
+
+---
+
 ### 7. No negative scan that V1 contains no role/grant statements
 
 - **Gap:** AC1 says V1 is schema-only with no role/grant statements. The byte-for-byte comparison against `design.md` enforces this indirectly, but there is no direct scan of the migration file.

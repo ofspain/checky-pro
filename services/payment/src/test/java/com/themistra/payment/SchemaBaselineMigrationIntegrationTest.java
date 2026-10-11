@@ -171,6 +171,28 @@ class SchemaBaselineMigrationIntegrationTest {
                 .doesNotThrowAnyException();
     }
 
+    /** Phase 11 finding 1: the test above only proves Flyway's own bookkeeping skips an
+     * already-applied version — it never re-executes V2's SQL, so it can't catch a real regression
+     * in V2's own `IF NOT EXISTS` guard or its GRANT statements' idempotency. Re-executes V2's
+     * actual file content directly against the admin connection a second time (V2 already ran once
+     * via `@BeforeAll`), then re-proves the grant is still exactly as scoped afterward — mirrors
+     * `notification-service`'s own identically-purposed test. */
+    @Test
+    void v2sOwnSqlIsIdempotentWhenReExecutedDirectlyNotJustSkippedByFlyway() throws IOException, SQLException {
+        String v2Sql = Files.readString(Path.of("src/main/resources/db/migration/V2__payment_app_role_and_grants.sql"));
+
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            assertThatCode(() -> statement.execute(v2Sql))
+                    .as("V2's own CREATE ROLE guard and GRANT statements must tolerate a direct re-run")
+                    .doesNotThrowAnyException();
+        }
+
+        long paymentId = seedPaymentAsAdmin();
+        try (Connection app = connectAsPaymentApp(PAYMENT_APP_PASSWORD)) {
+            assertInsertAndSelectSucceedUpdateAndDeleteAreDenied(app, "verification_records", paymentId);
+        }
+    }
+
     @Test
     void paymentAppRoleRequiresItsProvisionedPassword() {
         assertThatThrownBy(() -> connectAsPaymentApp("definitely-wrong-password"))
@@ -195,13 +217,29 @@ class SchemaBaselineMigrationIntegrationTest {
         }
     }
 
-    /** AC5: payment_app has no access at all to any of the other seven tables. */
+    /** AC5: payment_app has no access at all to any of the other seven tables — not just SELECT
+     * (Phase 11 finding 4: a stray INSERT-only grant without SELECT would otherwise slip past a
+     * SELECT-only check here, even though the information_schema test would still catch it). */
     @Test
     void paymentAppHasNoAccessAtAllToTablesOutsideAc3Scope() throws SQLException {
         try (Connection app = connectAsPaymentApp(PAYMENT_APP_PASSWORD); Statement statement = app.createStatement()) {
             for (String table : UNGRANTED_TABLES) {
                 assertThatThrownBy(() -> statement.executeQuery("SELECT * FROM payments." + table))
                         .as("SELECT on %s must be denied for payment_app (not one of AC3's two named tables)", table)
+                        .isInstanceOf(SQLException.class)
+                        .hasMessageContaining("permission denied");
+                assertThatThrownBy(() -> statement.execute("INSERT INTO payments." + table + " DEFAULT VALUES"))
+                        .as("INSERT on %s must be denied for payment_app", table)
+                        .isInstanceOf(SQLException.class)
+                        .hasMessageContaining("permission denied");
+                String anyRealColumn = anyRealColumnOf(table);
+                assertThatThrownBy(() -> statement.execute(
+                        "UPDATE payments." + table + " SET " + anyRealColumn + " = " + anyRealColumn))
+                        .as("UPDATE on %s must be denied for payment_app", table)
+                        .isInstanceOf(SQLException.class)
+                        .hasMessageContaining("permission denied");
+                assertThatThrownBy(() -> statement.execute("DELETE FROM payments." + table))
+                        .as("DELETE on %s must be denied for payment_app", table)
                         .isInstanceOf(SQLException.class)
                         .hasMessageContaining("permission denied");
             }
@@ -228,6 +266,28 @@ class SchemaBaselineMigrationIntegrationTest {
         }
     }
 
+    /** Phase 11 finding 2: the test above only proves the *set of tables* with a grant row equals
+     * GRANTED_TABLES — it never checks which privilege *types* are held on those tables. If V2
+     * accidentally granted only SELECT (no INSERT) on `ledger_entries`, this would stay silent;
+     * the functional test would still catch it, but with a less precise failure. AC3 requires
+     * exactly INSERT+SELECT, nothing more, nothing less, on each granted table. */
+    @Test
+    void grantedTablesHaveExactlyInsertAndSelectPrivilegesNoMore() throws SQLException {
+        for (String table : GRANTED_TABLES) {
+            try (Connection admin = adminConnection();
+                 Statement statement = admin.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT privilege_type FROM information_schema.table_privileges "
+                                 + "WHERE grantee = 'payment_app' AND table_schema = 'payments' AND table_name = '" + table + "'")) {
+                List<String> privileges = new ArrayList<>();
+                while (resultSet.next()) {
+                    privileges.add(resultSet.getString(1));
+                }
+                assertThat(privileges).as("%s privilege set", table).containsExactlyInAnyOrder("INSERT", "SELECT");
+            }
+        }
+    }
+
     /** AC6: no password for payment_app is committed anywhere in V2 — a text-scan, not a DB
      * behavior check, mirroring T01's own file-content convention for this exact kind of guard.
      * Checked against the file with its own SQL comments stripped first: V2's own explanatory
@@ -249,6 +309,34 @@ class SchemaBaselineMigrationIntegrationTest {
         return sql.replaceAll("--.*", "");
     }
 
+    /** Phase 11 finding 3: V2 must stay environment-agnostic — `GRANT CONNECT` targets
+     * `current_database()` dynamically, never a hardcoded database name. The executable SQL
+     * (comments stripped, since this file's own explanatory comment legitimately says "this
+     * migration is not tied to 'checky'", which would otherwise defeat a naive negative-proof)
+     * must contain `current_database()` and must not contain the literal "checky". */
+    @Test
+    void v2NeverHardcodesTheDatabaseName() throws IOException {
+        String v2 = stripSqlComments(
+                Files.readString(Path.of("src/main/resources/db/migration/V2__payment_app_role_and_grants.sql")));
+
+        assertThat(v2).contains("current_database()");
+        assertThat(v2).doesNotContain("checky");
+    }
+
+    /** Phase 11 finding 7: AC1 says V1 is schema-only, with the role/grants split entirely into V2.
+     * The byte-for-byte comparison against design.md enforces this only indirectly — if a future
+     * edit ever added a GRANT/CREATE ROLE into design.md's own verbatim block, that test would
+     * still pass while the V1/V2 architectural split was silently violated. This is a direct,
+     * independent structural invariant on V1 itself. */
+    @Test
+    void v1ContainsNoRoleOrGrantStatements() throws IOException {
+        String v1 = stripSqlComments(
+                Files.readString(Path.of("src/main/resources/db/migration/V1__payments_baseline.sql")));
+
+        assertThat(v1).doesNotContainPattern("(?i)CREATE ROLE");
+        assertThat(v1).doesNotContainPattern("(?i)\\bGRANT\\b");
+    }
+
     /** AC7: the owner/grantee split only means anything if the baseline tables are owned by the
      * migration/admin role, never by payment_app. */
     @Test
@@ -265,6 +353,30 @@ class SchemaBaselineMigrationIntegrationTest {
         }
     }
 
+    /** Phase 11 finding 5: L6 requires `NUMERIC(78, 0)` on every amount column, and no
+     * floating-point type anywhere. The byte-for-byte test is strong only if `design.md` itself is
+     * correct; this probes the live Postgres catalog directly, proving the migration actually
+     * instantiates the intended types rather than merely matching intended text. */
+    @Test
+    void amountColumnsAreNumericSeventyEightZeroAndNoFloatingPointTypeExistsAnywhere() throws SQLException, IOException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            for (String table : List.of("invoices", "payments")) {
+                try (ResultSet resultSet = statement.executeQuery(
+                        "SELECT data_type, numeric_precision, numeric_scale FROM information_schema.columns "
+                                + "WHERE table_schema = 'payments' AND table_name = '" + table + "' AND column_name = 'amount'")) {
+                    resultSet.next();
+                    assertThat(resultSet.getString("data_type")).as("%s.amount type", table).isEqualTo("numeric");
+                    assertThat(resultSet.getInt("numeric_precision")).as("%s.amount precision", table).isEqualTo(78);
+                    assertThat(resultSet.getInt("numeric_scale")).as("%s.amount scale", table).isEqualTo(0);
+                }
+            }
+        }
+
+        String v1 = stripSqlComments(
+                Files.readString(Path.of("src/main/resources/db/migration/V1__payments_baseline.sql")));
+        assertThat(v1).doesNotContainPattern("(?i)\\bFLOAT\\b|\\bDOUBLE PRECISION\\b|\\bREAL\\b");
+    }
+
     /** AC8: payment_app cannot create or drop anything in the payments schema. */
     @Test
     void paymentAppCannotPerformDdlInThePaymentsSchema() throws SQLException {
@@ -277,6 +389,21 @@ class SchemaBaselineMigrationIntegrationTest {
                     .isInstanceOf(SQLException.class)
                     .hasMessageContaining("must be owner of table ledger_entries");
         }
+    }
+
+    /** The seven ungranted tables have no column in common ("id" doesn't exist on
+     * `processed_events`/`shedlock`, whose primary keys are named differently) — this maps each
+     * one to a real column safe to reference in a no-op `SET col = col` UPDATE. */
+    private static String anyRealColumnOf(String ungrantedTable) {
+        return switch (ungrantedTable) {
+            case "invoices", "payments" -> "state";
+            case "receipts" -> "signature";
+            case "ledger_anchors" -> "head_entry_hash";
+            case "processed_events" -> "event_key";
+            case "outbox" -> "event_type";
+            case "shedlock" -> "name";
+            default -> throw new IllegalArgumentException("no known column for " + ungrantedTable);
+        };
     }
 
     private void assertInsertAndSelectSucceedUpdateAndDeleteAreDenied(Connection app, String table, long fkId) throws SQLException {
@@ -316,49 +443,52 @@ class SchemaBaselineMigrationIntegrationTest {
     }
 
     /** Seeds an invoice + payment row as admin (payment_app has no grant on either table) so the
-     * granted tables' own FK columns have something real to reference. */
+     * granted tables' own FK columns have something real to reference. Uses `RETURNING id`
+     * (Phase 11 finding 6) rather than a separate `SELECT ... ORDER BY id DESC LIMIT 1` — the
+     * latter is order-dependent and would break under parallel test execution or leftover rows
+     * from an earlier run; `RETURNING` hands back exactly the row this statement itself inserted. */
     private static long seedPaymentAsAdmin() throws SQLException {
         try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
-            statement.execute("""
+            long invoiceId;
+            try (ResultSet inserted = statement.executeQuery("""
                     INSERT INTO payments.invoices
                         (invoice_uuid, merchant_account_uuid, chain, token_contract_address, token_decimals,
                          amount, pay_to_address, expires_at)
                     VALUES
                         (gen_random_uuid(), gen_random_uuid(), 'ETHEREUM', repeat('1', 40), 6,
                          1000, repeat('2', 40), now() + interval '1 hour')
-                    """);
-            try (ResultSet invoiceId = statement.executeQuery(
-                    "SELECT id FROM payments.invoices ORDER BY id DESC LIMIT 1")) {
-                invoiceId.next();
-                long invId = invoiceId.getLong(1);
-                statement.execute("""
-                        INSERT INTO payments.payments
-                            (payment_uuid, invoice_id, chain, tx_hash, to_address, token_contract_address, amount)
-                        VALUES
-                            (gen_random_uuid(), %d, 'ETHEREUM', '0xit-schema-test', repeat('2', 40), repeat('1', 40), 1000)
-                        """.formatted(invId));
+                    RETURNING id
+                    """)) {
+                inserted.next();
+                invoiceId = inserted.getLong(1);
             }
-            try (ResultSet paymentId = statement.executeQuery(
-                    "SELECT id FROM payments.payments ORDER BY id DESC LIMIT 1")) {
-                paymentId.next();
-                return paymentId.getLong(1);
+            // tx_hash must be unique per call (payments.uq_payment_chain_tx) - this helper is
+            // called from more than one test method against the one, class-shared Testcontainers
+            // instance, so a literal constant here would collide on the second call.
+            try (ResultSet inserted = statement.executeQuery("""
+                    INSERT INTO payments.payments
+                        (payment_uuid, invoice_id, chain, tx_hash, to_address, token_contract_address, amount)
+                    VALUES
+                        (gen_random_uuid(), %d, 'ETHEREUM', '0xit-' || gen_random_uuid(), repeat('2', 40), repeat('1', 40), 1000)
+                    RETURNING id
+                    """.formatted(invoiceId))) {
+                inserted.next();
+                return inserted.getLong(1);
             }
         }
     }
 
     private static long seedReceiptAsAdmin(long paymentId) throws SQLException {
-        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
-            statement.execute("""
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement();
+             ResultSet inserted = statement.executeQuery("""
                     INSERT INTO payments.receipts
                         (receipt_uuid, payment_id, digest_sha256, signature, kms_key_id, s3_bucket, s3_key, signed_at)
                     VALUES
                         (gen_random_uuid(), %d, repeat('a', 64), 'it-signature', 'it-kms-key', 'it-bucket', 'it-key', now())
-                    """.formatted(paymentId));
-            try (ResultSet receiptId = statement.executeQuery(
-                    "SELECT id FROM payments.receipts ORDER BY id DESC LIMIT 1")) {
-                receiptId.next();
-                return receiptId.getLong(1);
-            }
+                    RETURNING id
+                    """.formatted(paymentId))) {
+            inserted.next();
+            return inserted.getLong(1);
         }
     }
 
