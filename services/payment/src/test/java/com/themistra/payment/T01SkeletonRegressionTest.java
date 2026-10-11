@@ -59,45 +59,50 @@ class T01SkeletonRegressionTest {
         assertThat(dependencyVersion(pom, "bom")).isEqualTo("2.50.2");
         assertThat(propertyValue(pom, "testcontainers.version")).isEqualTo("1.21.4");
 
-        // Web + validation
-        assertThat(pom).contains("<artifactId>spring-boot-starter-web</artifactId>");
-        assertThat(pom).contains("<artifactId>spring-boot-starter-validation</artifactId>");
+        // Web + validation - "exactly once" (Phase 11 finding 3), not "contains", so an
+        // accidentally duplicated <dependency> block would fail this suite rather than pass
+        // silently (Maven itself tolerates a duplicate without complaint).
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-boot-starter-web</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-boot-starter-validation</artifactId>");
 
         // Resource server only
-        assertThat(pom).contains("<artifactId>spring-boot-starter-oauth2-resource-server</artifactId>");
-        assertThat(pom).contains("<artifactId>spring-security-oauth2-resource-server</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-boot-starter-oauth2-resource-server</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-security-oauth2-resource-server</artifactId>");
 
         // Persistence
-        assertThat(pom).contains("<artifactId>spring-boot-starter-data-jpa</artifactId>");
-        assertThat(pom).contains("<artifactId>flyway-core</artifactId>");
-        assertThat(pom).contains("<artifactId>flyway-database-postgresql</artifactId>");
-        assertThat(pom).contains("<artifactId>postgresql</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-boot-starter-data-jpa</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>flyway-core</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>flyway-database-postgresql</artifactId>");
+        // The bare "postgresql" artifactId is NOT exactly-once: the ordinary JDBC driver
+        // (org.postgresql:postgresql) and Testcontainers' own module (org.testcontainers:postgresql)
+        // legitimately share that exact tag string - asserted as exactly two occurrences, and the
+        // Testcontainers one specifically pinned by its groupId pairing right below (Phase 11
+        // finding 1 - a plain "contains" here would stay green even if the Testcontainers module
+        // were deleted, since the JDBC driver's own identical tag would still match).
+        long postgresqlTags = Pattern.compile("<artifactId>postgresql</artifactId>").matcher(pom).results().count();
+        assertThat(postgresqlTags).as("JDBC driver + Testcontainers postgresql, exactly two").isEqualTo(2);
+        assertThat(pom).containsPattern("<groupId>org\\.testcontainers</groupId>\\s*<artifactId>postgresql</artifactId>");
 
         // Kafka
-        assertThat(pom).contains("<artifactId>spring-kafka</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-kafka</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>kafka</artifactId>");
 
         // Receipt store (L9)
-        assertThat(pom).containsPattern("<artifactId>s3</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>s3</artifactId>");
 
         // Observability
-        assertThat(pom).contains("<artifactId>spring-boot-starter-actuator</artifactId>");
-        assertThat(pom).contains("<artifactId>micrometer-registry-prometheus</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-boot-starter-actuator</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>micrometer-registry-prometheus</artifactId>");
 
         // Test scope
-        assertThat(pom).contains("<artifactId>spring-boot-starter-test</artifactId>");
-        assertThat(pom).contains("<artifactId>spring-security-test</artifactId>");
-        assertThat(pom).contains("<artifactId>spring-boot-testcontainers</artifactId>");
-        assertThat(pom).contains("<artifactId>junit-jupiter</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-boot-starter-test</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-security-test</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-boot-testcontainers</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>junit-jupiter</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>archunit-junit5</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>awaitility</artifactId>");
         assertThat(dependencyVersion(pom, "archunit-junit5")).isEqualTo("1.3.0");
         assertThat(dependencyVersion(pom, "awaitility")).isEqualTo("4.2.2");
-
-        // Both Testcontainers modules present (postgresql, kafka) - checked separately since
-        // "postgresql" also matches the main JDBC driver artifact above.
-        long testcontainersPostgres = pom.lines()
-                .filter(line -> line.contains("org.testcontainers") || line.contains("<artifactId>postgresql</artifactId>"))
-                .count();
-        assertThat(testcontainersPostgres).isGreaterThan(0);
-        assertThat(pom).contains("<artifactId>kafka</artifactId>");
     }
 
     /** AC3: this task deliberately excludes the KMS SDK (L3), any chain client, the OIDC-issuer
@@ -125,7 +130,11 @@ class T01SkeletonRegressionTest {
 
     /** AC4: the Application class is bare - exactly one class-level annotation
      * (@SpringBootApplication) and the standard main/SpringApplication.run entry point, nothing
-     * else. A structural source-text check, not a Maven shell-out (Phase 3 finding 5). */
+     * else. A structural source-text check, not a Maven shell-out (Phase 3 finding 5). The regex/
+     * count checks below run against the comment-stripped source (Phase 11 finding 2) - this same
+     * file already proved once, for the pom's own checks, that a comment explaining *why*
+     * something is present can accidentally contain the literal text a count-based check scans
+     * for; nothing exempts this, the one Java-source check in the suite, from that same risk. */
     @Test
     void applicationClassIsBareWithStandardMainMethod() throws IOException {
         String source = Files.readString(APPLICATION_SOURCE);
@@ -135,7 +144,14 @@ class T01SkeletonRegressionTest {
                 .as("SpringApplication.run must be called with the real class and args")
                 .contains("SpringApplication.run(PaymentServiceApplication.class, args);");
 
-        long classLevelAnnotations = source.lines()
+        String strippedSource = stripJavaComments(source);
+
+        // File-wide, not strictly position-scoped to "immediately before the class declaration"
+        // (Phase 11 finding 4, no test change needed for it - documented here instead): today
+        // there is exactly one @-starting line and it is the class annotation, so this is
+        // equivalent in practice. A future task adding an annotated method to this same class
+        // would need to revisit this assertion's scope, not treat a failure here as a regression.
+        long classLevelAnnotations = strippedSource.lines()
                 .filter(line -> line.trim().startsWith("@"))
                 .count();
         assertThat(classLevelAnnotations)
@@ -143,7 +159,7 @@ class T01SkeletonRegressionTest {
                         + "that introduces what it enables")
                 .isEqualTo(1);
 
-        long methodCount = Pattern.compile("\\bpublic\\s+static\\s+void\\s+main\\b").matcher(source).results().count();
+        long methodCount = Pattern.compile("\\bpublic\\s+static\\s+void\\s+main\\b").matcher(strippedSource).results().count();
         assertThat(methodCount).as("exactly one main method, no other method").isEqualTo(1);
     }
 
@@ -152,8 +168,8 @@ class T01SkeletonRegressionTest {
     void buildPluginsAndFinalNameAreRegistered() throws IOException {
         String pom = Files.readString(MODULE_POM);
 
-        assertThat(pom).contains("<artifactId>spring-boot-maven-plugin</artifactId>");
-        assertThat(pom).contains("<artifactId>flyway-maven-plugin</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>spring-boot-maven-plugin</artifactId>");
+        assertDeclaredExactlyOnce(pom, "<artifactId>flyway-maven-plugin</artifactId>");
         assertThat(dependencyVersion(pom, "flyway-maven-plugin")).isEqualTo("11.7.2");
         assertThat(pom).contains("<schemas>payments</schemas>");
         assertThat(stripXmlComments(pom))
@@ -227,6 +243,20 @@ class T01SkeletonRegressionTest {
      * substring search cannot tell the two apart. */
     private static String stripXmlComments(String xml) {
         return xml.replaceAll("(?s)<!--.*?-->", "");
+    }
+
+    /** Java-source counterpart to {@link #stripXmlComments} (Phase 11 finding 2): strips block
+     * and line comments before a regex/count-based check on the real code. */
+    private static String stripJavaComments(String java) {
+        return java.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("//.*", "");
+    }
+
+    /** Asserts a dependency coordinate appears exactly once - "at least once" (plain
+     * {@code contains}) would not catch an accidentally duplicated {@code <dependency>} block
+     * (Phase 11 finding 3). */
+    private static void assertDeclaredExactlyOnce(String pom, String artifactIdTag) {
+        long occurrences = Pattern.compile(Pattern.quote(artifactIdTag)).matcher(pom).results().count();
+        assertThat(occurrences).as("%s must appear exactly once, not duplicated", artifactIdTag).isEqualTo(1);
     }
 
     private static String propertyValue(String pomContent, String propertyName) {
