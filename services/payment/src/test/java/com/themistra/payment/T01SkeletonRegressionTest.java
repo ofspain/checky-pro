@@ -128,18 +128,24 @@ class T01SkeletonRegressionTest {
                 .doesNotContain("com.bucket4j");
     }
 
-    /** AC4: the Application class is bare - exactly one class-level annotation
-     * (@SpringBootApplication) and the standard main/SpringApplication.run entry point, nothing
-     * else. A structural source-text check, not a Maven shell-out (Phase 3 finding 5). The regex/
-     * count checks below run against the comment-stripped source (Phase 11 finding 2) - this same
-     * file already proved once, for the pom's own checks, that a comment explaining *why*
+    /** AC4: the Application class carries only the annotations the tasks landed so far actually
+     * introduced, and the standard main/SpringApplication.run entry point, nothing else. A
+     * structural source-text check, not a Maven shell-out (Phase 3 finding 5, T01). The regex/
+     * count checks below run against the comment-stripped source (Phase 11 finding 2, T01) - this
+     * same file already proved once, for the pom's own checks, that a comment explaining *why*
      * something is present can accidentally contain the literal text a count-based check scans
-     * for; nothing exempts this, the one Java-source check in the suite, from that same risk. */
+     * for; nothing exempts this, the one Java-source check in the suite, from that same risk.
+     * <b>Updated at T03</b> (mirrors {@code notification-service}'s own identical T01-test
+     * evolution): {@code @ConfigurationPropertiesScan} is now expected, since T03 introduced this
+     * service's first {@code @ConfigurationProperties} classes - the count below moved from 1 to
+     * 2, not left stale against the T01-only shape. */
     @Test
     void applicationClassIsBareWithStandardMainMethod() throws IOException {
         String source = Files.readString(APPLICATION_SOURCE);
 
         assertThat(source).contains("@SpringBootApplication");
+        assertThat(source).as("T03 added the first @ConfigurationProperties classes to scan")
+                .contains("@ConfigurationPropertiesScan");
         assertThat(source)
                 .as("SpringApplication.run must be called with the real class and args")
                 .contains("SpringApplication.run(PaymentServiceApplication.class, args);");
@@ -147,17 +153,18 @@ class T01SkeletonRegressionTest {
         String strippedSource = stripJavaComments(source);
 
         // File-wide, not strictly position-scoped to "immediately before the class declaration"
-        // (Phase 11 finding 4, no test change needed for it - documented here instead): today
-        // there is exactly one @-starting line and it is the class annotation, so this is
-        // equivalent in practice. A future task adding an annotated method to this same class
-        // would need to revisit this assertion's scope, not treat a failure here as a regression.
+        // (Phase 11 finding 4, T01, no test change needed for it then - documented there instead):
+        // today there are exactly two @-starting lines (@SpringBootApplication,
+        // @ConfigurationPropertiesScan) and both are class-level, so this remains equivalent in
+        // practice. A future task adding an annotated method to this same class would need to
+        // revisit this assertion's scope, not treat a failure here as a regression.
         long classLevelAnnotations = strippedSource.lines()
                 .filter(line -> line.trim().startsWith("@"))
                 .count();
         assertThat(classLevelAnnotations)
-                .as("no annotation beyond @SpringBootApplication - none is added until the task "
-                        + "that introduces what it enables")
-                .isEqualTo(1);
+                .as("no annotation beyond @SpringBootApplication/@ConfigurationPropertiesScan - "
+                        + "none else is added until the task that introduces what it enables")
+                .isEqualTo(2);
 
         long methodCount = Pattern.compile("\\bpublic\\s+static\\s+void\\s+main\\b").matcher(strippedSource).results().count();
         assertThat(methodCount).as("exactly one main method, no other method").isEqualTo(1);

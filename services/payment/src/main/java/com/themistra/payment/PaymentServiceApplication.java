@@ -2,14 +2,17 @@ package com.themistra.payment;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 /**
- * T01 — bare entry point. No other annotation is added here; each one
- * ({@code @ConfigurationPropertiesScan}, {@code @EnableScheduling}, {@code @EnableSchedulerLock},
- * etc.) is added only in the task that actually introduces the thing it enables (frozen brief,
- * mirrors {@code crypto-service} T01's own established discipline).
+ * T01 — bare entry point, no other annotation (mirrors {@code crypto-service} T01's own
+ * established discipline). {@code @ConfigurationPropertiesScan} added in T03, the first task to
+ * introduce any {@code @ConfigurationProperties} class ({@code common.config.*Properties}).
+ * {@code @EnableScheduling}/{@code @EnableSchedulerLock} land only in the task that introduces
+ * the thing each one enables.
  */
 @SpringBootApplication
+@ConfigurationPropertiesScan
 public class PaymentServiceApplication {
 
     public static void main(String[] args) {

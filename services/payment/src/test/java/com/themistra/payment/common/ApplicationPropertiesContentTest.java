@@ -1,0 +1,98 @@
+package com.themistra.payment.common;
+
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.regex.Pattern;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * T03 — permanent file-content guards for this task's own AC2, AC6, AC7, AC8 (Phase 3 findings
+ * 4, 5, 7, 8), which would otherwise only be checked by file reads during the review phases.
+ * Plain JUnit, no Spring context, mirroring T01's own skeleton-test style.
+ */
+class ApplicationPropertiesContentTest {
+
+    private static final Path APPLICATION_PROPERTIES = Path.of("src/main/resources/application.properties");
+    private static final Path APPLICATION_SOURCE =
+            Path.of("src/main/java/com/themistra/payment/PaymentServiceApplication.java");
+
+    /** AC2: PaymentServiceApplication carries @ConfigurationPropertiesScan - also covered by
+     * T01SkeletonRegressionTest's own updated assertion; kept here too since it is this task's
+     * own acceptance criterion, not just a T01 regression guard. */
+    @Test
+    void applicationClassHasConfigurationPropertiesScan() throws IOException {
+        String source = Files.readString(APPLICATION_SOURCE);
+        assertThat(source).contains("@ConfigurationPropertiesScan");
+    }
+
+    /** AC6: actuator exposure, health probes, and show-details=never are all set - without the
+     * exposure line, PublicEndpoints' own allowlisted paths 404 regardless of security config
+     * (named lesson, confirmed in every sibling service's own application.properties). */
+    @Test
+    void actuatorExposureProbesAndShowDetailsAreConfigured() throws IOException {
+        String properties = Files.readString(APPLICATION_PROPERTIES);
+
+        assertThat(properties).contains("management.endpoints.web.exposure.include=health,info,prometheus");
+        assertThat(properties).contains("management.endpoint.health.probes.enabled=true");
+        assertThat(properties).as("Phase 3 finding 4").contains("management.endpoint.health.show-details=never");
+    }
+
+    /** AC7 (Phase 3 finding 5): Kafka consumer group-id is set now, even though the first real
+     * listener lands in a later task - an unset group-id falls back to a generated id that
+     * changes across restarts, defeating consumer-group semantics. */
+    @Test
+    void kafkaConsumerGroupIdIsSet() throws IOException {
+        String properties = Files.readString(APPLICATION_PROPERTIES);
+        assertThat(properties).contains("spring.kafka.consumer.group-id=payment-service");
+    }
+
+    /** AC8 (Phase 3 finding 8): Hikari pool settings and the search_path init SQL are set now,
+     * even though no entity exists yet - omitting connection-init-sql would cause every later
+     * JPA query to fail once entities land, since nothing else sets the schema search path. */
+    @Test
+    void datasourceHikariPoolAndSearchPathAreConfigured() throws IOException {
+        String properties = Files.readString(APPLICATION_PROPERTIES);
+
+        assertThat(properties).contains("spring.datasource.hikari.maximum-pool-size=10");
+        assertThat(properties).contains("spring.datasource.hikari.connection-timeout=5000");
+        assertThat(properties).contains("spring.datasource.hikari.connection-init-sql=SET search_path TO payments, public");
+        assertThat(properties).as("L13/T02 - the app must never connect as the schema-owning admin role")
+                .contains("spring.datasource.username=${DB_USERNAME:payment_app}");
+    }
+
+    /** Phase 3 finding 7: no credential string beyond the documented datasource-password
+     * carve-out (the same local-dev-only placeholder pattern T01/T02 already established), and no
+     * YAML file exists anywhere under src/main/resources (agents.md: flat application.properties
+     * only, never YAML). */
+    @Test
+    void noUndocumentedSecretAndNoYamlFileExists() throws IOException {
+        String properties = Files.readString(APPLICATION_PROPERTIES);
+
+        long passwordLines = properties.lines().filter(line -> line.contains("password")).count();
+        assertThat(passwordLines)
+                .as("exactly one password-shaped line - the documented local-dev datasource carve-out")
+                .isEqualTo(1);
+        assertThat(properties).contains("spring.datasource.password=${DB_PASSWORD:payment-app-local-only}");
+        assertThat(properties).doesNotContainPattern("(?i)<secret>|apiKey=|accessKey=|accessToken=");
+
+        try (var files = Files.walk(Path.of("src/main/resources"))) {
+            List<Path> yamlFiles = files
+                    .filter(path -> Pattern.compile("\\.ya?ml$").matcher(path.toString()).find())
+                    .toList();
+            assertThat(yamlFiles).as("agents.md: flat application.properties only, never YAML").isEmpty();
+        }
+    }
+
+    /** AC3 companion: server.port claims 8083, the next free value after auth's 8080 and
+     * notification's already-claimed 8082 (Phase 1 resolution). */
+    @Test
+    void serverPortIsClaimedAndDoesNotCollideWithKnownSiblingPorts() throws IOException {
+        String properties = Files.readString(APPLICATION_PROPERTIES);
+        assertThat(properties).contains("server.port=${SERVER_PORT:8083}");
+    }
+}
