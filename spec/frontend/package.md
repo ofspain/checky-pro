@@ -26,7 +26,7 @@ the Phase 1a/1b shell or routing was built or specced with an assumption that pr
 | Phase | Slice | Status |
 |---|---|---|
 | Phase 1a | Auth and account gatekeeper | **SPEC COMPLETE** (2026-10-10). Every own open question (Q1, Q5, Q6, Q10, Q12, Q13, Q14, Q15) resolved. Execution is still deliberately deferred per `agents.md`'s own process rule, pending `spec/payment-service`. |
-| Phase 1b | Payment verification and invoicing | DRAFT. Q3 (notification stream) resolved 2026-10-08. Blocked on Q2. |
+| Phase 1b | Payment verification and invoicing | DRAFT. Q3 (notification stream) resolved 2026-10-08. Blocked on Q2 — partially resolved 2026-10-11 (payment-service's own Q1 closed); still waiting on `contracts/api/payments.yaml` itself landing. |
 | Phase 2 | Intelligence engine | **DEFERRED — out of MVP scope (2026-10-10).** Not blocked on Q4 anymore; simply not part of this spec revision. |
 | Phase 3 | AI-assisted dispute resolution | **DEFERRED — out of MVP scope (2026-10-10).** |
 | Phase 4 | Reputation and trust | **DEFERRED — out of MVP scope (2026-10-10).** |
@@ -326,10 +326,14 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   (`POST .../totp`, `POST .../totp/confirm`, `DELETE .../totp`, `POST .../recovery-codes`, the last covering the new R49)
   are implemented and documented in `contracts/api/auth.yaml` with explicit `security: [bearerAuth]`. 90 tests green,
   including real HTTP integration tests for every named path and failure path. Closed.
-- Q2. **Payments contract and payment-service Q1 (blocks R31–R39, R55, R56).** `contracts/api/payments.yaml` does not exist.
+- Q2. **Payments contract and payment-service Q1 (blocks R31–R39, R55, R56).** ~~`contracts/api/payments.yaml` does not exist.
   `spec/payment-service` defines invoice endpoints and the invoice states `OPEN`, `PAID`, `UNDERPAID`, `OVERPAID`, `EXPIRED`, `HELD`,
   but payment-service's own design O1 marks those outcomes as proposed, pending its Q1. Owner action: close payment-service Q1, then
-  author or supply `payments.yaml`.
+  author or supply `payments.yaml`.~~ **Partially resolved (2026-10-11): payment-service's own Q1 is now closed** — exact-match-only
+  tolerance, decided directly by the product owner (`spec/payment-service/design.md` O1). The invoice states `OPEN`, `PAID`,
+  `UNDERPAID`, `OVERPAID`, `EXPIRED`, `HELD` are no longer proposed; they're final. **Still open:** `contracts/api/payments.yaml`
+  itself does not exist yet — it's authored as part of payment-service's own build (`spec/payment-service/tasks.md` task 24), not
+  before it. This Q2 stays open until that contract lands.
 - Q3. **Notification stream and transport (blocks R35, R59, O7).** ~~`contracts/api/notifications.yaml` does not exist, and the
   transport and authentication are decided in `spec/notification-service` O3 and Q3. Owner action: confirm the SSE choice and the
   stream authentication option (O7).~~ **Resolved (2026-10-08).** The transport is SSE, already built
