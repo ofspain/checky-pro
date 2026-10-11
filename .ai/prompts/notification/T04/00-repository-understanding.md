@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** `R7`, `R8`
 - **Scoped LOCKED decisions:** `L1`
 - **Named tests (`package.md` §8):** `shouldDedupeDuplicateEventDeliveryByEventKey`, `shouldNotDoubleSendWhenSameEventRedelivered`
-- **Contracts:** `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
+- **Contracts:** `contracts/api/notifications.yaml`, `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
 - **Standing rules:** `spec/notification-service/agents.md` is authoritative — never restate or violate it.
 
 ---

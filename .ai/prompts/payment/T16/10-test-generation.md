@@ -5,21 +5,21 @@
 | | |
 |---|---|
 | **Service** | `payment-service` |
-| **Task** | T16 — Receipt digest (Q5) |
+| **Task** | T16 — Receipt digest (Q5, resolved, design.md O4) |
 | **Spec section** | Attestation, receipts, and ledger |
 | **Model** | Claude Sonnet |
 | **Consumes** | `artifacts/09-review-resolution.md` |
 | **Produces** | `artifacts/10-test-generation.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/payment-service/tasks.md`, task 16):**
-> **Receipt digest (Q5).** Implement the canonical signed-JSON receipt shape and `ReceiptDigest` (SHA-256 over canonical JSON). Pin the shape in design §4c once Q5 is answered.
+> **Receipt digest (Q5, resolved, design.md O4).** Add a shared `CanonicalJson.serialize(Map<String,Object>)` utility in `common/` (sorted keys, UTF-8, no insignificant whitespace) and use it from **both** `ReceiptDigest` (this task) and `LedgerService` (task 19) — one canonicalizer, not two independently-written ones. Implement `ReceiptDigest` over the exact field set in design.md O4.
 
 **Spec package:** `spec/payment-service/` → `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
 - **Scoped requirement IDs:** none cited inline — derive them in Phase 1 from `requirements.md`
 - **Scoped LOCKED decisions:** none cited inline — derive them in Phase 1 from `design.md` §4a
 - **Named tests (`package.md` §8):** none pre-mapped — derive from the acceptance criteria + `package.md` §8
-- **Contracts:** `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
+- **Contracts:** `contracts/api/crypto-internal.yaml`, `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
 - **Standing rules:** `spec/payment-service/agents.md` is authoritative — never restate or violate it.
 
 ---

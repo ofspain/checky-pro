@@ -4,7 +4,7 @@ One task folder per implementation task in [`spec/crypto-service/tasks.md`](../.
 
 **Spec package:** [`spec/crypto-service/`](../../../spec/crypto-service/) — `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
-**Tasks (29):**
+**Tasks (30):**
 
 | Task | Title | Section |
 |---|---|---|
@@ -37,5 +37,6 @@ One task folder per implementation task in [`spec/crypto-service/tasks.md`](../.
 | [T27](T27/) | Run full suite | Final verification |
 | [T28](T28/) | Threat-model closure | Final verification |
 | [T29](T29/) | Bump spec status | Final verification |
+| [T30](T30/) | On-demand tx-hash lookup endpoint (R29, L16) | Phase 2 prerequisite (added 2026-10-10, discovered authoring `spec/intelligence-service`) |
 
 To execute a task, open its folder and run `00-…` through `13-…` in order with the model named in each file's header. See [`../../WORKFLOW.md`](../../WORKFLOW.md).

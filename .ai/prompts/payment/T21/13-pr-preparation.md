@@ -5,21 +5,21 @@
 | | |
 |---|---|
 | **Service** | `payment-service` |
-| **Task** | T21 — Daily anchor job (Q4) |
+| **Task** | T21 — Daily anchor job (Q4) — DEFERRED, not executed under this revision |
 | **Spec section** | Attestation, receipts, and ledger |
 | **Model** | Claude Sonnet |
 | **Consumes** | `artifacts/12-specification-verification.md` |
 | **Produces** | `artifacts/13-pr-preparation.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/payment-service/tasks.md`, task 21):**
-> **Daily anchor job (Q4).** Implement `LedgerAnchorJob` (ShedLock) recording the head hash and anchor tx reference (R26). Route the on-chain write per Q4/O3 — **blocked until Q4 is answered.**
+> **Daily anchor job (Q4) — DEFERRED, not executed under this revision.** ~~Implement `LedgerAnchorJob` (ShedLock) recording the head hash and anchor tx reference (R26). Route the on-chain write per Q4/O3 — blocked until Q4 is answered.~~ **Resolved (2026-10-11): deferred for Phase 1/MVP, decided directly by the product owner** (design.md O3, requirements.md R26). Crypto Service has no chain-write capability to route this through, and adding one is out of scope for this revision. Skip this task; `ledger_anchors` stays in the schema, unpopulated. Revisit as an explicit, separately-scoped follow-up task if the product owner later wants the external anchor layer.
 
 **Spec package:** `spec/payment-service/` → `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
 - **Scoped requirement IDs:** `R26`
 - **Scoped LOCKED decisions:** none cited inline — derive them in Phase 1 from `design.md` §4a
 - **Named tests (`package.md` §8):** `shouldAnchorLedgerHeadOnChainDaily`
-- **Contracts:** `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
+- **Contracts:** `contracts/api/crypto-internal.yaml`, `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
 - **Standing rules:** `spec/payment-service/agents.md` is authoritative — never restate or violate it.
 
 ---

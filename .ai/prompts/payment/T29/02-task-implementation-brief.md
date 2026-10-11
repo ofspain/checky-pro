@@ -12,14 +12,14 @@
 | **Produces** | `artifacts/02-task-implementation-brief.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/payment-service/tasks.md`, task 29):**
-> **Bump spec status.** Once §11 questions (esp. Q1, Q3, Q4, Q5, Q7) are closed and tests pass, change this spec from `DRAFT` to `READY FOR IMPL` and version to `0.2`.
+> **Bump spec status.** **§11 is now fully closed as of 2026-10-11 (Q1–Q8 all resolved or deferred-and-disclosed) — the only remaining gate on this task is tests passing.** Once `mvn -pl services/payment verify` (task 27) and the threat-model check (task 28) both pass, change this spec from `DRAFT` to `READY FOR IMPL` and version to `0.2`, mirroring the auth/crypto services' own identical convention (bumped at the end of the build pipeline, not at spec-authoring time).
 
 **Spec package:** `spec/payment-service/` → `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
 - **Scoped requirement IDs:** none cited inline — derive them in Phase 1 from `requirements.md`
 - **Scoped LOCKED decisions:** none cited inline — derive them in Phase 1 from `design.md` §4a
 - **Named tests (`package.md` §8):** none pre-mapped — derive from the acceptance criteria + `package.md` §8
-- **Contracts:** `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
+- **Contracts:** `contracts/api/crypto-internal.yaml`, `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
 - **Standing rules:** `spec/payment-service/agents.md` is authoritative — never restate or violate it.
 
 ---

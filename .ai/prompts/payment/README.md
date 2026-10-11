@@ -23,12 +23,12 @@ One task folder per implementation task in [`spec/payment-service/tasks.md`](../
 | [T13](T13/) | Amount & poisoning integrity | State machine & consumers |
 | [T14](T14/) | Idempotency & ordering tests | State machine & consumers |
 | [T15](T15/) | Crypto client | Attestation, receipts, and ledger |
-| [T16](T16/) | Receipt digest (Q5) | Attestation, receipts, and ledger |
+| [T16](T16/) | Receipt digest (Q5, resolved, design.md O4) | Attestation, receipts, and ledger |
 | [T17](T17/) | Receipt issuance — FINALIZED only | Attestation, receipts, and ledger |
 | [T18](T18/) | S3 WORM store | Attestation, receipts, and ledger |
 | [T19](T19/) | Hash-chain ledger | Attestation, receipts, and ledger |
 | [T20](T20/) | Ledger verifier | Attestation, receipts, and ledger |
-| [T21](T21/) | Daily anchor job (Q4) | Attestation, receipts, and ledger |
+| [T21](T21/) | Daily anchor job (Q4) — DEFERRED, not executed under this revision | Attestation, receipts, and ledger |
 | [T22](T22/) | Tax export (Q6) | Exports, contracts, hardening |
 | [T23](T23/) | RFC 9457 errors | Exports, contracts, hardening |
 | [T24](T24/) | Contracts | Exports, contracts, hardening |

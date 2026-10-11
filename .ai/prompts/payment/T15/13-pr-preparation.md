@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** none cited inline — derive them in Phase 1 from `requirements.md`
 - **Scoped LOCKED decisions:** `L3`
 - **Named tests (`package.md` §8):** none pre-mapped — derive from the acceptance criteria + `package.md` §8
-- **Contracts:** `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
+- **Contracts:** `contracts/api/crypto-internal.yaml`, `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
 - **Standing rules:** `spec/payment-service/agents.md` is authoritative — never restate or violate it.
 
 ---

@@ -12,14 +12,14 @@
 | **Produces** | `artifacts/03-design-challenge.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/payment-service/tasks.md`, task 11):**
-> **Idempotent consumers.** Add `ChainEventConsumer` with `processed_events` dedupe on `chain:txhash:eventtype` inside the applying transaction (R13, L5). Handle `chain.tx.seen` → `SEEN` + emit `payment.seen` (R7, R8); `chain.tx.confirmed` → `CONFIRMING` + record confirmations (R9); `chain.tx.finalized` → `FINALIZED` + emit `payment.finalized` (R10).
+> **Idempotent consumers.** Add `ChainEventConsumer` with `processed_events` dedupe on `chain:txhash:eventtype` inside the applying transaction (R13, L5). Handle `chain.tx.seen` → `SEEN` + emit `payment.seen` + **unregister the invoice's watch via `CryptoClient`, same transaction's own effect, "one transaction per invoice" (R7, R7a, R8, design.md L14)**; `chain.tx.confirmed` → `CONFIRMING` + record confirmations (R9); `chain.tx.finalized` → `FINALIZED` + emit `payment.finalized` (R10). Test: a second `chain.tx.seen` for the same invoice's pay-to address after the first is never delivered (watch already unregistered), not merely ignored at the application layer.
 
 **Spec package:** `spec/payment-service/` → `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
 - **Scoped requirement IDs:** `R7`, `R8`, `R9`, `R10`, `R13`
-- **Scoped LOCKED decisions:** `L5`
-- **Named tests (`package.md` §8):** `shouldTransitionToSeenOnChainTxSeen`, `shouldEmitPaymentSeenOnFirstSeen`, `shouldTransitionToConfirmingOnChainTxConfirmed`, `shouldTransitionToFinalizedOnChainTxFinalized`, `shouldDedupeDuplicateChainEventsByEventKey`
-- **Contracts:** `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
+- **Scoped LOCKED decisions:** `L5`, `L14`
+- **Named tests (`package.md` §8):** `shouldTransitionToSeenOnChainTxSeen`, `shouldUnregisterWatchOnFirstSeenAndIgnoreSecondMatch`, `shouldEmitPaymentSeenOnFirstSeen`, `shouldTransitionToConfirmingOnChainTxConfirmed`, `shouldTransitionToFinalizedOnChainTxFinalized`, `shouldDedupeDuplicateChainEventsByEventKey`
+- **Contracts:** `contracts/api/crypto-internal.yaml`, `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
 - **Standing rules:** `spec/payment-service/agents.md` is authoritative — never restate or violate it.
 
 ---

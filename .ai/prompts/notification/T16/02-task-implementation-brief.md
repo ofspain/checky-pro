@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** none cited inline — derive them in Phase 1 from `requirements.md`
 - **Scoped LOCKED decisions:** `L2`, `L8`, `L11`
 - **Named tests (`package.md` §8):** `shouldPreventCrossModuleEntityImports`
-- **Contracts:** `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
+- **Contracts:** `contracts/api/notifications.yaml`, `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
 - **Standing rules:** `spec/notification-service/agents.md` is authoritative — never restate or violate it.
 
 ---

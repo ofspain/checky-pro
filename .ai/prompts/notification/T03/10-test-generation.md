@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** none cited inline — derive them in Phase 1 from `requirements.md`
 - **Scoped LOCKED decisions:** `L8`
 - **Named tests (`package.md` §8):** none pre-mapped — derive from the acceptance criteria + `package.md` §8
-- **Contracts:** `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
+- **Contracts:** `contracts/api/notifications.yaml`, `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
 - **Standing rules:** `spec/notification-service/agents.md` is authoritative — never restate or violate it.
 
 ---

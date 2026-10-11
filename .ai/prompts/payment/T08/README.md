@@ -4,11 +4,11 @@ Complete 14-phase prompt workflow for **Task 8** of the `payment-service` spec p
 Run the phases in order; each consumes the previous phase's artifact and writes exactly one of its own.
 
 **Task (verbatim, `spec/payment-service/tasks.md` task 8):**
-> **Invoice expiry sweep.** Add `InvoiceExpirySweepJob` (ShedLock) that transitions `OPEN → EXPIRED` and unregisters the watch (R5). Resolve Q3 for post-expiry finalization behaviour.
+> **Invoice expiry sweep.** Add `InvoiceExpirySweepJob` (ShedLock) that transitions `OPEN → EXPIRED` and unregisters the watch, but only for invoices with **no payment row in a non-terminal state** at sweep time (R5, revised). Post-expiry finalization is resolved (Q3, design.md O2): a payment already in flight at expiry is left alone and attests normally when it finalizes — never `HELD` for timing alone.
 
 **Spec section:** Invoices
 
-**Scoped IDs** — requirements: `R5` · locked: derive in Phase 1 · tests: `shouldExpireInvoiceAndUnregisterWatchAfterTtl`
+**Scoped IDs** — requirements: `R5` · locked: derive in Phase 1 · tests: `shouldExpireInvoiceAndUnregisterWatchAfterTtl`, `shouldNotExpireInvoiceWithPaymentInFlight`
 
 ## Phases
 

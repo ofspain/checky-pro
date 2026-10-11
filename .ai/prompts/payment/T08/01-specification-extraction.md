@@ -12,14 +12,14 @@
 | **Produces** | `artifacts/01-specification-extraction.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/payment-service/tasks.md`, task 8):**
-> **Invoice expiry sweep.** Add `InvoiceExpirySweepJob` (ShedLock) that transitions `OPEN → EXPIRED` and unregisters the watch (R5). Resolve Q3 for post-expiry finalization behaviour.
+> **Invoice expiry sweep.** Add `InvoiceExpirySweepJob` (ShedLock) that transitions `OPEN → EXPIRED` and unregisters the watch, but only for invoices with **no payment row in a non-terminal state** at sweep time (R5, revised). Post-expiry finalization is resolved (Q3, design.md O2): a payment already in flight at expiry is left alone and attests normally when it finalizes — never `HELD` for timing alone.
 
 **Spec package:** `spec/payment-service/` → `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
 - **Scoped requirement IDs:** `R5`
 - **Scoped LOCKED decisions:** none cited inline — derive them in Phase 1 from `design.md` §4a
-- **Named tests (`package.md` §8):** `shouldExpireInvoiceAndUnregisterWatchAfterTtl`
-- **Contracts:** `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
+- **Named tests (`package.md` §8):** `shouldExpireInvoiceAndUnregisterWatchAfterTtl`, `shouldNotExpireInvoiceWithPaymentInFlight`
+- **Contracts:** `contracts/api/crypto-internal.yaml`, `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
 - **Standing rules:** `spec/payment-service/agents.md` is authoritative — never restate or violate it.
 
 ---

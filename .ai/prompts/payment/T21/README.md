@@ -1,10 +1,10 @@
-# payment · T21 — Daily anchor job (Q4)
+# payment · T21 — Daily anchor job (Q4) — DEFERRED, not executed under this revision
 
 Complete 14-phase prompt workflow for **Task 21** of the `payment-service` spec package.
 Run the phases in order; each consumes the previous phase's artifact and writes exactly one of its own.
 
 **Task (verbatim, `spec/payment-service/tasks.md` task 21):**
-> **Daily anchor job (Q4).** Implement `LedgerAnchorJob` (ShedLock) recording the head hash and anchor tx reference (R26). Route the on-chain write per Q4/O3 — **blocked until Q4 is answered.**
+> **Daily anchor job (Q4) — DEFERRED, not executed under this revision.** ~~Implement `LedgerAnchorJob` (ShedLock) recording the head hash and anchor tx reference (R26). Route the on-chain write per Q4/O3 — blocked until Q4 is answered.~~ **Resolved (2026-10-11): deferred for Phase 1/MVP, decided directly by the product owner** (design.md O3, requirements.md R26). Crypto Service has no chain-write capability to route this through, and adding one is out of scope for this revision. Skip this task; `ledger_anchors` stays in the schema, unpopulated. Revisit as an explicit, separately-scoped follow-up task if the product owner later wants the external anchor layer.
 
 **Spec section:** Attestation, receipts, and ledger
 

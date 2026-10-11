@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** `R9`, `R10`, `R18`
 - **Scoped LOCKED decisions:** `L6`
 - **Named tests (`package.md` §8):** `shouldResolveChannelPreferencesPerRecipient`, `shouldSuppressChannelWhenRecipientOptedOut`, `shouldFallBackToDefaultPreferenceWhenNoneSet`
-- **Contracts:** `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
+- **Contracts:** `contracts/api/notifications.yaml`, `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
 - **Standing rules:** `spec/notification-service/agents.md` is authoritative — never restate or violate it.
 
 ---

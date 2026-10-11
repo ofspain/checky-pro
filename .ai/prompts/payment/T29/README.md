@@ -4,7 +4,7 @@ Complete 14-phase prompt workflow for **Task 29** of the `payment-service` spec 
 Run the phases in order; each consumes the previous phase's artifact and writes exactly one of its own.
 
 **Task (verbatim, `spec/payment-service/tasks.md` task 29):**
-> **Bump spec status.** Once §11 questions (esp. Q1, Q3, Q4, Q5, Q7) are closed and tests pass, change this spec from `DRAFT` to `READY FOR IMPL` and version to `0.2`.
+> **Bump spec status.** **§11 is now fully closed as of 2026-10-11 (Q1–Q8 all resolved or deferred-and-disclosed) — the only remaining gate on this task is tests passing.** Once `mvn -pl services/payment verify` (task 27) and the threat-model check (task 28) both pass, change this spec from `DRAFT` to `READY FOR IMPL` and version to `0.2`, mirroring the auth/crypto services' own identical convention (bumped at the end of the build pipeline, not at spec-authoring time).
 
 **Spec section:** Final verification
 

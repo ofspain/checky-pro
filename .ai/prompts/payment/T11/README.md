@@ -4,11 +4,11 @@ Complete 14-phase prompt workflow for **Task 11** of the `payment-service` spec 
 Run the phases in order; each consumes the previous phase's artifact and writes exactly one of its own.
 
 **Task (verbatim, `spec/payment-service/tasks.md` task 11):**
-> **Idempotent consumers.** Add `ChainEventConsumer` with `processed_events` dedupe on `chain:txhash:eventtype` inside the applying transaction (R13, L5). Handle `chain.tx.seen` → `SEEN` + emit `payment.seen` (R7, R8); `chain.tx.confirmed` → `CONFIRMING` + record confirmations (R9); `chain.tx.finalized` → `FINALIZED` + emit `payment.finalized` (R10).
+> **Idempotent consumers.** Add `ChainEventConsumer` with `processed_events` dedupe on `chain:txhash:eventtype` inside the applying transaction (R13, L5). Handle `chain.tx.seen` → `SEEN` + emit `payment.seen` + **unregister the invoice's watch via `CryptoClient`, same transaction's own effect, "one transaction per invoice" (R7, R7a, R8, design.md L14)**; `chain.tx.confirmed` → `CONFIRMING` + record confirmations (R9); `chain.tx.finalized` → `FINALIZED` + emit `payment.finalized` (R10). Test: a second `chain.tx.seen` for the same invoice's pay-to address after the first is never delivered (watch already unregistered), not merely ignored at the application layer.
 
 **Spec section:** State machine & consumers
 
-**Scoped IDs** — requirements: `R7`, `R8`, `R9`, `R10`, `R13` · locked: `L5` · tests: `shouldTransitionToSeenOnChainTxSeen`, `shouldEmitPaymentSeenOnFirstSeen`, `shouldTransitionToConfirmingOnChainTxConfirmed`, `shouldTransitionToFinalizedOnChainTxFinalized`, `shouldDedupeDuplicateChainEventsByEventKey`
+**Scoped IDs** — requirements: `R7`, `R8`, `R9`, `R10`, `R13` · locked: `L5`, `L14` · tests: `shouldTransitionToSeenOnChainTxSeen`, `shouldUnregisterWatchOnFirstSeenAndIgnoreSecondMatch`, `shouldEmitPaymentSeenOnFirstSeen`, `shouldTransitionToConfirmingOnChainTxConfirmed`, `shouldTransitionToFinalizedOnChainTxFinalized`, `shouldDedupeDuplicateChainEventsByEventKey`
 
 ## Phases
 

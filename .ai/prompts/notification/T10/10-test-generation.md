@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** `R15`
 - **Scoped LOCKED decisions:** `L4`
 - **Named tests (`package.md` §8):** `shouldNotLeakSecretsOrTokensIntoRenderedMessagesOrLogs`
-- **Contracts:** `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
+- **Contracts:** `contracts/api/notifications.yaml`, `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
 - **Standing rules:** `spec/notification-service/agents.md` is authoritative — never restate or violate it.
 
 ---

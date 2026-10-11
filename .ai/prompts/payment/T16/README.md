@@ -1,10 +1,10 @@
-# payment · T16 — Receipt digest (Q5)
+# payment · T16 — Receipt digest (Q5, resolved, design.md O4)
 
 Complete 14-phase prompt workflow for **Task 16** of the `payment-service` spec package.
 Run the phases in order; each consumes the previous phase's artifact and writes exactly one of its own.
 
 **Task (verbatim, `spec/payment-service/tasks.md` task 16):**
-> **Receipt digest (Q5).** Implement the canonical signed-JSON receipt shape and `ReceiptDigest` (SHA-256 over canonical JSON). Pin the shape in design §4c once Q5 is answered.
+> **Receipt digest (Q5, resolved, design.md O4).** Add a shared `CanonicalJson.serialize(Map<String,Object>)` utility in `common/` (sorted keys, UTF-8, no insignificant whitespace) and use it from **both** `ReceiptDigest` (this task) and `LedgerService` (task 19) — one canonicalizer, not two independently-written ones. Implement `ReceiptDigest` over the exact field set in design.md O4.
 
 **Spec section:** Attestation, receipts, and ledger
 

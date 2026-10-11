@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** `R16`, `R17`
 - **Scoped LOCKED decisions:** `L8`
 - **Named tests (`package.md` §8):** `shouldStreamInAppNotificationsToAuthenticatedRecipientOnly`, `shouldReturnUnreadInAppNotificationsForCaller`
-- **Contracts:** `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
+- **Contracts:** `contracts/api/notifications.yaml`, `contracts/events/`, `contracts/events/*`, `contracts/events/notifications/*`
 - **Standing rules:** `spec/notification-service/agents.md` is authoritative — never restate or violate it.
 
 ---

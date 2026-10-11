@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** `R21`, `R24`, `R25`
 - **Scoped LOCKED decisions:** `L7`
 - **Named tests (`package.md` §8):** `shouldAppendLedgerEntryWithPrevHashChainingToHead`, `shouldTransitionToAttestedAfterReceiptStoredAndLedgerAppended`, `shouldEmitReceiptIssuedAfterAttestation`
-- **Contracts:** `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
+- **Contracts:** `contracts/api/crypto-internal.yaml`, `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
 - **Standing rules:** `spec/payment-service/agents.md` is authoritative — never restate or violate it.
 
 ---

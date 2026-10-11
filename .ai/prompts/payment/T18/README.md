@@ -4,7 +4,7 @@ Complete 14-phase prompt workflow for **Task 18** of the `payment-service` spec 
 Run the phases in order; each consumes the previous phase's artifact and writes exactly one of its own.
 
 **Task (verbatim, `spec/payment-service/tasks.md` task 18):**
-> **S3 WORM store.** Implement `ReceiptStore` writing the signed JSON (and PDF per Q5) to the Object Lock bucket in compliance mode, no overwrite path (R23, L9).
+> **S3 WORM store.** Implement `ReceiptStore` writing the signed JSON and the PDF rendering (Apache PDFBox, design.md O4) to the Object Lock bucket in compliance mode, no overwrite path (R23, L9).
 
 **Spec section:** Attestation, receipts, and ledger
 

@@ -4,7 +4,7 @@ Complete 14-phase prompt workflow for **Task 5** of the `payment-service` spec p
 Run the phases in order; each consumes the previous phase's artifact and writes exactly one of its own.
 
 **Task (verbatim, `spec/payment-service/tasks.md` task 5):**
-> **Invoice domain.** Add `Invoice`, `InvoiceState`, repository, and `InvoiceService.create(...)` with amount/token validation (R3, R4) and base-unit `NUMERIC` handling (L6). Resolve Q1 amount-tolerance before finalizing comparison logic.
+> **Invoice domain.** Add `Invoice`, `InvoiceState`, repository, and `InvoiceService.create(...)` with amount/token validation (R3, R4) and base-unit `NUMERIC` handling (L6). Comparison logic is exact-match only (Q1 resolved, design.md O1) — `amount == invoice.amount` → `PAID`, else `UNDERPAID`/`OVERPAID`.
 
 **Spec section:** Invoices
 

@@ -12,14 +12,14 @@
 | **Produces** | `artifacts/08-independent-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/payment-service/tasks.md`, task 5):**
-> **Invoice domain.** Add `Invoice`, `InvoiceState`, repository, and `InvoiceService.create(...)` with amount/token validation (R3, R4) and base-unit `NUMERIC` handling (L6). Resolve Q1 amount-tolerance before finalizing comparison logic.
+> **Invoice domain.** Add `Invoice`, `InvoiceState`, repository, and `InvoiceService.create(...)` with amount/token validation (R3, R4) and base-unit `NUMERIC` handling (L6). Comparison logic is exact-match only (Q1 resolved, design.md O1) — `amount == invoice.amount` → `PAID`, else `UNDERPAID`/`OVERPAID`.
 
 **Spec package:** `spec/payment-service/` → `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
 - **Scoped requirement IDs:** `R3`, `R4`
 - **Scoped LOCKED decisions:** `L6`
 - **Named tests (`package.md` §8):** `shouldRejectInvoiceWithNonAllowlistedTokenReferenceShape`, `shouldRejectInvoiceAmountThatIsZeroOrNegativeOrFloat`, `shouldRejectFloatingPointMoneyTypesAtArchUnit`
-- **Contracts:** `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
+- **Contracts:** `contracts/api/crypto-internal.yaml`, `contracts/api/payments.yaml`, `contracts/events/payments/`, `contracts/events/payments/receipt-issued.v1.schema.json`
 - **Standing rules:** `spec/payment-service/agents.md` is authoritative — never restate or violate it.
 
 ---
