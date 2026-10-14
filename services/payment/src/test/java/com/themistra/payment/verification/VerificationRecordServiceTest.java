@@ -20,6 +20,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -82,6 +83,7 @@ class VerificationRecordServiceTest {
         assertThat(saved.getToState()).isEqualTo(PaymentState.FINALIZED);
         assertThat(saved.getConfirmations()).isNull();
         assertThat(saved.getDetail()).containsExactlyInAnyOrderEntriesOf(detail);
+        verify(repository).save(any(VerificationRecord.class));
     }
 
     @Test
@@ -94,6 +96,24 @@ class VerificationRecordServiceTest {
         assertThat(saved.getFromState()).isEqualTo(PaymentState.CREATED);
         assertThat(saved.getToState()).isEqualTo(PaymentState.WATCHING);
         assertThat(saved.getTriggerEventKey()).isNull();
+        // Phase 11 Gap 3 (Kimi): the thenAnswer-echo style alone doesn't prove repository.save was
+        // actually called - a broken implementation returning a hand-built object would still pass.
+        verify(repository).save(any(VerificationRecord.class));
+    }
+
+    /** Phase 11 Gap 5 (Kimi): {@code record} itself (not just {@code recordIgnored}) must also
+     * accept a null {@code fromState} - e.g. the very first recording of a payment, with no prior
+     * state at all. A regression that accidentally added a null-check on {@code fromState} would
+     * break this. */
+    @Test
+    void shouldRecordTransitionWithNullFromState() {
+        when(repository.save(any(VerificationRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        VerificationRecord saved = service.record(PAYMENT_ID, null, PaymentState.CREATED,
+                TRIGGER_EVENT_KEY, null, null);
+
+        assertThat(saved.getFromState()).isNull();
+        assertThat(saved.getToState()).isEqualTo(PaymentState.CREATED);
     }
 
     @Test
@@ -148,6 +168,24 @@ class VerificationRecordServiceTest {
         mutableDetail.put("reason", "mutated-after-the-fact");
 
         assertThat(captor.getValue().getDetail()).containsEntry("reason", "stale");
+    }
+
+    /** Phase 11 Gap 1 (Kimi): the prior test proves a pre-persistence mutation can't leak in;
+     * this proves the *returned* {@code detail} is also unmodifiable - a consumer calling
+     * {@code getDetail()} and attempting to mutate it must fail loudly, not silently corrupt a
+     * shared map other code might also be holding a reference to. */
+    @Test
+    void getDetailShouldReturnAnUnmodifiableMap() {
+        when(repository.save(any(VerificationRecord.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        // A genuinely mutable input (not Map.of(...), which is already unmodifiable and would
+        // make this test pass even if VerificationRecord provided no protection of its own).
+        VerificationRecord saved = service.recordIgnored(PAYMENT_ID, PaymentState.FINALIZED,
+                TRIGGER_EVENT_KEY, new HashMap<>(Map.of("reason", "stale")));
+
+        Map<String, Object> detail = saved.getDetail();
+
+        assertThatThrownBy(() -> detail.put("reason", "mutated"))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 
     /** L7 (AC5, Phase 3/4 Finding 2): no code in this task's own three production files calls
