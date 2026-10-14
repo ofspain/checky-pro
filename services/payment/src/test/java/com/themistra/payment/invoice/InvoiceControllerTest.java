@@ -31,6 +31,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -264,5 +265,85 @@ class InvoiceControllerTest {
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
                 .andExpect(jsonPath("$.type").value("about:blank"))
                 .andExpect(jsonPath("$.title").value("Validation failed"));
+    }
+
+    private static Invoice invoice(UUID merchantAccountUuid) {
+        return Invoice.create(INVOICE_UUID, merchantAccountUuid, "ETHEREUM", "0xabc", (short) 18,
+                new BigDecimal("1000"), "0xdef", "order-1", EXPIRES_AT, WATCH_ID, EXPIRES_AT);
+    }
+
+    /** AC1 (R28), AC4: proves the real JSON shape, not just the Java object - the full field
+     * set, {@code amount} as a quoted decimal string, and no {@code watchId} anywhere in the
+     * body (Phase 8 findings 2/6). */
+    @Test
+    void shouldReturnOnlyCallersOwnInvoicesFromList() throws Exception {
+        when(invoiceService.listForMerchant(MERCHANT_ACCOUNT_UUID)).thenReturn(List.of(invoice(MERCHANT_ACCOUNT_UUID)));
+
+        mockMvc.perform(get("/api/v1/invoices").with(merchantJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].invoiceUuid").value(INVOICE_UUID.toString()))
+                .andExpect(jsonPath("$[0].merchantAccountUuid").value(MERCHANT_ACCOUNT_UUID.toString()))
+                .andExpect(jsonPath("$[0].chain").value("ETHEREUM"))
+                .andExpect(jsonPath("$[0].tokenContractAddress").value("0xabc"))
+                .andExpect(jsonPath("$[0].tokenDecimals").value(18))
+                .andExpect(jsonPath("$[0].amount").value("1000"))
+                .andExpect(jsonPath("$[0].payToAddress").value("0xdef"))
+                .andExpect(jsonPath("$[0].reference").value("order-1"))
+                .andExpect(jsonPath("$[0].state").value("OPEN"))
+                .andExpect(jsonPath("$[0].watchId").doesNotExist());
+    }
+
+    @Test
+    void shouldReturnEmptyListWhenCallerHasNoInvoices() throws Exception {
+        when(invoiceService.listForMerchant(MERCHANT_ACCOUNT_UUID)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/invoices").with(merchantJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void shouldReturnInvoiceForOwningMerchant() throws Exception {
+        when(invoiceService.getForMerchant(MERCHANT_ACCOUNT_UUID, INVOICE_UUID))
+                .thenReturn(invoice(MERCHANT_ACCOUNT_UUID));
+
+        mockMvc.perform(get("/api/v1/invoices/" + INVOICE_UUID).with(merchantJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.invoiceUuid").value(INVOICE_UUID.toString()))
+                .andExpect(jsonPath("$.amount").value("1000"))
+                .andExpect(jsonPath("$.watchId").doesNotExist());
+    }
+
+    /** AC2: asserts the identical 404 body for both causes (Phase 8 finding 5) - captured once
+     * per case and compared, not just each asserted to be "some 404". */
+    @Test
+    void shouldReturnIdentical404ShapeForNonOwningMerchantAndNonexistentInvoiceUuid() throws Exception {
+        UUID nonexistentUuid = UUID.randomUUID();
+        when(invoiceService.getForMerchant(MERCHANT_ACCOUNT_UUID, INVOICE_UUID))
+                .thenThrow(new InvoiceNotFoundException());
+        when(invoiceService.getForMerchant(MERCHANT_ACCOUNT_UUID, nonexistentUuid))
+                .thenThrow(new InvoiceNotFoundException());
+
+        String nonOwningBody = mockMvc.perform(get("/api/v1/invoices/" + INVOICE_UUID).with(merchantJwt()))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.title").value("Invoice not found"))
+                .andReturn().getResponse().getContentAsString();
+
+        String nonexistentBody = mockMvc.perform(get("/api/v1/invoices/" + nonexistentUuid).with(merchantJwt()))
+                .andExpect(status().isNotFound())
+                .andReturn().getResponse().getContentAsString()
+                .replace(nonexistentUuid.toString(), INVOICE_UUID.toString());
+
+        assertThat(nonOwningBody).isEqualTo(nonexistentBody);
+    }
+
+    @Test
+    void shouldRejectNonMerchantCallerOnReadEndpoints() throws Exception {
+        mockMvc.perform(get("/api/v1/invoices").with(nonMerchantJwt()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/invoices/" + INVOICE_UUID).with(nonMerchantJwt()))
+                .andExpect(status().isForbidden());
     }
 }
