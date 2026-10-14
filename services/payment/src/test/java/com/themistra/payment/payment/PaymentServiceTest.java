@@ -96,6 +96,10 @@ class PaymentServiceTest {
         assertThat(saved.getToAddress()).isEqualTo(PAY_TO_ADDRESS);
         assertThat(saved.getState()).isEqualTo(PaymentState.SEEN);
         assertThat(saved.getAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+        // Phase 11 Gap 3 (Kimi): all 3 timestamps come from the injected Clock, never Instant.now().
+        assertThat(saved.getSeenAt()).isEqualTo(NOW);
+        assertThat(saved.getCreatedAt()).isEqualTo(NOW);
+        assertThat(saved.getUpdatedAt()).isEqualTo(NOW);
     }
 
     @Test
@@ -274,6 +278,29 @@ class PaymentServiceTest {
 
         verify(verificationRecordService).record(any(), eq(PaymentState.SEEN), eq(PaymentState.FINALIZED),
                 eq(TRIGGER_EVENT_KEY), eq(12), isNull());
+        // Phase 11 Gap 7 (Kimi): the SEEN-only finalize path must also publish, not just record.
+        verify(outboxPublisher).publish(eq("payment-finalized"), any(String.class), eq("payment.finalized"), any());
+    }
+
+    /** Phase 11 Gap 6 (Kimi): {@code shouldPersistRealObservedAmountAndAddressesOnFinalize} only
+     * ever exercised {@code addressPoisoningFlag = false} - a hardcoded-false regression would
+     * not have been caught. */
+    @Test
+    void shouldPersistAddressPoisoningFlagWhenTrue() {
+        Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
+        when(repository.markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
+                any(), any(), any(), any(Integer.class), eq(true), eq(NOW))).thenReturn(1);
+        ChainTxFinalized poisonedEvent = new ChainTxFinalized(TRIGGER_EVENT_KEY, WATCH_ID, INVOICE_UUID, CHAIN, TX_HASH,
+                "0xfrom", "0xto", TOKEN_CONTRACT_ADDRESS, new BigDecimal("1000"), 12, true, NOW);
+
+        service.applyFinalized(poisonedEvent);
+
+        verify(repository).markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
+                any(), any(), any(), any(Integer.class), eq(true), eq(NOW));
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(outboxPublisher).publish(eq("payment-finalized"), any(String.class), eq("payment.finalized"), payloadCaptor.capture());
+        assertThat(((PaymentFinalizedPayload) payloadCaptor.getValue()).addressPoisoningFlag()).isTrue();
     }
 
     @Test

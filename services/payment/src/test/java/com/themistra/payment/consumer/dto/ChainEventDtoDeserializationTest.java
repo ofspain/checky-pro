@@ -1,6 +1,7 @@
 package com.themistra.payment.consumer.dto;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.Test;
 
@@ -9,6 +10,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Phase 3/4 Finding 7: field names match {@code contracts/events/chain/
@@ -88,5 +90,26 @@ class ChainEventDtoDeserializationTest {
         assertThat(event.amount()).isEqualByComparingTo(new BigDecimal("123456789012345678901234567890"));
         assertThat(event.confirmations()).isEqualTo(12);
         assertThat(event.addressPoisoningFlag()).isTrue();
+    }
+
+    /** Phase 11 Gap 5 (Kimi), part (b): the real schemas declare {@code additionalProperties:
+     * false}. Confirmed empirically (Phase 11, not assumed): Jackson's own
+     * {@code FAIL_ON_UNKNOWN_PROPERTIES} defaults to {@code true} with no extra configuration, so
+     * a producer sending an extra field the schema doesn't define fails loudly rather than being
+     * silently accepted. Part (a) of Kimi's own suggestion (a missing required field should
+     * throw) is deliberately NOT added - these are plain Java records with no {@code
+     * @JsonProperty(required = true)} annotations, so a missing field currently deserializes to
+     * {@code null} (or the primitive default), not a thrown exception; adding that validation now
+     * would be new behavior beyond this task's own frozen brief, not a test of existing behavior. */
+    @Test
+    void shouldRejectAnUnrecognizedPropertyNotInTheRealSchema() {
+        String jsonWithExtraField = """
+                {"idempotencyKey":"ETHEREUM:0xabc:chain.tx.seen","watchId":"%s","invoiceUuid":"%s",
+                 "chain":"ETHEREUM","txHash":"0xabc","tokenContractAddress":"0x111",
+                 "confirmations":1,"occurredAt":"2026-07-13T00:00:00Z","notARealField":"x"}
+                """.formatted(UUID.randomUUID(), UUID.randomUUID());
+
+        assertThatThrownBy(() -> OBJECT_MAPPER.readValue(jsonWithExtraField, ChainTxSeen.class))
+                .isInstanceOf(UnrecognizedPropertyException.class);
     }
 }

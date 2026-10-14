@@ -168,6 +168,15 @@ class ChainEventConsumerTest {
         verify(paymentService, never()).applyConfirmed(any());
     }
 
+    /** Phase 11 Gap 2 (Kimi): completes the set - `seen`/`confirmed` were already covered. */
+    @Test
+    void shouldLogAndDropAMalformedFinalizedPayloadWithoutPropagating() {
+        org.assertj.core.api.Assertions.assertThatCode(() -> consumer.onChainTxFinalized("not valid json{{{"))
+                .doesNotThrowAnyException();
+
+        verify(paymentService, never()).applyFinalized(any());
+    }
+
     // --- basic delegation ---
 
     @Test
@@ -179,13 +188,21 @@ class ChainEventConsumerTest {
         verify(paymentService).applyConfirmed(argThatConfirmedEventHasConfirmations(3));
     }
 
+    /** Phase 11 Gap 4 (Kimi): an `ArgumentCaptor`, not a bare `any()` - proves the exact
+     * deserialized event (not an empty/wrong one) reaches `PaymentService`. */
     @Test
     void shouldDelegateChainTxFinalizedToPaymentService() {
         when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
 
         consumer.onChainTxFinalized(FINALIZED_JSON);
 
-        verify(paymentService).applyFinalized(any());
+        org.mockito.ArgumentCaptor<com.themistra.payment.consumer.dto.ChainTxFinalized> captor =
+                org.mockito.ArgumentCaptor.forClass(com.themistra.payment.consumer.dto.ChainTxFinalized.class);
+        verify(paymentService).applyFinalized(captor.capture());
+        assertThat(captor.getValue().chain()).isEqualTo("ETHEREUM");
+        assertThat(captor.getValue().txHash()).isEqualTo("0xabc");
+        assertThat(captor.getValue().amount()).isEqualByComparingTo("1000");
+        assertThat(captor.getValue().confirmations()).isEqualTo(12);
     }
 
     private static com.themistra.payment.consumer.dto.ChainTxConfirmed argThatConfirmedEventHasConfirmations(int expected) {
