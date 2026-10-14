@@ -192,24 +192,28 @@ public class ChainEventConsumer {
      * otherwise be orphaned - nothing would ever reference or unregister it on the
      * crypto-service side. {@code unregisterWatch} is called immediately to clean it up.</p>
      *
-     * <p><b>Phase 9 Finding 2.</b> Catches {@code RuntimeException} broadly, not only {@code
-     * CryptoServiceUnavailableException} - a failure anywhere in this best-effort step (including
-     * {@code invoiceService}'s own calls) must reach the same logged-and-swallowed outcome; the
+     * <p><b>Phase 9 Finding 2 (and a self-caught correction during Phase 10 test generation: the
+     * first version of this fix only wrapped the {@code registerWatch}/{@code
+     * updateWatchIdIfOpen} calls, leaving the {@code findByIdAsWatchView} lookup above still
+     * outside any catch - a new test exercising exactly that path caught it).</b> The
+     * {@code try} below wraps this method's entire body, not just the two {@code CryptoClient}/
+     * {@code InvoiceService} write calls - a failure anywhere in this best-effort step,
+     * including the initial lookup, must reach the same logged-and-swallowed outcome; the
      * DB-side reversal already committed, so letting anything here propagate would only trigger
      * a Kafka redelivery that is guaranteed to be a no-op (Finding 5's own crash-window case).</p> */
     private void registerReplacementWatch(Long invoiceId) {
-        Optional<InvoiceWatchView> maybeInvoice = invoiceService.findByIdAsWatchView(invoiceId);
-        if (maybeInvoice.isEmpty()) {
-            log.warn("Cannot register a replacement watch for invoiceId={}: no known invoice", invoiceId);
-            return;
-        }
-        InvoiceWatchView invoice = maybeInvoice.get();
-        if (invoice.state() != InvoiceState.OPEN) {
-            log.warn("Skipping replacement watch registration for invoiceUuid={}: invoice is no longer OPEN "
-                    + "(state={})", invoice.invoiceUuid(), invoice.state());
-            return;
-        }
         try {
+            Optional<InvoiceWatchView> maybeInvoice = invoiceService.findByIdAsWatchView(invoiceId);
+            if (maybeInvoice.isEmpty()) {
+                log.warn("Cannot register a replacement watch for invoiceId={}: no known invoice", invoiceId);
+                return;
+            }
+            InvoiceWatchView invoice = maybeInvoice.get();
+            if (invoice.state() != InvoiceState.OPEN) {
+                log.warn("Skipping replacement watch registration for invoiceUuid={}: invoice is no longer OPEN "
+                        + "(state={})", invoice.invoiceUuid(), invoice.state());
+                return;
+            }
             RegisterWatchResponse response = cryptoClient.registerWatch(invoice.invoiceUuid(), invoice.chain(),
                     invoice.payToAddress(), invoice.tokenContractAddress(), invoice.amount(), invoice.expiresAt());
             boolean updated = invoiceService.updateWatchIdIfOpen(invoice.id(), response.watchId(), clock.instant());
@@ -219,8 +223,8 @@ public class ChainEventConsumer {
                 cryptoClient.unregisterWatch(response.watchId());
             }
         } catch (RuntimeException e) {
-            log.error("Failed to register a replacement watch for invoiceUuid={}: the invoice will rely on its "
-                    + "own natural expiry rather than get stuck (Phase 4 Finding 3)", invoice.invoiceUuid(), e);
+            log.error("Failed to register a replacement watch for invoiceId={}: the invoice will rely on its "
+                    + "own natural expiry rather than get stuck (Phase 4 Finding 3)", invoiceId, e);
         }
     }
 

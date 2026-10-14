@@ -92,6 +92,27 @@ class ChainEventDtoDeserializationTest {
         assertThat(event.addressPoisoningFlag()).isTrue();
     }
 
+    /** T12. Mirrors {@code contracts/events/chain/tx-reorged.v1.schema.json}'s own required
+     * list - unlike the other three, it carries no {@code confirmations} field at all. */
+    @Test
+    void shouldDeserializeChainTxReorged() throws Exception {
+        UUID watchId = UUID.randomUUID();
+        String json = """
+                {"idempotencyKey":"ETHEREUM:0xabc:chain.tx.reorged","watchId":"%s",
+                 "invoiceUuid":"%s","chain":"ETHEREUM","txHash":"0xabc",
+                 "tokenContractAddress":"0x111","occurredAt":"2026-07-13T00:15:00Z"}
+                """.formatted(watchId, UUID.randomUUID());
+
+        ChainTxReorged event = OBJECT_MAPPER.readValue(json, ChainTxReorged.class);
+
+        assertThat(event.idempotencyKey()).isEqualTo("ETHEREUM:0xabc:chain.tx.reorged");
+        assertThat(event.watchId()).isEqualTo(watchId);
+        assertThat(event.chain()).isEqualTo("ETHEREUM");
+        assertThat(event.txHash()).isEqualTo("0xabc");
+        assertThat(event.tokenContractAddress()).isEqualTo("0x111");
+        assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-07-13T00:15:00Z"));
+    }
+
     /** Phase 11 Gap 5 (Kimi), part (b): the real schemas declare {@code additionalProperties:
      * false}. Confirmed empirically (Phase 11, not assumed): Jackson's own
      * {@code FAIL_ON_UNKNOWN_PROPERTIES} defaults to {@code true} with no extra configuration, so

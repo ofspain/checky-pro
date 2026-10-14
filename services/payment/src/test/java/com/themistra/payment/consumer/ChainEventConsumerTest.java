@@ -3,10 +3,14 @@ package com.themistra.payment.consumer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.themistra.payment.common.CryptoClient;
+import com.themistra.payment.common.CryptoServiceUnavailableException;
+import com.themistra.payment.common.crypto.RegisterWatchResponse;
 import com.themistra.payment.invoice.InvoiceService;
 import com.themistra.payment.invoice.InvoiceState;
 import com.themistra.payment.invoice.InvoiceWatchView;
 import com.themistra.payment.payment.PaymentService;
+import com.themistra.payment.payment.PaymentState;
+import com.themistra.payment.payment.ReorgOutcome;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -55,6 +59,12 @@ class ChainEventConsumerTest {
              "chain":"ETHEREUM","txHash":"0xabc","fromAddress":"0xfrom","toAddress":"0xto",
              "tokenContractAddress":"0x111","amount":"1000","confirmations":12,
              "addressPoisoningFlag":false,"occurredAt":"2026-07-13T00:00:00Z"}
+            """.formatted(WATCH_ID, INVOICE_UUID);
+
+    private static final String REORGED_JSON = """
+            {"idempotencyKey":"ETHEREUM:0xabc:chain.tx.reorged","watchId":"%s","invoiceUuid":"%s",
+             "chain":"ETHEREUM","txHash":"0xabc","tokenContractAddress":"0x111",
+             "occurredAt":"2026-07-13T00:00:00Z"}
             """.formatted(WATCH_ID, INVOICE_UUID);
 
     @Mock
@@ -216,5 +226,143 @@ class ChainEventConsumerTest {
             assertThat(event.confirmations()).isEqualTo(expected);
             return true;
         });
+    }
+
+    // --- R11/R12 (T12) ---
+
+    private static ReorgOutcome seenOutcome() {
+        return new ReorgOutcome(99L, 7L, PaymentState.SEEN);
+    }
+
+    private static ReorgOutcome watchingOutcome() {
+        return new ReorgOutcome(99L, 7L, PaymentState.WATCHING);
+    }
+
+    @Test
+    void shouldDedupeDuplicateChainEventsByEventKeyOnReorg() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.reorged", NOW)).thenReturn(0);
+
+        consumer.onChainTxReorged(REORGED_JSON);
+
+        verify(paymentService, never()).applyReorged(any());
+        verify(invoiceService, never()).findByIdAsWatchView(any());
+        verify(cryptoClient, never()).registerWatch(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void shouldLogAndDropAMalformedReorgedPayloadWithoutPropagating() {
+        org.assertj.core.api.Assertions.assertThatCode(() -> consumer.onChainTxReorged("not valid json{{{"))
+                .doesNotThrowAnyException();
+
+        verify(paymentService, never()).applyReorged(any());
+    }
+
+    /** R11: a CONFIRMING -> SEEN reversal needs no watch action at all. */
+    @Test
+    void shouldNotRegisterReplacementWatchWhenReorgWalksBackToSeen() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.reorged", NOW)).thenReturn(1);
+        when(paymentService.applyReorged(any())).thenReturn(Optional.of(seenOutcome()));
+
+        consumer.onChainTxReorged(REORGED_JSON);
+
+        verify(invoiceService, never()).findByIdAsWatchView(any());
+        verify(cryptoClient, never()).registerWatch(any(), any(), any(), any(), any(), any());
+    }
+
+    /** R14 continuity: a stale/unknown reorg event means {@code applyReorged} itself returned
+     * empty - the replacement-watch step must never even attempt a lookup. */
+    @Test
+    void shouldNotRegisterReplacementWatchWhenReorgIsStaleOrUnknown() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.reorged", NOW)).thenReturn(1);
+        when(paymentService.applyReorged(any())).thenReturn(Optional.empty());
+
+        consumer.onChainTxReorged(REORGED_JSON);
+
+        verify(invoiceService, never()).findByIdAsWatchView(any());
+        verify(cryptoClient, never()).registerWatch(any(), any(), any(), any(), any(), any());
+    }
+
+    /** R12, named. Phase 9 Finding 1: looks up the invoice by {@code ReorgOutcome.invoiceId()}
+     * (7L here), never by the event's own {@code watchId}. */
+    @Test
+    void shouldRegisterReplacementWatchAfterWalkingBackToWatching() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.reorged", NOW)).thenReturn(1);
+        when(paymentService.applyReorged(any())).thenReturn(Optional.of(watchingOutcome()));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
+        UUID newWatchId = UUID.randomUUID();
+        when(cryptoClient.registerWatch(INVOICE_UUID, "ETHEREUM", "0xdef", "0x111", BigDecimal.valueOf(1000),
+                NOW.plusSeconds(3600))).thenReturn(new RegisterWatchResponse(newWatchId, "REGISTERED"));
+        when(invoiceService.updateWatchIdIfOpen(7L, newWatchId, NOW)).thenReturn(true);
+
+        consumer.onChainTxReorged(REORGED_JSON);
+
+        verify(cryptoClient).registerWatch(INVOICE_UUID, "ETHEREUM", "0xdef", "0x111", BigDecimal.valueOf(1000),
+                NOW.plusSeconds(3600));
+        verify(invoiceService).updateWatchIdIfOpen(7L, newWatchId, NOW);
+        verify(cryptoClient, never()).unregisterWatch(any());
+    }
+
+    /** Phase 9 Finding 7: short-circuits before even calling {@code registerWatch} if the
+     * invoice is no longer OPEN. */
+    @Test
+    void shouldSkipRegistrationWhenInvoiceIsNoLongerOpen() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.reorged", NOW)).thenReturn(1);
+        when(paymentService.applyReorged(any())).thenReturn(Optional.of(watchingOutcome()));
+        InvoiceWatchView expiredInvoice = new InvoiceWatchView(7L, INVOICE_UUID, InvoiceState.EXPIRED, "0xdef",
+                WATCH_ID, "ETHEREUM", "0x111", BigDecimal.valueOf(1000), NOW.plusSeconds(3600));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(expiredInvoice));
+
+        consumer.onChainTxReorged(REORGED_JSON);
+
+        verify(cryptoClient, never()).registerWatch(any(), any(), any(), any(), any(), any());
+        verify(invoiceService, never()).updateWatchIdIfOpen(any(), any(), any());
+    }
+
+    /** Phase 9 Finding 3: a successful register whose {@code updateWatchIdIfOpen} still returns
+     * {@code false} (the invoice resolved in the narrow window between the state check and this
+     * update) must not leak the newly registered watch. */
+    @Test
+    void shouldUnregisterOrphanedWatchWhenUpdateWatchIdFailsAfterSuccessfulRegister() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.reorged", NOW)).thenReturn(1);
+        when(paymentService.applyReorged(any())).thenReturn(Optional.of(watchingOutcome()));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
+        UUID newWatchId = UUID.randomUUID();
+        when(cryptoClient.registerWatch(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new RegisterWatchResponse(newWatchId, "REGISTERED"));
+        when(invoiceService.updateWatchIdIfOpen(any(), any(), any())).thenReturn(false);
+
+        consumer.onChainTxReorged(REORGED_JSON);
+
+        verify(cryptoClient).unregisterWatch(newWatchId);
+    }
+
+    /** Phase 9 Finding 3 (AC5-equivalent): a {@code registerWatch} failure never rolls back the
+     * already-committed DB-side reversal - {@code applyReorged} was already called before this
+     * best-effort step even starts. */
+    @Test
+    void shouldSwallowACryptoServiceFailureDuringReplacementWatchRegistrationWithoutPropagating() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.reorged", NOW)).thenReturn(1);
+        when(paymentService.applyReorged(any())).thenReturn(Optional.of(watchingOutcome()));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
+        when(cryptoClient.registerWatch(any(), any(), any(), any(), any(), any()))
+                .thenThrow(new CryptoServiceUnavailableException("down", null));
+
+        org.assertj.core.api.Assertions.assertThatCode(() -> consumer.onChainTxReorged(REORGED_JSON))
+                .doesNotThrowAnyException();
+
+        verify(paymentService).applyReorged(any());
+    }
+
+    /** Phase 9 Finding 2: the catch was widened from only {@code CryptoServiceUnavailableException}
+     * to {@code RuntimeException} - this specific exception type from {@code invoiceService}
+     * would have propagated uncaught before that fix. */
+    @Test
+    void shouldSwallowAnUnexpectedRuntimeExceptionFromInvoiceLookupWithoutPropagating() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.reorged", NOW)).thenReturn(1);
+        when(paymentService.applyReorged(any())).thenReturn(Optional.of(watchingOutcome()));
+        when(invoiceService.findByIdAsWatchView(7L)).thenThrow(new IllegalStateException("transient failure"));
+
+        org.assertj.core.api.Assertions.assertThatCode(() -> consumer.onChainTxReorged(REORGED_JSON))
+                .doesNotThrowAnyException();
     }
 }

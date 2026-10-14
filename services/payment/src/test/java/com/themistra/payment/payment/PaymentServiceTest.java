@@ -2,6 +2,7 @@ package com.themistra.payment.payment;
 
 import com.themistra.payment.consumer.dto.ChainTxConfirmed;
 import com.themistra.payment.consumer.dto.ChainTxFinalized;
+import com.themistra.payment.consumer.dto.ChainTxReorged;
 import com.themistra.payment.consumer.dto.ChainTxSeen;
 import com.themistra.payment.events.OutboxPublisher;
 import com.themistra.payment.invoice.InvoiceState;
@@ -358,6 +359,101 @@ class PaymentServiceTest {
 
         verify(verificationRecordService, never()).record(any(), any(), any(), any(), any(), any());
         verify(verificationRecordService, never()).recordIgnored(any(), any(), any(), any());
+    }
+
+    // --- R11/R12 (T12), named tests ---
+
+    private static ChainTxReorged reorgedEvent() {
+        return new ChainTxReorged(TRIGGER_EVENT_KEY, WATCH_ID, INVOICE_UUID, CHAIN, TX_HASH,
+                TOKEN_CONTRACT_ADDRESS, NOW);
+    }
+
+    @Test
+    void shouldWalkBackwardConfirmingToSeenOnReorg() {
+        Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
+        when(repository.markSeenIfConfirming(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.SEEN), eq(NOW)))
+                .thenReturn(1);
+
+        Optional<ReorgOutcome> outcome = service.applyReorged(reorgedEvent());
+
+        assertThat(outcome).isPresent();
+        assertThat(outcome.get().invoiceId()).isEqualTo(INVOICE_ID);
+        assertThat(outcome.get().newState()).isEqualTo(PaymentState.SEEN);
+        verify(verificationRecordService).record(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.SEEN),
+                eq(TRIGGER_EVENT_KEY), isNull(), isNull());
+        // R11: no watch action accompanies this reversal - the WATCHING branch must never even
+        // be attempted once the CONFIRMING branch already succeeded.
+        verify(repository, never()).markWatchingIfSeen(any(), any(), any(), any());
+    }
+
+    @Test
+    void shouldWalkBackwardSeenToWatchingOnReorgBeforeConfirm() {
+        Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
+        when(repository.markSeenIfConfirming(any(), any(), any(), any())).thenReturn(0);
+        when(repository.markWatchingIfSeen(any(), eq(PaymentState.SEEN), eq(PaymentState.WATCHING), eq(NOW)))
+                .thenReturn(1);
+
+        Optional<ReorgOutcome> outcome = service.applyReorged(reorgedEvent());
+
+        assertThat(outcome).isPresent();
+        assertThat(outcome.get().invoiceId()).isEqualTo(INVOICE_ID);
+        assertThat(outcome.get().newState()).isEqualTo(PaymentState.WATCHING);
+        verify(verificationRecordService).record(any(), eq(PaymentState.SEEN), eq(PaymentState.WATCHING),
+                eq(TRIGGER_EVENT_KEY), isNull(), isNull());
+    }
+
+    @Test
+    void shouldLogAndDropChainTxReorgedForAnUnknownPayment() {
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.empty());
+
+        Optional<ReorgOutcome> outcome = service.applyReorged(reorgedEvent());
+
+        assertThat(outcome).isEmpty();
+        verify(verificationRecordService, never()).record(any(), any(), any(), any(), any(), any());
+        verify(verificationRecordService, never()).recordIgnored(any(), any(), any(), any());
+    }
+
+    /** Phase 9 Finding 4: the mismatch guard's dead `chain` half was removed - only
+     * {@code tokenContractAddress} is ever reachable, so this test exercises that one real
+     * clause directly rather than the chain half (which {@code findByChainAndTxHash}'s own
+     * {@code WHERE} clause makes impossible to violate). */
+    @Test
+    void shouldIgnoreReorgWhenTokenContractAddressMismatchesTheStoredPayment() {
+        Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
+        ChainTxReorged mismatched = new ChainTxReorged(TRIGGER_EVENT_KEY, WATCH_ID, INVOICE_UUID, CHAIN, TX_HASH,
+                "0xDIFFERENT", NOW);
+
+        Optional<ReorgOutcome> outcome = service.applyReorged(mismatched);
+
+        assertThat(outcome).isEmpty();
+        verify(repository, never()).markSeenIfConfirming(any(), any(), any(), any());
+        verify(repository, never()).markWatchingIfSeen(any(), any(), any(), any());
+        verify(verificationRecordService, never()).record(any(), any(), any(), any(), any(), any());
+        verify(verificationRecordService, never()).recordIgnored(any(), any(), any(), any());
+    }
+
+    @Test
+    void shouldRecordIgnoredWhenReorgedEventIsStale() {
+        Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
+        when(repository.markSeenIfConfirming(any(), any(), any(), any())).thenReturn(0);
+        when(repository.markWatchingIfSeen(any(), any(), any(), any())).thenReturn(0);
+        when(repository.findCurrentState(any())).thenReturn(Optional.of(PaymentState.FINALIZED));
+
+        Optional<ReorgOutcome> outcome = service.applyReorged(reorgedEvent());
+
+        assertThat(outcome).isEmpty();
+        verify(verificationRecordService, never()).record(any(), any(), any(), any(), any(), any());
+        verify(verificationRecordService).recordIgnored(any(), eq(PaymentState.FINALIZED), eq(TRIGGER_EVENT_KEY), any());
+    }
+
+    @Test
+    void applyReorgedShouldThrowNullPointerExceptionForNullArgument() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.applyReorged(null))
+                .isInstanceOf(NullPointerException.class);
     }
 
     // --- null handling ---
