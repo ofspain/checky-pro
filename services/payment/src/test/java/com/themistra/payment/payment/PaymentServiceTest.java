@@ -186,6 +186,22 @@ class PaymentServiceTest {
         assertThat(watchingOnlyCaptor.getValue()).containsExactly(PaymentState.WATCHING);
     }
 
+    /** Phase 11 Gap 1 (Kimi): the test above only proves which states are checked, never that
+     * {@code applySeen} actually SUCCEEDS once the reorged-{@code WATCHING} row no longer
+     * blocks it - a regression reverting to T11's own old, broader guard (treating any {@code
+     * WATCHING} row as blocking, reorged or not) would not have failed either existing test. */
+    @Test
+    void shouldAllowANewSeenWhenTheOnlyNonTerminalPaymentIsAReorgedWatchingRow() {
+        when(repository.existsByInvoiceIdAndStateIn(eq(INVOICE_ID), any())).thenReturn(false);
+        when(repository.existsByInvoiceIdAndStateInAndReorgedAtIsNull(eq(INVOICE_ID), any())).thenReturn(false);
+        when(repository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        boolean applied = service.applySeen(openInvoice(), seenEvent());
+
+        assertThat(applied).isTrue();
+        verify(repository).save(any(Payment.class));
+    }
+
     // --- AC9 (Phase 3/4 Finding 5): no row is ever persisted in CREATED/WATCHING ---
 
     @Test
