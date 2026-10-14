@@ -138,7 +138,10 @@ class T01SkeletonRegressionTest {
      * <b>Updated at T03</b> (mirrors {@code notification-service}'s own identical T01-test
      * evolution): {@code @ConfigurationPropertiesScan} is now expected, since T03 introduced this
      * service's first {@code @ConfigurationProperties} classes - the count below moved from 1 to
-     * 2, not left stale against the T01-only shape. */
+     * 2, not left stale against the T01-only shape.
+     * <b>Updated at T04</b>: {@code @EnableScheduling} is now expected, since T04 introduced this
+     * service's first {@code @Scheduled} method ({@link com.themistra.payment.events.OutboxRelay}) -
+     * the count below moved from 2 to 3, for the same reason. */
     @Test
     void applicationClassIsBareWithStandardMainMethod() throws IOException {
         String source = Files.readString(APPLICATION_SOURCE);
@@ -146,6 +149,8 @@ class T01SkeletonRegressionTest {
         assertThat(source).contains("@SpringBootApplication");
         assertThat(source).as("T03 added the first @ConfigurationProperties classes to scan")
                 .contains("@ConfigurationPropertiesScan");
+        assertThat(source).as("T04 added the first @Scheduled method (OutboxRelay)")
+                .contains("@EnableScheduling");
         assertThat(source)
                 .as("SpringApplication.run must be called with the real class and args")
                 .contains("SpringApplication.run(PaymentServiceApplication.class, args);");
@@ -154,17 +159,19 @@ class T01SkeletonRegressionTest {
 
         // File-wide, not strictly position-scoped to "immediately before the class declaration"
         // (Phase 11 finding 4, T01, no test change needed for it then - documented there instead):
-        // today there are exactly two @-starting lines (@SpringBootApplication,
-        // @ConfigurationPropertiesScan) and both are class-level, so this remains equivalent in
-        // practice. A future task adding an annotated method to this same class would need to
-        // revisit this assertion's scope, not treat a failure here as a regression.
+        // today there are exactly three @-starting lines (@SpringBootApplication,
+        // @ConfigurationPropertiesScan, @EnableScheduling) and all three are class-level, so this
+        // remains equivalent in practice. A future task adding an annotated method to this same
+        // class would need to revisit this assertion's scope, not treat a failure here as a
+        // regression.
         long classLevelAnnotations = strippedSource.lines()
                 .filter(line -> line.trim().startsWith("@"))
                 .count();
         assertThat(classLevelAnnotations)
-                .as("no annotation beyond @SpringBootApplication/@ConfigurationPropertiesScan - "
-                        + "none else is added until the task that introduces what it enables")
-                .isEqualTo(2);
+                .as("no annotation beyond @SpringBootApplication/@ConfigurationPropertiesScan/"
+                        + "@EnableScheduling - none else is added until the task that introduces "
+                        + "what it enables")
+                .isEqualTo(3);
 
         long methodCount = Pattern.compile("\\bpublic\\s+static\\s+void\\s+main\\b").matcher(strippedSource).results().count();
         assertThat(methodCount).as("exactly one main method, no other method").isEqualTo(1);
