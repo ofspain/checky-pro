@@ -97,24 +97,25 @@ class ArchitectureTest {
             .because("L6: money is NUMERIC/BigDecimal only - no float/double/Float/Double anywhere");
 
     /** T09 (L1/L12), mirroring {@code crypto-service}'s own {@code
-     * CrossModuleEntityArchitectureTest.FEATURE_MODULES} exactly. This service's four real
+     * CrossModuleEntityArchitectureTest.FEATURE_MODULES} exactly. This service's five real
      * top-level packages that own an {@code @Entity} today: {@code invoice} (T05),
-     * {@code payment} (no entity yet, T09 — included for forward consistency since it is a real
-     * business feature package), {@code events} (T04's own {@code OutboxEvent}), and
-     * {@code verification} (T10's own {@code VerificationRecord}). <b>When adding a new
-     * top-level package under {@code com.themistra.payment}, add it here too</b> — the fail-fast
-     * null check below means a class outside every module listed here is flagged rather than
-     * silently unenforced. {@code events} is cross-cutting infrastructure, not a business
-     * feature like the others — omitting it entirely would trip the fail-fast "unmapped entity"
-     * branch against real, already-shipped code (confirmed by running this rule against the real
-     * codebase before finalizing the list, not assumed), rather than against a deliberate
-     * violation. Including it also means a future module that imports {@code OutboxEvent}
-     * directly (bypassing {@code OutboxPublisher}'s own public API) would now be caught.
-     * {@code common} is deliberately excluded (shared plumbing per {@code agents.md}) and given
+     * {@code payment} (T09's own enum, now a real entity since T11's own {@code Payment}),
+     * {@code events} (T04's own {@code OutboxEvent}), {@code verification} (T10's own
+     * {@code VerificationRecord}), and {@code consumer} (T11's own {@code ProcessedEvent}).
+     * <b>When adding a new top-level package under {@code com.themistra.payment}, add it here
+     * too</b> — the fail-fast null check below means a class outside every module listed here is
+     * flagged rather than silently unenforced. {@code events} is cross-cutting infrastructure, not
+     * a business feature like the others — omitting it entirely would trip the fail-fast
+     * "unmapped entity" branch against real, already-shipped code (confirmed by running this rule
+     * against the real codebase before finalizing the list, not assumed), rather than against a
+     * deliberate violation. Including it also means a future module that imports
+     * {@code OutboxEvent} directly (bypassing {@code OutboxPublisher}'s own public API) would now
+     * be caught. {@code common} is deliberately excluded (shared plumbing per {@code agents.md})
+     * and given
      * no special-case, mirroring crypto's own identical choice — a {@code common}-package class
      * importing a feature module's entity is already, correctly, a violation. */
     private static final List<String> FEATURE_MODULES =
-            List.of("invoice", "payment", "events", "verification");
+            List.of("invoice", "payment", "events", "verification", "consumer");
 
     private static String featureModuleOf(JavaClass javaClass) {
         String packageName = javaClass.getPackageName();

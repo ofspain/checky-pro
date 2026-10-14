@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -89,6 +90,19 @@ public class InvoiceService {
         Objects.requireNonNull(invoiceUuid, "invoiceUuid must not be null");
         return repository.findByInvoiceUuidAndMerchantAccountUuid(invoiceUuid, merchantAccountUuid)
                 .orElseThrow(InvoiceNotFoundException::new);
+    }
+
+    /** T11 (Phase 3 Finding 2, and a real ArchUnit violation caught at Phase 6 - see {@link
+     * InvoiceWatchView}'s own Javadoc): the `consumer`/`payment` packages' own cross-module lookup
+     * API - it must never depend on {@link InvoiceRepository} directly, nor ever receive the real
+     * {@link Invoice} entity itself (L12). Returns {@link Optional} rather than throwing, unlike
+     * {@link #getForMerchant} - an unrecognized {@code watchId} is a routine, expected outcome for
+     * {@code ChainEventConsumer} (e.g. an event for a watch this service never registered, or one
+     * already unregistered), not an exceptional one. */
+    @Transactional(readOnly = true)
+    public Optional<InvoiceWatchView> findByWatchId(UUID watchId) {
+        Objects.requireNonNull(watchId, "watchId must not be null");
+        return repository.findByWatchId(watchId).map(InvoiceWatchView::from);
     }
 
     /** R5 (AC1/AC2, T08): system-level sweep candidates, not scoped to any one merchant. */

@@ -16,6 +16,13 @@ interface InvoiceRepository extends JpaRepository<Invoice, Long> {
 
     Optional<Invoice> findByInvoiceUuidAndMerchantAccountUuid(UUID invoiceUuid, UUID merchantAccountUuid);
 
+    /** T11: every consumed {@code chain.tx.*} event schema guarantees {@code watchId} in its own
+     * {@code required} list (unlike {@code invoiceUuid}, present but optional in all of them) -
+     * the one correlation key {@code ChainEventConsumer} can rely on. Called only through {@link
+     * com.themistra.payment.invoice.InvoiceService#findByWatchId} (Phase 3 Finding 2) - never
+     * directly from the {@code consumer} package, which must not depend on this repository. */
+    Optional<Invoice> findByWatchId(UUID watchId);
+
     /** T08 (R5, Phase 3/4 finding 1): excludes any invoice with a {@code payments} row in
      * {@code CREATED}/{@code WATCHING}/{@code SEEN}/{@code CONFIRMING} - the full non-terminal
      * set `design.md` O2 names, not only {@code SEEN}/{@code CONFIRMING}. No {@code Payment} JPA
