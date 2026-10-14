@@ -3,12 +3,18 @@ package com.themistra.payment.payment;
 import org.junit.jupiter.api.Test;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -87,6 +93,30 @@ class PaymentStateMachineTest {
     @Test
     void shouldTransitionAttestedToHeldOnPostAttestReorg() {
         assertLegal(PaymentState.ATTESTED, PaymentState.HELD);
+    }
+
+    /** Phase 11 Gap 1 (Kimi): {@code PaymentState}'s own names are used directly in JPQL/native
+     * SQL string literals elsewhere in this service (a future `Payment` entity/repository, task
+     * 11) - if an enum name ever drifted from the real {@code chk_payment_state} constraint, a
+     * query would fail at runtime with no compile-time warning. No equivalent guard exists yet
+     * for {@code InvoiceState} either (a worthwhile, separately-scoped future consistency task,
+     * not retroactively added here - out of this task's own scope). */
+    @Test
+    void shouldMatchChkPaymentStateConstraintExactly() throws IOException {
+        String sql = Files.readString(Path.of("src/main/resources/db/migration/V1__payments_baseline.sql"));
+        Matcher matcher = Pattern.compile("chk_payment_state CHECK \\(state IN\\s*\\(([^)]+)\\)\\)", Pattern.DOTALL)
+                .matcher(sql);
+
+        assertThat(matcher.find()).as("chk_payment_state constraint must exist in V1").isTrue();
+
+        Set<String> dbStates = Arrays.stream(matcher.group(1).split(","))
+                .map(value -> value.trim().replace("'", ""))
+                .collect(Collectors.toSet());
+        Set<String> enumStates = Arrays.stream(PaymentState.values())
+                .map(Enum::name)
+                .collect(Collectors.toSet());
+
+        assertThat(enumStates).isEqualTo(dbStates);
     }
 
     private void assertLegal(PaymentState current, PaymentState target) {
@@ -182,5 +212,19 @@ class PaymentStateMachineTest {
         assertThat(PaymentStateMachine.class.isAnnotationPresent(Component.class))
                 .as("PaymentStateMachine must remain a Spring bean for future injection")
                 .isTrue();
+
+        // Phase 11 Gap 2 (Kimi): Spring needs a public class with a public no-arg constructor to
+        // instantiate the bean - the checks above alone would still pass a package-private class
+        // or constructor, silently breaking DI at a future call site.
+        assertThat(Modifier.isPublic(PaymentStateMachine.class.getModifiers())).isTrue();
+        assertThat(Modifier.isPublic(constructors[0].getModifiers())).isTrue();
+    }
+
+    /** Phase 11 Gap 3 (Kimi): the frozen brief requires this exception to be public so a future
+     * cross-package caller (task 11's {@code consumer} package) can catch it - nothing previously
+     * guarded that visibility. */
+    @Test
+    void illegalPaymentStateTransitionExceptionShouldBePublic() {
+        assertThat(Modifier.isPublic(IllegalPaymentStateTransitionException.class.getModifiers())).isTrue();
     }
 }
