@@ -22,6 +22,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
@@ -172,6 +173,59 @@ class CryptoClientTest {
         // headroom while still being well short of the server's own 1000ms sleep, so this
         // actually proves the bounded timeout, not just "eventually returned."
         assertThat(elapsedMs).isLessThan(500);
+    }
+
+    // --- T08 (R5): unregisterWatch ---
+
+    @Test
+    void shouldSendDeleteRequestOnUnregisterWatch() throws IOException {
+        AtomicReference<String> capturedMethod = new AtomicReference<>();
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startServer(204, "", exchange -> capturedMethod.set(exchange.getRequestMethod()));
+
+        client.unregisterWatch(UUID.randomUUID());
+
+        assertThat(capturedMethod.get()).isEqualTo("DELETE");
+    }
+
+    /** Phase 3 finding 3: a prior successful unregister that a retried sweep repeats (e.g. after
+     * a failed DB commit before {@code expireInvoice} ran) must never throw - {@code 404} is one
+     * real shape a deployment might use for "already gone." */
+    @Test
+    void shouldTreatNotFoundAsSuccessOnUnregisterWatch() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startServer(404, "not found", null);
+
+        assertThatCode(() -> client.unregisterWatch(UUID.randomUUID())).doesNotThrowAnyException();
+    }
+
+    /** Phase 3 finding 3: {@code 410 Gone} is the other real shape a deployment might use for
+     * "already gone" - also treated as success. */
+    @Test
+    void shouldTreatGoneAsSuccessOnUnregisterWatch() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startServer(410, "gone", null);
+
+        assertThatCode(() -> client.unregisterWatch(UUID.randomUUID())).doesNotThrowAnyException();
+    }
+
+    @Test
+    void shouldThrowCryptoServiceUnavailableOnUnregisterWatchServerError() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startServer(500, "error", null);
+
+        assertThatThrownBy(() -> client.unregisterWatch(UUID.randomUUID()))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
+    }
+
+    @Test
+    void shouldThrowCryptoServiceUnavailableOnUnregisterWatchConnectionFailure() {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClientProperties properties = cryptoClientProperties("http://127.0.0.1:1");
+        CryptoClient client = new CryptoClient(RestClient.builder(), tokenProvider, properties);
+
+        assertThatThrownBy(() -> client.unregisterWatch(UUID.randomUUID()))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
     }
 
     private CryptoClient startServer(int status, String responseBody,

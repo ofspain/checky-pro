@@ -9,12 +9,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.jpa.repository.Query;
 
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 
 import java.io.IOException;
@@ -236,5 +238,79 @@ class InvoiceServiceTest {
                 (short) 18, new BigDecimal("1000"), "0xdef", null, null, WATCH_ID))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("expiresAt");
+    }
+
+    // --- T08 (R5): findExpiredCandidatesWithoutInFlightPayment / expireInvoice ---
+
+    @Test
+    void shouldDelegateCandidateLookupToRepositoryUsingInjectedClock() {
+        Invoice candidate = Invoice.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, new BigDecimal("1000"), "0xdef", null, EXPIRES_AT, WATCH_ID, NOW);
+        when(repository.findExpiredCandidatesWithoutInFlightPayment(NOW)).thenReturn(List.of(candidate));
+
+        List<Invoice> candidates = service.findExpiredCandidatesWithoutInFlightPayment();
+
+        assertThat(candidates).containsExactly(candidate);
+        verify(repository).findExpiredCandidatesWithoutInFlightPayment(NOW);
+    }
+
+    /** Phase 1 (R5), Phase 3/4 finding 1: the native query's own {@code IN} clause must name all
+     * four non-terminal payment states {@code design.md} O2 lists ({@code CREATED}/{@code
+     * WATCHING}/{@code SEEN}/{@code CONFIRMING}), not only the narrower {@code SEEN}/{@code
+     * CONFIRMING} pair an earlier reading of this task used. No Docker this session (same
+     * disclosed, carried-forward gap as Phase 7/8/9) means this cannot be proven by actually
+     * running the query against Postgres, so this is a structural proof instead: it reads the
+     * real {@code @Query} annotation value via reflection (not a static source-text file read,
+     * so it survives reformatting) and asserts all four state literals are present. */
+    @Test
+    void shouldNotExpireInvoiceWithPaymentInFlight() throws NoSuchMethodException {
+        Query query = InvoiceRepository.class
+                .getDeclaredMethod("findExpiredCandidatesWithoutInFlightPayment", Instant.class)
+                .getAnnotation(Query.class);
+
+        assertThat(query).as("the candidate query must be a real @Query").isNotNull();
+        assertThat(query.value())
+                .contains("'CREATED'")
+                .contains("'WATCHING'")
+                .contains("'SEEN'")
+                .contains("'CONFIRMING'");
+    }
+
+    @Test
+    void expireInvoiceShouldThrowNullPointerExceptionForNullInvoice() {
+        assertThatThrownBy(() -> service.expireInvoice(null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("invoice");
+    }
+
+    @Test
+    void shouldExpireInvoiceAndUnregisterWatchAfterTtl() {
+        Invoice candidate = Invoice.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, new BigDecimal("1000"), "0xdef", null, EXPIRES_AT, WATCH_ID, NOW);
+        when(repository.updateStateIfCurrentState(candidate.getId(), InvoiceState.OPEN, InvoiceState.EXPIRED, NOW))
+                .thenReturn(1);
+
+        boolean expired = service.expireInvoice(candidate);
+
+        assertThat(expired).isTrue();
+        verify(repository).updateStateIfCurrentState(candidate.getId(), InvoiceState.OPEN, InvoiceState.EXPIRED, NOW);
+    }
+
+    /** AC6 (Phase 9 correction): the acceptance criterion's own original wording named a
+     * {@code markExpired()} no-op guard; that method was removed at Phase 9 in favor of a single
+     * atomic, conditional {@code UPDATE ... WHERE state = 'OPEN'} (Kimi Phase 8 finding 1) - this
+     * proves the same acceptance criterion's real intent (a non-{@code OPEN} invoice is never
+     * silently overwritten back to {@code EXPIRED}) against the new design: a 0-row update result
+     * is reported as "not expired," not as an error. */
+    @Test
+    void shouldNotOverwriteNonOpenInvoiceState() {
+        Invoice candidate = Invoice.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, new BigDecimal("1000"), "0xdef", null, EXPIRES_AT, WATCH_ID, NOW);
+        when(repository.updateStateIfCurrentState(candidate.getId(), InvoiceState.OPEN, InvoiceState.EXPIRED, NOW))
+                .thenReturn(0);
+
+        boolean expired = service.expireInvoice(candidate);
+
+        assertThat(expired).isFalse();
     }
 }

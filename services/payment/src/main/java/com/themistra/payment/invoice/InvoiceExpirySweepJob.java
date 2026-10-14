@@ -47,7 +47,7 @@ public class InvoiceExpirySweepJob {
         }
     }
 
-    private void processOne(Invoice invoice) {
+    void processOne(Invoice invoice) {
         if (invoice.getWatchId() == null) {
             // Phase 3 finding 7: every invoice created by InvoiceController (T06) has a watchId
             // set at creation time, so this path is not currently reachable - defensive only,
