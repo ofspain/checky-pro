@@ -2,6 +2,7 @@ package com.themistra.payment.payment;
 
 import com.themistra.payment.consumer.dto.ChainTxConfirmed;
 import com.themistra.payment.consumer.dto.ChainTxFinalized;
+import com.themistra.payment.consumer.dto.ChainTxReorged;
 import com.themistra.payment.consumer.dto.ChainTxSeen;
 import com.themistra.payment.events.OutboxPublisher;
 import com.themistra.payment.invoice.InvoiceState;
@@ -32,12 +33,16 @@ import java.util.Optional;
 public class PaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
-    /** T11 (Phase 8, Kimi Finding 1): the full non-terminal set, mirroring
-     * {@code InvoiceRepository.findExpiredCandidatesWithoutInFlightPayment}'s own identical
-     * definition (T08) exactly - a payment in any of these states means the invoice is not
-     * actually free to start a new one. */
-    private static final List<PaymentState> NON_TERMINAL_STATES =
-            List.of(PaymentState.CREATED, PaymentState.WATCHING, PaymentState.SEEN, PaymentState.CONFIRMING);
+    /** T11 (Phase 8, Kimi Finding 1), narrowed at T12 (Phase 3 Kimi Finding 1): the states that
+     * ALWAYS block a new payment for the same invoice, regardless of {@code reorgedAt}. {@code
+     * WATCHING} is deliberately excluded here - a fresh (never-reorged) {@code WATCHING} row
+     * would still block (checked separately below via {@code
+     * existsByInvoiceIdAndStateInAndReorgedAtIsNull}), but a reorged-back one must not, or the
+     * very replacement transaction R12's own watch re-registration exists to detect would be
+     * dropped by this guard - defeating the reorg-recovery path entirely. */
+    private static final List<PaymentState> ACTIVE_NON_TERMINAL_STATES =
+            List.of(PaymentState.CREATED, PaymentState.SEEN, PaymentState.CONFIRMING);
+    private static final List<PaymentState> WATCHING_ONLY = List.of(PaymentState.WATCHING);
 
     private final PaymentRepository repository;
     private final PaymentStateMachine stateMachine;
@@ -83,9 +88,11 @@ public class PaymentService {
             return false;
         }
 
-        if (repository.existsByInvoiceIdAndStateIn(invoice.id(), NON_TERMINAL_STATES)) {
-            log.warn("Ignoring chain.tx.seen for invoiceUuid={}: a non-terminal payment already exists "
-                    + "(the disclosed T08 residual unregister-timing race)", invoice.invoiceUuid());
+        if (repository.existsByInvoiceIdAndStateIn(invoice.id(), ACTIVE_NON_TERMINAL_STATES)
+                || repository.existsByInvoiceIdAndStateInAndReorgedAtIsNull(invoice.id(), WATCHING_ONLY)) {
+            log.warn("Ignoring chain.tx.seen for invoiceUuid={}: an active non-terminal payment already exists "
+                    + "(the disclosed T08 residual unregister-timing race, or a fresh WATCHING row)",
+                    invoice.invoiceUuid());
             return false;
         }
 
@@ -210,5 +217,63 @@ public class PaymentService {
         return repository.markFinalizedIfCurrentState(paymentId, expectedCurrentState, PaymentState.FINALIZED,
                 event.amount(), event.fromAddress(), event.toAddress(), event.confirmations(),
                 event.addressPoisoningFlag(), now) > 0;
+    }
+
+    /** R11/R12 (T12). A {@code chain.tx.reorged} event walks {@code CONFIRMING} back to {@code
+     * SEEN} (R11, no watch action) or {@code SEEN} back to {@code WATCHING} (R12); any other
+     * current state is stale (R14, {@code recordIgnored}). Phase 3 Finding 6: the event's own
+     * {@code chain}/{@code tokenContractAddress} must match the already-loaded {@code Payment}'s
+     * own stored values, or the event is treated as stale regardless of state - a mismatch is
+     * logged at {@code ERROR}, not {@code WARN}, since it indicates either a producer bug or a
+     * malicious message, not a routine race.
+     *
+     * <p>Returns the state the payment landed in ({@link Optional#empty()} means stale/ignored -
+     * no transition occurred) so {@code ChainEventConsumer} - never this method (Phase 3 Finding
+     * 4: no outbound {@code CryptoClient}/{@code InvoiceService} call may originate here) - can
+     * decide whether a replacement watch needs registering.</p> */
+    @Transactional
+    public Optional<PaymentState> applyReorged(ChainTxReorged event) {
+        Objects.requireNonNull(event, "event must not be null");
+        Optional<Payment> maybePayment = repository.findByChainAndTxHash(event.chain(), event.txHash());
+        if (maybePayment.isEmpty()) {
+            log.warn("Ignoring chain.tx.reorged for chain={} txHash={}: no known payment", event.chain(), event.txHash());
+            return Optional.empty();
+        }
+        Payment payment = maybePayment.get();
+
+        if (!payment.getChain().equals(event.chain()) || !payment.getTokenContractAddress().equals(event.tokenContractAddress())) {
+            log.error("Ignoring chain.tx.reorged for paymentId={}: chain/tokenContractAddress mismatch "
+                    + "against the loaded payment's own stored values", payment.getId());
+            return Optional.empty();
+        }
+
+        Instant now = clock.instant();
+
+        // Phase 8 Kimi Finding 6 precedent: a defensive sanity check, not the real enforcement -
+        // the atomic UPDATE's own WHERE clause enforces legality.
+        if (!stateMachine.isPermitted(PaymentState.CONFIRMING, PaymentState.SEEN)
+                || !stateMachine.isPermitted(PaymentState.SEEN, PaymentState.WATCHING)) {
+            throw new IllegalStateException("A reorg reversal edge is not permitted - PaymentStateMachine's own edge set changed unexpectedly");
+        }
+
+        int toSeen = repository.markSeenIfConfirming(payment.getId(), PaymentState.CONFIRMING, PaymentState.SEEN, now);
+        if (toSeen > 0) {
+            verificationRecordService.record(payment.getId(), PaymentState.CONFIRMING, PaymentState.SEEN,
+                    event.idempotencyKey(), null, null);
+            return Optional.of(PaymentState.SEEN);
+        }
+
+        int toWatching = repository.markWatchingIfSeen(payment.getId(), PaymentState.SEEN, PaymentState.WATCHING, now);
+        if (toWatching > 0) {
+            verificationRecordService.record(payment.getId(), PaymentState.SEEN, PaymentState.WATCHING,
+                    event.idempotencyKey(), null, null);
+            return Optional.of(PaymentState.WATCHING);
+        }
+
+        // Phase 8 Kimi Finding 4 precedent: see applyConfirmed's own identical comment.
+        PaymentState currentState = repository.findCurrentState(payment.getId()).orElse(payment.getState());
+        verificationRecordService.recordIgnored(payment.getId(), currentState, event.idempotencyKey(),
+                Map.of("reason", "stale-reorg-event"));
+        return Optional.empty();
     }
 }

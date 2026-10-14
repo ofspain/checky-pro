@@ -24,6 +24,15 @@ interface PaymentRepository extends JpaRepository<Payment, Long> {
      * unregister-timing race) must never create a second competing {@code Payment} row. */
     boolean existsByInvoiceIdAndStateIn(Long invoiceId, Collection<PaymentState> states);
 
+    /** T12 (Phase 3 Kimi Finding 1): the other half of the existing-payment guard above - a
+     * {@code WATCHING} row that has been reorged back to (non-null {@code reorgedAt}) must NOT
+     * block a new payment the way a fresh, never-reorged {@code WATCHING} row would (there is no
+     * such row in practice today - {@code WATCHING} is never persisted pre-T12 per T11's own
+     * Decision 1/Finding 5 - but the condition is written generally). {@code PaymentService}
+     * calls this and {@link #existsByInvoiceIdAndStateIn} separately and ORs the two booleans,
+     * rather than this repository expressing the nullness distinction in one combined query. */
+    boolean existsByInvoiceIdAndStateInAndReorgedAtIsNull(Long invoiceId, Collection<PaymentState> states);
+
     /** T11 (Phase 8, Kimi Finding 4): a plain scalar projection, not a full entity load - bypasses
      * the persistence context's own first-level cache entirely (unlike {@code findById}, which
      * would return the same already-managed, now-stale {@code Payment} instance this
@@ -88,4 +97,28 @@ interface PaymentRepository extends JpaRepository<Payment, Long> {
                                      @Param("toAddress") String toAddress, @Param("confirmations") int confirmations,
                                      @Param("addressPoisoningFlag") boolean addressPoisoningFlag,
                                      @Param("now") Instant now);
+
+    /** R11 (T12). A {@code chain.tx.reorged} reversal: {@code CONFIRMING → SEEN}. Atomic, same
+     * rationale as {@code markConfirmingIfSeen}. No watch action accompanies this reversal - a
+     * {@code SEEN} payment still correlates by {@code (chain, txHash)}, independent of any live
+     * watch. {@code reorgedAt} records the real historical fact; {@code seenAt}/{@code
+     * confirmedAt} are deliberately left untouched - they remain true records of when those
+     * milestones were first reached, even though the payment later reverted. */
+    @Modifying
+    @Query("UPDATE Payment p SET p.state = :newState, p.reorgedAt = :now, p.updatedAt = :now "
+            + "WHERE p.id = :id AND p.state = :expectedCurrentState")
+    int markSeenIfConfirming(@Param("id") Long id, @Param("expectedCurrentState") PaymentState expectedCurrentState,
+                              @Param("newState") PaymentState newState, @Param("now") Instant now);
+
+    /** R12 (T12). A {@code chain.tx.reorged} reversal: {@code SEEN → WATCHING}. Atomic, same
+     * rationale as {@code markSeenIfConfirming}. Unlike that reversal, this one does need a
+     * watch action - {@code ChainEventConsumer} (never this repository, never {@code
+     * PaymentService} - Phase 3 Finding 4) registers a replacement watch after this update
+     * commits, since the original watch was already unregistered on first {@code SEEN}
+     * (R7a/L14, T11) and there is no "reactivate" path. */
+    @Modifying
+    @Query("UPDATE Payment p SET p.state = :newState, p.reorgedAt = :now, p.updatedAt = :now "
+            + "WHERE p.id = :id AND p.state = :expectedCurrentState")
+    int markWatchingIfSeen(@Param("id") Long id, @Param("expectedCurrentState") PaymentState expectedCurrentState,
+                            @Param("newState") PaymentState newState, @Param("now") Instant now);
 }

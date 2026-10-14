@@ -13,7 +13,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -67,17 +69,21 @@ class ChainEventConsumerTest {
     @Mock
     private CryptoClient cryptoClient;
 
+    @Mock
+    private PlatformTransactionManager transactionManager;
+
     private ChainEventConsumer consumer;
 
     @BeforeEach
     void setUp() {
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
         consumer = new ChainEventConsumer(objectMapper, processedEventRepository, invoiceService, paymentService,
-                cryptoClient, Clock.fixed(NOW, ZoneOffset.UTC));
+                cryptoClient, Clock.fixed(NOW, ZoneOffset.UTC), transactionManager);
     }
 
     private static InvoiceWatchView openInvoice() {
-        return new InvoiceWatchView(7L, INVOICE_UUID, InvoiceState.OPEN, "0xdef", WATCH_ID);
+        return new InvoiceWatchView(7L, INVOICE_UUID, InvoiceState.OPEN, "0xdef", WATCH_ID,
+                "ETHEREUM", "0x111", BigDecimal.valueOf(1000), NOW.plusSeconds(3600));
     }
 
     // --- R13/L5, named ---

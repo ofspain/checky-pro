@@ -50,6 +50,8 @@ class PaymentServiceTest {
     private static final String TX_HASH = "0xabc";
     private static final String TOKEN_CONTRACT_ADDRESS = "0x111";
     private static final String TRIGGER_EVENT_KEY = CHAIN + ":" + TX_HASH + ":chain.tx.seen";
+    private static final BigDecimal INVOICE_AMOUNT = BigDecimal.valueOf(1000);
+    private static final Instant INVOICE_EXPIRES_AT = NOW.plusSeconds(3600);
 
     @Mock
     private PaymentRepository repository;
@@ -69,7 +71,8 @@ class PaymentServiceTest {
     }
 
     private static InvoiceWatchView openInvoice() {
-        return new InvoiceWatchView(INVOICE_ID, INVOICE_UUID, InvoiceState.OPEN, PAY_TO_ADDRESS, WATCH_ID);
+        return new InvoiceWatchView(INVOICE_ID, INVOICE_UUID, InvoiceState.OPEN, PAY_TO_ADDRESS, WATCH_ID,
+                CHAIN, TOKEN_CONTRACT_ADDRESS, INVOICE_AMOUNT, INVOICE_EXPIRES_AT);
     }
 
     private static ChainTxSeen seenEvent() {
@@ -137,7 +140,7 @@ class PaymentServiceTest {
     @Test
     void shouldNotCreatePaymentWhenInvoiceIsNoLongerOpen() {
         InvoiceWatchView nonOpenInvoice = new InvoiceWatchView(INVOICE_ID, INVOICE_UUID, InvoiceState.EXPIRED,
-                PAY_TO_ADDRESS, WATCH_ID);
+                PAY_TO_ADDRESS, WATCH_ID, CHAIN, TOKEN_CONTRACT_ADDRESS, INVOICE_AMOUNT, INVOICE_EXPIRES_AT);
 
         boolean applied = service.applySeen(nonOpenInvoice, seenEvent());
 
@@ -159,17 +162,27 @@ class PaymentServiceTest {
         verify(outboxPublisher, never()).publish(any(), any(), any(), any());
     }
 
+    /** T12 (Phase 3 Kimi Finding 1): the guard is now split across two calls - the OR'd
+     * {@code existsByInvoiceIdAndStateIn} no longer includes {@code WATCHING} (a reorged-back
+     * {@code WATCHING} row must not block a replacement transaction); {@code
+     * existsByInvoiceIdAndStateInAndReorgedAtIsNull} covers only a fresh (never-reorged) {@code
+     * WATCHING} row. */
     @Test
-    void existsByInvoiceIdAndStateInShouldCheckTheFullNonTerminalSet() {
+    void existsByInvoiceIdAndStateInShouldCheckOnlyTheActiveNonTerminalSet() {
         when(repository.existsByInvoiceIdAndStateIn(eq(INVOICE_ID), any())).thenReturn(false);
+        when(repository.existsByInvoiceIdAndStateInAndReorgedAtIsNull(eq(INVOICE_ID), any())).thenReturn(false);
         when(repository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         service.applySeen(openInvoice(), seenEvent());
 
-        ArgumentCaptor<List<PaymentState>> statesCaptor = ArgumentCaptor.forClass(List.class);
-        verify(repository).existsByInvoiceIdAndStateIn(eq(INVOICE_ID), statesCaptor.capture());
-        assertThat(statesCaptor.getValue()).containsExactlyInAnyOrder(
-                PaymentState.CREATED, PaymentState.WATCHING, PaymentState.SEEN, PaymentState.CONFIRMING);
+        ArgumentCaptor<List<PaymentState>> activeStatesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(repository).existsByInvoiceIdAndStateIn(eq(INVOICE_ID), activeStatesCaptor.capture());
+        assertThat(activeStatesCaptor.getValue()).containsExactlyInAnyOrder(
+                PaymentState.CREATED, PaymentState.SEEN, PaymentState.CONFIRMING);
+
+        ArgumentCaptor<List<PaymentState>> watchingOnlyCaptor = ArgumentCaptor.forClass(List.class);
+        verify(repository).existsByInvoiceIdAndStateInAndReorgedAtIsNull(eq(INVOICE_ID), watchingOnlyCaptor.capture());
+        assertThat(watchingOnlyCaptor.getValue()).containsExactly(PaymentState.WATCHING);
     }
 
     // --- AC9 (Phase 3/4 Finding 5): no row is ever persisted in CREATED/WATCHING ---

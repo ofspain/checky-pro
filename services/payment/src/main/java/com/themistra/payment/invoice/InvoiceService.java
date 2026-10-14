@@ -132,6 +132,21 @@ public class InvoiceService {
         return rowsUpdated > 0;
     }
 
+    /** T12 (Phase 3 Kimi Finding 5). Called only by {@code ChainEventConsumer}, after a
+     * successful {@code CryptoClient.registerWatch} following a {@code SEEN → WATCHING} reorg
+     * reversal (R12) - deliberately not {@code @Transactional} wrapping any outbound call itself
+     * (the register call already happened by the time this runs); this method's own atomic
+     * update is its entire unit of work. Returns whether the row was actually updated - {@code
+     * false} means the invoice was no longer {@code OPEN} by the time this ran (not an error,
+     * mirrors {@link #expireInvoice}'s own convention). */
+    @Transactional
+    public boolean updateWatchIdIfOpen(Long invoiceId, UUID newWatchId, Instant now) {
+        Objects.requireNonNull(invoiceId, "invoiceId must not be null");
+        Objects.requireNonNull(newWatchId, "newWatchId must not be null");
+        Objects.requireNonNull(now, "now must not be null");
+        return repository.updateWatchIdIfOpen(invoiceId, newWatchId, now) > 0;
+    }
+
     /** R3 (AC1): {@code chain} must be a recognized value; {@code tokenContractAddress} must be
      * present. No address-format/checksum validation - no precedent exists anywhere in the
      * codebase yet ({@code crypto-service}'s own {@code AddressValidator} is explicitly future-
