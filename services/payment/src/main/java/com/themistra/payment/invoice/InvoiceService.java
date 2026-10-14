@@ -161,6 +161,33 @@ public class InvoiceService {
         return repository.updateWatchIdIfOpen(invoiceId, newWatchId, now) > 0;
     }
 
+    /** R15/T13 (Phase 4 Finding 1, widened from a single-state guard after Kimi's Phase 3
+     * review). Tries {@code OPEN} then {@code EXPIRED}, mirroring {@code PaymentService
+     * #tryFinalizeFrom}'s own two-attempt shape - closes a real path through T08's own
+     * already-disclosed sweep race (the sweep's atomic {@code UPDATE} re-checks only {@code
+     * Invoice.state}, not the payment's own current state, against a candidate list snapshotted
+     * moments earlier - a payment that transitions into a blocking state in that narrow window
+     * can still be wrongly swept to {@code EXPIRED}; without this widening, a payment that later
+     * legitimately finalizes against such an invoice would leave it stuck at {@code EXPIRED}
+     * forever, contradicting {@code design.md} O2's own "attest anyway" policy). No new
+     * repository method - {@code updateStateIfCurrentState} (T08) is already fully generic.
+     *
+     * <p>Phase 4 Finding 5: {@code outcome} is rejected outright if {@code null} or not one of
+     * the three real payment-outcome states - a silent no-op here would mask a caller bug. */
+    @Transactional
+    public boolean markOutcomeIfOpenOrExpired(Long invoiceId, InvoiceState outcome, Instant now) {
+        Objects.requireNonNull(invoiceId, "invoiceId must not be null");
+        Objects.requireNonNull(outcome, "outcome must not be null");
+        Objects.requireNonNull(now, "now must not be null");
+        if (outcome != InvoiceState.PAID && outcome != InvoiceState.UNDERPAID && outcome != InvoiceState.OVERPAID) {
+            throw new IllegalArgumentException("outcome must be PAID, UNDERPAID, or OVERPAID, got: " + outcome);
+        }
+        if (repository.updateStateIfCurrentState(invoiceId, InvoiceState.OPEN, outcome, now) > 0) {
+            return true;
+        }
+        return repository.updateStateIfCurrentState(invoiceId, InvoiceState.EXPIRED, outcome, now) > 0;
+    }
+
     /** R3 (AC1): {@code chain} must be a recognized value; {@code tokenContractAddress} must be
      * present. No address-format/checksum validation - no precedent exists anywhere in the
      * codebase yet ({@code crypto-service}'s own {@code AddressValidator} is explicitly future-

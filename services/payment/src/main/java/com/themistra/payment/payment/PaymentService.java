@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -43,6 +44,11 @@ public class PaymentService {
     private static final List<PaymentState> ACTIVE_NON_TERMINAL_STATES =
             List.of(PaymentState.CREATED, PaymentState.SEEN, PaymentState.CONFIRMING);
     private static final List<PaymentState> WATCHING_ONLY = List.of(PaymentState.WATCHING);
+    /** T13 (Phase 4 Finding 3): named constants, not inline magic strings, for the two real
+     * {@code amount_discrepancy} values - the schema's own `NULL | 'UNDERPAID' | 'OVERPAID'`
+     * comment (`V1`) is the source of truth these must keep matching exactly. */
+    private static final String UNDERPAID = "UNDERPAID";
+    private static final String OVERPAID = "OVERPAID";
 
     private final PaymentRepository repository;
     private final PaymentStateMachine stateMachine;
@@ -163,39 +169,62 @@ public class PaymentService {
                 Map.of("reason", "stale-or-non-increasing-confirmed-event", "reportedConfirmations", event.confirmations()));
     }
 
-    /** R10. {@code SEEN}/{@code CONFIRMING → FINALIZED} is the real transition; any other current
-     * state is stale (R14, {@code recordIgnored}). Persists the event's own real
+    /** T13 (Phase 4 Finding 2). A plain, read-only passthrough returning only the stable
+     * {@code invoiceId} foreign key - never the {@link Payment} entity itself. {@code
+     * ChainEventConsumer} calls this before {@link #applyFinalized} so the invoice's own
+     * {@code amount} is available to compute the discrepancy as part of that method's single
+     * atomic update, without ever correlating by the reorg-vulnerable {@code watchId} (see
+     * {@link ReorgOutcome}'s own Javadoc for the staleness race this avoids entirely by
+     * construction, not by argument). */
+    @Transactional(readOnly = true)
+    public Optional<Long> findInvoiceIdByChainAndTxHash(String chain, String txHash) {
+        Objects.requireNonNull(chain, "chain must not be null");
+        Objects.requireNonNull(txHash, "txHash must not be null");
+        return repository.findByChainAndTxHash(chain, txHash).map(Payment::getInvoiceId);
+    }
+
+    /** R10/R15 (T13). {@code SEEN}/{@code CONFIRMING → FINALIZED} is the real transition; any
+     * other current state is stale (R14, {@code recordIgnored}). Persists the event's own real
      * {@code amount}/{@code fromAddress}/{@code toAddress}/{@code addressPoisoningFlag},
-     * overwriting {@link Payment#createSeen}'s own placeholder {@code amount = 0}.
+     * overwriting {@link Payment#createSeen}'s own placeholder {@code amount = 0} - and, new in
+     * T13, the exact-match amount discrepancy against the invoice's own {@code amount} (Q1: no
+     * tolerance band).
      *
      * <p>Tries {@code CONFIRMING} then {@code SEEN} as the expected prior state, one atomic
      * attempt at a time (Phase 7 self-review — see {@link PaymentRepository
      * #markFinalizedIfCurrentState}'s own Javadoc for why this must not be collapsed back into a
      * single {@code IN (SEEN, CONFIRMING)} query): whichever one succeeds is the real,
      * exactly-known {@code fromState} for the {@code VerificationRecord}, never inferred from a
-     * read that could already be stale by the time the update actually runs. */
+     * read that could already be stale by the time the update actually runs.
+     *
+     * <p>Returns a {@link FinalizationOutcome} ({@link Optional#empty()} means stale/ignored -
+     * no transition occurred) so {@code ChainEventConsumer} - never this method (L12: no
+     * outbound {@code InvoiceService} call may originate here) - can transition {@code
+     * Invoice.state} to match.</p> */
     @Transactional
-    public void applyFinalized(ChainTxFinalized event) {
+    public Optional<FinalizationOutcome> applyFinalized(InvoiceWatchView invoice, ChainTxFinalized event) {
+        Objects.requireNonNull(invoice, "invoice must not be null");
         Objects.requireNonNull(event, "event must not be null");
         Optional<Payment> maybePayment = repository.findByChainAndTxHash(event.chain(), event.txHash());
         if (maybePayment.isEmpty()) {
             log.warn("Ignoring chain.tx.finalized for chain={} txHash={}: no known payment", event.chain(), event.txHash());
-            return;
+            return Optional.empty();
         }
         Payment payment = maybePayment.get();
         Instant now = clock.instant();
+        String amountDiscrepancy = classifyDiscrepancy(event.amount(), invoice.amount());
 
         PaymentState fromState;
-        if (tryFinalizeFrom(payment.getId(), PaymentState.CONFIRMING, event, now)) {
+        if (tryFinalizeFrom(payment.getId(), PaymentState.CONFIRMING, event, amountDiscrepancy, now)) {
             fromState = PaymentState.CONFIRMING;
-        } else if (tryFinalizeFrom(payment.getId(), PaymentState.SEEN, event, now)) {
+        } else if (tryFinalizeFrom(payment.getId(), PaymentState.SEEN, event, amountDiscrepancy, now)) {
             fromState = PaymentState.SEEN;
         } else {
             // Phase 8 Kimi Finding 4: see applyConfirmed's own identical comment.
             PaymentState currentState = repository.findCurrentState(payment.getId()).orElse(payment.getState());
             verificationRecordService.recordIgnored(payment.getId(), currentState, event.idempotencyKey(),
                     Map.of("reason", "stale-finalized-event"));
-            return;
+            return Optional.empty();
         }
 
         verificationRecordService.record(payment.getId(), fromState, PaymentState.FINALIZED,
@@ -205,9 +234,27 @@ public class PaymentService {
                 new PaymentFinalizedPayload(payment.getPaymentUuid(), event.chain(), event.txHash(),
                         event.fromAddress(), event.toAddress(), event.tokenContractAddress(),
                         event.amount().toPlainString(), event.confirmations(), event.addressPoisoningFlag(), now));
+
+        return Optional.of(new FinalizationOutcome(payment.getId(), invoice.id(), amountDiscrepancy));
     }
 
-    private boolean tryFinalizeFrom(Long paymentId, PaymentState expectedCurrentState, ChainTxFinalized event, Instant now) {
+    /** R15 (Q1, exact match only - no tolerance band). {@code null} means an exact match
+     * (maps to {@code InvoiceState.PAID}); the two named constants above are the only other
+     * possible return values, matching the schema's own `NULL | 'UNDERPAID' | 'OVERPAID'`
+     * comment exactly. */
+    private static String classifyDiscrepancy(BigDecimal observedAmount, BigDecimal invoiceAmount) {
+        int comparison = observedAmount.compareTo(invoiceAmount);
+        if (comparison < 0) {
+            return UNDERPAID;
+        }
+        if (comparison > 0) {
+            return OVERPAID;
+        }
+        return null;
+    }
+
+    private boolean tryFinalizeFrom(Long paymentId, PaymentState expectedCurrentState, ChainTxFinalized event,
+                                     String amountDiscrepancy, Instant now) {
         // Phase 8 Kimi Finding 6: same defensive sanity check as applyConfirmed's own identical
         // comment - the atomic UPDATE's own WHERE clause is the real enforcement.
         if (!stateMachine.isPermitted(expectedCurrentState, PaymentState.FINALIZED)) {
@@ -216,7 +263,7 @@ public class PaymentService {
         }
         return repository.markFinalizedIfCurrentState(paymentId, expectedCurrentState, PaymentState.FINALIZED,
                 event.amount(), event.fromAddress(), event.toAddress(), event.confirmations(),
-                event.addressPoisoningFlag(), now) > 0;
+                event.addressPoisoningFlag(), amountDiscrepancy, now) > 0;
     }
 
     /** R11/R12 (T12). A {@code chain.tx.reorged} event walks {@code CONFIRMING} back to {@code

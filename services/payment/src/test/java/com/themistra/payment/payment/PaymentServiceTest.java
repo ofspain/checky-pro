@@ -285,14 +285,16 @@ class PaymentServiceTest {
         Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
         when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
         when(repository.markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
-                any(), any(), any(), any(Integer.class), any(Boolean.class), eq(NOW))).thenReturn(1);
+                any(), any(), any(), any(Integer.class), any(Boolean.class), isNull(), eq(NOW))).thenReturn(1);
 
-        service.applyFinalized(finalizedEvent());
+        Optional<FinalizationOutcome> outcome = service.applyFinalized(openInvoice(), finalizedEvent());
 
+        assertThat(outcome).isPresent();
+        assertThat(outcome.get().amountDiscrepancy()).isNull();
         verify(verificationRecordService).record(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
                 eq(TRIGGER_EVENT_KEY), eq(12), isNull());
         verify(repository, never()).markFinalizedIfCurrentState(any(), eq(PaymentState.SEEN), any(), any(), any(),
-                any(), any(Integer.class), any(Boolean.class), any());
+                any(), any(Integer.class), any(Boolean.class), any(), any());
     }
 
     @Test
@@ -300,11 +302,11 @@ class PaymentServiceTest {
         Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
         when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
         when(repository.markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), any(), any(), any(), any(),
-                any(Integer.class), any(Boolean.class), any())).thenReturn(0);
+                any(Integer.class), any(Boolean.class), any(), any())).thenReturn(0);
         when(repository.markFinalizedIfCurrentState(any(), eq(PaymentState.SEEN), eq(PaymentState.FINALIZED), any(),
-                any(), any(), any(Integer.class), any(Boolean.class), eq(NOW))).thenReturn(1);
+                any(), any(), any(Integer.class), any(Boolean.class), isNull(), eq(NOW))).thenReturn(1);
 
-        service.applyFinalized(finalizedEvent());
+        service.applyFinalized(openInvoice(), finalizedEvent());
 
         verify(verificationRecordService).record(any(), eq(PaymentState.SEEN), eq(PaymentState.FINALIZED),
                 eq(TRIGGER_EVENT_KEY), eq(12), isNull());
@@ -320,14 +322,14 @@ class PaymentServiceTest {
         Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
         when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
         when(repository.markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
-                any(), any(), any(), any(Integer.class), eq(true), eq(NOW))).thenReturn(1);
+                any(), any(), any(), any(Integer.class), eq(true), isNull(), eq(NOW))).thenReturn(1);
         ChainTxFinalized poisonedEvent = new ChainTxFinalized(TRIGGER_EVENT_KEY, WATCH_ID, INVOICE_UUID, CHAIN, TX_HASH,
                 "0xfrom", "0xto", TOKEN_CONTRACT_ADDRESS, new BigDecimal("1000"), 12, true, NOW);
 
-        service.applyFinalized(poisonedEvent);
+        service.applyFinalized(openInvoice(), poisonedEvent);
 
         verify(repository).markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
-                any(), any(), any(), any(Integer.class), eq(true), eq(NOW));
+                any(), any(), any(), any(Integer.class), eq(true), isNull(), eq(NOW));
         ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
         verify(outboxPublisher).publish(eq("payment-finalized"), any(String.class), eq("payment.finalized"), payloadCaptor.capture());
         assertThat(((PaymentFinalizedPayload) payloadCaptor.getValue()).addressPoisoningFlag()).isTrue();
@@ -338,9 +340,9 @@ class PaymentServiceTest {
         Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
         when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
         when(repository.markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
-                eq(new BigDecimal("1000")), eq("0xfrom"), eq("0xto"), eq(12), eq(false), eq(NOW))).thenReturn(1);
+                eq(new BigDecimal("1000")), eq("0xfrom"), eq("0xto"), eq(12), eq(false), isNull(), eq(NOW))).thenReturn(1);
 
-        service.applyFinalized(finalizedEvent());
+        service.applyFinalized(openInvoice(), finalizedEvent());
 
         ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
         verify(outboxPublisher).publish(eq("payment-finalized"), any(String.class), eq("payment.finalized"),
@@ -357,11 +359,12 @@ class PaymentServiceTest {
         Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
         when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
         when(repository.markFinalizedIfCurrentState(any(), any(), any(), any(), any(), any(), any(Integer.class),
-                any(Boolean.class), any())).thenReturn(0);
+                any(Boolean.class), any(), any())).thenReturn(0);
         when(repository.findCurrentState(any())).thenReturn(Optional.of(PaymentState.ATTESTED));
 
-        service.applyFinalized(finalizedEvent());
+        Optional<FinalizationOutcome> outcome = service.applyFinalized(openInvoice(), finalizedEvent());
 
+        assertThat(outcome).isEmpty();
         verify(verificationRecordService, never()).record(any(), any(), any(), any(), any(), any());
         verify(verificationRecordService).recordIgnored(any(), eq(PaymentState.ATTESTED), eq(TRIGGER_EVENT_KEY), any());
         verify(outboxPublisher, never()).publish(any(), any(), any(), any());
@@ -371,8 +374,9 @@ class PaymentServiceTest {
     void shouldLogAndDropChainTxFinalizedForAnUnknownPayment() {
         when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.empty());
 
-        service.applyFinalized(finalizedEvent());
+        Optional<FinalizationOutcome> outcome = service.applyFinalized(openInvoice(), finalizedEvent());
 
+        assertThat(outcome).isEmpty();
         verify(verificationRecordService, never()).record(any(), any(), any(), any(), any(), any());
         verify(verificationRecordService, never()).recordIgnored(any(), any(), any(), any());
     }

@@ -11,6 +11,7 @@ import com.themistra.payment.consumer.dto.ChainTxSeen;
 import com.themistra.payment.invoice.InvoiceService;
 import com.themistra.payment.invoice.InvoiceState;
 import com.themistra.payment.invoice.InvoiceWatchView;
+import com.themistra.payment.payment.FinalizationOutcome;
 import com.themistra.payment.payment.PaymentService;
 import com.themistra.payment.payment.PaymentState;
 import com.themistra.payment.payment.ReorgOutcome;
@@ -126,6 +127,14 @@ public class ChainEventConsumer {
         paymentService.applyConfirmed(event);
     }
 
+    /** R10/R15 (T13). The invoice is looked up by {@link PaymentService
+     * #findInvoiceIdByChainAndTxHash}'s own stable {@code invoiceId} - never by {@code
+     * event.watchId()} (Phase 4 Finding 2) - so {@link PaymentService#applyFinalized} has the
+     * invoice's own {@code amount} on hand to compute the discrepancy before its one atomic
+     * update runs. Stays {@code @Transactional} directly on this method (unlike {@code
+     * onChainTxReorged}'s own {@link TransactionTemplate} split) - {@link InvoiceService
+     * #markOutcomeIfOpenOrExpired} is a plain local atomic update with no outbound call, so
+     * there is nothing here that needs isolating from the rest of this event's own transaction. */
     @KafkaListener(topics = "chain.tx.finalized", groupId = "${spring.kafka.consumer.group-id}")
     @Transactional
     public void onChainTxFinalized(String rawJson) {
@@ -133,7 +142,43 @@ public class ChainEventConsumer {
         if (event == null || !dedupe(event.idempotencyKey())) {
             return;
         }
-        paymentService.applyFinalized(event);
+
+        Optional<Long> maybeInvoiceId = paymentService.findInvoiceIdByChainAndTxHash(event.chain(), event.txHash());
+        if (maybeInvoiceId.isEmpty()) {
+            log.warn("Ignoring chain.tx.finalized for chain={} txHash={}: no known payment", event.chain(), event.txHash());
+            return;
+        }
+        Optional<InvoiceWatchView> maybeInvoice = invoiceService.findByIdAsWatchView(maybeInvoiceId.get());
+        if (maybeInvoice.isEmpty()) {
+            log.error("Ignoring chain.tx.finalized for invoiceId={}: payment references a non-existent invoice "
+                    + "(data integrity issue, not a routine race)", maybeInvoiceId.get());
+            return;
+        }
+
+        Optional<FinalizationOutcome> outcome = paymentService.applyFinalized(maybeInvoice.get(), event);
+        if (outcome.isEmpty()) {
+            return;
+        }
+        InvoiceState invoiceOutcome = toInvoiceState(outcome.get().amountDiscrepancy());
+        boolean updated = invoiceService.markOutcomeIfOpenOrExpired(outcome.get().invoiceId(), invoiceOutcome, clock.instant());
+        if (!updated) {
+            log.warn("Invoice {} was not OPEN or EXPIRED when its payment finalized (state already moved on); "
+                    + "leaving its own state as-is", outcome.get().invoiceId());
+        }
+    }
+
+    /** R15. {@code null} means an exact match (maps to {@code PAID}); the schema's own
+     * `NULL | 'UNDERPAID' | 'OVERPAID'` values are the only ones {@code PaymentService
+     * #classifyDiscrepancy} ever produces. */
+    private static InvoiceState toInvoiceState(String amountDiscrepancy) {
+        if (amountDiscrepancy == null) {
+            return InvoiceState.PAID;
+        }
+        return switch (amountDiscrepancy) {
+            case "UNDERPAID" -> InvoiceState.UNDERPAID;
+            case "OVERPAID" -> InvoiceState.OVERPAID;
+            default -> throw new IllegalStateException("Unexpected amountDiscrepancy value: " + amountDiscrepancy);
+        };
     }
 
     /** R11/R12 (T12). See this class's own Javadoc for why this listener, alone, is not itself

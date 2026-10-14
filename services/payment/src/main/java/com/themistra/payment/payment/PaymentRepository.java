@@ -85,17 +85,23 @@ interface PaymentRepository extends JpaRepository<Payment, Long> {
      * in the audit trail - the stale pre-read value, not the state the row was actually in when
      * this query matched it). {@link PaymentService#applyFinalized} now tries each expected state
      * in its own separate call, so whichever one succeeds is known exactly, not inferred from a
-     * read that could already be stale by the time this query runs.</p> */
+     * read that could already be stale by the time this query runs.</p>
+     *
+     * <p><b>T13 (R15):</b> also sets {@code amountDiscrepancy} - {@code null} (exact match),
+     * {@code "UNDERPAID"}, or {@code "OVERPAID"}, computed once by {@code PaymentService
+     * #classifyDiscrepancy} before either atomic attempt, reused for both.</p> */
     @Modifying
     @Query("UPDATE Payment p SET p.state = :newState, p.amount = :amount, p.fromAddress = :fromAddress, "
             + "p.toAddress = :toAddress, p.confirmations = :confirmations, "
-            + "p.addressPoisoningFlag = :addressPoisoningFlag, p.finalizedAt = :now, p.updatedAt = :now "
+            + "p.addressPoisoningFlag = :addressPoisoningFlag, p.amountDiscrepancy = :amountDiscrepancy, "
+            + "p.finalizedAt = :now, p.updatedAt = :now "
             + "WHERE p.id = :id AND p.state = :expectedCurrentState")
     int markFinalizedIfCurrentState(@Param("id") Long id, @Param("expectedCurrentState") PaymentState expectedCurrentState,
                                      @Param("newState") PaymentState newState,
                                      @Param("amount") BigDecimal amount, @Param("fromAddress") String fromAddress,
                                      @Param("toAddress") String toAddress, @Param("confirmations") int confirmations,
                                      @Param("addressPoisoningFlag") boolean addressPoisoningFlag,
+                                     @Param("amountDiscrepancy") String amountDiscrepancy,
                                      @Param("now") Instant now);
 
     /** R11 (T12). A {@code chain.tx.reorged} reversal: {@code CONFIRMING → SEEN}. Atomic, same

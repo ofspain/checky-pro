@@ -124,7 +124,7 @@ class ChainEventConsumerTest {
 
         consumer.onChainTxFinalized(FINALIZED_JSON);
 
-        verify(paymentService, never()).applyFinalized(any());
+        verify(paymentService, never()).applyFinalized(any(), any());
     }
 
     // --- R7a, named ---
@@ -190,7 +190,7 @@ class ChainEventConsumerTest {
         org.assertj.core.api.Assertions.assertThatCode(() -> consumer.onChainTxFinalized("not valid json{{{"))
                 .doesNotThrowAnyException();
 
-        verify(paymentService, never()).applyFinalized(any());
+        verify(paymentService, never()).applyFinalized(any(), any());
     }
 
     // --- basic delegation ---
@@ -209,12 +209,14 @@ class ChainEventConsumerTest {
     @Test
     void shouldDelegateChainTxFinalizedToPaymentService() {
         when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
+        when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.of(7L));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
 
         consumer.onChainTxFinalized(FINALIZED_JSON);
 
         org.mockito.ArgumentCaptor<com.themistra.payment.consumer.dto.ChainTxFinalized> captor =
                 org.mockito.ArgumentCaptor.forClass(com.themistra.payment.consumer.dto.ChainTxFinalized.class);
-        verify(paymentService).applyFinalized(captor.capture());
+        verify(paymentService).applyFinalized(any(), captor.capture());
         assertThat(captor.getValue().chain()).isEqualTo("ETHEREUM");
         assertThat(captor.getValue().txHash()).isEqualTo("0xabc");
         assertThat(captor.getValue().amount()).isEqualByComparingTo("1000");
