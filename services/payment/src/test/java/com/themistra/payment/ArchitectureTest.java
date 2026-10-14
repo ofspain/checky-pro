@@ -1,6 +1,9 @@
 package com.themistra.payment;
 
 import com.themistra.payment.archtestfixtures.RogueFloatingPointMoneyUser;
+import com.themistra.payment.archtestfixtures.RogueUnmappedEntity;
+import com.themistra.payment.invoice.Invoice;
+import com.themistra.payment.payment.RogueInvoiceEntityReferencer;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
@@ -9,8 +12,10 @@ import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
+import jakarta.persistence.Entity;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
@@ -91,6 +96,69 @@ class ArchitectureTest {
             })
             .because("L6: money is NUMERIC/BigDecimal only - no float/double/Float/Double anywhere");
 
+    /** T09 (L1/L12), mirroring {@code crypto-service}'s own {@code
+     * CrossModuleEntityArchitectureTest.FEATURE_MODULES} exactly. This service's three real
+     * top-level packages that own an {@code @Entity} today. <b>When adding a new top-level
+     * package under {@code com.themistra.payment}, add it here too</b> — the fail-fast null
+     * check below means a class outside every module listed here is flagged rather than silently
+     * unenforced. {@code events} is included (T04's own {@code OutboxEvent}) even though it is
+     * cross-cutting infrastructure, not a business feature like {@code invoice}/{@code payment} —
+     * omitting it entirely would trip the fail-fast "unmapped entity" branch against real,
+     * already-shipped code (confirmed by running this rule against the real codebase before
+     * finalizing this list, not assumed), rather than against a deliberate violation. Including it
+     * also means a future module that imports {@code OutboxEvent} directly (bypassing {@code
+     * OutboxPublisher}'s own public API) would now be caught. {@code common} is deliberately
+     * excluded (shared plumbing per {@code agents.md}) and given no special-case, mirroring
+     * crypto's own identical choice — a {@code common}-package class importing a feature
+     * module's entity is already, correctly, a violation. */
+    private static final List<String> FEATURE_MODULES = List.of("invoice", "payment", "events");
+
+    private static String featureModuleOf(JavaClass javaClass) {
+        String packageName = javaClass.getPackageName();
+        for (String module : FEATURE_MODULES) {
+            String modulePackage = ANALYZED_PACKAGE + "." + module;
+            if (packageName.equals(modulePackage) || packageName.startsWith(modulePackage + ".")) {
+                return module;
+            }
+        }
+        return null;
+    }
+
+    /** T09 (L1/L12), named test {@code shouldPreventCrossModuleEntityImports} (`package.md` §8),
+     * mirroring {@code crypto-service}'s own identical rule exactly (itself mirroring
+     * {@code auth-service}'s). Dependency-based ({@link JavaClass#getDirectDependenciesToSelf()}),
+     * not access-based — catches a declared-but-unused field of the entity's own type, a real
+     * cross-module coupling even if nothing ever calls a method on it ({@link
+     * RogueInvoiceEntityReferencer}'s own never-read field is exactly this shape, deliberately).
+     * No allowlist needed — unlike crypto-service, this service has zero pre-existing cross-module
+     * entity dependencies to grandfather in. */
+    private static final ArchRule shouldPreventCrossModuleEntityImports = classes()
+            .that().areAnnotatedWith(Entity.class)
+            .should(onlyBeAccessedFromTheSameFeatureModule())
+            .because("L1/L12: no feature module may import an entity class from another feature module");
+
+    private static ArchCondition<JavaClass> onlyBeAccessedFromTheSameFeatureModule() {
+        return new ArchCondition<JavaClass>("only be accessed from the same feature module") {
+            @Override
+            public void check(JavaClass entityClass, ConditionEvents events) {
+                String entityModule = featureModuleOf(entityClass);
+                if (entityModule == null) {
+                    events.add(new SimpleConditionEvent(entityClass, false, entityClass.getName()
+                            + " is annotated @Entity but does not reside in any module listed in "
+                            + "FEATURE_MODULES - add its module there, or this entity's cross-module "
+                            + "boundary is not being enforced at all"));
+                    return;
+                }
+                entityClass.getDirectDependenciesToSelf().forEach(dependency -> {
+                    JavaClass originClass = dependency.getOriginClass();
+                    String dependingModule = featureModuleOf(originClass);
+                    boolean sameModule = entityModule.equals(dependingModule);
+                    events.add(new SimpleConditionEvent(dependency, sameModule, dependency.getDescription()));
+                });
+            }
+        };
+    }
+
     private static JavaClasses analyzedClasses() {
         return new ClassFileImporter()
                 .withImportOption(new ImportOption.DoNotIncludeTests())
@@ -100,6 +168,45 @@ class ArchitectureTest {
     @Test
     void shouldRejectFloatingPointMoneyTypesAtArchUnit() {
         shouldRejectFloatingPointMoneyTypes.check(analyzedClasses());
+    }
+
+    @Test
+    void shouldPreventCrossModuleEntityImportsIsCheckedDuringStandardBuild() {
+        shouldPreventCrossModuleEntityImports.check(analyzedClasses());
+    }
+
+    /** The canary above only proves the rule passes on already-clean code - it says nothing
+     * about whether it can ever actually fail. {@link RogueInvoiceEntityReferencer} is a real
+     * class, deliberately violating the rule, deliberately placed <b>inside</b> a real feature
+     * module ({@code payment}) so this test exercises the actual {@code entityModule !=
+     * dependingModule} violation path - not the fail-fast null path a fixture outside every known
+     * module would instead trip. This test builds its own, separate, narrow {@code JavaClasses}
+     * set naming exactly the two classes the violation involves. */
+    @Test
+    void shouldPreventCrossModuleEntityImportsActuallyFailsAgainstAGenuineViolation() {
+        JavaClasses violatingClasses = new ClassFileImporter()
+                .importClasses(RogueInvoiceEntityReferencer.class, Invoice.class);
+
+        assertThatThrownBy(() -> shouldPreventCrossModuleEntityImports.check(violatingClasses))
+                .as("a feature module importing another feature module's entity must fail this rule")
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueInvoiceEntityReferencer")
+                .hasMessageContaining("Invoice");
+    }
+
+    /** {@link RogueUnmappedEntity} is a real {@code @Entity}, deliberately placed outside
+     * {@code com.themistra.payment} entirely's own module list (it lives under
+     * {@code archtestfixtures}, not {@code invoice} or {@code payment}), proving the documented
+     * "fail loudly, don't silently skip" behavior for an entity this rule doesn't know how to
+     * place. */
+    @Test
+    void shouldFailFastWhenAnEntityIsOutsideEveryFeatureModule() {
+        JavaClasses unmappedEntityOnly = new ClassFileImporter().importClasses(RogueUnmappedEntity.class);
+
+        assertThatThrownBy(() -> shouldPreventCrossModuleEntityImports.check(unmappedEntityOnly))
+                .as("an @Entity outside every FEATURE_MODULES entry must fail loudly, not be silently unenforced")
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("does not reside in any module listed in FEATURE_MODULES");
     }
 
     /** The canary above only proves the rule passes on already-clean code - it says nothing
