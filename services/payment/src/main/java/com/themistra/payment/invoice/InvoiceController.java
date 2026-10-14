@@ -10,12 +10,15 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -60,8 +63,29 @@ public class InvoiceController {
                 request.tokenContractAddress(), request.tokenDecimals(), request.amount(),
                 request.payToAddress(), request.reference(), expiresAt, watchResponse.watchId());
 
-        InvoiceResponse response = new InvoiceResponse(invoice.getInvoiceUuid(), invoice.getPayToAddress());
+        InvoiceResponse response = InvoiceResponse.from(invoice);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    /** {@code GET /api/v1/invoices} (R28) - only the caller's own invoices. */
+    @GetMapping
+    @PreAuthorize("hasRole('MERCHANT')")
+    public List<InvoiceResponse> list(@AuthenticationPrincipal Jwt jwt) {
+        UUID merchantAccountUuid = merchantAccountUuidFrom(jwt);
+        return invoiceService.listForMerchant(merchantAccountUuid).stream()
+                .map(InvoiceResponse::from)
+                .toList();
+    }
+
+    /** {@code GET /api/v1/invoices/{invoiceUuid}} (R28) - 404, not 403, for a cross-merchant
+     * lookup (L10); {@link InvoiceService#getForMerchant} throws the same exception for a
+     * genuinely nonexistent UUID, so this handler cannot distinguish the two cases either. */
+    @GetMapping("/{invoiceUuid}")
+    @PreAuthorize("hasRole('MERCHANT')")
+    public InvoiceResponse get(@PathVariable UUID invoiceUuid, @AuthenticationPrincipal Jwt jwt) {
+        UUID merchantAccountUuid = merchantAccountUuidFrom(jwt);
+        Invoice invoice = invoiceService.getForMerchant(merchantAccountUuid, invoiceUuid);
+        return InvoiceResponse.from(invoice);
     }
 
     /** Mirrors {@code notification-service}'s own identical {@code accountUuidFrom} helper

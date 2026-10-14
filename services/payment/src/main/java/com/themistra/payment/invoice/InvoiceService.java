@@ -10,6 +10,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -70,6 +71,24 @@ public class InvoiceService {
         outboxPublisher.publish("invoice", invoiceUuid.toString(), "invoice.created", payload);
 
         return saved;
+    }
+
+    /** R28 (AC1): all of the caller's own invoices, newest first. */
+    @Transactional(readOnly = true)
+    public List<Invoice> listForMerchant(UUID merchantAccountUuid) {
+        Objects.requireNonNull(merchantAccountUuid, "merchantAccountUuid must not be null");
+        return repository.findByMerchantAccountUuidOrderByCreatedAtDesc(merchantAccountUuid);
+    }
+
+    /** R28 (AC2): the same {@link InvoiceNotFoundException} for "doesn't exist" and "exists but
+     * isn't the caller's" - no enumeration oracle (mirrors {@code auth-service}'s own
+     * {@code SessionNotFoundException} convention). */
+    @Transactional(readOnly = true)
+    public Invoice getForMerchant(UUID merchantAccountUuid, UUID invoiceUuid) {
+        Objects.requireNonNull(merchantAccountUuid, "merchantAccountUuid must not be null");
+        Objects.requireNonNull(invoiceUuid, "invoiceUuid must not be null");
+        return repository.findByInvoiceUuidAndMerchantAccountUuid(invoiceUuid, merchantAccountUuid)
+                .orElseThrow(InvoiceNotFoundException::new);
     }
 
     /** R3 (AC1): {@code chain} must be a recognized value; {@code tokenContractAddress} must be

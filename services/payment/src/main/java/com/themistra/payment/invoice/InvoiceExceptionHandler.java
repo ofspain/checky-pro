@@ -42,4 +42,15 @@ public class InvoiceExceptionHandler {
         problem.setDetail("The invoice could not be created because an upstream dependency is unavailable.");
         return problem;
     }
+
+    /** R28/L10 (T07): the same {@code 404} for "doesn't exist" and "exists but isn't the
+     * caller's" - no detail message at all, so the body itself carries no signal distinguishing
+     * the two (mirrors {@code auth-service}'s own {@code SessionExceptionHandler}). */
+    @ExceptionHandler(InvoiceNotFoundException.class)
+    ProblemDetail onInvoiceNotFound(InvoiceNotFoundException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setType(URI.create("about:blank"));
+        problem.setTitle("Invoice not found");
+        return problem;
+    }
 }
