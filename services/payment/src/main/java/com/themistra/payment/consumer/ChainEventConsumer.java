@@ -8,7 +8,6 @@ import com.themistra.payment.consumer.dto.ChainTxFinalized;
 import com.themistra.payment.consumer.dto.ChainTxSeen;
 import com.themistra.payment.invoice.InvoiceService;
 import com.themistra.payment.invoice.InvoiceWatchView;
-import com.themistra.payment.payment.Payment;
 import com.themistra.payment.payment.PaymentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,12 +19,15 @@ import java.time.Clock;
 import java.util.Optional;
 
 /**
- * T11. Mirrors {@code notification-service}'s own {@code AuthEventConsumer} shape exactly: raw
+ * T11. Mirrors {@code notification-service}'s own {@code AuthEventConsumer} shape: raw
  * {@code String} payloads, Spring Boot's autoconfigured {@link ObjectMapper}, one
  * {@code @Transactional} listener method per topic (Phase 3/4 Finding 4 — resolves {@code
  * design.md}'s own open O6 question: one listener per event type, same consumer group, every
  * event schema's own producer-side partition key is {@code watchId}, so per-payment ordering is
- * preserved within each topic).
+ * preserved within each topic). One deliberate divergence (Phase 8 Kimi Finding 2):
+ * deserialization failures are caught and logged here, never left to propagate the way
+ * {@code AuthEventConsumer}'s own listener methods still do — a poison message must never force
+ * an infinite redelivery retry loop.
  *
  * <p><b>{@code unregisterWatch} runs last, inside the transaction (Decision 4/Finding 6 — a
  * deliberate departure from {@code CryptoClient.registerWatch}'s own T06 precedent, which runs
@@ -61,9 +63,9 @@ public class ChainEventConsumer {
 
     @KafkaListener(topics = "chain.tx.seen", groupId = "${spring.kafka.consumer.group-id}")
     @Transactional
-    public void onChainTxSeen(String rawJson) throws JsonProcessingException {
-        ChainTxSeen event = objectMapper.readValue(rawJson, ChainTxSeen.class);
-        if (!dedupe(event.idempotencyKey())) {
+    public void onChainTxSeen(String rawJson) {
+        ChainTxSeen event = deserialize(rawJson, ChainTxSeen.class, "chain.tx.seen");
+        if (event == null || !dedupe(event.idempotencyKey())) {
             return;
         }
 
@@ -75,8 +77,7 @@ public class ChainEventConsumer {
         }
         InvoiceWatchView invoice = maybeInvoice.get();
 
-        Optional<Payment> applied = paymentService.applySeen(invoice, event);
-        if (applied.isEmpty()) {
+        if (!paymentService.applySeen(invoice, event)) {
             return;
         }
         // Last, inside the transaction - see this class's own Javadoc.
@@ -85,9 +86,9 @@ public class ChainEventConsumer {
 
     @KafkaListener(topics = "chain.tx.confirmed", groupId = "${spring.kafka.consumer.group-id}")
     @Transactional
-    public void onChainTxConfirmed(String rawJson) throws JsonProcessingException {
-        ChainTxConfirmed event = objectMapper.readValue(rawJson, ChainTxConfirmed.class);
-        if (!dedupe(event.idempotencyKey())) {
+    public void onChainTxConfirmed(String rawJson) {
+        ChainTxConfirmed event = deserialize(rawJson, ChainTxConfirmed.class, "chain.tx.confirmed");
+        if (event == null || !dedupe(event.idempotencyKey())) {
             return;
         }
         paymentService.applyConfirmed(event);
@@ -95,12 +96,28 @@ public class ChainEventConsumer {
 
     @KafkaListener(topics = "chain.tx.finalized", groupId = "${spring.kafka.consumer.group-id}")
     @Transactional
-    public void onChainTxFinalized(String rawJson) throws JsonProcessingException {
-        ChainTxFinalized event = objectMapper.readValue(rawJson, ChainTxFinalized.class);
-        if (!dedupe(event.idempotencyKey())) {
+    public void onChainTxFinalized(String rawJson) {
+        ChainTxFinalized event = deserialize(rawJson, ChainTxFinalized.class, "chain.tx.finalized");
+        if (event == null || !dedupe(event.idempotencyKey())) {
             return;
         }
         paymentService.applyFinalized(event);
+    }
+
+    /** Phase 8 Kimi Finding 2: a malformed payload must never propagate out of a listener method -
+     * Spring Kafka's own default error handler would otherwise retry the same offset indefinitely
+     * (a poison-message loop), never acknowledging past it. Logged at {@code ERROR} with the raw
+     * payload (useful for diagnosing a producer-side bug) and dropped - this is the same
+     * "an unreadable message is dead-lettered, not retried forever" judgment
+     * {@code notification-service}'s own {@code RetryScheduler} already makes for its own
+     * equivalent poison-pill case, applied here at the point of deserialization instead. */
+    private <T> T deserialize(String rawJson, Class<T> type, String topic) {
+        try {
+            return objectMapper.readValue(rawJson, type);
+        } catch (JsonProcessingException e) {
+            log.error("Unreadable {} payload, dropping: {}", topic, rawJson, e);
+            return null;
+        }
     }
 
     /** R13/L5. @return {@code true} if this event key is genuinely new (processing should

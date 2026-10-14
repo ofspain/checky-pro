@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Optional;
 
 interface PaymentRepository extends JpaRepository<Payment, Long> {
@@ -15,6 +16,23 @@ interface PaymentRepository extends JpaRepository<Payment, Long> {
      * the correlation key {@code chain.tx.confirmed}/{@code chain.tx.finalized} use to find the
      * row {@code chain.tx.seen} already created. */
     Optional<Payment> findByChainAndTxHash(String chain, String txHash);
+
+    /** T11 (Phase 8, Kimi Finding 1 - a real, confirmed omission from the frozen brief's own
+     * Decision 3, not implemented until now): closes the one real residual race this task's own
+     * design explicitly named but never actually guarded against in code - a second
+     * {@code chain.tx.seen} for the same invoice (the disclosed T08 Phase 9 residual
+     * unregister-timing race) must never create a second competing {@code Payment} row. */
+    boolean existsByInvoiceIdAndStateIn(Long invoiceId, Collection<PaymentState> states);
+
+    /** T11 (Phase 8, Kimi Finding 4): a plain scalar projection, not a full entity load - bypasses
+     * the persistence context's own first-level cache entirely (unlike {@code findById}, which
+     * would return the same already-managed, now-stale {@code Payment} instance this
+     * transaction's own earlier {@code findByChainAndTxHash} call loaded, even after a
+     * *different* transaction concurrently changed the real row). Used only to find the real
+     * current state for an ignored-event audit record after an atomic update attempt reports 0
+     * rows changed. */
+    @Query("SELECT p.state FROM Payment p WHERE p.id = :id")
+    Optional<PaymentState> findCurrentState(@Param("id") Long id);
 
     /** T11 (mirrors {@code InvoiceRepository.updateStateIfCurrentState}'s own T08 lesson): the
      * real {@code SEEN → CONFIRMING} transition. Atomic - no entity load, no merge, no

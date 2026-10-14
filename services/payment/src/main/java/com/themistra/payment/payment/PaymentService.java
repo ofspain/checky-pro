@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -31,6 +32,12 @@ import java.util.Optional;
 public class PaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
+    /** T11 (Phase 8, Kimi Finding 1): the full non-terminal set, mirroring
+     * {@code InvoiceRepository.findExpiredCandidatesWithoutInFlightPayment}'s own identical
+     * definition (T08) exactly - a payment in any of these states means the invoice is not
+     * actually free to start a new one. */
+    private static final List<PaymentState> NON_TERMINAL_STATES =
+            List.of(PaymentState.CREATED, PaymentState.WATCHING, PaymentState.SEEN, PaymentState.CONFIRMING);
 
     private final PaymentRepository repository;
     private final PaymentStateMachine stateMachine;
@@ -50,21 +57,36 @@ public class PaymentService {
 
     /** R7/R7a/R8. Phase 3 Finding 1: an invoice that is no longer {@code OPEN} means this
      * {@code chain.tx.seen} is stale relative to an already-resolved invoice - logged at
-     * {@code WARN} and dropped. No {@link com.themistra.payment.verification.VerificationRecord}
-     * is possible for this case (its own {@code payment_id} column is {@code NOT NULL}, and there
-     * is no {@code Payment} row to attach one to) - a disclosed, schema-driven limitation, not an
-     * oversight. Returns {@link Optional#empty()} in that case so {@code ChainEventConsumer}
-     * knows not to call {@code unregisterWatch} either (nothing was actually recorded as seen).
-     */
+     * {@code WARN} and dropped. Phase 8 Kimi Finding 1 (a real, confirmed omission - Decision 3
+     * named this exact race but it was never actually implemented until now): an invoice that
+     * already has a non-terminal {@code Payment} row (the disclosed T08 Phase 9 residual
+     * unregister-timing race letting a second real transaction slip through) must not get a
+     * second, competing row either - also logged at {@code WARN} and dropped. Neither case can
+     * produce a {@link com.themistra.payment.verification.VerificationRecord} (its own
+     * {@code payment_id} column is {@code NOT NULL}, and there is no {@code Payment} row to
+     * attach one to for the first case; the second case has a different, unrelated existing row,
+     * not one this event belongs to) - a disclosed, schema-driven limitation, not an oversight.
+     *
+     * <p>Returns {@code false} in both cases (Phase 8 Kimi Finding 3: no longer returns
+     * {@code Optional<Payment>} - the entity itself must never cross into {@code consumer}, even
+     * as a generic type argument that happens not to trip today's ArchUnit bytecode scan; a
+     * future refactor storing the result in a field could). {@code ChainEventConsumer} only needs
+     * success/failure, to decide whether to call {@code unregisterWatch}. */
     @Transactional
-    public Optional<Payment> applySeen(InvoiceWatchView invoice, ChainTxSeen event) {
+    public boolean applySeen(InvoiceWatchView invoice, ChainTxSeen event) {
         Objects.requireNonNull(invoice, "invoice must not be null");
         Objects.requireNonNull(event, "event must not be null");
 
         if (invoice.state() != InvoiceState.OPEN) {
             log.warn("Ignoring chain.tx.seen for invoiceUuid={}: invoice is no longer OPEN (state={})",
                     invoice.invoiceUuid(), invoice.state());
-            return Optional.empty();
+            return false;
+        }
+
+        if (repository.existsByInvoiceIdAndStateIn(invoice.id(), NON_TERMINAL_STATES)) {
+            log.warn("Ignoring chain.tx.seen for invoiceUuid={}: a non-terminal payment already exists "
+                    + "(the disclosed T08 residual unregister-timing race)", invoice.invoiceUuid());
+            return false;
         }
 
         Instant now = clock.instant();
@@ -86,7 +108,7 @@ public class PaymentService {
                 new PaymentSeenPayload(saved.getPaymentUuid(), invoice.invoiceUuid(), saved.getChain(),
                         saved.getTxHash(), saved.getTokenContractAddress(), saved.getConfirmations(), now));
 
-        return Optional.of(saved);
+        return true;
     }
 
     /** R9. Three-way outcome per Phase 3/4 Finding 3: {@code SEEN → CONFIRMING} is a real
@@ -104,6 +126,13 @@ public class PaymentService {
         Payment payment = maybePayment.get();
         Instant now = clock.instant();
 
+        // Phase 8 Kimi Finding 6: a defensive sanity check, not an enforcement mechanism - the
+        // atomic UPDATE's own WHERE clause is what actually enforces legality. This only guards
+        // against PaymentStateMachine's own edge set (T09) ever drifting out of sync with this
+        // repository's own hardcoded queries without anyone noticing.
+        if (!stateMachine.isPermitted(PaymentState.SEEN, PaymentState.CONFIRMING)) {
+            throw new IllegalStateException("SEEN -> CONFIRMING must always be permitted - PaymentStateMachine's own edge set changed unexpectedly");
+        }
         int transitioned = repository.markConfirmingIfSeen(payment.getId(), PaymentState.SEEN, PaymentState.CONFIRMING,
                 event.confirmations(), now);
         if (transitioned > 0) {
@@ -119,9 +148,10 @@ public class PaymentService {
             return;
         }
 
-        PaymentState currentState = repository.findById(payment.getId())
-                .map(Payment::getState)
-                .orElse(payment.getState());
+        // Phase 8 Kimi Finding 4: findCurrentState is a scalar projection, bypassing the
+        // persistence context's own first-level cache - repository.findById(...) here would
+        // return the same already-managed, now-stale `payment` instance loaded above.
+        PaymentState currentState = repository.findCurrentState(payment.getId()).orElse(payment.getState());
         verificationRecordService.recordIgnored(payment.getId(), currentState, event.idempotencyKey(),
                 Map.of("reason", "stale-or-non-increasing-confirmed-event", "reportedConfirmations", event.confirmations()));
     }
@@ -154,9 +184,8 @@ public class PaymentService {
         } else if (tryFinalizeFrom(payment.getId(), PaymentState.SEEN, event, now)) {
             fromState = PaymentState.SEEN;
         } else {
-            PaymentState currentState = repository.findById(payment.getId())
-                    .map(Payment::getState)
-                    .orElse(payment.getState());
+            // Phase 8 Kimi Finding 4: see applyConfirmed's own identical comment.
+            PaymentState currentState = repository.findCurrentState(payment.getId()).orElse(payment.getState());
             verificationRecordService.recordIgnored(payment.getId(), currentState, event.idempotencyKey(),
                     Map.of("reason", "stale-finalized-event"));
             return;
@@ -172,6 +201,12 @@ public class PaymentService {
     }
 
     private boolean tryFinalizeFrom(Long paymentId, PaymentState expectedCurrentState, ChainTxFinalized event, Instant now) {
+        // Phase 8 Kimi Finding 6: same defensive sanity check as applyConfirmed's own identical
+        // comment - the atomic UPDATE's own WHERE clause is the real enforcement.
+        if (!stateMachine.isPermitted(expectedCurrentState, PaymentState.FINALIZED)) {
+            throw new IllegalStateException(expectedCurrentState
+                    + " -> FINALIZED must always be permitted - PaymentStateMachine's own edge set changed unexpectedly");
+        }
         return repository.markFinalizedIfCurrentState(paymentId, expectedCurrentState, PaymentState.FINALIZED,
                 event.amount(), event.fromAddress(), event.toAddress(), event.confirmations(),
                 event.addressPoisoningFlag(), now) > 0;
