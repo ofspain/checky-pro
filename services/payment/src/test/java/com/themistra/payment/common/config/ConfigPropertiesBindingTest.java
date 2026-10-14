@@ -49,7 +49,10 @@ class ConfigPropertiesBindingTest {
                         "themistra.payment.crypto.attest-path=/internal/v1/attest",
                         "themistra.payment.crypto.watch-path=/internal/v1/watches",
                         "themistra.payment.crypto.connect-timeout-ms=2000",
-                        "themistra.payment.crypto.read-timeout-ms=5000")
+                        "themistra.payment.crypto.read-timeout-ms=5000",
+                        "themistra.payment.crypto.auth.token-uri=http://localhost:8080/oauth2/token",
+                        "themistra.payment.crypto.auth.client-id=payment-service",
+                        "themistra.payment.crypto.auth.client-secret=test-secret")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     CryptoClientProperties props = context.getBean(CryptoClientProperties.class);
@@ -66,7 +69,10 @@ class ConfigPropertiesBindingTest {
                         "themistra.payment.crypto.attest-path=/internal/v1/attest",
                         "themistra.payment.crypto.watch-path=/internal/v1/watches",
                         "themistra.payment.crypto.connect-timeout-ms=0",
-                        "themistra.payment.crypto.read-timeout-ms=5000")
+                        "themistra.payment.crypto.read-timeout-ms=5000",
+                        "themistra.payment.crypto.auth.token-uri=http://localhost:8080/oauth2/token",
+                        "themistra.payment.crypto.auth.client-id=payment-service",
+                        "themistra.payment.crypto.auth.client-secret=test-secret")
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
                         .isInstanceOf(BindValidationException.class)
@@ -83,7 +89,10 @@ class ConfigPropertiesBindingTest {
                         "themistra.payment.crypto.attest-path=/internal/v1/attest",
                         "themistra.payment.crypto.watch-path=/internal/v1/watches",
                         "themistra.payment.crypto.connect-timeout-ms=2000",
-                        "themistra.payment.crypto.read-timeout-ms=0")
+                        "themistra.payment.crypto.read-timeout-ms=0",
+                        "themistra.payment.crypto.auth.token-uri=http://localhost:8080/oauth2/token",
+                        "themistra.payment.crypto.auth.client-id=payment-service",
+                        "themistra.payment.crypto.auth.client-secret=test-secret")
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
                         .isInstanceOf(BindValidationException.class)
@@ -101,7 +110,10 @@ class ConfigPropertiesBindingTest {
                         "themistra.payment.crypto.attest-path=/internal/v1/attest",
                         "themistra.payment.crypto.watch-path=/internal/v1/watches",
                         "themistra.payment.crypto.connect-timeout-ms=2000",
-                        "themistra.payment.crypto.read-timeout-ms=5000")
+                        "themistra.payment.crypto.read-timeout-ms=5000",
+                        "themistra.payment.crypto.auth.token-uri=http://localhost:8080/oauth2/token",
+                        "themistra.payment.crypto.auth.client-id=payment-service",
+                        "themistra.payment.crypto.auth.client-secret=test-secret")
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
                         .isInstanceOf(BindValidationException.class)
@@ -116,7 +128,10 @@ class ConfigPropertiesBindingTest {
                         "themistra.payment.crypto.attest-path=",
                         "themistra.payment.crypto.watch-path=/internal/v1/watches",
                         "themistra.payment.crypto.connect-timeout-ms=2000",
-                        "themistra.payment.crypto.read-timeout-ms=5000")
+                        "themistra.payment.crypto.read-timeout-ms=5000",
+                        "themistra.payment.crypto.auth.token-uri=http://localhost:8080/oauth2/token",
+                        "themistra.payment.crypto.auth.client-id=payment-service",
+                        "themistra.payment.crypto.auth.client-secret=test-secret")
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
                         .isInstanceOf(BindValidationException.class)
@@ -131,7 +146,10 @@ class ConfigPropertiesBindingTest {
                         "themistra.payment.crypto.attest-path=/internal/v1/attest",
                         "themistra.payment.crypto.watch-path=",
                         "themistra.payment.crypto.connect-timeout-ms=2000",
-                        "themistra.payment.crypto.read-timeout-ms=5000")
+                        "themistra.payment.crypto.read-timeout-ms=5000",
+                        "themistra.payment.crypto.auth.token-uri=http://localhost:8080/oauth2/token",
+                        "themistra.payment.crypto.auth.client-id=payment-service",
+                        "themistra.payment.crypto.auth.client-secret=test-secret")
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
                         .isInstanceOf(BindValidationException.class)

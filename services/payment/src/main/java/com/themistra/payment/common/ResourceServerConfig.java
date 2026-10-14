@@ -6,9 +6,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
@@ -27,18 +29,22 @@ import java.util.Map;
  * reject every legitimately issued token, not attacker traffic (same rationale already
  * established for {@code crypto-service}/{@code notification-service}).
  *
- * <p>No authority-restricted path exists yet (Phase 3 finding 1) — nothing in this task's own
- * scope can reach {@link #problemJsonAccessDeniedHandler}'s 403 path through a real request; it
- * is proven directly, by invoking the handler bean against a mock request/response, mirroring
- * {@code notification-service}'s own identical resolution to the same gap.</p>
+ * <p><b>T06</b> — this task's own `POST /api/v1/invoices` is the first authority-restricted path
+ * (Phase 3 findings 1/3, no longer theoretical, per T03's own disclosed gap). {@code
+ * @EnableMethodSecurity} and a {@code JwtAuthenticationConverter} wired to {@link
+ * JwtRoleAuthoritiesConverter} are added so {@code @PreAuthorize("hasRole('MERCHANT')")} means
+ * something — mirrors {@code auth-service}'s own identical {@code SecurityChainsConfig}
+ * wiring.</p>
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class ResourceServerConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
+            JwtAuthenticationConverter jwtAuthenticationConverter,
             AuthenticationEntryPoint problemJsonAuthenticationEntryPoint,
             AccessDeniedHandler problemJsonAccessDeniedHandler) throws Exception {
         http
@@ -51,11 +57,19 @@ public class ResourceServerConfig {
                     auth.anyRequest().authenticated();
                 })
                 .oauth2ResourceServer(rs -> rs
-                        .jwt(Customizer.withDefaults())
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter))
                         .authenticationEntryPoint(problemJsonAuthenticationEntryPoint)
                         .accessDeniedHandler(problemJsonAccessDeniedHandler));
 
         return http.build();
+    }
+
+    @Bean
+    public JwtAuthenticationConverter jwtAuthenticationConverter(
+            JwtRoleAuthoritiesConverter rolesConverter) {
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(rolesConverter);
+        return converter;
     }
 
     /**

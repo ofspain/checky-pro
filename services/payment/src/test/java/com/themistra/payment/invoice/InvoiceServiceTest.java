@@ -1,6 +1,7 @@
 package com.themistra.payment.invoice;
 
 import com.themistra.payment.common.config.InvoiceProperties;
+import com.themistra.payment.events.OutboxPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +22,8 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,27 +32,39 @@ class InvoiceServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-07-13T00:00:00Z");
     private static final UUID MERCHANT_ACCOUNT_UUID = UUID.randomUUID();
+    private static final UUID INVOICE_UUID = UUID.randomUUID();
+    private static final UUID WATCH_ID = UUID.randomUUID();
+    private static final Instant EXPIRES_AT = NOW.plus(Duration.ofMinutes(60));
 
     @Mock
     private InvoiceRepository repository;
+
+    @Mock
+    private OutboxPublisher outboxPublisher;
 
     private InvoiceService service;
 
     @BeforeEach
     void setUp() {
         InvoiceProperties invoiceProperties = new InvoiceProperties(60, 0);
-        service = new InvoiceService(repository, invoiceProperties, Clock.fixed(NOW, ZoneOffset.UTC));
+        service = new InvoiceService(repository, invoiceProperties, Clock.fixed(NOW, ZoneOffset.UTC),
+                outboxPublisher);
+    }
+
+    @Test
+    void shouldComputeExpiresAtFromInjectedClockAndConfiguredTtl() {
+        assertThat(service.computeExpiresAt()).isEqualTo(EXPIRES_AT);
     }
 
     @Test
     void shouldCreateInvoiceWithOpenStateAndComputedExpiry() {
         when(repository.save(any(Invoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Invoice invoice = service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
-                new BigDecimal("1000"), "0xdef", "order-1");
+        Invoice invoice = service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, new BigDecimal("1000"), "0xdef", "order-1", EXPIRES_AT, WATCH_ID);
 
         assertThat(invoice.getState()).isEqualTo(InvoiceState.OPEN);
-        assertThat(invoice.getInvoiceUuid()).isNotNull();
+        assertThat(invoice.getInvoiceUuid()).isEqualTo(INVOICE_UUID);
         assertThat(invoice.getMerchantAccountUuid()).isEqualTo(MERCHANT_ACCOUNT_UUID);
         assertThat(invoice.getChain()).isEqualTo("ETHEREUM");
         assertThat(invoice.getTokenContractAddress()).isEqualTo("0xabc");
@@ -57,59 +72,75 @@ class InvoiceServiceTest {
         assertThat(invoice.getAmount()).isEqualByComparingTo(new BigDecimal("1000"));
         assertThat(invoice.getPayToAddress()).isEqualTo("0xdef");
         assertThat(invoice.getReference()).isEqualTo("order-1");
+        assertThat(invoice.getWatchId()).isEqualTo(WATCH_ID);
         assertThat(invoice.getCreatedAt()).isEqualTo(NOW);
         assertThat(invoice.getUpdatedAt()).isEqualTo(NOW);
-        assertThat(invoice.getExpiresAt()).isEqualTo(NOW.plus(Duration.ofMinutes(60)));
+        assertThat(invoice.getExpiresAt()).isEqualTo(EXPIRES_AT);
         verify(repository).save(invoice);
+    }
+
+    /** R2 (AC3): the invoice.created outbox event is emitted in the same call as the insert. */
+    @Test
+    void shouldEmitInvoiceCreatedInSameTransactionAsInsert() {
+        when(repository.save(any(Invoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
+                new BigDecimal("1000"), "0xdef", "order-1", EXPIRES_AT, WATCH_ID);
+
+        verify(outboxPublisher).publish(eq("invoice"), eq(INVOICE_UUID.toString()),
+                eq("invoice.created"), any());
     }
 
     @Test
     void shouldRejectInvoiceWithNonAllowlistedTokenReferenceShape() {
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, "BITCOIN", "0xabc", (short) 18,
-                new BigDecimal("1000"), "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "BITCOIN", "0xabc",
+                (short) 18, new BigDecimal("1000"), "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(InvalidInvoiceRequestException.class)
                 .hasMessageContaining("BITCOIN");
 
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, null, "0xabc", (short) 18,
-                new BigDecimal("1000"), "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, null, "0xabc",
+                (short) 18, new BigDecimal("1000"), "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(InvalidInvoiceRequestException.class);
 
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", null, (short) 18,
-                new BigDecimal("1000"), "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", null,
+                (short) 18, new BigDecimal("1000"), "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(InvalidInvoiceRequestException.class)
                 .hasMessageContaining("tokenContractAddress");
 
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "   ", (short) 18,
-                new BigDecimal("1000"), "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "   ",
+                (short) 18, new BigDecimal("1000"), "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(InvalidInvoiceRequestException.class)
                 .hasMessageContaining("tokenContractAddress");
+
+        verify(repository, never()).save(any());
+        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
     }
 
     @Test
     void shouldRejectInvoiceAmountThatIsZeroOrNegativeOrFloat() {
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
-                null, "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, null, "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(InvalidInvoiceRequestException.class)
                 .hasMessageContaining("null");
 
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
-                BigDecimal.ZERO, "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, BigDecimal.ZERO, "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(InvalidInvoiceRequestException.class)
                 .hasMessageContaining("positive");
 
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
-                new BigDecimal("-5"), "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, new BigDecimal("-5"), "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(InvalidInvoiceRequestException.class)
                 .hasMessageContaining("positive");
 
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
-                new BigDecimal("10.5"), "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, new BigDecimal("10.5"), "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(InvalidInvoiceRequestException.class)
                 .hasMessageContaining("whole number");
 
         BigDecimal tooManyDigits = new BigDecimal("1".repeat(79));
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
-                tooManyDigits, "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, tooManyDigits, "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(InvalidInvoiceRequestException.class)
                 .hasMessageContaining("78");
     }
@@ -122,13 +153,13 @@ class InvoiceServiceTest {
     void shouldAcceptWholeNumberAmountWithTrailingZerosAndRejectByTrueDigitCountNotReducedPrecision() {
         when(repository.save(any(Invoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Invoice invoice = service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
-                new BigDecimal("100.00"), "0xdef", null);
+        Invoice invoice = service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, new BigDecimal("100.00"), "0xdef", null, EXPIRES_AT, WATCH_ID);
         assertThat(invoice.getAmount()).isEqualByComparingTo(new BigDecimal("100.00"));
 
         BigDecimal eightyOneDigitsWithTrailingZeros = new BigDecimal("1" + "0".repeat(80));
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
-                eightyOneDigitsWithTrailingZeros, "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, eightyOneDigitsWithTrailingZeros, "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(InvalidInvoiceRequestException.class)
                 .hasMessageContaining("78");
     }
@@ -141,15 +172,15 @@ class InvoiceServiceTest {
         when(repository.save(any(Invoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         BigDecimal exactly78Digits = new BigDecimal("1".repeat(78));
-        Invoice invoice = service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
-                exactly78Digits, "0xdef", null);
+        Invoice invoice = service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, exactly78Digits, "0xdef", null, EXPIRES_AT, WATCH_ID);
 
         assertThat(invoice.getAmount()).isEqualByComparingTo(exactly78Digits);
     }
 
-    /** Phase 11 Gap 3: AC5 requires {@code create(...)} to be {@code @Transactional}; this plain-
-     * JUnit suite never loads a Spring context, so removing the annotation would otherwise leave
-     * the suite green. A source-text guard closes that gap without needing a context boot,
+    /** Phase 11 Gap 3 (T05): AC5 requires {@code create(...)} to be {@code @Transactional}; this
+     * plain-JUnit suite never loads a Spring context, so removing the annotation would otherwise
+     * leave the suite green. A source-text guard closes that gap without needing a context boot,
      * mirroring {@code T01SkeletonRegressionTest}'s own identical source-text-check style. */
     @Test
     void createMethodIsAnnotatedTransactional() throws IOException {
@@ -159,18 +190,34 @@ class InvoiceServiceTest {
     }
 
     @Test
+    void shouldThrowNullPointerExceptionForNullInvoiceUuid() {
+        assertThatThrownBy(() -> service.create(null, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, new BigDecimal("1000"), "0xdef", null, EXPIRES_AT, WATCH_ID))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("invoiceUuid");
+    }
+
+    @Test
     void shouldThrowNullPointerExceptionForNullMerchantAccountUuid() {
-        assertThatThrownBy(() -> service.create(null, "ETHEREUM", "0xabc", (short) 18,
-                new BigDecimal("1000"), "0xdef", null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, null, "ETHEREUM", "0xabc", (short) 18,
+                new BigDecimal("1000"), "0xdef", null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("merchantAccountUuid");
     }
 
     @Test
     void shouldThrowNullPointerExceptionForNullPayToAddress() {
-        assertThatThrownBy(() -> service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
-                new BigDecimal("1000"), null, null))
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, new BigDecimal("1000"), null, null, EXPIRES_AT, WATCH_ID))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("payToAddress");
+    }
+
+    @Test
+    void shouldThrowNullPointerExceptionForNullExpiresAt() {
+        assertThatThrownBy(() -> service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc",
+                (short) 18, new BigDecimal("1000"), "0xdef", null, null, WATCH_ID))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("expiresAt");
     }
 }

@@ -90,7 +90,8 @@ public class Invoice {
 
     public static Invoice create(UUID invoiceUuid, UUID merchantAccountUuid, String chain,
                                   String tokenContractAddress, short tokenDecimals, BigDecimal amount,
-                                  String payToAddress, String reference, Instant expiresAt, Instant now) {
+                                  String payToAddress, String reference, Instant expiresAt, UUID watchId,
+                                  Instant now) {
         Invoice invoice = new Invoice();
         invoice.invoiceUuid = invoiceUuid;
         invoice.merchantAccountUuid = merchantAccountUuid;
@@ -100,6 +101,7 @@ public class Invoice {
         invoice.amount = amount;
         invoice.payToAddress = payToAddress;
         invoice.reference = reference;
+        invoice.watchId = watchId;
         invoice.state = InvoiceState.OPEN;
         invoice.expiresAt = expiresAt;
         invoice.createdAt = now;

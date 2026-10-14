@@ -1,6 +1,8 @@
 package com.themistra.payment.invoice;
 
 import com.themistra.payment.common.config.InvoiceProperties;
+import com.themistra.payment.events.OutboxPublisher;
+import com.themistra.payment.invoice.event.InvoiceCreatedPayload;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,9 +15,16 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * {@code create(...)} is the only method this task (T05) implements — {@code expire(...)} and
- * the {@code mark paid/under/over} methods {@code design.md} §6 lists for this class's eventual
- * full scope belong to later tasks (8, and whichever task applies R15) and do not exist yet.
+ * {@code create(...)} is this task's (T05/T06) own scope — {@code expire(...)} and the
+ * {@code mark paid/under/over} methods {@code design.md} §6 lists for this class's eventual full
+ * scope belong to later tasks (8, and whichever task applies R15) and do not exist yet.
+ *
+ * <p><b>T06:</b> {@link #computeExpiresAt()} is deliberately a plain, non-{@code @Transactional}
+ * method — {@code InvoiceController} calls it, then {@link com.themistra.payment.common.CryptoClient}
+ * (outside any transaction), then {@link #create}, so {@code expiresAt} is computed exactly once
+ * and is identical in both the watch-registration call and the persisted row (Phase 3/4
+ * disposition — the TIB's original "compute inside the transaction" design would have required
+ * two separate {@link Clock} reads, risking a few-millisecond skew between the two).</p>
  */
 @Service
 public class InvoiceService {
@@ -26,27 +35,41 @@ public class InvoiceService {
     private final InvoiceRepository repository;
     private final InvoiceProperties invoiceProperties;
     private final Clock clock;
+    private final OutboxPublisher outboxPublisher;
 
-    public InvoiceService(InvoiceRepository repository, InvoiceProperties invoiceProperties, Clock clock) {
+    public InvoiceService(InvoiceRepository repository, InvoiceProperties invoiceProperties, Clock clock,
+                           OutboxPublisher outboxPublisher) {
         this.repository = repository;
         this.invoiceProperties = invoiceProperties;
         this.clock = clock;
+        this.outboxPublisher = outboxPublisher;
+    }
+
+    public Instant computeExpiresAt() {
+        return clock.instant().plus(Duration.ofMinutes(invoiceProperties.defaultTtlMinutes()));
     }
 
     @Transactional
-    public Invoice create(UUID merchantAccountUuid, String chain, String tokenContractAddress,
-                           short tokenDecimals, BigDecimal amount, String payToAddress, String reference) {
+    public Invoice create(UUID invoiceUuid, UUID merchantAccountUuid, String chain, String tokenContractAddress,
+                           short tokenDecimals, BigDecimal amount, String payToAddress, String reference,
+                           Instant expiresAt, UUID watchId) {
+        Objects.requireNonNull(invoiceUuid, "invoiceUuid must not be null");
         Objects.requireNonNull(merchantAccountUuid, "merchantAccountUuid must not be null");
         Objects.requireNonNull(payToAddress, "payToAddress must not be null");
+        Objects.requireNonNull(expiresAt, "expiresAt must not be null");
         validateChainAndTokenAddress(chain, tokenContractAddress);
         validateAmount(amount);
 
         Instant now = clock.instant();
-        Instant expiresAt = now.plus(Duration.ofMinutes(invoiceProperties.defaultTtlMinutes()));
+        Invoice invoice = Invoice.create(invoiceUuid, merchantAccountUuid, chain, tokenContractAddress,
+                tokenDecimals, amount, payToAddress, reference, expiresAt, watchId, now);
+        Invoice saved = repository.save(invoice);
 
-        Invoice invoice = Invoice.create(UUID.randomUUID(), merchantAccountUuid, chain,
-                tokenContractAddress, tokenDecimals, amount, payToAddress, reference, expiresAt, now);
-        return repository.save(invoice);
+        InvoiceCreatedPayload payload = new InvoiceCreatedPayload(invoiceUuid, merchantAccountUuid, chain,
+                tokenContractAddress, tokenDecimals, amount.toPlainString(), payToAddress, reference, expiresAt);
+        outboxPublisher.publish("invoice", invoiceUuid.toString(), "invoice.created", payload);
+
+        return saved;
     }
 
     /** R3 (AC1): {@code chain} must be a recognized value; {@code tokenContractAddress} must be
