@@ -3,16 +3,17 @@ package com.themistra.payment.consumer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.payment.common.CryptoClient;
-import com.themistra.payment.common.CryptoServiceUnavailableException;
 import com.themistra.payment.common.crypto.RegisterWatchResponse;
 import com.themistra.payment.consumer.dto.ChainTxConfirmed;
 import com.themistra.payment.consumer.dto.ChainTxFinalized;
 import com.themistra.payment.consumer.dto.ChainTxReorged;
 import com.themistra.payment.consumer.dto.ChainTxSeen;
 import com.themistra.payment.invoice.InvoiceService;
+import com.themistra.payment.invoice.InvoiceState;
 import com.themistra.payment.invoice.InvoiceWatchView;
 import com.themistra.payment.payment.PaymentService;
 import com.themistra.payment.payment.PaymentState;
+import com.themistra.payment.payment.ReorgOutcome;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -57,6 +58,15 @@ import java.util.Optional;
  * {@code @Transactional} method (self-invocation bypasses Spring's AOP proxy entirely and the
  * annotation would silently do nothing), wraps only the dedupe-and-reverse step; the register
  * call runs afterward, in this method's own un-transacted continuation.</p>
+ *
+ * <p><b>Phase 9 Finding 6, an accepted trade-off, not a gap.</b> This means the Kafka offset
+ * commit for {@code chain.tx.reorged} is coupled to the {@code registerWatch} HTTP round-trip
+ * (R12 only) — the listener doesn't return, and Kafka doesn't ack, until that best-effort call
+ * also finishes, even though its outcome is swallowed either way. Unlike {@code
+ * unregisterWatch}'s own held-open DB connection above, nothing here blocks a DB connection, only
+ * consumer-lag latency on this one topic. Revisit only if load testing against a slow/
+ * unavailable crypto-service shows real lag impact — not a reason to move this call to an async
+ * executor by default.</p>
  */
 @Component
 public class ChainEventConsumer {
@@ -130,7 +140,16 @@ public class ChainEventConsumer {
      * {@code @Transactional}: {@code dedupe} and {@link PaymentService#applyReorged} run inside
      * one explicit {@link TransactionTemplate} transaction (L5's own "dedupe-first, same
      * transaction" still holds); the replacement-watch registration (R12 only) runs afterward,
-     * outside it, best-effort (Decision 2). */
+     * outside it, best-effort (Decision 2).
+     *
+     * <p><b>Phase 9 Finding 5.</b> If the process crashes after the {@code transactionTemplate}
+     * block above commits but before (or during) {@link #registerReplacementWatch}, Kafka
+     * redelivery cannot retry the registration step on its own: {@code dedupe} already consumed
+     * this event's idempotency key in the committed transaction, so the retry short-circuits
+     * before ever calling {@code applyReorged} again. This lands in exactly the same place as a
+     * {@code registerWatch} HTTP failure (the invoice rides its own natural expiry - see {@code
+     * registerReplacementWatch}'s own Javadoc) - a second, distinct way to reach the same
+     * already-accepted degradation, not a gap this method needs to additionally guard against.</p> */
     @KafkaListener(topics = "chain.tx.reorged", groupId = "${spring.kafka.consumer.group-id}")
     public void onChainTxReorged(String rawJson) {
         ChainTxReorged event = deserialize(rawJson, ChainTxReorged.class, "chain.tx.reorged");
@@ -138,15 +157,15 @@ public class ChainEventConsumer {
             return;
         }
 
-        Optional<PaymentState> newState = transactionTemplate.execute(status -> {
+        Optional<ReorgOutcome> outcome = transactionTemplate.execute(status -> {
             if (!dedupe(event.idempotencyKey())) {
                 return Optional.empty();
             }
             return paymentService.applyReorged(event);
         });
 
-        if (newState != null && newState.orElse(null) == PaymentState.WATCHING) {
-            registerReplacementWatch(event);
+        if (outcome != null && outcome.isPresent() && outcome.get().newState() == PaymentState.WATCHING) {
+            registerReplacementWatch(outcome.get().invoiceId());
         }
     }
 
@@ -155,19 +174,51 @@ public class ChainEventConsumer {
      * validation rejects) is logged and swallowed, never retried from here - the invoice simply
      * rides its own natural expiry (see {@code InvoiceRepository
      * #findExpiredCandidatesWithoutInFlightPayment}'s own Phase 3 Finding 1 refinement), not a
-     * permanent stuck state requiring operator intervention. */
-    private void registerReplacementWatch(ChainTxReorged event) {
-        Optional<InvoiceWatchView> maybeInvoice = invoiceService.findByWatchId(event.watchId());
+     * permanent stuck state requiring operator intervention.
+     *
+     * <p><b>Phase 9 Finding 1.</b> Looks up the invoice by {@code invoiceId} (a stable foreign
+     * key carried on {@link ReorgOutcome}), never by the original reorg event's own {@code
+     * watchId} - see {@code ReorgOutcome}'s own Javadoc for the cross-partition staleness race
+     * that lookup would otherwise be exposed to.</p>
+     *
+     * <p><b>Phase 9 Finding 7.</b> Short-circuits before calling {@code registerWatch} at all if
+     * the invoice is no longer {@code OPEN} - avoids wasting the call (and, pending Finding 3
+     * below, needing to immediately undo it) for an invoice that has already resolved some other
+     * way by the time this best-effort step runs.</p>
+     *
+     * <p><b>Phase 9 Finding 3.</b> If {@code registerWatch} still succeeds but {@code
+     * updateWatchIdIfOpen} returns {@code false} (the invoice resolved in the narrow window
+     * between the state check above and this update), the newly registered watch would
+     * otherwise be orphaned - nothing would ever reference or unregister it on the
+     * crypto-service side. {@code unregisterWatch} is called immediately to clean it up.</p>
+     *
+     * <p><b>Phase 9 Finding 2.</b> Catches {@code RuntimeException} broadly, not only {@code
+     * CryptoServiceUnavailableException} - a failure anywhere in this best-effort step (including
+     * {@code invoiceService}'s own calls) must reach the same logged-and-swallowed outcome; the
+     * DB-side reversal already committed, so letting anything here propagate would only trigger
+     * a Kafka redelivery that is guaranteed to be a no-op (Finding 5's own crash-window case).</p> */
+    private void registerReplacementWatch(Long invoiceId) {
+        Optional<InvoiceWatchView> maybeInvoice = invoiceService.findByIdAsWatchView(invoiceId);
         if (maybeInvoice.isEmpty()) {
-            log.warn("Cannot register a replacement watch for watchId={}: no known invoice", event.watchId());
+            log.warn("Cannot register a replacement watch for invoiceId={}: no known invoice", invoiceId);
             return;
         }
         InvoiceWatchView invoice = maybeInvoice.get();
+        if (invoice.state() != InvoiceState.OPEN) {
+            log.warn("Skipping replacement watch registration for invoiceUuid={}: invoice is no longer OPEN "
+                    + "(state={})", invoice.invoiceUuid(), invoice.state());
+            return;
+        }
         try {
             RegisterWatchResponse response = cryptoClient.registerWatch(invoice.invoiceUuid(), invoice.chain(),
                     invoice.payToAddress(), invoice.tokenContractAddress(), invoice.amount(), invoice.expiresAt());
-            invoiceService.updateWatchIdIfOpen(invoice.id(), response.watchId(), clock.instant());
-        } catch (CryptoServiceUnavailableException e) {
+            boolean updated = invoiceService.updateWatchIdIfOpen(invoice.id(), response.watchId(), clock.instant());
+            if (!updated) {
+                log.warn("Invoice {} was no longer OPEN when the replacement watch was persisted; "
+                        + "unregistering the now-orphaned watch {}", invoice.invoiceUuid(), response.watchId());
+                cryptoClient.unregisterWatch(response.watchId());
+            }
+        } catch (RuntimeException e) {
             log.error("Failed to register a replacement watch for invoiceUuid={}: the invoice will rely on its "
                     + "own natural expiry rather than get stuck (Phase 4 Finding 3)", invoice.invoiceUuid(), e);
         }

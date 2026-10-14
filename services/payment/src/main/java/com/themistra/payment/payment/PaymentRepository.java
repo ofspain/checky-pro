@@ -121,4 +121,17 @@ interface PaymentRepository extends JpaRepository<Payment, Long> {
             + "WHERE p.id = :id AND p.state = :expectedCurrentState")
     int markWatchingIfSeen(@Param("id") Long id, @Param("expectedCurrentState") PaymentState expectedCurrentState,
                             @Param("newState") PaymentState newState, @Param("now") Instant now);
+
+    /* Phase 9 Finding 8 (Kimi, Low confidence, explicit decision rather than a silent default):
+     * neither reversal above touches `confirmations` or `amount`. Both values are left exactly
+     * as the reorged-out chain.tx.confirmed/chain.tx.finalized event last set them - a deliberate
+     * choice to treat them as historical observations (what was actually seen on-chain, at the
+     * time it was seen), not as claims about current validity (which `state` and `reorgedAt`
+     * already carry correctly). There is no new, more-current value to reset them to anyway:
+     * `confirmations` from the original chain.tx.seen was never persisted (Payment.createSeen
+     * takes it, but a reorg reversal has no "original chain.tx.seen event" in hand to re-read
+     * it from), and resetting `amount` back to Payment.createSeen's own BigDecimal.ZERO
+     * placeholder would misrepresent a `WATCHING` row that, pre-T12, never carried a non-zero
+     * amount in the first place - there is nothing to "undo" there either. The VerificationRecord
+     * written alongside each reversal is the authoritative record of the transition itself. */
 }

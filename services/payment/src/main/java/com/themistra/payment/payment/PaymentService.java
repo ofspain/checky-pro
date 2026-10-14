@@ -221,18 +221,24 @@ public class PaymentService {
 
     /** R11/R12 (T12). A {@code chain.tx.reorged} event walks {@code CONFIRMING} back to {@code
      * SEEN} (R11, no watch action) or {@code SEEN} back to {@code WATCHING} (R12); any other
-     * current state is stale (R14, {@code recordIgnored}). Phase 3 Finding 6: the event's own
-     * {@code chain}/{@code tokenContractAddress} must match the already-loaded {@code Payment}'s
-     * own stored values, or the event is treated as stale regardless of state - a mismatch is
-     * logged at {@code ERROR}, not {@code WARN}, since it indicates either a producer bug or a
-     * malicious message, not a routine race.
+     * current state is stale (R14, {@code recordIgnored}). Phase 3 Finding 6/Phase 9 Finding 4:
+     * the event's own {@code tokenContractAddress} must match the already-loaded {@code
+     * Payment}'s own stored value, or the event is treated as stale regardless of state - a
+     * mismatch is logged at {@code ERROR}, not {@code WARN}, since it indicates either a
+     * producer bug or a malicious message, not a routine race. (There is no equivalent
+     * {@code chain} check: {@code payment} was found via {@code findByChainAndTxHash(event.chain(),
+     * ...)}, whose own {@code WHERE} clause already guarantees {@code payment.getChain().equals(
+     * event.chain())} - an explicit re-check here would be dead code, not defense-in-depth.)
      *
-     * <p>Returns the state the payment landed in ({@link Optional#empty()} means stale/ignored -
-     * no transition occurred) so {@code ChainEventConsumer} - never this method (Phase 3 Finding
-     * 4: no outbound {@code CryptoClient}/{@code InvoiceService} call may originate here) - can
-     * decide whether a replacement watch needs registering.</p> */
+     * <p>Returns a {@link ReorgOutcome} ({@link Optional#empty()} means stale/ignored - no
+     * transition occurred) so {@code ChainEventConsumer} - never this method (Phase 3 Finding 4:
+     * no outbound {@code CryptoClient}/{@code InvoiceService} call may originate here) - can
+     * decide whether a replacement watch needs registering. Phase 8 Kimi Finding 1: carries
+     * {@code invoiceId}, not just the landed-on state, specifically so the consumer can look up
+     * the invoice by this stable foreign key rather than the event's own {@code watchId} (see
+     * {@link ReorgOutcome}'s own Javadoc for why that would be unreliable).</p> */
     @Transactional
-    public Optional<PaymentState> applyReorged(ChainTxReorged event) {
+    public Optional<ReorgOutcome> applyReorged(ChainTxReorged event) {
         Objects.requireNonNull(event, "event must not be null");
         Optional<Payment> maybePayment = repository.findByChainAndTxHash(event.chain(), event.txHash());
         if (maybePayment.isEmpty()) {
@@ -241,9 +247,9 @@ public class PaymentService {
         }
         Payment payment = maybePayment.get();
 
-        if (!payment.getChain().equals(event.chain()) || !payment.getTokenContractAddress().equals(event.tokenContractAddress())) {
-            log.error("Ignoring chain.tx.reorged for paymentId={}: chain/tokenContractAddress mismatch "
-                    + "against the loaded payment's own stored values", payment.getId());
+        if (!payment.getTokenContractAddress().equals(event.tokenContractAddress())) {
+            log.error("Ignoring chain.tx.reorged for paymentId={}: tokenContractAddress mismatch "
+                    + "against the loaded payment's own stored value", payment.getId());
             return Optional.empty();
         }
 
@@ -260,14 +266,14 @@ public class PaymentService {
         if (toSeen > 0) {
             verificationRecordService.record(payment.getId(), PaymentState.CONFIRMING, PaymentState.SEEN,
                     event.idempotencyKey(), null, null);
-            return Optional.of(PaymentState.SEEN);
+            return Optional.of(new ReorgOutcome(payment.getId(), payment.getInvoiceId(), PaymentState.SEEN));
         }
 
         int toWatching = repository.markWatchingIfSeen(payment.getId(), PaymentState.SEEN, PaymentState.WATCHING, now);
         if (toWatching > 0) {
             verificationRecordService.record(payment.getId(), PaymentState.SEEN, PaymentState.WATCHING,
                     event.idempotencyKey(), null, null);
-            return Optional.of(PaymentState.WATCHING);
+            return Optional.of(new ReorgOutcome(payment.getId(), payment.getInvoiceId(), PaymentState.WATCHING));
         }
 
         // Phase 8 Kimi Finding 4 precedent: see applyConfirmed's own identical comment.

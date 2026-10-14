@@ -105,6 +105,20 @@ public class InvoiceService {
         return repository.findByWatchId(watchId).map(InvoiceWatchView::from);
     }
 
+    /** T12 (Phase 8 Kimi Finding 1). The cross-module lookup {@code ChainEventConsumer} uses for
+     * a replacement-watch registration after a {@code SEEN → WATCHING} reorg reversal - by the
+     * invoice's own stable internal {@code id} (from {@code Payment.invoiceId}, via {@link
+     * com.themistra.payment.payment.ReorgOutcome}), never by the reorg event's own {@code
+     * watchId}, which can be stale by the time a cross-partition-delayed event is processed (see
+     * {@code ReorgOutcome}'s own Javadoc). {@code JpaRepository.findById} is inherited, not
+     * hand-written, but still only ever returns the {@link InvoiceWatchView} projection (L12),
+     * same as {@link #findByWatchId}. */
+    @Transactional(readOnly = true)
+    public Optional<InvoiceWatchView> findByIdAsWatchView(Long invoiceId) {
+        Objects.requireNonNull(invoiceId, "invoiceId must not be null");
+        return repository.findById(invoiceId).map(InvoiceWatchView::from);
+    }
+
     /** R5 (AC1/AC2, T08): system-level sweep candidates, not scoped to any one merchant. */
     @Transactional(readOnly = true)
     public List<Invoice> findExpiredCandidatesWithoutInFlightPayment() {
