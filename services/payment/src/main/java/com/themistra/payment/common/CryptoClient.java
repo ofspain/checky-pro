@@ -3,6 +3,7 @@ package com.themistra.payment.common;
 import com.themistra.payment.common.config.CryptoClientProperties;
 import com.themistra.payment.common.crypto.RegisterWatchRequest;
 import com.themistra.payment.common.crypto.RegisterWatchResponse;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -29,8 +30,14 @@ public class CryptoClient {
     public CryptoClient(RestClient.Builder restClientBuilder, CryptoServiceTokenProvider tokenProvider,
                          CryptoClientProperties properties) {
         this.watchPath = properties.watchPath();
+
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(properties.connectTimeoutMs());
+        requestFactory.setReadTimeout(properties.readTimeoutMs());
+
         this.restClient = restClientBuilder
                 .baseUrl(properties.baseUrl())
+                .requestFactory(requestFactory)
                 .requestInterceptor((request, body, execution) -> {
                     request.getHeaders().setBearerAuth(tokenProvider.getAccessToken());
                     return execution.execute(request, body);

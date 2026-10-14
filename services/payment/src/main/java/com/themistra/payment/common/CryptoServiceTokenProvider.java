@@ -3,6 +3,7 @@ package com.themistra.payment.common;
 import com.themistra.payment.common.config.CryptoClientProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -40,7 +41,11 @@ public class CryptoServiceTokenProvider {
 
     public CryptoServiceTokenProvider(RestClient.Builder restClientBuilder,
                                        CryptoClientProperties properties, Clock clock) {
-        this.restClient = restClientBuilder.build();
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(properties.connectTimeoutMs());
+        requestFactory.setReadTimeout(properties.readTimeoutMs());
+
+        this.restClient = restClientBuilder.requestFactory(requestFactory).build();
         this.auth = properties.auth();
         this.clock = clock;
     }
