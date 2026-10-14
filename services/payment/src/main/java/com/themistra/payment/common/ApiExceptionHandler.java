@@ -9,6 +9,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -72,6 +73,25 @@ public class ApiExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
         problem.setType(URI.create("about:blank"));
         problem.setTitle("Malformed request body");
+        return problem;
+    }
+
+    /** Phase 10 — a genuinely new discovery, not previously tested anywhere in this codebase
+     * (confirmed: {@code auth-service}'s own {@code @PreAuthorize} test explicitly avoided a
+     * live MockMvc check for this exact reason, calling it "a bigger infrastructure decision").
+     * {@code @PreAuthorize}'s own denial throws {@link AuthorizationDeniedException} - a
+     * <b>different</b> exception from the filter-chain-level {@code AccessDeniedException}
+     * {@code ResourceServerConfig}'s own manual {@code problemJsonAccessDeniedHandler} handles.
+     * Without this, every current {@code @PreAuthorize}-protected endpoint in this service (and,
+     * by the same mirrored template, every sibling service using {@code @PreAuthorize}) returns
+     * {@code 500}, not {@code 403}, for a role-denied caller - confirmed empirically via
+     * {@code InvoiceControllerTest} before this handler existed. */
+    @ExceptionHandler(AuthorizationDeniedException.class)
+    ProblemDetail onAuthorizationDenied(AuthorizationDeniedException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setType(URI.create("about:blank"));
+        problem.setTitle("Forbidden");
+        problem.setDetail("The token does not carry the required access.");
         return problem;
     }
 
