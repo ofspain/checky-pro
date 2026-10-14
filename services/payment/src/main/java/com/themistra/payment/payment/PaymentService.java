@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -32,7 +31,6 @@ import java.util.Optional;
 public class PaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
-    private static final List<PaymentState> FINALIZABLE_STATES = List.of(PaymentState.SEEN, PaymentState.CONFIRMING);
 
     private final PaymentRepository repository;
     private final PaymentStateMachine stateMachine;
@@ -131,7 +129,14 @@ public class PaymentService {
     /** R10. {@code SEEN}/{@code CONFIRMING → FINALIZED} is the real transition; any other current
      * state is stale (R14, {@code recordIgnored}). Persists the event's own real
      * {@code amount}/{@code fromAddress}/{@code toAddress}/{@code addressPoisoningFlag},
-     * overwriting {@link Payment#createSeen}'s own placeholder {@code amount = 0}. */
+     * overwriting {@link Payment#createSeen}'s own placeholder {@code amount = 0}.
+     *
+     * <p>Tries {@code CONFIRMING} then {@code SEEN} as the expected prior state, one atomic
+     * attempt at a time (Phase 7 self-review — see {@link PaymentRepository
+     * #markFinalizedIfCurrentState}'s own Javadoc for why this must not be collapsed back into a
+     * single {@code IN (SEEN, CONFIRMING)} query): whichever one succeeds is the real,
+     * exactly-known {@code fromState} for the {@code VerificationRecord}, never inferred from a
+     * read that could already be stale by the time the update actually runs. */
     @Transactional
     public void applyFinalized(ChainTxFinalized event) {
         Objects.requireNonNull(event, "event must not be null");
@@ -141,28 +146,34 @@ public class PaymentService {
             return;
         }
         Payment payment = maybePayment.get();
-        PaymentState priorState = payment.getState();
         Instant now = clock.instant();
 
-        int finalized = repository.markFinalizedIfCurrentState(payment.getId(), PaymentState.FINALIZED,
-                FINALIZABLE_STATES, event.amount(), event.fromAddress(), event.toAddress(), event.confirmations(),
-                event.addressPoisoningFlag(), now);
-
-        if (finalized == 0) {
+        PaymentState fromState;
+        if (tryFinalizeFrom(payment.getId(), PaymentState.CONFIRMING, event, now)) {
+            fromState = PaymentState.CONFIRMING;
+        } else if (tryFinalizeFrom(payment.getId(), PaymentState.SEEN, event, now)) {
+            fromState = PaymentState.SEEN;
+        } else {
             PaymentState currentState = repository.findById(payment.getId())
                     .map(Payment::getState)
-                    .orElse(priorState);
+                    .orElse(payment.getState());
             verificationRecordService.recordIgnored(payment.getId(), currentState, event.idempotencyKey(),
                     Map.of("reason", "stale-finalized-event"));
             return;
         }
 
-        verificationRecordService.record(payment.getId(), priorState, PaymentState.FINALIZED,
+        verificationRecordService.record(payment.getId(), fromState, PaymentState.FINALIZED,
                 event.idempotencyKey(), event.confirmations(), null);
 
         outboxPublisher.publish("payment-finalized", payment.getPaymentUuid().toString(), "payment.finalized",
                 new PaymentFinalizedPayload(payment.getPaymentUuid(), event.chain(), event.txHash(),
                         event.fromAddress(), event.toAddress(), event.tokenContractAddress(),
                         event.amount().toPlainString(), event.confirmations(), event.addressPoisoningFlag(), now));
+    }
+
+    private boolean tryFinalizeFrom(Long paymentId, PaymentState expectedCurrentState, ChainTxFinalized event, Instant now) {
+        return repository.markFinalizedIfCurrentState(paymentId, expectedCurrentState, PaymentState.FINALIZED,
+                event.amount(), event.fromAddress(), event.toAddress(), event.confirmations(),
+                event.addressPoisoningFlag(), now) > 0;
     }
 }

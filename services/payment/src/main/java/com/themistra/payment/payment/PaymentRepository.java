@@ -7,7 +7,6 @@ import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 
 interface PaymentRepository extends JpaRepository<Payment, Long> {
@@ -49,14 +48,24 @@ interface PaymentRepository extends JpaRepository<Payment, Long> {
      * arrive without an intervening confirmed event). Persists the event's own real observed
      * {@code amount}/{@code fromAddress}/{@code toAddress}/{@code confirmations}/
      * {@code addressPoisoningFlag}, overwriting {@code Payment.createSeen}'s own placeholder
-     * {@code amount = 0}. Atomic, same rationale as the two methods above. */
+     * {@code amount = 0}. Atomic, same rationale as the two methods above.
+     *
+     * <p>Takes exactly one {@code expectedCurrentState}, not an {@code IN (SEEN, CONFIRMING)}
+     * list (Phase 7 self-review: an earlier version did take a two-state list, built from a
+     * {@code priorState} read moments before this query ran - but if a concurrent event changed
+     * the real state from {@code SEEN} to {@code CONFIRMING} in that window, the update would
+     * still match the {@code IN} list, yet the caller would record the wrong {@code fromState}
+     * in the audit trail - the stale pre-read value, not the state the row was actually in when
+     * this query matched it). {@link PaymentService#applyFinalized} now tries each expected state
+     * in its own separate call, so whichever one succeeds is known exactly, not inferred from a
+     * read that could already be stale by the time this query runs.</p> */
     @Modifying
     @Query("UPDATE Payment p SET p.state = :newState, p.amount = :amount, p.fromAddress = :fromAddress, "
             + "p.toAddress = :toAddress, p.confirmations = :confirmations, "
             + "p.addressPoisoningFlag = :addressPoisoningFlag, p.finalizedAt = :now, p.updatedAt = :now "
-            + "WHERE p.id = :id AND p.state IN :permittedCurrentStates")
-    int markFinalizedIfCurrentState(@Param("id") Long id, @Param("newState") PaymentState newState,
-                                     @Param("permittedCurrentStates") List<PaymentState> permittedCurrentStates,
+            + "WHERE p.id = :id AND p.state = :expectedCurrentState")
+    int markFinalizedIfCurrentState(@Param("id") Long id, @Param("expectedCurrentState") PaymentState expectedCurrentState,
+                                     @Param("newState") PaymentState newState,
                                      @Param("amount") BigDecimal amount, @Param("fromAddress") String fromAddress,
                                      @Param("toAddress") String toAddress, @Param("confirmations") int confirmations,
                                      @Param("addressPoisoningFlag") boolean addressPoisoningFlag,
