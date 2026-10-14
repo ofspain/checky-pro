@@ -107,13 +107,16 @@ class ApplicationPropertiesContentTest {
         assertThat(properties).contains("server.port=${SERVER_PORT:8083}");
     }
 
-    /** T04 AC6 (Phase 8 finding 2): the outbox relay's own polling interval must stay present -
-     * without it, OutboxRelay's @Scheduled(fixedDelayString = ...) falls back to the hardcoded
-     * literal default baked into the annotation itself, silently decoupling runtime behavior from
-     * this file the next time someone expects changing this property to have any effect. */
+    /** T04 AC6 (Phase 8 finding 2; tightened at Phase 11 Gap 2): the outbox relay's own polling
+     * interval must stay present with its exact env-var/default shape - without it, OutboxRelay's
+     * @Scheduled(fixedDelayString = ...) falls back to the hardcoded literal default baked into
+     * the annotation itself, silently decoupling runtime behavior from this file. A bare
+     * `contains("...=")` check (as originally written) would pass even if the default value were
+     * changed or the env-var override removed; asserting the full value closes that gap. */
     @Test
     void outboxRelayIntervalIsConfigured() throws IOException {
         String properties = Files.readString(APPLICATION_PROPERTIES);
-        assertThat(properties).contains("themistra.payment.outbox.relay-interval-ms=");
+        assertThat(properties)
+                .contains("themistra.payment.outbox.relay-interval-ms=${OUTBOX_RELAY_INTERVAL_MS:2000}");
     }
 }
