@@ -34,16 +34,21 @@ class ArchitectureTest {
     private static final String ANALYZED_PACKAGE = "com.themistra.payment";
 
     private static final Set<String> FORBIDDEN_FLOATING_POINT_TYPES =
-            Set.of("float", "double", "java.lang.Float", "java.lang.Double");
+            Set.of("float", "double", "java.lang.Float", "java.lang.Double",
+                    // Array forms (Phase 11 Gap 5) - ArchUnit reports array raw types using the
+                    // JVM's own binary name convention, not "float[]"/"Double[]".
+                    "[F", "[D", "[Ljava.lang.Float;", "[Ljava.lang.Double;");
 
     /**
-     * L6: money is {@code NUMERIC}/{@code BigDecimal} only. Scans fields, method return types,
-     * and method parameters (Phase 3 finding 6 — a parameter-only scope, like a fields-and-
-     * returns-only scope, would miss a future DTO constructor or helper that merely *accepts* a
-     * floating-point amount). A custom {@link ArchCondition}, not the built-in
-     * {@code haveRawType}/{@code haveRawReturnType} DSL, because no built-in ArchUnit predicate
-     * covers "any parameter has a forbidden type" cleanly — one condition keeps all three checks
-     * consistent and keeps this rule a single named test, per {@code package.md} §8.
+     * L6: money is {@code NUMERIC}/{@code BigDecimal} only. Scans fields (including array-typed
+     * fields, Phase 11 Gap 5), method return types, method parameters, and constructor
+     * parameters (Phase 11 Gap 4 — a future DTO constructor like {@code
+     * CreateInvoiceRequest(double amount)} would otherwise evade this rule entirely, since
+     * {@code JavaClass.getMethods()} does not include constructors). A custom {@link
+     * ArchCondition}, not the built-in {@code haveRawType}/{@code haveRawReturnType} DSL,
+     * because no built-in ArchUnit predicate covers "any parameter has a forbidden type"
+     * cleanly — one condition keeps all four checks consistent and keeps this rule a single
+     * named test, per {@code package.md} §8.
      */
     private static final ArchRule shouldRejectFloatingPointMoneyTypes = classes()
             .that().resideInAPackage(ANALYZED_PACKAGE + "..")
@@ -73,6 +78,15 @@ class ArchitectureTest {
                             }
                         });
                     });
+                    javaClass.getConstructors().forEach(constructor ->
+                            constructor.getParameters().forEach(parameter -> {
+                                if (FORBIDDEN_FLOATING_POINT_TYPES.contains(parameter.getRawType().getName())) {
+                                    events.add(new SimpleConditionEvent(constructor, false,
+                                            "constructor " + constructor.getFullName() + " has a forbidden "
+                                                    + "floating-point parameter of type "
+                                                    + parameter.getRawType().getName()));
+                                }
+                            }));
                 }
             })
             .because("L6: money is NUMERIC/BigDecimal only - no float/double/Float/Double anywhere");
@@ -90,19 +104,24 @@ class ArchitectureTest {
 
     /** The canary above only proves the rule passes on already-clean code - it says nothing
      * about whether it can ever actually fail. {@link RogueFloatingPointMoneyUser} deliberately
-     * violates all three checked shapes (field, method return type, method parameter) in one
-     * class, so this test exercises all three violation paths at once. */
+     * violates all five checked shapes (field, array field, method return type, method
+     * parameter, constructor parameter — Phase 11 Gaps 4/5) in one class, so this test exercises
+     * every violation path at once. */
     @Test
     void shouldRejectFloatingPointMoneyTypesAtArchUnitActuallyFailsAgainstAGenuineViolation() {
         JavaClasses violatingClasses = new ClassFileImporter().importClasses(RogueFloatingPointMoneyUser.class);
 
         assertThatThrownBy(() -> shouldRejectFloatingPointMoneyTypes.check(violatingClasses))
-                .as("a float field, a float-returning method, and a Double parameter must each fail this rule")
+                .as("a float field, a double[] field, a float-returning method, a Double "
+                        + "parameter, and a float constructor parameter must each fail this rule")
                 .isInstanceOf(AssertionError.class)
                 .hasMessageContaining("field")
                 .hasMessageContaining("amount")
                 .hasMessageContaining("forbidden floating-point type double")
+                .hasMessageContaining("amountHistory")
                 .hasMessageContaining("getFloatAmount")
-                .hasMessageContaining("acceptDoubleAmount");
+                .hasMessageContaining("acceptDoubleAmount")
+                .hasMessageContaining("constructor")
+                .hasMessageContaining("<init>(float)");
     }
 }

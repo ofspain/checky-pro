@@ -14,9 +14,14 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -55,6 +60,7 @@ class InvoiceServiceTest {
         assertThat(invoice.getCreatedAt()).isEqualTo(NOW);
         assertThat(invoice.getUpdatedAt()).isEqualTo(NOW);
         assertThat(invoice.getExpiresAt()).isEqualTo(NOW.plus(Duration.ofMinutes(60)));
+        verify(repository).save(invoice);
     }
 
     @Test
@@ -125,6 +131,31 @@ class InvoiceServiceTest {
                 eightyOneDigitsWithTrailingZeros, "0xdef", null))
                 .isInstanceOf(InvalidInvoiceRequestException.class)
                 .hasMessageContaining("78");
+    }
+
+    /** Phase 11 Gap 2: the 79-digit rejection case alone does not prove the boundary itself is
+     * correct - an off-by-one in the digit-count comparison would only surface here, at exactly
+     * 78 digits, accepted. */
+    @Test
+    void shouldAcceptAmountAtExactly78DigitsPrecisionBoundary() {
+        when(repository.save(any(Invoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        BigDecimal exactly78Digits = new BigDecimal("1".repeat(78));
+        Invoice invoice = service.create(MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
+                exactly78Digits, "0xdef", null);
+
+        assertThat(invoice.getAmount()).isEqualByComparingTo(exactly78Digits);
+    }
+
+    /** Phase 11 Gap 3: AC5 requires {@code create(...)} to be {@code @Transactional}; this plain-
+     * JUnit suite never loads a Spring context, so removing the annotation would otherwise leave
+     * the suite green. A source-text guard closes that gap without needing a context boot,
+     * mirroring {@code T01SkeletonRegressionTest}'s own identical source-text-check style. */
+    @Test
+    void createMethodIsAnnotatedTransactional() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/themistra/payment/invoice/InvoiceService.java"));
+        assertThat(source).contains("@Transactional");
     }
 
     @Test
