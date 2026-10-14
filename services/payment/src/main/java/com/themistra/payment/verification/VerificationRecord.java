@@ -14,15 +14,27 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Maps {@code verification_records} in {@code V1__payments_baseline.sql} exactly (immutable,
- * T02) — the append-only audit trail for every payment state movement (L7-style: {@code
- * payment_app} has {@code INSERT}+{@code SELECT} only, no {@code UPDATE}/{@code DELETE}). No
+ * Maps {@code verification_records} in {@code V1__payments_baseline.sql} (the migration file
+ * itself is immutable, T02) exactly — the append-only audit trail for every payment state
+ * movement (L7-style: {@code payment_app} has {@code INSERT}+{@code SELECT} only, no
+ * {@code UPDATE}/{@code DELETE}; no code path here ever updates or deletes a persisted row). No
  * {@code Payment} entity exists yet (task 11's own scope), so {@code paymentId} is a plain
  * {@code Long}, not a JPA relationship — mirrors {@code Invoice}'s own established precedent for
  * not-yet-modeled associations.
+ *
+ * <p><b>Fields are non-final (Phase 8, Kimi Finding 3)</b> — a JPA requirement (the no-arg
+ * constructor plus proxying/bytecode enhancement need mutable fields), not a sign this class is
+ * mutable in practice: every field is set exactly once, by {@link #create}, and never
+ * reassigned afterward by any method this class exposes. {@code detail} is the one field that
+ * needed an explicit defensive copy (Phase 8, Kimi Finding 1) — a {@code Map} is mutable by
+ * reference, so {@link #create} and {@link #getDetail()} each copy it rather than sharing the
+ * caller's own instance, closing a real aliasing gap a non-final field alone would not have
+ * caught.</p>
  *
  * <p><b>{@code fromState} is nullable; {@code toState} is not (T10, Phase 3/4 Finding 1).</b> A
  * {@link VerificationRecordService#recordIgnored} row stores {@code fromState = null},
@@ -85,7 +97,7 @@ public class VerificationRecord {
         record.toState = toState;
         record.triggerEventKey = triggerEventKey;
         record.confirmations = confirmations;
-        record.detail = detail;
+        record.detail = copyOf(detail);
         record.occurredAt = occurredAt;
         return record;
     }
@@ -122,7 +134,18 @@ public class VerificationRecord {
     }
 
     public Map<String, Object> getDetail() {
-        return detail;
+        return copyOf(detail);
+    }
+
+    /** Phase 8 (Kimi Finding 1): {@code Map} is mutable by reference - without this, a caller
+     * could mutate the map passed to {@link #create} (or the one returned by {@link #getDetail()})
+     * after the fact, silently changing this entity's own persisted state. {@code Map.copyOf}
+     * is not used here (unlike other read-only copies elsewhere in this codebase) because it
+     * rejects null keys/values, and a JSONB {@code detail} payload may legitimately contain a
+     * null value (e.g. {@code {"actualState": null}}) - {@code LinkedHashMap} preserves
+     * insertion order and tolerates nulls the way {@code Map.copyOf} does not. */
+    private static Map<String, Object> copyOf(Map<String, Object> source) {
+        return source == null ? null : Collections.unmodifiableMap(new LinkedHashMap<>(source));
     }
 
     public Instant getOccurredAt() {
