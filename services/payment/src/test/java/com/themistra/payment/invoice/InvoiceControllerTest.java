@@ -7,6 +7,9 @@ import com.themistra.payment.common.JwtRoleAuthoritiesConverter;
 import com.themistra.payment.common.ResourceServerConfig;
 import com.themistra.payment.common.crypto.RegisterWatchResponse;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
+import org.springframework.security.oauth2.jwt.JwtClaimNames;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -21,8 +24,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
@@ -101,9 +106,11 @@ class InvoiceControllerTest {
                 .andExpect(jsonPath("$.payToAddress").value("0xdef"));
     }
 
-    /** R6: the watchId registerWatch returns is the exact same value passed into
-     * InvoiceService.create - proven by capturing the real, randomly-generated invoiceUuid
-     * the controller itself creates and confirming both calls received the identical value. */
+    /** R6, strengthened (Phase 11 Gaps 2/3): proves, not just asserts via comments, that the
+     * exact same randomly-generated {@code invoiceUuid} reaches both calls, and that {@code
+     * registerWatch} happens strictly before {@code create} - the whole point of the Phase 4
+     * transaction redesign. Two separate {@code ArgumentCaptor}s (one per mock) rather than one
+     * shared captor, since each call site is on a different mock. */
     @Test
     void shouldTransitionCreatedToWatchingOnWatchAck() throws Exception {
         when(invoiceService.computeExpiresAt()).thenReturn(EXPIRES_AT);
@@ -121,16 +128,69 @@ class InvoiceControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_REQUEST_JSON))
                 .andExpect(status().isCreated());
 
-        verify(invoiceService).create(any(UUID.class), eq(MERCHANT_ACCOUNT_UUID), eq("ETHEREUM"), eq("0xabc"),
-                eq((short) 18), eq(new BigDecimal("1000")), eq("0xdef"), eq("order-1"), eq(EXPIRES_AT),
-                eq(WATCH_ID));
+        InOrder inOrder = inOrder(cryptoClient, invoiceService);
+        ArgumentCaptor<UUID> watchInvoiceUuid = ArgumentCaptor.forClass(UUID.class);
+        ArgumentCaptor<UUID> createInvoiceUuid = ArgumentCaptor.forClass(UUID.class);
+
+        inOrder.verify(cryptoClient).registerWatch(watchInvoiceUuid.capture(), eq("ETHEREUM"), eq("0xdef"),
+                eq("0xabc"), eq(new BigDecimal("1000")), eq(EXPIRES_AT));
+        inOrder.verify(invoiceService).create(createInvoiceUuid.capture(), eq(MERCHANT_ACCOUNT_UUID),
+                eq("ETHEREUM"), eq("0xabc"), eq((short) 18), eq(new BigDecimal("1000")), eq("0xdef"),
+                eq("order-1"), eq(EXPIRES_AT), eq(WATCH_ID));
+
+        assertThat(createInvoiceUuid.getValue())
+                .as("the same invoiceUuid registered with Crypto Service must be the one persisted")
+                .isEqualTo(watchInvoiceUuid.getValue());
     }
 
+    /** Phase 11 Gap 5: previously checked status only - now also proves the Phase 10 {@code
+     * AuthorizationDeniedException} handler's own RFC 9457 body shape, the actual reason this
+     * test returns 403 at all rather than the generic 500 it returned before that handler
+     * existed. */
     @Test
     void shouldRejectNonMerchantCallerWithForbidden() throws Exception {
         mockMvc.perform(post("/api/v1/invoices").with(nonMerchantJwt())
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_REQUEST_JSON))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.title").value("Forbidden"))
+                .andExpect(jsonPath("$.status").value(403));
+    }
+
+    /** Phase 11 Gap 4: a missing sub claim must map to this service's own 400, not an uncaught
+     * NullPointerException falling through to a generic 500 (mirrors notification-service's own
+     * identical Kimi Phase 11 Gap #10 precedent, which InvoiceController.merchantAccountUuidFrom
+     * already guards against - this proves it, rather than only asserting it by comment).
+     * {@code SecurityMockMvcRequestPostProcessors.jwt()}'s own default {@code Jwt.Builder} always
+     * sets {@code sub="user"} (confirmed by reading its source directly) - {@code
+     * .claims(claims -> claims.remove(...))} is required to produce a genuinely absent claim,
+     * not just a non-default value. */
+    @Test
+    void shouldReturn400ForMissingSubClaim() throws Exception {
+        RequestPostProcessor missingSubJwt = jwt()
+                .jwt(builder -> builder.claim("roles", List.of("MERCHANT"))
+                        .claims(claims -> claims.remove(JwtClaimNames.SUB)))
+                .authorities(new SimpleGrantedAuthority("ROLE_MERCHANT"));
+
+        mockMvc.perform(post("/api/v1/invoices").with(missingSubJwt)
+                        .contentType(MediaType.APPLICATION_JSON).content(VALID_REQUEST_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Invalid invoice request"))
+                .andExpect(jsonPath("$.detail").value("sub claim is missing"));
+    }
+
+    @Test
+    void shouldReturn400ForMalformedSubClaim() throws Exception {
+        RequestPostProcessor malformedSubJwt = jwt()
+                .jwt(builder -> builder.subject("not-a-uuid").claim("roles", List.of("MERCHANT")))
+                .authorities(new SimpleGrantedAuthority("ROLE_MERCHANT"));
+
+        mockMvc.perform(post("/api/v1/invoices").with(malformedSubJwt)
+                        .contentType(MediaType.APPLICATION_JSON).content(VALID_REQUEST_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Invalid invoice request"))
+                .andExpect(jsonPath("$.detail").value("sub claim is not a valid UUID: not-a-uuid"));
     }
 
     @Test

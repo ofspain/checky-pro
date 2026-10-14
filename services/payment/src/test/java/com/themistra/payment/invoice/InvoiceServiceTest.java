@@ -2,9 +2,11 @@ package com.themistra.payment.invoice;
 
 import com.themistra.payment.common.config.InvoiceProperties;
 import com.themistra.payment.events.OutboxPublisher;
+import com.themistra.payment.invoice.event.InvoiceCreatedPayload;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -87,8 +89,23 @@ class InvoiceServiceTest {
         service.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
                 new BigDecimal("1000"), "0xdef", "order-1", EXPIRES_AT, WATCH_ID);
 
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
         verify(outboxPublisher).publish(eq("invoice"), eq(INVOICE_UUID.toString()),
-                eq("invoice.created"), any());
+                eq("invoice.created"), payloadCaptor.capture());
+
+        // Phase 11 Gap 6: the bare any() above only proved publish was called, never that the
+        // payload itself is correct - in particular, that amount is a decimal String (L6), not a
+        // JSON number, matching RegisterWatchRequest's own identical convention.
+        InvoiceCreatedPayload payload = (InvoiceCreatedPayload) payloadCaptor.getValue();
+        assertThat(payload.invoiceUuid()).isEqualTo(INVOICE_UUID);
+        assertThat(payload.merchantAccountUuid()).isEqualTo(MERCHANT_ACCOUNT_UUID);
+        assertThat(payload.chain()).isEqualTo("ETHEREUM");
+        assertThat(payload.tokenContractAddress()).isEqualTo("0xabc");
+        assertThat(payload.tokenDecimals()).isEqualTo((short) 18);
+        assertThat(payload.amount()).isEqualTo("1000");
+        assertThat(payload.payToAddress()).isEqualTo("0xdef");
+        assertThat(payload.reference()).isEqualTo("order-1");
+        assertThat(payload.expiresAt()).isEqualTo(EXPIRES_AT);
     }
 
     @Test

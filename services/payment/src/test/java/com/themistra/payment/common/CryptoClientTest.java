@@ -168,7 +168,10 @@ class CryptoClientTest {
                 .isInstanceOf(CryptoServiceUnavailableException.class);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
 
-        assertThat(elapsedMs).isLessThan(1000);
+        // Phase 11 Gap 11: configured read timeout is 200ms; 500ms leaves generous scheduling
+        // headroom while still being well short of the server's own 1000ms sleep, so this
+        // actually proves the bounded timeout, not just "eventually returned."
+        assertThat(elapsedMs).isLessThan(500);
     }
 
     private CryptoClient startServer(int status, String responseBody,

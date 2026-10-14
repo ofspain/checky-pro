@@ -34,13 +34,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers
 class SchemaBaselineMigrationIntegrationTest {
 
-    private static final List<String> GRANTED_TABLES = List.of("ledger_entries", "verification_records");
-    // The other seven baseline tables (invoices, payments, receipts, ledger_anchors,
-    // processed_events, outbox, shedlock) get no grant at all in this task — each one's own grant
-    // lands in whichever later task first needs it (T05, T09/T11/T13, T17, deferred/T21-skipped,
-    // T11, T08 respectively), mirroring crypto-service's own incremental V2-V9 pattern.
+    // T06/V3 (Phase 9, Kimi Phase 8 finding 1): invoices joins the INSERT+SELECT-only set (T06's
+    // own InvoiceService.create is the first real caller); outbox gets its own, wider privilege
+    // set (INSERT+SELECT+UPDATE - OutboxRelay, T04, also needs UPDATE to mark published_at), so
+    // it is tracked separately, not folded into GRANTED_TABLES's own exactly-two-privileges check.
+    private static final List<String> GRANTED_TABLES =
+            List.of("ledger_entries", "verification_records", "invoices");
+    private static final List<String> ALL_GRANTED_TABLE_NAMES =
+            List.of("ledger_entries", "verification_records", "invoices", "outbox");
+    // The remaining five baseline tables (payments, receipts, ledger_anchors, processed_events,
+    // shedlock) get no grant at all in this task — each one's own grant lands in whichever later
+    // task first needs it (T09/T11/T13, T17, deferred/T21-skipped, T11, T08 respectively),
+    // mirroring crypto-service's own incremental V2-V9 pattern.
     private static final List<String> UNGRANTED_TABLES =
-            List.of("invoices", "payments", "receipts", "ledger_anchors", "processed_events", "outbox", "shedlock");
+            List.of("payments", "receipts", "ledger_anchors", "processed_events", "shedlock");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -136,7 +143,7 @@ class SchemaBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2");
+            assertThat(succeededVersions).containsExactly("1", "2", "3");
         }
     }
 
@@ -262,7 +269,7 @@ class SchemaBaselineMigrationIntegrationTest {
             while (resultSet.next()) {
                 grantedTableNames.add(resultSet.getString(1));
             }
-            assertThat(grantedTableNames).containsExactlyInAnyOrderElementsOf(GRANTED_TABLES);
+            assertThat(grantedTableNames).containsExactlyInAnyOrderElementsOf(ALL_GRANTED_TABLE_NAMES);
         }
     }
 
@@ -285,6 +292,24 @@ class SchemaBaselineMigrationIntegrationTest {
                 }
                 assertThat(privileges).as("%s privilege set", table).containsExactlyInAnyOrder("INSERT", "SELECT");
             }
+        }
+    }
+
+    /** T06/V3 (Phase 9/11): outbox's own privilege set is wider than GRANTED_TABLES's (INSERT,
+     * SELECT, UPDATE - OutboxRelay, T04, marks published_at on successful delivery), so it is
+     * verified separately rather than folded into the exactly-INSERT-SELECT check above. */
+    @Test
+    void outboxHasExactlyInsertSelectAndUpdatePrivilegesNoMore() throws SQLException {
+        try (Connection admin = adminConnection();
+             Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT privilege_type FROM information_schema.table_privileges "
+                             + "WHERE grantee = 'payment_app' AND table_schema = 'payments' AND table_name = 'outbox'")) {
+            List<String> privileges = new ArrayList<>();
+            while (resultSet.next()) {
+                privileges.add(resultSet.getString(1));
+            }
+            assertThat(privileges).as("outbox privilege set").containsExactlyInAnyOrder("INSERT", "SELECT", "UPDATE");
         }
     }
 
