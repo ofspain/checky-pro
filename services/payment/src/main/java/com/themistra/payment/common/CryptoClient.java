@@ -24,6 +24,8 @@ import java.util.UUID;
 @Component
 public class CryptoClient {
 
+    private static final String REGISTERED_STATUS = "REGISTERED";
+
     private final RestClient restClient;
     private final String watchPath;
 
@@ -61,6 +63,11 @@ public class CryptoClient {
             if (response == null || response.watchId() == null) {
                 throw new CryptoServiceUnavailableException(
                         "Crypto Service returned no watchId for invoice " + invoiceUuid, null);
+            }
+            if (!REGISTERED_STATUS.equalsIgnoreCase(response.status())) {
+                throw new CryptoServiceUnavailableException(
+                        "Crypto Service returned unexpected watch status '" + response.status()
+                                + "' for invoice " + invoiceUuid, null);
             }
             return response;
         } catch (RestClientException e) {

@@ -89,6 +89,18 @@ class ApplicationPropertiesContentTest {
                 .as("exactly one password-shaped line - the documented local-dev datasource carve-out")
                 .isEqualTo(1);
         assertThat(properties).contains("spring.datasource.password=${DB_PASSWORD:payment-app-local-only}");
+
+        // T06 (Phase 9, Kimi Phase 8 finding 2): client-secret is a second, separately-shaped
+        // credential carve-out the original check (password-only) never covered - closes that
+        // gap rather than widening the generic doesNotContainPattern check below, which must
+        // stay a real catch-all for anything NOT already an accounted-for carve-out.
+        long clientSecretLines = properties.lines().filter(line -> line.contains("client-secret")).count();
+        assertThat(clientSecretLines)
+                .as("exactly one client-secret-shaped line - the documented local-dev Crypto Service auth carve-out")
+                .isEqualTo(1);
+        assertThat(properties).contains(
+                "themistra.payment.crypto.auth.client-secret=${PAYMENT_SERVICE_CLIENT_SECRET:payment-local-only}");
+
         assertThat(properties).doesNotContainPattern("(?i)<secret>|apiKey=|accessKey=|accessToken=");
 
         try (var files = Files.walk(Path.of("src/main/resources"))) {
