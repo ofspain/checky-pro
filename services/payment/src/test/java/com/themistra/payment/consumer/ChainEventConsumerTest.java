@@ -8,6 +8,7 @@ import com.themistra.payment.common.crypto.RegisterWatchResponse;
 import com.themistra.payment.invoice.InvoiceService;
 import com.themistra.payment.invoice.InvoiceState;
 import com.themistra.payment.invoice.InvoiceWatchView;
+import com.themistra.payment.payment.FinalizationOutcome;
 import com.themistra.payment.payment.PaymentService;
 import com.themistra.payment.payment.PaymentState;
 import com.themistra.payment.payment.ReorgOutcome;
@@ -221,6 +222,98 @@ class ChainEventConsumerTest {
         assertThat(captor.getValue().txHash()).isEqualTo("0xabc");
         assertThat(captor.getValue().amount()).isEqualByComparingTo("1000");
         assertThat(captor.getValue().confirmations()).isEqualTo(12);
+    }
+
+    // --- T13: invoice-outcome marking after FINALIZED ---
+
+    @Test
+    void shouldLogAndDropChainTxFinalizedForAnUnknownPayment() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
+        when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.empty());
+
+        consumer.onChainTxFinalized(FINALIZED_JSON);
+
+        verify(invoiceService, never()).findByIdAsWatchView(any());
+        verify(paymentService, never()).applyFinalized(any(), any());
+        verify(invoiceService, never()).markOutcomeIfOpenOrExpired(any(), any(), any());
+    }
+
+    @Test
+    void shouldLogAndDropChainTxFinalizedWhenInvoiceIsMissing() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
+        when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.of(7L));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.empty());
+
+        consumer.onChainTxFinalized(FINALIZED_JSON);
+
+        verify(paymentService, never()).applyFinalized(any(), any());
+        verify(invoiceService, never()).markOutcomeIfOpenOrExpired(any(), any(), any());
+    }
+
+    @Test
+    void shouldNotMarkInvoiceOutcomeWhenFinalizedOutcomeIsEmpty() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
+        when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.of(7L));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
+        when(paymentService.applyFinalized(any(), any())).thenReturn(Optional.empty());
+
+        consumer.onChainTxFinalized(FINALIZED_JSON);
+
+        verify(invoiceService, never()).markOutcomeIfOpenOrExpired(any(), any(), any());
+    }
+
+    @Test
+    void shouldMarkInvoicePaidOnExactMatch() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
+        when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.of(7L));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
+        when(paymentService.applyFinalized(any(), any())).thenReturn(Optional.of(new FinalizationOutcome(99L, 7L, null)));
+
+        consumer.onChainTxFinalized(FINALIZED_JSON);
+
+        verify(invoiceService).markOutcomeIfOpenOrExpired(7L, InvoiceState.PAID, NOW);
+    }
+
+    @Test
+    void shouldMarkInvoiceUnderpaidOnUnderpayment() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
+        when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.of(7L));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
+        when(paymentService.applyFinalized(any(), any()))
+                .thenReturn(Optional.of(new FinalizationOutcome(99L, 7L, "UNDERPAID")));
+
+        consumer.onChainTxFinalized(FINALIZED_JSON);
+
+        verify(invoiceService).markOutcomeIfOpenOrExpired(7L, InvoiceState.UNDERPAID, NOW);
+    }
+
+    @Test
+    void shouldMarkInvoiceOverpaidOnOverpayment() {
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
+        when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.of(7L));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
+        when(paymentService.applyFinalized(any(), any()))
+                .thenReturn(Optional.of(new FinalizationOutcome(99L, 7L, "OVERPAID")));
+
+        consumer.onChainTxFinalized(FINALIZED_JSON);
+
+        verify(invoiceService).markOutcomeIfOpenOrExpired(7L, InvoiceState.OVERPAID, NOW);
+    }
+
+    /** Phase 4 Finding 1 (T13): a {@code false} return from {@code markOutcomeIfOpenOrExpired}
+     * (the invoice was in neither {@code OPEN} nor {@code EXPIRED}) is logged, not treated as an
+     * error - mirrors {@code InvoiceService#expireInvoice}'s own identical convention. */
+    @Test
+    void shouldLogWhenInvoiceOutcomeIsNotApplied() {
+        org.assertj.core.api.Assertions.assertThatCode(() -> {
+            when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
+            when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.of(7L));
+            when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
+            when(paymentService.applyFinalized(any(), any())).thenReturn(Optional.of(new FinalizationOutcome(99L, 7L, null)));
+            when(invoiceService.markOutcomeIfOpenOrExpired(7L, InvoiceState.PAID, NOW)).thenReturn(false);
+
+            consumer.onChainTxFinalized(FINALIZED_JSON);
+        }).doesNotThrowAnyException();
     }
 
     private static com.themistra.payment.consumer.dto.ChainTxConfirmed argThatConfirmedEventHasConfirmations(int expected) {

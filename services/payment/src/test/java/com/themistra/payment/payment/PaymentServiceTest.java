@@ -273,6 +273,27 @@ class PaymentServiceTest {
         verify(verificationRecordService, never()).recordIgnored(any(), any(), any(), any());
     }
 
+    // --- Phase 4 Finding 2 (T13): the stable-invoiceId lookup ---
+
+    @Test
+    void findInvoiceIdByChainAndTxHashShouldReturnTheInvoiceIdOfAKnownPayment() {
+        Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
+
+        Optional<Long> invoiceId = service.findInvoiceIdByChainAndTxHash(CHAIN, TX_HASH);
+
+        assertThat(invoiceId).contains(INVOICE_ID);
+    }
+
+    @Test
+    void findInvoiceIdByChainAndTxHashShouldReturnEmptyForAnUnknownPayment() {
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.empty());
+
+        Optional<Long> invoiceId = service.findInvoiceIdByChainAndTxHash(CHAIN, TX_HASH);
+
+        assertThat(invoiceId).isEmpty();
+    }
+
     // --- R10: finalize from either SEEN or CONFIRMING ---
 
     private static ChainTxFinalized finalizedEvent() {
@@ -352,6 +373,90 @@ class PaymentServiceTest {
         assertThat(payload.fromAddress()).isEqualTo("0xfrom");
         assertThat(payload.toAddress()).isEqualTo("0xto");
         assertThat(payload.addressPoisoningFlag()).isFalse();
+    }
+
+    // --- R16 (T13, named): already persisted since T11, surfaced end-to-end via the new signature ---
+
+    @Test
+    void shouldSurfaceAddressPoisoningFlagFromObservation() {
+        Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
+        when(repository.markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
+                any(), any(), any(), any(Integer.class), eq(true), isNull(), eq(NOW))).thenReturn(1);
+        ChainTxFinalized poisonedEvent = new ChainTxFinalized(TRIGGER_EVENT_KEY, WATCH_ID, INVOICE_UUID, CHAIN, TX_HASH,
+                "0xfrom", "0xto", TOKEN_CONTRACT_ADDRESS, new BigDecimal("1000"), 12, true, NOW);
+
+        service.applyFinalized(openInvoice(), poisonedEvent);
+
+        // Persisted on the Payment row...
+        verify(repository).markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
+                any(), any(), any(), any(Integer.class), eq(true), isNull(), eq(NOW));
+        // ...and surfaced via the outbox event, both halves of R16.
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(outboxPublisher).publish(eq("payment-finalized"), any(String.class), eq("payment.finalized"), payloadCaptor.capture());
+        assertThat(((PaymentFinalizedPayload) payloadCaptor.getValue()).addressPoisoningFlag()).isTrue();
+    }
+
+    // --- R15 (T13, named): under/exact/over discrepancy classification ---
+
+    @Test
+    void shouldFlagUnderpaymentAndOverpaymentAgainstInvoiceAmount() {
+        Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
+        when(repository.markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
+                any(), any(), any(), any(Integer.class), any(Boolean.class), any(), eq(NOW))).thenReturn(1);
+
+        ChainTxFinalized underpaidEvent = new ChainTxFinalized(TRIGGER_EVENT_KEY, WATCH_ID, INVOICE_UUID, CHAIN, TX_HASH,
+                "0xfrom", "0xto", TOKEN_CONTRACT_ADDRESS, new BigDecimal("900"), 12, false, NOW);
+        Optional<FinalizationOutcome> underpaid = service.applyFinalized(openInvoice(), underpaidEvent);
+        assertThat(underpaid).isPresent();
+        assertThat(underpaid.get().amountDiscrepancy()).isEqualTo("UNDERPAID");
+        verify(repository).markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
+                eq(new BigDecimal("900")), any(), any(), any(Integer.class), any(Boolean.class), eq("UNDERPAID"), eq(NOW));
+
+        ChainTxFinalized overpaidEvent = new ChainTxFinalized(TRIGGER_EVENT_KEY, WATCH_ID, INVOICE_UUID, CHAIN, TX_HASH,
+                "0xfrom", "0xto", TOKEN_CONTRACT_ADDRESS, new BigDecimal("1100"), 12, false, NOW);
+        Optional<FinalizationOutcome> overpaid = service.applyFinalized(openInvoice(), overpaidEvent);
+        assertThat(overpaid).isPresent();
+        assertThat(overpaid.get().amountDiscrepancy()).isEqualTo("OVERPAID");
+        verify(repository).markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
+                eq(new BigDecimal("1100")), any(), any(), any(Integer.class), any(Boolean.class), eq("OVERPAID"), eq(NOW));
+
+        Optional<FinalizationOutcome> exact = service.applyFinalized(openInvoice(), finalizedEvent());
+        assertThat(exact).isPresent();
+        assertThat(exact.get().amountDiscrepancy()).isNull();
+    }
+
+    @Test
+    void shouldCarryTheInvoiceIdOnFinalizationOutcome() {
+        Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
+        when(repository.markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
+                any(), any(), any(), any(Integer.class), any(Boolean.class), isNull(), eq(NOW))).thenReturn(1);
+
+        Optional<FinalizationOutcome> outcome = service.applyFinalized(openInvoice(), finalizedEvent());
+
+        assertThat(outcome).isPresent();
+        assertThat(outcome.get().invoiceId()).isEqualTo(INVOICE_ID);
+    }
+
+    // --- Phase 9 Finding 3: tokenContractAddress mismatch guard ---
+
+    @Test
+    void shouldIgnoreFinalizedEventWhenTokenContractAddressMismatchesTheStoredPayment() {
+        Payment existing = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findByChainAndTxHash(CHAIN, TX_HASH)).thenReturn(Optional.of(existing));
+        ChainTxFinalized mismatched = new ChainTxFinalized(TRIGGER_EVENT_KEY, WATCH_ID, INVOICE_UUID, CHAIN, TX_HASH,
+                "0xfrom", "0xto", "0xDIFFERENT", new BigDecimal("1000"), 12, false, NOW);
+
+        Optional<FinalizationOutcome> outcome = service.applyFinalized(openInvoice(), mismatched);
+
+        assertThat(outcome).isEmpty();
+        verify(repository, never()).markFinalizedIfCurrentState(any(), any(), any(), any(), any(), any(),
+                any(Integer.class), any(Boolean.class), any(), any());
+        verify(verificationRecordService, never()).record(any(), any(), any(), any(), any(), any());
+        verify(verificationRecordService, never()).recordIgnored(any(), any(), any(), any());
+        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
     }
 
     @Test
@@ -483,6 +588,14 @@ class PaymentServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.applySeen(null, seenEvent()))
                 .isInstanceOf(NullPointerException.class);
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.applySeen(openInvoice(), null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void applyFinalizedShouldThrowNullPointerExceptionForNullArguments() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.applyFinalized(null, finalizedEvent()))
+                .isInstanceOf(NullPointerException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.applyFinalized(openInvoice(), null))
                 .isInstanceOf(NullPointerException.class);
     }
 }

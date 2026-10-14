@@ -354,4 +354,65 @@ class InvoiceServiceTest {
 
         assertThat(expired).isFalse();
     }
+
+    // --- T13 (Phase 4 Finding 1, widened; Phase 4 Finding 5): markOutcomeIfOpenOrExpired ---
+
+    private static final Long INVOICE_ID = 7L;
+
+    @Test
+    void shouldMarkOutcomeFromOpen() {
+        when(repository.updateStateIfCurrentState(INVOICE_ID, InvoiceState.OPEN, InvoiceState.PAID, NOW))
+                .thenReturn(1);
+
+        boolean updated = service.markOutcomeIfOpenOrExpired(INVOICE_ID, InvoiceState.PAID, NOW);
+
+        assertThat(updated).isTrue();
+        verify(repository, never()).updateStateIfCurrentState(INVOICE_ID, InvoiceState.EXPIRED, InvoiceState.PAID, NOW);
+    }
+
+    /** Phase 3 Kimi Finding 1 (T13): the widening this method exists for - a payment that
+     * legitimately finalizes after its own invoice was already (possibly wrongly) swept to
+     * {@code EXPIRED} must still be able to leave that state, per design.md O2's "attest
+     * anyway" policy. */
+    @Test
+    void shouldMarkOutcomeFromExpiredWhenOpenAttemptFails() {
+        when(repository.updateStateIfCurrentState(INVOICE_ID, InvoiceState.OPEN, InvoiceState.UNDERPAID, NOW))
+                .thenReturn(0);
+        when(repository.updateStateIfCurrentState(INVOICE_ID, InvoiceState.EXPIRED, InvoiceState.UNDERPAID, NOW))
+                .thenReturn(1);
+
+        boolean updated = service.markOutcomeIfOpenOrExpired(INVOICE_ID, InvoiceState.UNDERPAID, NOW);
+
+        assertThat(updated).isTrue();
+    }
+
+    @Test
+    void shouldNotUpdateAnInvoiceInAnyOtherState() {
+        when(repository.updateStateIfCurrentState(eq(INVOICE_ID), any(), eq(InvoiceState.OVERPAID), eq(NOW)))
+                .thenReturn(0);
+
+        boolean updated = service.markOutcomeIfOpenOrExpired(INVOICE_ID, InvoiceState.OVERPAID, NOW);
+
+        assertThat(updated).isFalse();
+    }
+
+    @Test
+    void markOutcomeIfOpenOrExpiredShouldThrowNullPointerExceptionForNullArguments() {
+        assertThatThrownBy(() -> service.markOutcomeIfOpenOrExpired(null, InvoiceState.PAID, NOW))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> service.markOutcomeIfOpenOrExpired(INVOICE_ID, null, NOW))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> service.markOutcomeIfOpenOrExpired(INVOICE_ID, InvoiceState.PAID, null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void markOutcomeIfOpenOrExpiredShouldRejectAnyStateNotPaidUnderpaidOrOverpaid() {
+        assertThatThrownBy(() -> service.markOutcomeIfOpenOrExpired(INVOICE_ID, InvoiceState.EXPIRED, NOW))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.markOutcomeIfOpenOrExpired(INVOICE_ID, InvoiceState.OPEN, NOW))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.markOutcomeIfOpenOrExpired(INVOICE_ID, InvoiceState.HELD, NOW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }
