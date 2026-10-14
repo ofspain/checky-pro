@@ -175,7 +175,18 @@ public class PaymentService {
      * {@code amount} is available to compute the discrepancy as part of that method's single
      * atomic update, without ever correlating by the reorg-vulnerable {@code watchId} (see
      * {@link ReorgOutcome}'s own Javadoc for the staleness race this avoids entirely by
-     * construction, not by argument). */
+     * construction, not by argument).
+     *
+     * <p><b>Phase 9 Finding 2.</b> {@link #applyFinalized}'s own subsequent {@code
+     * findByChainAndTxHash} call runs inside the same transaction/Hibernate session as this
+     * method - it still issues its own SQL (the query is by {@code (chain, txHash)}, not by
+     * primary key, so Hibernate cannot skip the round-trip), but the row materializes into the
+     * *same already-managed* {@code Payment} instance this method's own call already loaded,
+     * not a freshly hydrated one. Safe here only because {@code invoiceId} is set once at
+     * {@link Payment#createSeen} and never mutated - the same caution T11 Phase 8 Finding 4
+     * raised for a *mutable* field (`findById` returning a stale instance) does not transfer to
+     * an immutable one, but a future caller relying on this same double-lookup shape for a
+     * mutable field should not assume the same safety without re-checking.</p> */
     @Transactional(readOnly = true)
     public Optional<Long> findInvoiceIdByChainAndTxHash(String chain, String txHash) {
         Objects.requireNonNull(chain, "chain must not be null");
@@ -200,7 +211,17 @@ public class PaymentService {
      * <p>Returns a {@link FinalizationOutcome} ({@link Optional#empty()} means stale/ignored -
      * no transition occurred) so {@code ChainEventConsumer} - never this method (L12: no
      * outbound {@code InvoiceService} call may originate here) - can transition {@code
-     * Invoice.state} to match.</p> */
+     * Invoice.state} to match.</p>
+     *
+     * <p><b>Phase 9 Finding 3 (Kimi, corrected — the suggested fix compared the wrong pair).</b>
+     * The event's own {@code tokenContractAddress} must match the already-loaded {@code
+     * Payment}'s own stored value, mirroring {@code applyReorged}'s own identical guard (Phase 3
+     * Finding 6, T12) exactly - not {@code invoice.tokenContractAddress()} against {@code
+     * payment.getTokenContractAddress()} as Kimi's own suggestion proposed, which checks a
+     * different (and, by construction, already-guaranteed-matching) pair: a mismatch there would
+     * indicate a bug several steps earlier, at the original {@code chain.tx.seen} match, not in
+     * this event. A mismatch here is logged at {@code ERROR} and treated as stale, before any
+     * discrepancy is computed.</p> */
     @Transactional
     public Optional<FinalizationOutcome> applyFinalized(InvoiceWatchView invoice, ChainTxFinalized event) {
         Objects.requireNonNull(invoice, "invoice must not be null");
@@ -211,6 +232,13 @@ public class PaymentService {
             return Optional.empty();
         }
         Payment payment = maybePayment.get();
+
+        if (!payment.getTokenContractAddress().equals(event.tokenContractAddress())) {
+            log.error("Ignoring chain.tx.finalized for paymentId={}: tokenContractAddress mismatch "
+                    + "against the loaded payment's own stored value", payment.getId());
+            return Optional.empty();
+        }
+
         Instant now = clock.instant();
         String amountDiscrepancy = classifyDiscrepancy(event.amount(), invoice.amount());
 

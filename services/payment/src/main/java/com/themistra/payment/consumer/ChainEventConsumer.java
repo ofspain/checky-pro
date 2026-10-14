@@ -143,15 +143,8 @@ public class ChainEventConsumer {
             return;
         }
 
-        Optional<Long> maybeInvoiceId = paymentService.findInvoiceIdByChainAndTxHash(event.chain(), event.txHash());
-        if (maybeInvoiceId.isEmpty()) {
-            log.warn("Ignoring chain.tx.finalized for chain={} txHash={}: no known payment", event.chain(), event.txHash());
-            return;
-        }
-        Optional<InvoiceWatchView> maybeInvoice = invoiceService.findByIdAsWatchView(maybeInvoiceId.get());
+        Optional<InvoiceWatchView> maybeInvoice = resolveInvoiceForFinalization(event);
         if (maybeInvoice.isEmpty()) {
-            log.error("Ignoring chain.tx.finalized for invoiceId={}: payment references a non-existent invoice "
-                    + "(data integrity issue, not a routine race)", maybeInvoiceId.get());
             return;
         }
 
@@ -165,6 +158,23 @@ public class ChainEventConsumer {
             log.warn("Invoice {} was not OPEN or EXPIRED when its payment finalized (state already moved on); "
                     + "leaving its own state as-is", outcome.get().invoiceId());
         }
+    }
+
+    /** Phase 9 Finding 1: extracted from {@code onChainTxFinalized}'s own body for readability -
+     * resolves the invoice by the payment's own stable {@code invoiceId} (Phase 4 Finding 2),
+     * never by {@code event.watchId()}, logging and returning empty for either failure case. */
+    private Optional<InvoiceWatchView> resolveInvoiceForFinalization(ChainTxFinalized event) {
+        Optional<Long> maybeInvoiceId = paymentService.findInvoiceIdByChainAndTxHash(event.chain(), event.txHash());
+        if (maybeInvoiceId.isEmpty()) {
+            log.warn("Ignoring chain.tx.finalized for chain={} txHash={}: no known payment", event.chain(), event.txHash());
+            return Optional.empty();
+        }
+        Optional<InvoiceWatchView> maybeInvoice = invoiceService.findByIdAsWatchView(maybeInvoiceId.get());
+        if (maybeInvoice.isEmpty()) {
+            log.error("Ignoring chain.tx.finalized for invoiceId={}: payment references a non-existent invoice "
+                    + "(data integrity issue, not a routine race)", maybeInvoiceId.get());
+        }
+        return maybeInvoice;
     }
 
     /** R15. {@code null} means an exact match (maps to {@code PAID}); the schema's own
