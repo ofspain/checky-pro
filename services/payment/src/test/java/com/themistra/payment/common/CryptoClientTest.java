@@ -188,6 +188,35 @@ class CryptoClientTest {
         assertThat(capturedMethod.get()).isEqualTo("DELETE");
     }
 
+    /** Phase 11 Gap 5 (Kimi): the method-only check above would still pass if the URI were wrong
+     * (e.g. missing the watchId path segment entirely). */
+    @Test
+    void shouldSendDeleteRequestToTheWatchIdSpecificUriOnUnregisterWatch() throws IOException {
+        AtomicReference<String> capturedPath = new AtomicReference<>();
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startServer(204, "", exchange -> capturedPath.set(exchange.getRequestURI().getPath()));
+
+        UUID watchId = UUID.randomUUID();
+        client.unregisterWatch(watchId);
+
+        assertThat(capturedPath.get()).isEqualTo("/internal/v1/watches/" + watchId);
+    }
+
+    /** Phase 11 Gap 6 (Kimi): {@code registerWatch}'s own bearer-token injection is covered by
+     * {@code shouldSendBearerTokenFromProvider}, but the shared interceptor was never verified
+     * for the DELETE path specifically. */
+    @Test
+    void shouldSendBearerTokenOnUnregisterWatch() throws IOException {
+        AtomicReference<String> capturedAuthHeader = new AtomicReference<>();
+        when(tokenProvider.getAccessToken()).thenReturn("a-real-looking-token");
+        CryptoClient client = startServer(204, "",
+                exchange -> capturedAuthHeader.set(exchange.getRequestHeaders().getFirst("Authorization")));
+
+        client.unregisterWatch(UUID.randomUUID());
+
+        assertThat(capturedAuthHeader.get()).isEqualTo("Bearer a-real-looking-token");
+    }
+
     /** Phase 3 finding 3: a prior successful unregister that a retried sweep repeats (e.g. after
      * a failed DB commit before {@code expireInvoice} ran) must never throw - {@code 404} is one
      * real shape a deployment might use for "already gone." */

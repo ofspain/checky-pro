@@ -1,8 +1,13 @@
 package com.themistra.payment.invoice;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.themistra.payment.common.CryptoClient;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
@@ -34,7 +39,11 @@ class InvoiceExpirySweepJobTest {
     private final InvoiceExpirySweepJob job = new InvoiceExpirySweepJob(invoiceService, cryptoClient);
 
     private static Invoice invoiceWithWatchId(UUID watchId) {
-        return Invoice.create(UUID.randomUUID(), MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
+        return invoiceWithWatchId(watchId, UUID.randomUUID());
+    }
+
+    private static Invoice invoiceWithWatchId(UUID watchId, UUID invoiceUuid) {
+        return Invoice.create(invoiceUuid, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc", (short) 18,
                 new BigDecimal("1000"), "0xdef", null, NOW.plusSeconds(3600), watchId, NOW);
     }
 
@@ -72,17 +81,37 @@ class InvoiceExpirySweepJobTest {
      * the invoice was no longer {@code OPEN} by the time the atomic update ran (e.g. a payment
      * became in-flight first) - not an error. The sweep must not throw or otherwise treat this as
      * a failure; {@code unregisterWatch} has already run by this point regardless (the disclosed,
-     * narrower residual race documented in {@code processOne}'s own Javadoc). */
+     * narrower residual race documented in {@code processOne}'s own Javadoc).
+     *
+     * <p>Phase 11 Gap 8 (Kimi): originally only proved "doesn't throw" - extended with {@code
+     * ListAppender} (mirrors {@code HeldFactAlerterTest}'s own identical pattern, crypto-service)
+     * to also prove the disclosed residual race is actually logged at {@code WARN}, not silently
+     * swallowed. */
     @Test
     void shouldNotThrowWhenInvoiceWasNoLongerOpenWhenExpiryWasAttempted() {
         UUID watchId = UUID.randomUUID();
-        Invoice invoice = invoiceWithWatchId(watchId);
+        UUID invoiceUuid = UUID.randomUUID();
+        Invoice invoice = invoiceWithWatchId(watchId, invoiceUuid);
         when(invoiceService.expireInvoice(invoice)).thenReturn(false);
 
-        job.processOne(invoice);
+        Logger logger = (Logger) LoggerFactory.getLogger(InvoiceExpirySweepJob.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            job.processOne(invoice);
 
-        verify(cryptoClient).unregisterWatch(watchId);
-        verify(invoiceService).expireInvoice(invoice);
+            verify(cryptoClient).unregisterWatch(watchId);
+            verify(invoiceService).expireInvoice(invoice);
+            assertThat(appender.list).anySatisfy(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage())
+                        .contains(invoiceUuid.toString())
+                        .contains("no longer OPEN");
+            });
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 
     /** AC4: one invoice's own failure - including an exception {@code processOne} itself throws -
@@ -102,6 +131,19 @@ class InvoiceExpirySweepJobTest {
 
         verify(invoiceService).expireInvoice(goodInvoice);
         verify(invoiceService, never()).expireInvoice(badInvoice);
+    }
+
+    /** Phase 11 Gap 3 (Kimi): {@code sweepMethodIsAnnotatedSchedulerLock} proves the ShedLock
+     * guard, but nothing proved the method is actually scheduled - a missing {@code @Scheduled}
+     * would leave the job dormant despite the cron property being bound. */
+    @Test
+    void sweepMethodIsAnnotatedScheduled() throws NoSuchMethodException {
+        Method sweep = InvoiceExpirySweepJob.class.getMethod("sweep");
+        org.springframework.scheduling.annotation.Scheduled scheduled =
+                sweep.getAnnotation(org.springframework.scheduling.annotation.Scheduled.class);
+
+        assertThat(scheduled).as("sweep() must be @Scheduled").isNotNull();
+        assertThat(scheduled.cron()).isEqualTo("${themistra.payment.invoice.expiry-sweep.cron}");
     }
 
     /** AC3: {@code sweep()} must be {@code @SchedulerLock}-guarded, mirroring

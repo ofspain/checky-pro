@@ -34,13 +34,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers
 class SchemaBaselineMigrationIntegrationTest {
 
-    // T06/V3 (Phase 9, Kimi Phase 8 finding 1): invoices joins the INSERT+SELECT-only set (T06's
-    // own InvoiceService.create is the first real caller); outbox, shedlock, and payments each
-    // have their own, differently-shaped privilege set (outbox: INSERT+SELECT+UPDATE; shedlock:
-    // SELECT+INSERT+UPDATE, T08; payments: SELECT-only, T08), so each is tracked and tested
-    // separately, not folded into GRANTED_TABLES's own exactly-two-privileges check.
+    // T06/V3: outbox, shedlock, payments, and (since V6, T08 Phase 11) invoices each have their
+    // own, differently-shaped privilege set (outbox: INSERT+SELECT+UPDATE; shedlock:
+    // SELECT+INSERT+UPDATE, T08; payments: SELECT-only, T08; invoices: INSERT+SELECT+UPDATE,
+    // T08 V6), so each is tracked and tested separately, not folded into GRANTED_TABLES's own
+    // exactly-two-privileges check.
     private static final List<String> GRANTED_TABLES =
-            List.of("ledger_entries", "verification_records", "invoices");
+            List.of("ledger_entries", "verification_records");
     private static final List<String> ALL_GRANTED_TABLE_NAMES =
             List.of("ledger_entries", "verification_records", "invoices", "outbox", "shedlock", "payments");
     // The remaining three baseline tables (receipts, ledger_anchors, processed_events) get no
@@ -144,7 +144,7 @@ class SchemaBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6");
         }
     }
 
@@ -293,6 +293,28 @@ class SchemaBaselineMigrationIntegrationTest {
                 }
                 assertThat(privileges).as("%s privilege set", table).containsExactlyInAnyOrder("INSERT", "SELECT");
             }
+        }
+    }
+
+    /** T08/V6 (Phase 11): invoices' own privilege set widened from INSERT+SELECT to include
+     * UPDATE - InvoiceRepository.updateStateIfCurrentState (Phase 9's own atomic conditional
+     * update, the fix for the lost-update race) issues a real UPDATE against this table as
+     * payment_app; without this grant it fails with a real permission-denied error. Self-
+     * identified while resolving Kimi's Phase 11 Gap 1/2 suggestions - no prior test exercised a
+     * real UPDATE against invoices as payment_app, so this gap was invisible to every mocked-
+     * repository unit test. */
+    @Test
+    void invoicesHasExactlyInsertSelectAndUpdatePrivilegesNoMore() throws SQLException {
+        try (Connection admin = adminConnection();
+             Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT privilege_type FROM information_schema.table_privileges "
+                             + "WHERE grantee = 'payment_app' AND table_schema = 'payments' AND table_name = 'invoices'")) {
+            List<String> privileges = new ArrayList<>();
+            while (resultSet.next()) {
+                privileges.add(resultSet.getString(1));
+            }
+            assertThat(privileges).as("invoices privilege set").containsExactlyInAnyOrder("INSERT", "SELECT", "UPDATE");
         }
     }
 

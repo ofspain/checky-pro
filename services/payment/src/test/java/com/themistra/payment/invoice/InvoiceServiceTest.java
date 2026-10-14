@@ -11,6 +11,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.jpa.repository.Query;
 
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
@@ -261,7 +262,17 @@ class InvoiceServiceTest {
      * disclosed, carried-forward gap as Phase 7/8/9) means this cannot be proven by actually
      * running the query against Postgres, so this is a structural proof instead: it reads the
      * real {@code @Query} annotation value via reflection (not a static source-text file read,
-     * so it survives reformatting) and asserts all four state literals are present. */
+     * so it survives reformatting) and asserts all four state literals are present.
+     *
+     * <p>Phase 11 Gap 2 (Kimi): the original version of this test only checked the four state
+     * literals, which would still pass if {@code state = 'OPEN'}, {@code expires_at <= :now}, or
+     * the {@code NOT EXISTS} anti-join shape were dropped - extended to also guard those. The
+     * authoritative behavioral proof (not just structural) is now
+     * {@code InvoiceRepositoryIntegrationTest.findExpiredCandidatesWithoutInFlightPaymentReturnsOnlyTheEligibleInvoice}
+     * (Phase 11 Gap 1), which seeds real rows against a real Postgres - also currently unrunnable
+     * locally for the same disclosed Docker-unavailable reason. This structural test stays as a
+     * fast, no-Docker-required regression guard; it is deliberately not the only line of
+     * defense. */
     @Test
     void shouldNotExpireInvoiceWithPaymentInFlight() throws NoSuchMethodException {
         Query query = InvoiceRepository.class
@@ -273,7 +284,37 @@ class InvoiceServiceTest {
                 .contains("'CREATED'")
                 .contains("'WATCHING'")
                 .contains("'SEEN'")
-                .contains("'CONFIRMING'");
+                .contains("'CONFIRMING'")
+                .contains("state = 'OPEN'")
+                .contains("expires_at <= :now")
+                .contains("NOT EXISTS");
+    }
+
+    /** Phase 11 Gap 7 (Kimi): a regression that dropped {@code i.updatedAt = :now} from the
+     * atomic update would leave expired invoices with a stale {@code updated_at} - structural
+     * guard on the real {@code @Query} value (behavioral proof is
+     * {@code InvoiceRepositoryIntegrationTest.updateStateIfCurrentStateActuallyUpdatesStateAndUpdatedAtForARealOpenInvoice}). */
+    @Test
+    void updateStateIfCurrentStateQuerySetsUpdatedAt() throws NoSuchMethodException {
+        Query query = InvoiceRepository.class
+                .getDeclaredMethod("updateStateIfCurrentState", Long.class, InvoiceState.class,
+                        InvoiceState.class, Instant.class)
+                .getAnnotation(Query.class);
+
+        assertThat(query).as("updateStateIfCurrentState must be a real @Query").isNotNull();
+        assertThat(query.value()).contains("i.updatedAt = :now");
+    }
+
+    /** Phase 11 Gap 4 (Kimi): {@code expireInvoice} must be {@code @Transactional} - the atomic
+     * update must run inside a real transaction. Reflection-based (not a source-text search,
+     * which {@code sweepMethodIsNotAnnotatedTransactional}'s own precedent in
+     * {@code InvoiceExpirySweepJobTest} found can false-positive on Javadoc prose). */
+    @Test
+    void expireInvoiceMethodIsAnnotatedTransactional() throws NoSuchMethodException {
+        Method method = InvoiceService.class.getMethod("expireInvoice", Invoice.class);
+
+        assertThat(method.getAnnotation(org.springframework.transaction.annotation.Transactional.class))
+                .isNotNull();
     }
 
     @Test
