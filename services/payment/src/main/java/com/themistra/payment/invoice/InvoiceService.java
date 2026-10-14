@@ -97,16 +97,25 @@ public class InvoiceService {
         return repository.findExpiredCandidatesWithoutInFlightPayment(clock.instant());
     }
 
-    /** R5 (T08): {@code invoice} is the already-fetched (now-detached, since the candidate query
-     * runs outside this method's own transaction) entity - {@code repository.save} is a merge,
-     * mirroring {@code notification-service}'s own identical {@code RetryScheduler} pattern for
-     * exactly this situation. {@link Invoice#markExpired()} itself is the no-op guard against a
-     * concurrent state change (Phase 3 finding 2) - this method does not re-check state. */
+    /** R5 (T08). <b>Phase 9 correction (Kimi Phase 8 finding 1, High severity):</b> the Phase 6
+     * design merged the already-fetched, now-detached {@code invoice} entity via {@code
+     * repository.save} - a real, confirmed bug: the detached object's own {@code state} field is
+     * always {@code OPEN} (that was the candidate query's own filter), so merging it would
+     * silently overwrite any real concurrent state change (e.g. a {@code chain.tx.seen} moving
+     * the invoice to a different state) back to {@code EXPIRED}. {@code mirrors notification-
+     * service's own RetryScheduler pattern} was the wrong precedent to copy here - that pattern
+     * is safe for an entity nothing else concurrently mutates, which does not describe {@code
+     * Invoice} during an in-flight payment. Replaced with a single atomic, conditional {@code
+     * UPDATE ... WHERE state = 'OPEN'} (no entity load, no merge, no lost-update window at all -
+     * also closes Phase 8 findings 3 and 6, the same root cause). Returns whether the row was
+     * actually expired (false means it was no longer {@code OPEN} by the time this ran - not an
+     * error, the payment simply became in-flight first). */
     @Transactional
-    public void expireInvoice(Invoice invoice) {
+    public boolean expireInvoice(Invoice invoice) {
         Objects.requireNonNull(invoice, "invoice must not be null");
-        invoice.markExpired();
-        repository.save(invoice);
+        int rowsUpdated = repository.updateStateIfCurrentState(
+                invoice.getId(), InvoiceState.OPEN, InvoiceState.EXPIRED, clock.instant());
+        return rowsUpdated > 0;
     }
 
     /** R3 (AC1): {@code chain} must be a recognized value; {@code tokenContractAddress} must be

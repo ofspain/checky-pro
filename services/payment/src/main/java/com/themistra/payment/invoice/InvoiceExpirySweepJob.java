@@ -56,6 +56,24 @@ public class InvoiceExpirySweepJob {
             return;
         }
         cryptoClient.unregisterWatch(invoice.getWatchId());
-        invoiceService.expireInvoice(invoice);
+        boolean expired = invoiceService.expireInvoice(invoice);
+        if (!expired) {
+            // Phase 9 (Kimi Phase 8 findings 1/3/6) fixed the DB-state half of this race: the
+            // atomic conditional update leaves the invoice's real state alone if it is no longer
+            // OPEN by the time this runs (e.g. a payment became in-flight between the batch's own
+            // candidate query and this specific invoice's turn in the loop). It does NOT close
+            // the watch-removal half: unregisterWatch, above, already ran unconditionally against
+            // the batch-stale candidate state. A payment that arrives in that (typically narrow,
+            // but non-zero for invoices later in a large batch) window loses its watch even though
+            // this method correctly leaves its row alone - no further chain.tx.* event for it will
+            // ever reach this service. Disclosed, not silently accepted: closing it fully would
+            // need a fresh in-flight re-check immediately before unregisterWatch, atomically with
+            // it - a real design question for a future hardening task if this window is ever shown
+            // to matter in practice, not attempted here as a late addition to an already-approved
+            // Phase 9 fix.
+            log.warn("Invoice invoiceUuid={} was no longer OPEN when expiry was attempted; its watch "
+                    + "was already unregistered above - see InvoiceExpirySweepJob's own Javadoc "
+                    + "for the known, disclosed race this can expose", invoice.getInvoiceUuid());
+        }
     }
 }

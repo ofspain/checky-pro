@@ -32,6 +32,14 @@ import java.util.UUID;
  * beans), so this fallback only fires if some future path ever persists/updates an {@code
  * Invoice} without going through {@link #create} or without otherwise setting {@code
  * updatedAt}. No caller takes that path within this task's own scope.</p>
+ *
+ * <p><b>No state-mutator exists (T08, Phase 9 correction).</b> A {@code markExpired()} method
+ * was added and then removed in the same task, once Kimi's Phase 8 review found that merging a
+ * detached instance of this entity (the shape every mutator-plus-{@code save} approach requires)
+ * creates a real lost-update race against a concurrent state change — see
+ * {@code InvoiceService.expireInvoice}'s own Javadoc for the full correction. State transitions
+ * are performed by atomic, conditional `UPDATE ... WHERE state = :expected` queries instead,
+ * never by loading, mutating, and merging this entity.</p>
  */
 @Entity
 @Table(name = "invoices")
@@ -107,17 +115,6 @@ public class Invoice {
         invoice.createdAt = now;
         invoice.updatedAt = now;
         return invoice;
-    }
-
-    /** R5 (T08): a no-op unless the current state is {@code OPEN} (Phase 3 finding 2) - guards
-     * the narrow race window between the sweep's own candidate query and this update, where a
-     * {@code chain.tx.seen} event or a concurrent sweep run could already have moved the invoice
-     * to a different state. */
-    void markExpired() {
-        if (state != InvoiceState.OPEN) {
-            return;
-        }
-        state = InvoiceState.EXPIRED;
     }
 
     @PrePersist

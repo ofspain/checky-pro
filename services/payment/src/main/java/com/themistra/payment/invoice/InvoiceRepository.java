@@ -1,6 +1,7 @@
 package com.themistra.payment.invoice;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -30,4 +31,16 @@ interface InvoiceRepository extends JpaRepository<Invoice, Long> {
             )
             """, nativeQuery = true)
     List<Invoice> findExpiredCandidatesWithoutInFlightPayment(@Param("now") Instant now);
+
+    /** T08 (Phase 9, Kimi Phase 8 findings 1/3/6): a single atomic, conditional update - no
+     * entity load, no merge, no lost-update window. Returns the number of rows actually updated
+     * (0 or 1); 0 means the invoice was no longer in {@code expectedCurrentState} by the time
+     * this ran (e.g. a payment became in-flight first) - not an error, the caller treats this as
+     * "correctly left alone," not a failure. Bypasses {@code @PreUpdate} (a JPQL bulk update
+     * never loads an entity instance), so {@code updatedAt} is set explicitly here instead. */
+    @Modifying
+    @Query("UPDATE Invoice i SET i.state = :newState, i.updatedAt = :now "
+            + "WHERE i.id = :id AND i.state = :expectedCurrentState")
+    int updateStateIfCurrentState(@Param("id") Long id, @Param("expectedCurrentState") InvoiceState expectedCurrentState,
+                                   @Param("newState") InvoiceState newState, @Param("now") Instant now);
 }
