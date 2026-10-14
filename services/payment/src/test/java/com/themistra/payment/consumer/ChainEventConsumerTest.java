@@ -125,6 +125,9 @@ class ChainEventConsumerTest {
 
         consumer.onChainTxFinalized(FINALIZED_JSON);
 
+        // Phase 11 Gap 6 (Kimi, narrowed - a dedupe test already existed, it just didn't assert
+        // on this T13-introduced intermediate call).
+        verify(paymentService, never()).findInvoiceIdByChainAndTxHash(any(), any());
         verify(paymentService, never()).applyFinalized(any(), any());
     }
 
@@ -302,18 +305,38 @@ class ChainEventConsumerTest {
 
     /** Phase 4 Finding 1 (T13): a {@code false} return from {@code markOutcomeIfOpenOrExpired}
      * (the invoice was in neither {@code OPEN} nor {@code EXPIRED}) is logged, not treated as an
-     * error - mirrors {@code InvoiceService#expireInvoice}'s own identical convention. */
+     * error - mirrors {@code InvoiceService#expireInvoice}'s own identical convention.
+     *
+     * <p>Phase 11 Gap 4 (Kimi): a {@code ListAppender} (mirrors {@code
+     * InvoiceExpirySweepJobTest}'s own identical pattern) proves the warning is actually
+     * logged, not silently swallowed - asserting "does not throw" alone would also pass for a
+     * no-op. */
     @Test
     void shouldLogWhenInvoiceOutcomeIsNotApplied() {
-        org.assertj.core.api.Assertions.assertThatCode(() -> {
-            when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
-            when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.of(7L));
-            when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
-            when(paymentService.applyFinalized(any(), any())).thenReturn(Optional.of(new FinalizationOutcome(99L, 7L, null)));
-            when(invoiceService.markOutcomeIfOpenOrExpired(7L, InvoiceState.PAID, NOW)).thenReturn(false);
+        when(processedEventRepository.insertIfNew("ETHEREUM:0xabc:chain.tx.finalized", NOW)).thenReturn(1);
+        when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.of(7L));
+        when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
+        when(paymentService.applyFinalized(any(), any())).thenReturn(Optional.of(new FinalizationOutcome(99L, 7L, null)));
+        when(invoiceService.markOutcomeIfOpenOrExpired(7L, InvoiceState.PAID, NOW)).thenReturn(false);
 
+        org.slf4j.Logger slf4jLogger = org.slf4j.LoggerFactory.getLogger(ChainEventConsumer.class);
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) slf4jLogger;
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
             consumer.onChainTxFinalized(FINALIZED_JSON);
-        }).doesNotThrowAnyException();
+
+            assertThat(appender.list).anySatisfy(event -> {
+                assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+                assertThat(event.getFormattedMessage())
+                        .contains("7")
+                        .contains("not OPEN or EXPIRED");
+            });
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 
     private static com.themistra.payment.consumer.dto.ChainTxConfirmed argThatConfirmedEventHasConfirmations(int expected) {
