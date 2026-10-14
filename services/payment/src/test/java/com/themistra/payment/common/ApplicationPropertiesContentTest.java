@@ -106,4 +106,14 @@ class ApplicationPropertiesContentTest {
         String properties = Files.readString(APPLICATION_PROPERTIES);
         assertThat(properties).contains("server.port=${SERVER_PORT:8083}");
     }
+
+    /** T04 AC6 (Phase 8 finding 2): the outbox relay's own polling interval must stay present -
+     * without it, OutboxRelay's @Scheduled(fixedDelayString = ...) falls back to the hardcoded
+     * literal default baked into the annotation itself, silently decoupling runtime behavior from
+     * this file the next time someone expects changing this property to have any effect. */
+    @Test
+    void outboxRelayIntervalIsConfigured() throws IOException {
+        String properties = Files.readString(APPLICATION_PROPERTIES);
+        assertThat(properties).contains("themistra.payment.outbox.relay-interval-ms=");
+    }
 }
