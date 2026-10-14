@@ -59,8 +59,13 @@ class InvoiceExpirySweepJobTest {
 
         job.processOne(invoice);
 
-        verify(cryptoClient).unregisterWatch(watchId);
-        verify(invoiceService).expireInvoice(invoice);
+        // Phase 12 (self-identified while building the traceability matrix): the two bare
+        // verify()s below only proved both calls happened, never AC5's own actual claim - that
+        // unregisterWatch runs strictly before expireInvoice (its own @Transactional method),
+        // never inside or after it.
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(cryptoClient, invoiceService);
+        inOrder.verify(cryptoClient).unregisterWatch(watchId);
+        inOrder.verify(invoiceService).expireInvoice(invoice);
     }
 
     /** AC8 (Phase 3 finding 7): a candidate with no {@code watchId} is skipped entirely - neither
