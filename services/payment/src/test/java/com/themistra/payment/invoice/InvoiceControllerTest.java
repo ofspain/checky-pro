@@ -292,6 +292,8 @@ class InvoiceControllerTest {
                 .andExpect(jsonPath("$[0].reference").value("order-1"))
                 .andExpect(jsonPath("$[0].state").value("OPEN"))
                 .andExpect(jsonPath("$[0].watchId").doesNotExist());
+
+        verify(invoiceService).listForMerchant(MERCHANT_ACCOUNT_UUID);
     }
 
     @Test
@@ -311,8 +313,33 @@ class InvoiceControllerTest {
         mockMvc.perform(get("/api/v1/invoices/" + INVOICE_UUID).with(merchantJwt()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.invoiceUuid").value(INVOICE_UUID.toString()))
+                .andExpect(jsonPath("$.merchantAccountUuid").value(MERCHANT_ACCOUNT_UUID.toString()))
+                .andExpect(jsonPath("$.chain").value("ETHEREUM"))
+                .andExpect(jsonPath("$.tokenContractAddress").value("0xabc"))
+                .andExpect(jsonPath("$.tokenDecimals").value(18))
                 .andExpect(jsonPath("$.amount").value("1000"))
+                .andExpect(jsonPath("$.payToAddress").value("0xdef"))
+                .andExpect(jsonPath("$.reference").value("order-1"))
+                .andExpect(jsonPath("$.state").value("OPEN"))
                 .andExpect(jsonPath("$.watchId").doesNotExist());
+
+        // Phase 11 Gap 6: proves the controller actually delegates with the JWT-derived merchant
+        // UUID and the real path UUID, not hard-coded/stubbed data.
+        verify(invoiceService).getForMerchant(MERCHANT_ACCOUNT_UUID, INVOICE_UUID);
+    }
+
+    /** Phase 11 Gap 8: an invoice with a null reference must serialize the field as JSON
+     * {@code null}, not omit it or throw - resolves the ambiguity Kimi itself raised. */
+    @Test
+    void shouldSerializeNullReferenceAsJsonNull() throws Exception {
+        Invoice invoiceWithNullReference = Invoice.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM",
+                "0xabc", (short) 18, new BigDecimal("1000"), "0xdef", null, EXPIRES_AT, WATCH_ID, EXPIRES_AT);
+        when(invoiceService.getForMerchant(MERCHANT_ACCOUNT_UUID, INVOICE_UUID))
+                .thenReturn(invoiceWithNullReference);
+
+        mockMvc.perform(get("/api/v1/invoices/" + INVOICE_UUID).with(merchantJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reference").value(org.hamcrest.Matchers.nullValue()));
     }
 
     /** AC2: asserts the identical 404 body for both causes (Phase 8 finding 5) - captured once
@@ -342,8 +369,37 @@ class InvoiceControllerTest {
     @Test
     void shouldRejectNonMerchantCallerOnReadEndpoints() throws Exception {
         mockMvc.perform(get("/api/v1/invoices").with(nonMerchantJwt()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.title").value("Forbidden"))
+                .andExpect(jsonPath("$.status").value(403));
         mockMvc.perform(get("/api/v1/invoices/" + INVOICE_UUID).with(nonMerchantJwt()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.title").value("Forbidden"))
+                .andExpect(jsonPath("$.status").value(403));
+    }
+
+    /** Phase 11 Gap 5: the existing unauthenticated test covers POST only - the security filter
+     * chain's own {@code .anyRequest().authenticated()} rule must apply to the read paths too. */
+    @Test
+    void shouldRejectUnauthenticatedCallerOnReadEndpoints() throws Exception {
+        mockMvc.perform(get("/api/v1/invoices"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/v1/invoices/" + INVOICE_UUID))
+                .andExpect(status().isUnauthorized());
+    }
+
+    /** Phase 11 Gap 4: a non-UUID path segment must map to the existing {@code
+     * ApiExceptionHandler.onTypeMismatch} 400 path (T06) - not previously exercised for this
+     * controller's own path variable. */
+    @Test
+    void shouldReturn400ForMalformedInvoiceUuidPathVariable() throws Exception {
+        mockMvc.perform(get("/api/v1/invoices/not-a-uuid").with(merchantJwt()))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.title").value("Malformed request parameter"));
     }
 }
