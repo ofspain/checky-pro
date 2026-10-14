@@ -194,11 +194,10 @@ class ArchitectureTest {
                 .hasMessageContaining("Invoice");
     }
 
-    /** {@link RogueUnmappedEntity} is a real {@code @Entity}, deliberately placed outside
-     * {@code com.themistra.payment} entirely's own module list (it lives under
-     * {@code archtestfixtures}, not {@code invoice} or {@code payment}), proving the documented
-     * "fail loudly, don't silently skip" behavior for an entity this rule doesn't know how to
-     * place. */
+    /** {@link RogueUnmappedEntity} is a real {@code @Entity}, deliberately placed outside every
+     * package {@link #FEATURE_MODULES} lists (it lives under {@code archtestfixtures}, not
+     * {@code invoice}/{@code payment}/{@code events}), proving the documented "fail loudly,
+     * don't silently skip" behavior for an entity this rule doesn't know how to place. */
     @Test
     void shouldFailFastWhenAnEntityIsOutsideEveryFeatureModule() {
         JavaClasses unmappedEntityOnly = new ClassFileImporter().importClasses(RogueUnmappedEntity.class);
