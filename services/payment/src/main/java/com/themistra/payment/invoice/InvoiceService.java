@@ -91,6 +91,24 @@ public class InvoiceService {
                 .orElseThrow(InvoiceNotFoundException::new);
     }
 
+    /** R5 (AC1/AC2, T08): system-level sweep candidates, not scoped to any one merchant. */
+    @Transactional(readOnly = true)
+    public List<Invoice> findExpiredCandidatesWithoutInFlightPayment() {
+        return repository.findExpiredCandidatesWithoutInFlightPayment(clock.instant());
+    }
+
+    /** R5 (T08): {@code invoice} is the already-fetched (now-detached, since the candidate query
+     * runs outside this method's own transaction) entity - {@code repository.save} is a merge,
+     * mirroring {@code notification-service}'s own identical {@code RetryScheduler} pattern for
+     * exactly this situation. {@link Invoice#markExpired()} itself is the no-op guard against a
+     * concurrent state change (Phase 3 finding 2) - this method does not re-check state. */
+    @Transactional
+    public void expireInvoice(Invoice invoice) {
+        Objects.requireNonNull(invoice, "invoice must not be null");
+        invoice.markExpired();
+        repository.save(invoice);
+    }
+
     /** R3 (AC1): {@code chain} must be a recognized value; {@code tokenContractAddress} must be
      * present. No address-format/checksum validation - no precedent exists anywhere in the
      * codebase yet ({@code crypto-service}'s own {@code AddressValidator} is explicitly future-

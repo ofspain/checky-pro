@@ -109,6 +109,17 @@ public class Invoice {
         return invoice;
     }
 
+    /** R5 (T08): a no-op unless the current state is {@code OPEN} (Phase 3 finding 2) - guards
+     * the narrow race window between the sweep's own candidate query and this update, where a
+     * {@code chain.tx.seen} event or a concurrent sweep run could already have moved the invoice
+     * to a different state. */
+    void markExpired() {
+        if (state != InvoiceState.OPEN) {
+            return;
+        }
+        state = InvoiceState.EXPIRED;
+    }
+
     @PrePersist
     void onCreate() {
         if (createdAt == null) {

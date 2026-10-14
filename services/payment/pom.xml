@@ -81,12 +81,12 @@
     <dependency><groupId>com.tngtech.archunit</groupId><artifactId>archunit-junit5</artifactId><version>1.3.0</version><scope>test</scope></dependency>
     <dependency><groupId>org.awaitility</groupId><artifactId>awaitility</artifactId><version>4.2.2</version><scope>test</scope></dependency>
 
-    <!-- Deliberately NOT added this task (T01 frozen brief, Phase 0/1 finding): ShedLock
-         (net.javacrumbs.shedlock:*) lands at task 8 (invoice expiry sweep), the first task that
-         actually needs multi-replica mutual exclusion. jackson-dataformat-yaml lands at task 24
-         (contracts/api/payments.yaml parsing for the OpenAPI contract test). Adding either now
-         would front-load a dependency before the task that introduces what it enables - the same
-         discipline crypto-service's own T01 established for Application-class annotations. -->
+    <!-- T08: ShedLock, this service's first multi-replica mutual-exclusion need
+         (InvoiceExpirySweepJob). Version matches notification-service's own identical, already-
+         vetted pinned version. jackson-dataformat-yaml still deliberately NOT added - lands at
+         task 24 (contracts/api/payments.yaml parsing for the OpenAPI contract test). -->
+    <dependency><groupId>net.javacrumbs.shedlock</groupId><artifactId>shedlock-spring</artifactId><version>7.9.0</version></dependency>
+    <dependency><groupId>net.javacrumbs.shedlock</groupId><artifactId>shedlock-provider-jdbc-template</artifactId><version>7.9.0</version></dependency>
   </dependencies>
 
   <build>

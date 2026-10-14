@@ -3,8 +3,11 @@ package com.themistra.payment.common;
 import com.themistra.payment.common.config.CryptoClientProperties;
 import com.themistra.payment.common.crypto.RegisterWatchRequest;
 import com.themistra.payment.common.crypto.RegisterWatchResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
@@ -14,8 +17,8 @@ import java.util.UUID;
 
 /**
  * The outbound REST client to the Crypto Service (design.md §4c, L3) — this service's first
- * inter-service authenticated HTTP call (T06). Only {@code registerWatch} is this task's own
- * scope; {@code attest}/{@code unregisterWatch} land in later tasks.
+ * inter-service authenticated HTTP call (T06). {@code unregisterWatch} added at T08 (invoice
+ * expiry sweep); {@code attest} lands in a later task.
  *
  * <p>Deliberately never called from inside {@code InvoiceService.create}'s own
  * {@code @Transactional} method (Phase 3 findings 1/7, Phase 4 disposition) — {@code
@@ -24,6 +27,7 @@ import java.util.UUID;
 @Component
 public class CryptoClient {
 
+    private static final Logger log = LoggerFactory.getLogger(CryptoClient.class);
     private static final String REGISTERED_STATUS = "REGISTERED";
 
     private final RestClient restClient;
@@ -73,6 +77,27 @@ public class CryptoClient {
         } catch (RestClientException e) {
             throw new CryptoServiceUnavailableException(
                     "Failed to register a watch with Crypto Service for invoice " + invoiceUuid, e);
+        }
+    }
+
+    /**
+     * {@code DELETE /internal/v1/watches/{watchId}} (R5, T08). The contract's own text says this
+     * is idempotent — "also returned for an already-unregistered watch" — but a 204 is not the
+     * only shape a real Crypto Service deployment might use to say "already gone"; {@code 404}/
+     * {@code 410} are treated as success too (Phase 3 finding 3), so a retried sweep after a
+     * prior successful unregister (but a failed DB commit before {@code expireInvoice} ran)
+     * never gets permanently stuck.
+     */
+    public void unregisterWatch(UUID watchId) {
+        try {
+            restClient.delete()
+                    .uri(watchPath + "/{watchId}", watchId)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Gone e) {
+            log.debug("Watch {} was already unregistered; treating as success", watchId);
+        } catch (RestClientException e) {
+            throw new CryptoServiceUnavailableException("Failed to unregister watch " + watchId, e);
         }
     }
 }
