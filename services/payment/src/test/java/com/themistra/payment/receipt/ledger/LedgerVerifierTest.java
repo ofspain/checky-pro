@@ -227,16 +227,161 @@ class LedgerVerifierTest {
     void shouldReportBrokenNotThrowWhenPayloadIsNull() throws SQLException {
         LedgerEntry entry = ledgerService.append(seedReceipt(), Map.of("k", "v1"));
 
-        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
-            statement.execute("ALTER TABLE payments.ledger_entries ALTER COLUMN payload DROP NOT NULL");
-            statement.execute("UPDATE payments.ledger_entries SET payload = NULL WHERE seq = " + entry.getSeq());
-        }
+        // Phase 11 Gap 1 (Kimi): the container is class-scoped - dropping NOT NULL here would
+        // otherwise leak into every later test in this class. Restored in a finally block, not
+        // left to the next test's own good luck.
+        withNullableColumn("payload", () -> {
+            corruptColumn("payload", "NULL", entry.getSeq());
+
+            LedgerVerificationResult result = verifier.verify();
+            assertThat(result).isInstanceOf(LedgerVerificationResult.Broken.class);
+            LedgerVerificationResult.Broken broken = (LedgerVerificationResult.Broken) result;
+            assertThat(broken.seq()).isEqualTo(entry.getSeq());
+            assertThat(broken.reason()).contains("entry could not be verified");
+        });
+    }
+
+    /** Phase 11 Gap 2 (Kimi): the symmetric case - a NULL prevHash must also be reported as
+     * Broken, not thrown. Confirmed empirically (not assumed) that this does NOT actually
+     * exercise the catch-all handler the way a null payload does: Java's own {@code +} string
+     * concatenation operator tolerates a null operand (producing the literal text {@code
+     * "null"}), so the AC1 hash-recomputation step - which runs before AC2 would ever reach the
+     * {@code .equals(...)} call that WOULD throw on a null prevHash - already produces a
+     * mismatched hash and reports {@code REASON_ENTRY_HASH_MISMATCH} first. The catch-all
+     * handler's own real purpose is narrower than this scenario: it exists for failures AC1's
+     * own string concatenation can't silently tolerate, like a null payload ({@code
+     * CanonicalJson.serialize(null)} throws directly) or an unsupported value type (the next
+     * test) - not a null prevHash, which the ordinary AC1 path already handles safely on its
+     * own. */
+    @Test
+    void shouldReportEntryHashMismatchNotThrowWhenPrevHashIsNull() throws SQLException {
+        LedgerEntry entry = ledgerService.append(seedReceipt(), Map.of("k", "v1"));
+
+        withNullableColumn("prev_hash", () -> {
+            corruptColumn("prev_hash", "NULL", entry.getSeq());
+
+            LedgerVerificationResult result = verifier.verify();
+            assertThat(result).isInstanceOf(LedgerVerificationResult.Broken.class);
+            LedgerVerificationResult.Broken broken = (LedgerVerificationResult.Broken) result;
+            assertThat(broken.seq()).isEqualTo(entry.getSeq());
+            assertThat(broken.reason()).isEqualTo(LedgerVerifier.REASON_ENTRY_HASH_MISMATCH);
+        });
+    }
+
+    /** Phase 11 Gap 3 (Kimi): distinct from a NULL value - an unsupported JSON value type
+     * (a bare decimal, which {@code CanonicalJson} rejects) proves the catch-all handler is
+     * truly general, not just a null check. */
+    @Test
+    void shouldReportBrokenNotThrowWhenPayloadContainsAnUnsupportedValueType() throws SQLException {
+        LedgerEntry entry = ledgerService.append(seedReceipt(), Map.of("k", "v1"));
+
+        corruptColumn("payload", "'{\"amount\": 1.5}'", entry.getSeq());
 
         LedgerVerificationResult result = verifier.verify();
         assertThat(result).isInstanceOf(LedgerVerificationResult.Broken.class);
         LedgerVerificationResult.Broken broken = (LedgerVerificationResult.Broken) result;
         assertThat(broken.seq()).isEqualTo(entry.getSeq());
         assertThat(broken.reason()).contains("entry could not be verified");
+    }
+
+    /** Phase 11 Gap 4 (Kimi): the positional prior-entry lookup must detect a TRUE insider
+     * deletion, not just a harmless rolled-back-transaction seq gap - the complement to {@link
+     * #shouldNotFalselyReportBrokenAcrossASeqGap()}. */
+    @Test
+    void shouldDetectBrokenChainWhenAMiddleEntryIsDeleted() throws SQLException {
+        LedgerEntry first = ledgerService.append(seedReceipt(), Map.of("k", "v1"));
+        LedgerEntry second = ledgerService.append(seedReceipt(), Map.of("k", "v2"));
+        LedgerEntry third = ledgerService.append(seedReceipt(), Map.of("k", "v3"));
+
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("DELETE FROM payments.ledger_entries WHERE seq = " + second.getSeq());
+        }
+
+        LedgerVerificationResult result = verifier.verify();
+        assertThat(result).isInstanceOf(LedgerVerificationResult.Broken.class);
+        LedgerVerificationResult.Broken broken = (LedgerVerificationResult.Broken) result;
+        assertThat(broken.seq()).isEqualTo(third.getSeq());
+        assertThat(broken.reason()).isEqualTo(LedgerVerifier.REASON_PREV_HASH_MISMATCH);
+    }
+
+    /** Phase 11 Gap 5 (Kimi): the named test corrupts a middle entry - this proves the head
+     * entry itself is also checked, ruling out an off-by-one in the loop. */
+    @Test
+    void shouldDetectCorruptionOfTheHeadEntry() throws SQLException {
+        ledgerService.append(seedReceipt(), Map.of("k", "v1"));
+        ledgerService.append(seedReceipt(), Map.of("k", "v2"));
+        LedgerEntry head = ledgerService.append(seedReceipt(), Map.of("k", "v3"));
+
+        corruptColumn("payload", "'{\"k\":\"tampered\"}'", head.getSeq());
+
+        LedgerVerificationResult result = verifier.verify();
+        assertThat(result).isInstanceOf(LedgerVerificationResult.Broken.class);
+        LedgerVerificationResult.Broken broken = (LedgerVerificationResult.Broken) result;
+        assertThat(broken.seq()).isEqualTo(head.getSeq());
+        assertThat(broken.reason()).isEqualTo(LedgerVerifier.REASON_ENTRY_HASH_MISMATCH);
+    }
+
+    /** Phase 11 Gap 6 (Kimi): a direct corruption of only the stored {@code entry_hash} column
+     * (payload and prevHash both left untouched) isolates AC1 from the payload-corruption shape
+     * the named test already covers. */
+    @Test
+    void shouldDetectDirectEntryHashCorruptionWithUntouchedPayload() throws SQLException {
+        ledgerService.append(seedReceipt(), Map.of("k", "v1"));
+        LedgerEntry second = ledgerService.append(seedReceipt(), Map.of("k", "v2"));
+
+        corruptColumn("entry_hash", "'" + "0".repeat(64) + "'", second.getSeq());
+
+        LedgerVerificationResult result = verifier.verify();
+        assertThat(result).isInstanceOf(LedgerVerificationResult.Broken.class);
+        LedgerVerificationResult.Broken broken = (LedgerVerificationResult.Broken) result;
+        assertThat(broken.seq()).isEqualTo(second.getSeq());
+        assertThat(broken.reason()).isEqualTo(LedgerVerifier.REASON_ENTRY_HASH_MISMATCH);
+    }
+
+    /** Phase 11 Gap 7 (Kimi): {@code verify()} is explicitly read-only (this task's own Phase 2
+     * Constraints) - proves it, rather than only asserting it in a Javadoc comment. */
+    @Test
+    void verifyShouldNotMutateTheLedger() throws SQLException {
+        ledgerService.append(seedReceipt(), Map.of("k", "v1"));
+        ledgerService.append(seedReceipt(), Map.of("k", "v2"));
+        long countBefore = countLedgerEntries();
+
+        verifier.verify();
+
+        assertThat(countLedgerEntries()).isEqualTo(countBefore);
+    }
+
+    private static long countLedgerEntries() throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT count(*) FROM payments.ledger_entries")) {
+            rs.next();
+            return rs.getLong(1);
+        }
+    }
+
+    /** Phase 11 Gap 1 (Kimi): drops the column's own {@code NOT NULL} constraint for the
+     * duration of {@code action}, then restores it unconditionally - the Testcontainers
+     * instance is class-scoped (shared across every test method), so a dropped constraint left
+     * in place would silently change every later test's own schema assumptions. */
+    @FunctionalInterface
+    private interface SqlAction {
+        void run() throws SQLException;
+    }
+
+    private static void withNullableColumn(String column, SqlAction action) throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("ALTER TABLE payments.ledger_entries ALTER COLUMN " + column + " DROP NOT NULL");
+        }
+        try {
+            action.run();
+        } finally {
+            // The corrupted row must be gone before SET NOT NULL can succeed - Postgres refuses
+            // to re-add a NOT NULL constraint while any existing row violates it.
+            try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+                statement.execute("DELETE FROM payments.ledger_entries");
+                statement.execute("ALTER TABLE payments.ledger_entries ALTER COLUMN " + column + " SET NOT NULL");
+            }
+        }
     }
 
     private static void corruptColumn(String column, String sqlLiteralValue, long seq) throws SQLException {
