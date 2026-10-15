@@ -10,7 +10,6 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
-import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -20,7 +19,6 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -50,8 +48,16 @@ import java.util.function.Supplier;
  * throws" stance, this task's S3 write is the load-bearing operation R23's "SHALL store" text
  * exists to guarantee — any {@link SdkException} propagates wrapped as {@link
  * ReceiptStorageException}, never swallowed (AC4).</p>
+ *
+ * <p>No {@code @Component}/{@code @Service} annotation (Phase 7, self-review) — constructed
+ * only via {@code ReceiptStoreConfig}'s own explicit {@code @Bean} factory method, mirroring
+ * {@code ObservationSnapshotStore}'s own identical precedent (crypto-service) exactly. An
+ * earlier draft of this class carried {@code @Component} as well, which silently registered
+ * two {@code ReceiptStore} bean definitions under the same name — Spring's own component-scan-
+ * vs-{@code @Configuration}-class override resolution happened to pick one without error since
+ * both construct the bean identically, but relying on that undocumented resolution order was
+ * never the intent.</p>
  */
-@Component
 public class ReceiptStore {
 
     private static final Duration RETENTION_PERIOD = Duration.ofDays(7 * 365L);
@@ -166,6 +172,11 @@ public class ReceiptStore {
      * receiptUuid} is printed first; every other field follows as a label/value line in the
      * same map order {@link #toCanonicalMap} built; {@code signature} is wrapped at {@value
      * #SIGNATURE_WRAP_WIDTH} characters/line so it never overflows the page width.
+     *
+     * <p>A failure here is wrapped as {@link ReceiptStorageException} (Phase 7, self-review),
+     * the same type an S3 failure is wrapped as — not a separate {@code UncheckedIOException} —
+     * so a caller has exactly one exception type to catch for "this receipt was not durably
+     * stored," regardless of which step actually failed.</p>
      */
     private byte[] renderPdf(Map<String, Object> fields) {
         try (PDDocument document = new PDDocument()) {
@@ -200,7 +211,7 @@ public class ReceiptStore {
             document.save(out);
             return out.toByteArray();
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to render receipt PDF", e);
+            throw new ReceiptStorageException("Failed to render the PDF receipt object", e);
         }
     }
 
