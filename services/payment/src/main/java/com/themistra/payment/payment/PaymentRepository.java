@@ -128,6 +128,18 @@ interface PaymentRepository extends JpaRepository<Payment, Long> {
     int markWatchingIfSeen(@Param("id") Long id, @Param("expectedCurrentState") PaymentState expectedCurrentState,
                             @Param("newState") PaymentState newState, @Param("now") Instant now);
 
+    /** R20 (T17). A {@code BLOCKED} attest outcome: {@code FINALIZED → HELD}. Atomic, same
+     * rationale as every other transition above - no entity load, no merge. Takes no
+     * {@code expectedCurrentState} parameter (unlike the reorg reversals above) because this
+     * task's own resolved scope (a receipt is only ever requested for an already-{@code
+     * FINALIZED} payment, re-checked fresh immediately before the {@code attest()} call) means
+     * {@code FINALIZED} is the only state this is ever called against - a literal {@code 'FINALIZED'}
+     * in the query, mirroring {@code InvoiceRepository.updateWatchIdIfOpen}'s own identical
+     * single-literal-state shape. */
+    @Modifying
+    @Query("UPDATE Payment p SET p.state = 'HELD', p.updatedAt = :now WHERE p.id = :id AND p.state = 'FINALIZED'")
+    int markHeldIfFinalized(@Param("id") Long id, @Param("now") Instant now);
+
     /* Phase 9 Finding 8 (Kimi, Low confidence, explicit decision rather than a silent default):
      * neither reversal above touches `confirmations` or `amount`. Both values are left exactly
      * as the reorged-out chain.tx.confirmed/chain.tx.finalized event last set them - a deliberate

@@ -15,6 +15,7 @@ import com.themistra.payment.payment.FinalizationOutcome;
 import com.themistra.payment.payment.PaymentService;
 import com.themistra.payment.payment.PaymentState;
 import com.themistra.payment.payment.ReorgOutcome;
+import com.themistra.payment.receipt.ReceiptService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -79,17 +80,20 @@ public class ChainEventConsumer {
     private final InvoiceService invoiceService;
     private final PaymentService paymentService;
     private final CryptoClient cryptoClient;
+    private final ReceiptService receiptService;
     private final Clock clock;
     private final TransactionTemplate transactionTemplate;
 
     public ChainEventConsumer(ObjectMapper objectMapper, ProcessedEventRepository processedEventRepository,
                                InvoiceService invoiceService, PaymentService paymentService,
-                               CryptoClient cryptoClient, Clock clock, PlatformTransactionManager transactionManager) {
+                               CryptoClient cryptoClient, ReceiptService receiptService, Clock clock,
+                               PlatformTransactionManager transactionManager) {
         this.objectMapper = objectMapper;
         this.processedEventRepository = processedEventRepository;
         this.invoiceService = invoiceService;
         this.paymentService = paymentService;
         this.cryptoClient = cryptoClient;
+        this.receiptService = receiptService;
         this.clock = clock;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -131,33 +135,48 @@ public class ChainEventConsumer {
      * #findInvoiceIdByChainAndTxHash}'s own stable {@code invoiceId} - never by {@code
      * event.watchId()} (Phase 4 Finding 2) - so {@link PaymentService#applyFinalized} has the
      * invoice's own {@code amount} on hand to compute the discrepancy before its one atomic
-     * update runs. Stays {@code @Transactional} directly on this method (unlike {@code
-     * onChainTxReorged}'s own {@link TransactionTemplate} split) - {@link InvoiceService
-     * #markOutcomeIfOpenOrExpired} is a plain local atomic update with no outbound call, so
-     * there is nothing here that needs isolating from the rest of this event's own transaction. */
+     * update runs.
+     *
+     * <p><b>T17: no longer {@code @Transactional} on the method itself (Phase 3, Kimi Finding
+     * 7).</b> The dedupe/resolve/apply/outcome-update sequence above is unchanged in its own
+     * internal behavior, but now runs inside an explicit {@link TransactionTemplate} block, the
+     * same split {@code onChainTxReorged} already established for the identical problem: {@link
+     * ReceiptService#issueIfEligible} calls {@code CryptoClient.attest} (T15), an outbound HTTP
+     * call that must never run with this transaction still open (L2). The call happens only
+     * after that transaction commits, and only when the payment's own amount matched exactly
+     * (R17's own resolved scope - an {@code UNDERPAID}/{@code OVERPAID} outcome never requests a
+     * receipt at all). {@code ReceiptService} re-checks eligibility fresh itself (Phase 3, Kimi
+     * Finding 3), so this method does not need to gate on whether {@code
+     * markOutcomeIfOpenOrExpired} itself succeeded - only on the discrepancy classification.</p> */
     @KafkaListener(topics = "chain.tx.finalized", groupId = "${spring.kafka.consumer.group-id}")
-    @Transactional
     public void onChainTxFinalized(String rawJson) {
         ChainTxFinalized event = deserialize(rawJson, ChainTxFinalized.class, "chain.tx.finalized");
-        if (event == null || !dedupe(event.idempotencyKey())) {
+        if (event == null) {
             return;
         }
 
-        Optional<InvoiceWatchView> maybeInvoice = resolveInvoiceForFinalization(event);
-        if (maybeInvoice.isEmpty()) {
-            return;
-        }
+        Optional<FinalizationOutcome> outcome = transactionTemplate.execute(status -> {
+            if (!dedupe(event.idempotencyKey())) {
+                return Optional.<FinalizationOutcome>empty();
+            }
+            Optional<InvoiceWatchView> maybeInvoice = resolveInvoiceForFinalization(event);
+            if (maybeInvoice.isEmpty()) {
+                return Optional.<FinalizationOutcome>empty();
+            }
+            Optional<FinalizationOutcome> result = paymentService.applyFinalized(maybeInvoice.get(), event);
+            result.ifPresent(o -> {
+                InvoiceState invoiceOutcome = toInvoiceState(o.amountDiscrepancy());
+                boolean updated = invoiceService.markOutcomeIfOpenOrExpired(o.invoiceId(), invoiceOutcome, clock.instant());
+                if (!updated) {
+                    log.warn("Invoice {} was not OPEN or EXPIRED when its payment finalized (state already "
+                            + "moved on); leaving its own state as-is", o.invoiceId());
+                }
+            });
+            return result;
+        });
 
-        Optional<FinalizationOutcome> outcome = paymentService.applyFinalized(maybeInvoice.get(), event);
-        if (outcome.isEmpty()) {
-            return;
-        }
-        InvoiceState invoiceOutcome = toInvoiceState(outcome.get().amountDiscrepancy());
-        boolean updated = invoiceService.markOutcomeIfOpenOrExpired(outcome.get().invoiceId(), invoiceOutcome, clock.instant());
-        if (!updated) {
-            log.warn("Invoice {} was not OPEN or EXPIRED when its payment finalized (state already moved on); "
-                    + "leaving its own state as-is", outcome.get().invoiceId());
-        }
+        outcome.filter(o -> o.amountDiscrepancy() == null)
+                .ifPresent(o -> receiptService.issueIfEligible(o.paymentId(), event.idempotencyKey()));
     }
 
     /** Phase 9 Finding 1: extracted from {@code onChainTxFinalized}'s own body for readability -

@@ -12,6 +12,7 @@ import com.themistra.payment.payment.FinalizationOutcome;
 import com.themistra.payment.payment.PaymentService;
 import com.themistra.payment.payment.PaymentState;
 import com.themistra.payment.payment.ReorgOutcome;
+import com.themistra.payment.receipt.ReceiptService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -81,6 +82,9 @@ class ChainEventConsumerTest {
     private CryptoClient cryptoClient;
 
     @Mock
+    private ReceiptService receiptService;
+
+    @Mock
     private PlatformTransactionManager transactionManager;
 
     private ChainEventConsumer consumer;
@@ -89,7 +93,7 @@ class ChainEventConsumerTest {
     void setUp() {
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
         consumer = new ChainEventConsumer(objectMapper, processedEventRepository, invoiceService, paymentService,
-                cryptoClient, Clock.fixed(NOW, ZoneOffset.UTC), transactionManager);
+                cryptoClient, receiptService, Clock.fixed(NOW, ZoneOffset.UTC), transactionManager);
     }
 
     private static InvoiceWatchView openInvoice() {

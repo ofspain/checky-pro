@@ -357,4 +357,39 @@ public class PaymentService {
                 Map.of("reason", "stale-reorg-event"));
         return Optional.empty();
     }
+
+    /** T17 (L12). The cross-module read {@code receipt.ReceiptService} uses to build a {@code
+     * ReceiptPayload} and to re-check eligibility immediately before calling {@code /attest} -
+     * {@code onChainTxFinalized}'s own first transaction has already committed by the time this
+     * runs, so its outcome is stale (Phase 3, Kimi Finding 3); this always re-reads fresh. */
+    @Transactional(readOnly = true)
+    public Optional<PaymentReceiptView> findReceiptPrimitives(Long paymentId) {
+        Objects.requireNonNull(paymentId, "paymentId must not be null");
+        return repository.findById(paymentId).map(PaymentReceiptView::from);
+    }
+
+    /** R20 (T17). A {@code BLOCKED} attest outcome: {@code FINALIZED -> HELD}. Records a {@link
+     * VerificationRecord} on success (Phase 3, Kimi Finding 4), with {@code blockedReason} in
+     * its own {@code detail} map - every other transition in this class already gets one; this
+     * was the one omission. {@code confirmations} is {@code null} - not applicable to this
+     * transition. */
+    @Transactional
+    public boolean markHeldIfFinalized(Long paymentId, String blockedReason, String triggerEventKey, Instant now) {
+        Objects.requireNonNull(paymentId, "paymentId must not be null");
+        Objects.requireNonNull(blockedReason, "blockedReason must not be null");
+        Objects.requireNonNull(triggerEventKey, "triggerEventKey must not be null");
+        Objects.requireNonNull(now, "now must not be null");
+
+        // Phase 8 Kimi Finding 6 precedent: a defensive sanity check, not the real enforcement.
+        if (!stateMachine.isPermitted(PaymentState.FINALIZED, PaymentState.HELD)) {
+            throw new IllegalStateException(
+                    "FINALIZED -> HELD must always be permitted - PaymentStateMachine's own edge set changed unexpectedly");
+        }
+        if (repository.markHeldIfFinalized(paymentId, now) > 0) {
+            verificationRecordService.record(paymentId, PaymentState.FINALIZED, PaymentState.HELD,
+                    triggerEventKey, null, Map.of("blockedReason", blockedReason));
+            return true;
+        }
+        return false;
+    }
 }

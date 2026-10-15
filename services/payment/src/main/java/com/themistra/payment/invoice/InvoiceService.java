@@ -222,4 +222,27 @@ public class InvoiceService {
                     "amount exceeds the maximum representable precision (" + MAX_AMOUNT_DIGITS + " digits)");
         }
     }
+
+    /** T17 (L12). The cross-module read {@code receipt.ReceiptService} uses to build a {@code
+     * ReceiptPayload} and to re-check eligibility immediately before calling {@code /attest} -
+     * mirrors {@link #findByIdAsWatchView}'s own identical shape, a different projection. */
+    @Transactional(readOnly = true)
+    public Optional<InvoiceReceiptView> findReceiptPrimitives(Long invoiceId) {
+        Objects.requireNonNull(invoiceId, "invoiceId must not be null");
+        return repository.findById(invoiceId).map(InvoiceReceiptView::from);
+    }
+
+    /** R20 (T17). A {@code BLOCKED} attest outcome: {@code PAID -> HELD}. A named method (Phase
+     * 3, Kimi Finding 9), not a raw call to the generic {@link
+     * InvoiceRepository#updateStateIfCurrentState} from {@code ReceiptService} directly - the
+     * receipt-blocked business meaning stays visible at the call site. By this task's own
+     * resolved scope (a receipt is only ever requested for an already-{@code PAID} invoice,
+     * re-checked fresh immediately before the {@code attest()} call), {@code PAID} is the only
+     * state this is ever called against. */
+    @Transactional
+    public boolean markHeldIfPaid(Long invoiceId, Instant now) {
+        Objects.requireNonNull(invoiceId, "invoiceId must not be null");
+        Objects.requireNonNull(now, "now must not be null");
+        return repository.updateStateIfCurrentState(invoiceId, InvoiceState.PAID, InvoiceState.HELD, now) > 0;
+    }
 }
