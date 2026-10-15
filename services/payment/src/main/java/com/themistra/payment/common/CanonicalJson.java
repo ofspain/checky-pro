@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 
 /**
@@ -29,14 +30,17 @@ import java.util.TreeMap;
  * JavaTimeModule} or UUID-specific module, so a digest's own byte-for-byte reproducibility never
  * depends on Jackson's own evolving defaults for those types.</p>
  *
- * <p><b>ASCII scope (Phase 3/4, Kimi Finding 4).</b> This class relies on Jackson's default
- * {@code ObjectMapper} behavior, which escapes non-ASCII characters as backslash-u-prefixed
- * hex sequences. Every
- * known real payload (O4's receipt fields, the ledger entry payload) is ASCII-only (UUIDs,
- * hex/addresses, chain names, RFC3339 timestamps), so this is harmless today. If a future
- * payload needs raw UTF-8 non-ASCII bytes in the canonical output, this would need an explicit
- * {@code JsonGenerator.Feature.ESCAPE_NON_ASCII} override and a dedicated test — not done here,
- * since no real payload needs it yet.</p>
+ * <p><b>ASCII scope (Phase 3/4 Finding 4, corrected at Phase 9 - Kimi Phase 8 New Finding 2).</b>
+ * This class is intended for ASCII-only keys and values. Jackson's {@code ESCAPE_NON_ASCII}
+ * feature is disabled by default (confirmed directly against {@code jackson-core}'s own
+ * {@code JsonWriteFeature} source - {@code ESCAPE_NON_ASCII(false)}), so a default-configured
+ * {@code ObjectMapper} actually emits raw UTF-8 bytes for non-ASCII characters, not an escaped
+ * form - the opposite of this class's own first-drafted claim here, caught during Phase 8's
+ * independent review. Every known real payload (O4's receipt fields, the ledger entry payload)
+ * is ASCII-only (UUIDs, hex/addresses, chain names, RFC3339 timestamps), so this has no practical
+ * effect today either way - but if a future payload needs a specific non-ASCII canonicalization
+ * policy, that would need an explicit decision (not this class's own current silent default) and
+ * a dedicated test.</p>
  */
 public final class CanonicalJson {
 
@@ -46,6 +50,7 @@ public final class CanonicalJson {
     }
 
     public static String serialize(Map<String, Object> payload) {
+        Objects.requireNonNull(payload, "payload must not be null");
         try {
             return OBJECT_MAPPER.writeValueAsString(canonicalize(payload));
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
@@ -62,7 +67,13 @@ public final class CanonicalJson {
         if (value instanceof Map<?, ?> map) {
             TreeMap<String, Object> sorted = new TreeMap<>();
             for (Map.Entry<?, ?> entry : map.entrySet()) {
-                sorted.put((String) entry.getKey(), canonicalize(entry.getValue()));
+                Object key = entry.getKey();
+                if (!(key instanceof String stringKey)) {
+                    throw new IllegalArgumentException(
+                            "Unsupported canonical JSON map key type: "
+                                    + (key == null ? "null" : key.getClass().getName()));
+                }
+                sorted.put(stringKey, canonicalize(entry.getValue()));
             }
             return sorted;
         }

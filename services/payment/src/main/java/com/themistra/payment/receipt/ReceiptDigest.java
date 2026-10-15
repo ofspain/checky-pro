@@ -8,6 +8,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * T16 (R19, partial — the digest-computation mechanism; obtaining the signature and acting on
@@ -32,6 +33,7 @@ public final class ReceiptDigest {
     }
 
     public static String digest(ReceiptPayload payload) {
+        Objects.requireNonNull(payload, "payload must not be null");
         String canonicalJson = CanonicalJson.serialize(toCanonicalMap(payload));
         return sha256(canonicalJson);
     }
