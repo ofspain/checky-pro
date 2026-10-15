@@ -2,16 +2,21 @@
 
 Consumes: `artifacts/11-test-review.md`
 
+**Updated (2026-10-15)** after the real Kimi Phase 11 artifact landed, superseding an earlier,
+self-produced Phase 11 pass that had briefly stood in its place and was reverted on explicit
+user instruction (`11-test-review.md` deleted, then replaced by the genuine artifact). This
+revision reflects the real Kimi findings and the fixes applied for them.
+
 ## Traceability matrix
 
 | Requirement/Decision | Implemented? | Evidence (file:line) | Test? | Missing? | Deviation? |
 |---|---|---|---|---|---|
-| **R19** (partial — digest computation only) — compute the canonical receipt digest over `design.md` O4's exact 12-field payload | Yes | `ReceiptDigest.java:35` (`digest(...)`), `ReceiptPayload.java:29` (the 12-field record) | `ReceiptDigestTest` — 12 methods (hex-format, determinism, 6 field-sensitivity cases incl. both O4 asymmetric fields and `receiptUuid`, amount-as-string, tokenDecimals-as-number, null-payload, golden full-payload) | No | No |
+| **R19** (partial — digest computation only) — compute the canonical receipt digest over `design.md` O4's exact 12-field payload | Yes | `ReceiptDigest.java:35` (`digest(...)`), `ReceiptPayload.java:29` (the 12-field record) | `ReceiptDigestTest` — 13 methods (hex-format, determinism, 6 field-sensitivity cases incl. both O4 asymmetric fields and `receiptUuid`, amount-as-string, tokenDecimals-as-number, null-payload, golden full-payload, and a Phase 11 Kimi-added independent-hash tie from the real digest to the golden JSON) | No | No |
 | **L6** — `amount` never a bare numeric JSON token; money is `BigDecimal`-typed in-memory | Yes | `ReceiptDigest.java` `toCanonicalMap` — `payload.amount().toPlainString()` | `shouldSerializeAmountAsDecimalStringNotJsonNumber` | No | No |
 | **L7** (context — task 19's own scope, not re-implemented here) — `CanonicalJson` built generic enough for `LedgerService` to reuse without a second canonicalizer | Yes, by design | `CanonicalJson.java:52,61` (`serialize`/`canonicalize` — type-agnostic beyond the explicit allowed-type list, recursive, no O4-specific logic anywhere in this class) | N/A (task 19 not built) | No | No |
 | **L12** — `CanonicalJson` in `common/`; `ReceiptPayload`/`ReceiptDigest` in `receipt/`, neither importing `Invoice`/`Payment` | Yes | File locations confirmed; `grep -c "import.*\.Invoice\|import.*\.Payment"` on both new `receipt/` files returns 0 | `shouldPreventCrossModuleEntityImportsIsCheckedDuringStandardBuild` (re-run, unaffected — this task adds no `@Entity`, so the rule's own scan has nothing new to check) | No | No |
-| **Task statement's own "sorted keys, UTF-8, no insignificant whitespace"** | Yes | `CanonicalJson.java:61` (`canonicalize`'s `TreeMap` sort) | `shouldProduceIdenticalOutputRegardlessOfKeyInsertionOrder`, `shouldProduceNoPrettyPrintingWhitespace`, `shouldSortNestedMapKeys` | No | No |
-| **New, found during this task (Phase 3/4 Finding 1)** — `CanonicalJson` rejects any unsupported value type, recursively, rather than trusting callers | Yes | `CanonicalJson.java:61` (`canonicalize`'s exhaustive type check + final `throw`) | 8 `shouldReject*`/`shouldAccept*` tests (Phase 10 + Phase 11's own 3 additions: `Boolean` positive, `BigInteger`/array negative) | No | No |
+| **Task statement's own "sorted keys, UTF-8, no insignificant whitespace"** | Yes | `CanonicalJson.java:61` (`canonicalize`'s `TreeMap` sort) | `shouldProduceIdenticalOutputRegardlessOfKeyInsertionOrder`, `shouldProduceNoPrettyPrintingWhitespace`, `shouldSortNestedMapKeys`, `shouldSortMapKeysInsideAList` (Phase 11, Kimi Gap 4 — the one remaining nesting combination) | No | No |
+| **New, found during this task (Phase 3/4 Finding 1)** — `CanonicalJson` rejects any unsupported value type, recursively, rather than trusting callers | Yes | `CanonicalJson.java:61` (`canonicalize`'s exhaustive type check + final `throw`) | 11 `shouldReject*`/`shouldAccept*` tests, plus `shouldSerializeEmptyMapAndEmptyListValues` (Phase 11, Kimi Gap 5) | No | No |
 
 ## Principal-engineer review
 
@@ -28,13 +33,16 @@ entity import), AC7 (the type guard, added at Phase 4).
 **(3) Does it violate any LOCKED decision?** No. L6/L7/L12 all hold.
 
 **(4) Remaining risks (carried forward, not blocking this task's own PASS):**
-- **Phase 11 was self-produced**, not a genuine Kimi pass — no Kimi artifact ever landed for
-  this task's own Phase 11 before the user explicitly directed moving on. The self-produced
-  review found and fixed 4 real gaps (disclosed in `11-test-review.md`), but a genuine
-  independent reviewer might still find something a self-review cannot — logged as a disclosed
-  process deviation, not a silent one, consistent with this session's own "disclose forward"
-  convention. If a real Kimi Phase 11 artifact appears later, re-run it against this task's own
-  final state as a follow-up, not retroactively blocking this PASS.
+- **Phase 11 is now a genuine Kimi pass**, closing the earlier process gap: a self-produced
+  pass had briefly stood in this slot after a vague "move on" was misread as authorization to
+  fill a Kimi-reserved phase; the user corrected this explicitly, the self-produced artifact was
+  deleted, and the real Kimi review (which ran against the Phase 10 test state, 14+11 methods)
+  found 5 of its own findings — one Medium (`ReceiptDigest`'s canonical-JSON assertions only
+  ever going through a test-only helper that independently mirrors `toCanonicalMap`, so a real
+  drift there could go undetected) and four Low. All actionable findings applied; one
+  (`Boolean` coverage, part of Kimi's own Gap 5) turned out to already be closed by the kept
+  code from the earlier self-produced pass, since Kimi's review predated that code existing in
+  the state it reviewed — confirmed, not assumed, before dispositioning.
 - **`CanonicalJson`'s own genuine reusability for T19 is unverified until T19 actually exists** —
   the type guard and recursive design are built to be generic, but no real second payload shape
   has exercised it yet. Not a defect; the expected, disclosed shape of building shared
@@ -47,6 +55,10 @@ entity import), AC7 (the type guard, added at Phase 4).
 
 **PASS** — `CanonicalJson` and `ReceiptDigest` are both fully implemented, correctly guarded
 against the type-safety foot-gun Kimi's Phase 3 review identified, and tested against every
-acceptance criterion including two further rounds of real gap-finding (Phase 8's independent
-review and a self-produced Phase 11, both verified-not-assumed). `CanonicalJsonTest`+
-`ReceiptDigestTest`: 29/29. Full payment-service suite: 345/345 passing.
+acceptance criterion including two further rounds of genuine, independent gap-finding (Phase 8
+and Phase 11, both real Kimi passes, both verified-not-assumed before applying). The Phase 11
+fix most worth noting: `ReceiptDigest.digest(...)`'s real output is now tied directly to the
+golden canonical JSON reference via an independently-computed `SHA-256` call, not just through
+a parallel test helper — mutation-verified (a simulated dropped field in `toCanonicalMap` was
+caught). `CanonicalJsonTest`+`ReceiptDigestTest`: 32/32. Full payment-service suite: 348/348
+passing.

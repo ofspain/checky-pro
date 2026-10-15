@@ -45,14 +45,19 @@ was backwards - verified directly against jackson-core's own JsonWriteFeature so
 (ESCAPE_NON_ASCII disabled by default), so a default-configured mapper actually emits raw UTF-8
 for non-ASCII content.
 
-No Kimi Phase 11 artifact landed for this task; the test review was self-produced and held to
-the same adversarial standard as a genuine pass (disclosed in Phase 12, not hidden), finding and
-fixing 4 real gaps: Boolean (an explicitly supported type) and BigInteger/arrays (explicitly
-rejected types) all had zero test coverage despite being named in the class's own contract, and
-only 4 of ReceiptPayload's 12 fields had a dedicated digest-sensitivity test.
+Kimi's independent test review found one real Medium-severity gap: ReceiptDigest's own
+canonical-JSON assertions only ever went through a test-only helper that independently mirrors
+toCanonicalMap's own logic, so a real drift in that private method could go undetected since
+the helper would need the identical drift to still pass. Closed with a test that hashes the
+golden canonical JSON literal via a separate MessageDigest call and ties it directly to
+ReceiptDigest's own real output - mutation-verified (a simulated dropped field in
+toCanonicalMap was caught by this new test). Three further Low-severity gaps (map-inside-a-list
+canonicalization, empty map/list serialization) were also closed; one more (Boolean coverage)
+turned out to already be addressed by test content kept from an earlier, briefly-self-produced
+and since-corrected Phase 11 pass.
 
-CanonicalJsonTest+ReceiptDigestTest: 29/29 passing. Full suite: 345/345 passing (316 pre-task
-baseline + 29 new).
+CanonicalJsonTest+ReceiptDigestTest: 32/32 passing. Full suite: 348/348 passing (316 pre-task
+baseline + 32 new).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01X8S7DqTs5nXBPSMMnxQqch
@@ -68,9 +73,9 @@ Claude-Session: https://claude.ai/code/session_01X8S7DqTs5nXBPSMMnxQqch
 
 **Tests:**
 - `services/payment/src/test/java/com/themistra/payment/common/CanonicalJsonTest.java` (new) —
-  17 tests.
+  19 tests.
 - `services/payment/src/test/java/com/themistra/payment/receipt/ReceiptDigestTest.java` (new) —
-  12 tests.
+  13 tests.
 
 No migration file — this task is wholly stateless, no entity, no persistence.
 
@@ -91,13 +96,15 @@ Jackson module at all.
 - `mvn -o -pl services/payment -am compile`, `mvn -o -pl services/payment -am test-compile`:
   clean throughout every phase (one self-caught Javadoc unicode-escape compile error at Phase 6,
   fixed immediately).
-- `mvn -o -pl services/payment -am test -Dtest=CanonicalJsonTest,ReceiptDigestTest`: **29/29
+- `mvn -o -pl services/payment -am test -Dtest=CanonicalJsonTest,ReceiptDigestTest`: **32/32
   passing**.
 - `mvn -o -pl services/payment -am test` (full suite, Docker up —
-  `services/auth/compose.local.yaml`): **345/345 passing** (316 pre-task baseline + 29 new).
-- Mutation-tested the core type guard twice: once at Phase 10 (removed the final `throw`,
-  confirmed 5 rejection tests failed red, reverted) and the underlying logic re-exercised by
-  Phase 11's own 3 new type-coverage tests (`Boolean` positive, `BigInteger`/array negative).
+  `services/auth/compose.local.yaml`): **348/348 passing** (316 pre-task baseline + 32 new).
+- Mutation-tested twice: the core type guard at Phase 10 (removed the final `throw`, confirmed 5
+  rejection tests failed red, reverted) and, at Phase 11 (the real Kimi pass), the
+  `toCanonicalMap`-to-digest tie (commented out the `fromAddress` field mapping, confirmed the
+  new golden-digest-tie test — and the pre-existing `fromAddress`-sensitivity test — both failed
+  red, reverted, confirmed clean).
 
 ## Specification references
 
