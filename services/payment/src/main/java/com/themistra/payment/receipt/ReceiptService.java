@@ -4,12 +4,15 @@ import com.themistra.payment.common.AttestationRefusedException;
 import com.themistra.payment.common.CryptoClient;
 import com.themistra.payment.common.CryptoServiceUnavailableException;
 import com.themistra.payment.common.crypto.AttestationResult;
+import com.themistra.payment.events.OutboxPublisher;
 import com.themistra.payment.invoice.InvoiceReceiptView;
 import com.themistra.payment.invoice.InvoiceService;
 import com.themistra.payment.invoice.InvoiceState;
 import com.themistra.payment.payment.PaymentReceiptView;
 import com.themistra.payment.payment.PaymentService;
 import com.themistra.payment.payment.PaymentState;
+import com.themistra.payment.receipt.event.ReceiptIssuedPayload;
+import com.themistra.payment.receipt.ledger.LedgerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -18,12 +21,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * T17 (L2, R17/R18/R19/R20). Guards that a payment is {@code FINALIZED} and its invoice is
+ * T17/T19 (L2, R17-R21, R23-R25). Guards that a payment is {@code FINALIZED} and its invoice is
  * exactly {@code PAID} (R17's own "satisfies its invoice," resolved directly by the product
  * owner: a receipt is Themistra's attestation that the payment correctly satisfied the invoice
  * - an {@code UNDERPAID}/{@code OVERPAID} payment is finalized on-chain and keeps its own
@@ -32,11 +36,25 @@ import java.util.UUID;
  * durably" language, mirrors {@code ChainEventConsumer.onChainTxReorged}'s own identical
  * {@code TransactionTemplate} split for the same class of problem, T12).
  *
- * <p>A {@code SIGNED} result persists nothing here - no {@code Receipt} row can exist yet
- * ({@code receipts.s3_bucket}/{@code s3_key} are {@code NOT NULL}; T18 hasn't written one yet)
- * and the payment does not reach {@code ATTESTED} here either (T19's own job, once the ledger
- * append also exists). The signed data is returned to the caller via {@link
- * ReceiptIssueResult.Signed}, not discarded.</p>
+ * <p><b>A {@code SIGNED} result (T19) is persisted in full, atomically</b>: {@code
+ * ReceiptStore.store(...)} writes the signed JSON/PDF to S3 (T18, also outside any transaction -
+ * an S3 call is an outbound I/O call, the same discipline as {@code attest()} itself), then one
+ * single transaction inserts the {@code Receipt} row, appends the hash-chain ledger entry
+ * ({@code receipt.ledger.LedgerService}), transitions the payment to {@code ATTESTED}, and
+ * publishes {@code receipt.issued} - R24/R25's own explicit "same transaction" text. If the
+ * {@code ATTESTED} transition itself finds the payment no longer {@code FINALIZED} (a concurrent
+ * reorg, Phase 3/4 Kimi Finding 2), the whole transaction aborts and rolls back - no
+ * {@code Receipt}/{@code LedgerEntry}/outbox row survives for a payment that never actually
+ * reached {@code ATTESTED}.</p>
+ *
+ * <p><b>The S3-orphan window (Phase 3/4, Kimi Finding 6) - a sharper form of the "no retry"
+ * gap below.</b> If the DB transaction above fails or is never reached after {@code
+ * ReceiptStore.store(...)} already succeeded, the signed JSON/PDF objects remain durably in S3
+ * WORM storage (L9 bans a delete path in application code - there is no cleanup mechanism here)
+ * with no corresponding {@code Receipt}/{@code LedgerEntry}/{@code ATTESTED} payment. Unlike the
+ * general "attest() failed, nothing was ever signed" gap, this window means a real KMS signature
+ * was already consumed and a real S3 object already written for work that never actually
+ * completed - operational reconciliation only, not solved in application code.</p>
  *
  * <p>A {@code BLOCKED} result moves both the payment and invoice to {@code HELD}, atomically as
  * a pair (Phase 3, Kimi Finding 2) - a concurrent reorg could otherwise leave exactly one of the
@@ -68,14 +86,24 @@ public class ReceiptService {
     private final PaymentService paymentService;
     private final InvoiceService invoiceService;
     private final CryptoClient cryptoClient;
+    private final ReceiptStore receiptStore;
+    private final ReceiptRepository receiptRepository;
+    private final LedgerService ledgerService;
+    private final OutboxPublisher outboxPublisher;
     private final Clock clock;
     private final TransactionTemplate transactionTemplate;
 
     public ReceiptService(PaymentService paymentService, InvoiceService invoiceService,
-                           CryptoClient cryptoClient, PlatformTransactionManager transactionManager, Clock clock) {
+                           CryptoClient cryptoClient, ReceiptStore receiptStore, ReceiptRepository receiptRepository,
+                           LedgerService ledgerService, OutboxPublisher outboxPublisher,
+                           PlatformTransactionManager transactionManager, Clock clock) {
         this.paymentService = paymentService;
         this.invoiceService = invoiceService;
         this.cryptoClient = cryptoClient;
+        this.receiptStore = receiptStore;
+        this.receiptRepository = receiptRepository;
+        this.ledgerService = ledgerService;
+        this.outboxPublisher = outboxPublisher;
         this.clock = clock;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -114,10 +142,74 @@ public class ReceiptService {
         }
 
         if (result instanceof AttestationResult.Signed signed) {
-            return new ReceiptIssueResult.Signed(receiptUuid, signed);
+            return persistSignedReceipt(payment, invoice, payload, digest, receiptUuid, signed, triggerEventKey);
         }
         AttestationResult.Blocked blocked = (AttestationResult.Blocked) result;
         return handleBlocked(payment.id(), payment.invoiceId(), blocked.reason(), triggerEventKey);
+    }
+
+    /** T19 (R21/R23/R24/R25, Phase 3/4 Kimi Findings 2/6/7). {@code receiptStore.store(...)}
+     * runs first, outside any transaction (an S3 call). Everything else - the {@code Receipt}
+     * insert, the ledger append, the {@code ATTESTED} transition, and the {@code receipt.issued}
+     * publish - runs inside exactly one transaction, in that order (Finding 7: {@code
+     * ledger_entries.receipt_id} references {@code receipts.id}, so the {@code Receipt} must
+     * commit-order before the {@code LedgerEntry}). Any failure anywhere in this sequence - the
+     * S3 write itself, or anything inside the transaction, including the abort-on-zero-rows
+     * guard below (Finding 2) - converts to {@link ReceiptIssueResult.Failed} rather than
+     * propagating or silently returning {@code Signed} for work that didn't actually commit. */
+    private ReceiptIssueResult persistSignedReceipt(PaymentReceiptView payment, InvoiceReceiptView invoice,
+            ReceiptPayload payload, String digest, UUID receiptUuid, AttestationResult.Signed signed,
+            String triggerEventKey) {
+        try {
+            ReceiptStorageLocation location = receiptStore.store(payload, signed);
+            return transactionTemplate.execute(status -> {
+                Instant now = clock.instant();
+                Receipt receipt = receiptRepository.save(Receipt.create(receiptUuid, payment.id(), digest,
+                        signed.signature(), signed.kmsKeyId(), location.bucket(), location.s3KeyPrefix(),
+                        signed.signedAt(), now));
+
+                Map<String, Object> ledgerPayload = buildLedgerPayload(payload, signed, location);
+                ledgerService.append(receipt.getId(), ledgerPayload);
+
+                boolean attested = paymentService.markAttestedIfFinalized(payment.id(), triggerEventKey,
+                        receiptUuid, now);
+                if (!attested) {
+                    throw new IllegalStateException("Payment " + payment.id()
+                            + " was no longer FINALIZED when the ATTESTED transition ran");
+                }
+
+                outboxPublisher.publish("receipt", receiptUuid.toString(), "receipt.issued",
+                        new ReceiptIssuedPayload(invoice.invoiceUuid(), payment.paymentUuid(), receiptUuid,
+                                invoice.merchantAccountUuid(), payment.chain(), payment.txHash(),
+                                payment.amount().toPlainString(), payment.tokenContractAddress(),
+                                signed.kmsKeyId(), receiptUri(location), now));
+
+                return new ReceiptIssueResult.Signed(receiptUuid, signed);
+            });
+        } catch (RuntimeException e) {
+            log.error("Failed to persist receipt/ledger/ATTESTED transition for payment {}", payment.id(), e);
+            return new ReceiptIssueResult.Failed("persist-failed: " + e.getMessage());
+        }
+    }
+
+    /** The ledger entry's own JSONB payload (Phase 3/4, Kimi Finding 5): {@code ReceiptStore}'s
+     * own 15-field canonical map (now {@code public static}, Finding 12) plus the already-
+     * normalized {@code s3Bucket}/{@code s3KeyPrefix} - so the ledger entry is self-describing,
+     * locatable without a join back to {@code receipts}. The JSON object is at
+     * {@code s3KeyPrefix + ".json"}, the PDF at {@code s3KeyPrefix + ".pdf"} (documented here,
+     * not re-derived elsewhere). */
+    private static Map<String, Object> buildLedgerPayload(ReceiptPayload payload, AttestationResult.Signed signed,
+            ReceiptStorageLocation location) {
+        Map<String, Object> map = ReceiptStore.toCanonicalMap(payload, signed);
+        map.put("s3Bucket", location.bucket());
+        map.put("s3KeyPrefix", location.s3KeyPrefix());
+        return map;
+    }
+
+    /** Points at the canonical JSON object - the machine-verifiable artifact (T18's own "JSON
+     * first" framing) - never the PDF. */
+    private static String receiptUri(ReceiptStorageLocation location) {
+        return "s3://" + location.bucket() + "/" + location.s3KeyPrefix() + ".json";
     }
 
     /** Phase 3, Kimi Finding 2: the two {@code HELD} updates are all-or-nothing. If exactly one

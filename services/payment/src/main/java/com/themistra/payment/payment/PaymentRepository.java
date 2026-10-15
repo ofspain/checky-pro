@@ -143,6 +143,15 @@ interface PaymentRepository extends JpaRepository<Payment, Long> {
     int markHeldIfFinalized(@Param("id") Long id, @Param("expectedCurrentState") PaymentState expectedCurrentState,
                              @Param("newState") PaymentState newState, @Param("now") Instant now);
 
+    /** T19 (R24, Phase 3/4 Kimi Finding 4) - also sets {@code attestedAt}, mirroring every other
+     * major transition's own dedicated timestamp column ({@code seenAt}/{@code confirmedAt}/
+     * {@code finalizedAt}/{@code reorgedAt}). */
+    @Modifying
+    @Query("UPDATE Payment p SET p.state = :newState, p.attestedAt = :now, p.updatedAt = :now "
+            + "WHERE p.id = :id AND p.state = :expectedCurrentState")
+    int markAttestedIfFinalized(@Param("id") Long id, @Param("expectedCurrentState") PaymentState expectedCurrentState,
+                                 @Param("newState") PaymentState newState, @Param("now") Instant now);
+
     /* Phase 9 Finding 8 (Kimi, Low confidence, explicit decision rather than a silent default):
      * neither reversal above touches `confirmations` or `amount`. Both values are left exactly
      * as the reorged-out chain.tx.confirmed/chain.tx.finalized event last set them - a deliberate

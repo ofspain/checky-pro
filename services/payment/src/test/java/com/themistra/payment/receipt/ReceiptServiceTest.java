@@ -4,12 +4,14 @@ import com.themistra.payment.common.AttestationRefusedException;
 import com.themistra.payment.common.CryptoClient;
 import com.themistra.payment.common.CryptoServiceUnavailableException;
 import com.themistra.payment.common.crypto.AttestationResult;
+import com.themistra.payment.events.OutboxPublisher;
 import com.themistra.payment.invoice.InvoiceReceiptView;
 import com.themistra.payment.invoice.InvoiceService;
 import com.themistra.payment.invoice.InvoiceState;
 import com.themistra.payment.payment.PaymentReceiptView;
 import com.themistra.payment.payment.PaymentService;
 import com.themistra.payment.payment.PaymentState;
+import com.themistra.payment.receipt.ledger.LedgerService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -62,12 +64,39 @@ class ReceiptServiceTest {
     @Mock
     private PlatformTransactionManager transactionManager;
 
+    @Mock
+    private ReceiptStore receiptStore;
+
+    @Mock
+    private ReceiptRepository receiptRepository;
+
+    @Mock
+    private LedgerService ledgerService;
+
+    @Mock
+    private OutboxPublisher outboxPublisher;
+
     private ReceiptService service;
 
     @BeforeEach
     void setUp() {
-        service = new ReceiptService(paymentService, invoiceService, cryptoClient, transactionManager,
+        service = new ReceiptService(paymentService, invoiceService, cryptoClient, receiptStore,
+                receiptRepository, ledgerService, outboxPublisher, transactionManager,
                 Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
+    /** T19 - the happy path through {@code persistSignedReceipt} now needs every new
+     * collaborator stubbed; not every test needs this (the ineligibility/BLOCKED/409/
+     * unavailable tests never reach this code path), so it's explicit per-test rather than a
+     * blanket {@code @BeforeEach} stub Mockito's strict stubbing would otherwise flag as
+     * unnecessary on those tests. */
+    private void stubSuccessfulPersistence() {
+        when(receiptStore.store(any(), any())).thenReturn(
+                new ReceiptStorageLocation("bucket", "receipts/uuid", "receipts/uuid.json", "receipts/uuid.pdf"));
+        Receipt savedReceipt = Receipt.create(UUID.randomUUID(), PAYMENT_ID, "digest", "sig", "key",
+                "bucket", "receipts/uuid", NOW, NOW);
+        when(receiptRepository.save(any())).thenReturn(savedReceipt);
+        when(paymentService.markAttestedIfFinalized(any(), any(), any(), any())).thenReturn(true);
     }
 
     private static PaymentReceiptView finalizedPayment() {
@@ -90,6 +119,7 @@ class ReceiptServiceTest {
     @Test
     void shouldIssueReceiptOnlyFromFinalizedState() {
         stubEligiblePaymentAndInvoice();
+        stubSuccessfulPersistence();
         when(cryptoClient.attest(any(), eq(CHAIN), eq(TX_HASH)))
                 .thenReturn(new AttestationResult.Signed("sig", "key", NOW));
 
@@ -152,6 +182,7 @@ class ReceiptServiceTest {
     @Test
     void shouldRequestKmsSignatureViaCryptoAttestEndpoint() {
         stubEligiblePaymentAndInvoice();
+        stubSuccessfulPersistence();
         when(cryptoClient.attest(any(), eq(CHAIN), eq(TX_HASH)))
                 .thenReturn(new AttestationResult.Signed("sig", "key", NOW));
 
@@ -165,6 +196,7 @@ class ReceiptServiceTest {
     @Test
     void shouldCarryTheSameReceiptUuidInTheSignedResult() {
         stubEligiblePaymentAndInvoice();
+        stubSuccessfulPersistence();
         when(cryptoClient.attest(any(), any(), any())).thenReturn(new AttestationResult.Signed("sig", "key", NOW));
 
         ReceiptIssueResult.Signed result = (ReceiptIssueResult.Signed) service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
@@ -178,6 +210,7 @@ class ReceiptServiceTest {
     @Test
     void shouldGenerateADifferentReceiptUuidOnEachCall() {
         stubEligiblePaymentAndInvoice();
+        stubSuccessfulPersistence();
         when(cryptoClient.attest(any(), any(), any())).thenReturn(new AttestationResult.Signed("sig", "key", NOW));
 
         ReceiptIssueResult.Signed first = (ReceiptIssueResult.Signed) service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);

@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * T11. The first real caller of {@link PaymentStateMachine} (T09) and {@link
@@ -397,6 +398,32 @@ public class PaymentService {
             String recordedReason = blockedReason == null ? "(no reason provided)" : blockedReason;
             verificationRecordService.record(paymentId, PaymentState.FINALIZED, PaymentState.HELD,
                     triggerEventKey, null, Map.of("blockedReason", recordedReason));
+            return true;
+        }
+        return false;
+    }
+
+    /** R24 (T19). A successful {@code SIGNED} attest outcome, fully persisted (receipt stored
+     * in S3, {@code Receipt} row and ledger entry both appended): {@code FINALIZED -> ATTESTED}.
+     * Records a {@link VerificationRecord} on success (Phase 3/4, Kimi Finding 13), with
+     * {@code receiptUuid} in its own {@code detail} map, keyed by the same {@code
+     * triggerEventKey} every other transition already uses - the original {@code
+     * chain.tx.finalized} idempotency key. {@code confirmations} is {@code null} - not
+     * applicable to this transition, same as {@code markHeldIfFinalized}. */
+    @Transactional
+    public boolean markAttestedIfFinalized(Long paymentId, String triggerEventKey, UUID receiptUuid, Instant now) {
+        Objects.requireNonNull(paymentId, "paymentId must not be null");
+        Objects.requireNonNull(triggerEventKey, "triggerEventKey must not be null");
+        Objects.requireNonNull(receiptUuid, "receiptUuid must not be null");
+        Objects.requireNonNull(now, "now must not be null");
+
+        if (!stateMachine.isPermitted(PaymentState.FINALIZED, PaymentState.ATTESTED)) {
+            throw new IllegalStateException(
+                    "FINALIZED -> ATTESTED must always be permitted - PaymentStateMachine's own edge set changed unexpectedly");
+        }
+        if (repository.markAttestedIfFinalized(paymentId, PaymentState.FINALIZED, PaymentState.ATTESTED, now) > 0) {
+            verificationRecordService.record(paymentId, PaymentState.FINALIZED, PaymentState.ATTESTED,
+                    triggerEventKey, null, Map.of("receiptUuid", receiptUuid.toString()));
             return true;
         }
         return false;

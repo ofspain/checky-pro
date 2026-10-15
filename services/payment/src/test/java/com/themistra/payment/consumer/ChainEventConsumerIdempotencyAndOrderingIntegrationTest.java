@@ -85,14 +85,18 @@ import static org.awaitility.Awaitility.await;
  * ever booted the real, unscoped PaymentServiceApplication before this one; every other
  * integration test either uses a narrow custom config (InvoiceRepositoryIntegrationTest) or a
  * slice (InvoiceControllerTest), which is why this was never surfaced until now. Scoping
- * @EntityScan to the five real feature-module packages (matching ArchitectureTest's own
- * FEATURE_MODULES list exactly) excludes archtestfixtures without needing any other change. */
+ * @EntityScan to the real feature-module packages (matching ArchitectureTest's own
+ * FEATURE_MODULES list exactly) excludes archtestfixtures without needing any other change.
+ * T19 added "receipt" here (Receipt/LedgerEntry are the first entities in that module) - the
+ * exact same "Not a managed type" failure this comment already describes for the whole class,
+ * confirmed again by a real run before this fix. */
 @EntityScan(basePackages = {
         "com.themistra.payment.invoice",
         "com.themistra.payment.payment",
         "com.themistra.payment.events",
         "com.themistra.payment.verification",
-        "com.themistra.payment.consumer"
+        "com.themistra.payment.consumer",
+        "com.themistra.payment.receipt"
 })
 class ChainEventConsumerIdempotencyAndOrderingIntegrationTest {
 

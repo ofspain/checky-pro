@@ -41,18 +41,20 @@ class SchemaBaselineMigrationIntegrationTest {
     // T11 V8), so each is tracked and tested separately, not folded into GRANTED_TABLES's own
     // exactly-two-privileges check.
     private static final List<String> GRANTED_TABLES =
-            List.of("ledger_entries", "verification_records");
+            List.of("ledger_entries", "verification_records", "receipts");
     private static final List<String> ALL_GRANTED_TABLE_NAMES =
             List.of("ledger_entries", "verification_records", "invoices", "outbox", "shedlock", "payments",
-                    "processed_events");
-    // The remaining two baseline tables (receipts, ledger_anchors) get no grant at all in this
-    // task — each one's own grant lands in whichever later task first needs it (T17,
-    // deferred/T21-skipped respectively), mirroring crypto-service's own incremental V2-V9
-    // pattern. processed_events moved here to ALL_GRANTED_TABLE_NAMES once T11's own V8 granted
-    // it (confirmed real, 2026-10-14, once Docker became available this session — this test had
-    // silently gone stale against V7/V8, never re-run since roughly T07).
+                    "processed_events", "receipts");
+    // The one remaining baseline table (ledger_anchors) gets no grant at all under this
+    // revision - R26/task 21 are deferred, never executed (Q4, 2026-10-11), mirroring
+    // crypto-service's own incremental V2-V9 pattern. processed_events moved to
+    // ALL_GRANTED_TABLE_NAMES once T11's own V8 granted it (confirmed real, 2026-10-14, once
+    // Docker became available this session). receipts moved from UNGRANTED_TABLES to
+    // GRANTED_TABLES once T19's own V9 granted INSERT+SELECT - the exact same two-privilege
+    // shape as ledger_entries/verification_records, so it joins the "exactly two privileges"
+    // check rather than ALL_GRANTED_TABLE_NAMES alone.
     private static final List<String> UNGRANTED_TABLES =
-            List.of("receipts", "ledger_anchors");
+            List.of("ledger_anchors");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -135,9 +137,10 @@ class SchemaBaselineMigrationIntegrationTest {
         return block.toString();
     }
 
-    /** AC2: all migrations applied and recorded as successful. Count updated to 8 (V7/V8, T11)
-     * - confirmed stale and fixed 2026-10-14, once Docker became available this session; this
-     * test had not actually run against a live Postgres since roughly T07. */
+    /** AC2: all migrations applied and recorded as successful. Count updated to 9 (V9, T19 -
+     * the receipts grant) - V7/V8 (T11) confirmed stale and fixed 2026-10-14, once Docker
+     * became available this session; this test had not actually run against a live Postgres
+     * since roughly T07. */
     @Test
     void bothMigrationsAreRecordedAsSuccessfulInFlywayHistory() throws SQLException {
         try (Connection admin = adminConnection();
@@ -150,7 +153,7 @@ class SchemaBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9");
         }
     }
 

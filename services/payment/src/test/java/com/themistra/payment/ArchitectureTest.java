@@ -99,11 +99,16 @@ class ArchitectureTest {
             .because("L6: money is NUMERIC/BigDecimal only - no float/double/Float/Double anywhere");
 
     /** T09 (L1/L12), mirroring {@code crypto-service}'s own {@code
-     * CrossModuleEntityArchitectureTest.FEATURE_MODULES} exactly. This service's five real
+     * CrossModuleEntityArchitectureTest.FEATURE_MODULES} exactly. This service's six real
      * top-level packages that own an {@code @Entity} today: {@code invoice} (T05),
      * {@code payment} (T09's own enum, now a real entity since T11's own {@code Payment}),
      * {@code events} (T04's own {@code OutboxEvent}), {@code verification} (T10's own
-     * {@code VerificationRecord}), and {@code consumer} (T11's own {@code ProcessedEvent}).
+     * {@code VerificationRecord}), {@code consumer} (T11's own {@code ProcessedEvent}), and
+     * {@code receipt} (T19's own {@code Receipt} and its {@code ledger} sub-package's
+     * {@code LedgerEntry} - a sub-package's entity still belongs to its own top-level module,
+     * {@code featureModuleOf}'s own {@code startsWith(modulePackage + ".")} check already
+     * covers this, confirmed by the real violation this rule reported before this module was
+     * added here).
      * <b>When adding a new top-level package under {@code com.themistra.payment}, add it here
      * too</b> — the fail-fast null check below means a class outside every module listed here is
      * flagged rather than silently unenforced. {@code events} is cross-cutting infrastructure, not
@@ -117,7 +122,7 @@ class ArchitectureTest {
      * no special-case, mirroring crypto's own identical choice — a {@code common}-package class
      * importing a feature module's entity is already, correctly, a violation. */
     private static final List<String> FEATURE_MODULES =
-            List.of("invoice", "payment", "events", "verification", "consumer");
+            List.of("invoice", "payment", "events", "verification", "consumer", "receipt");
 
     private static String featureModuleOf(JavaClass javaClass) {
         String packageName = javaClass.getPackageName();

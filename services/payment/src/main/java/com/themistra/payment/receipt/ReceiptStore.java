@@ -121,8 +121,17 @@ public class ReceiptStore {
      * for {@code finalizedAt}) plus {@code signature}/{@code kmsKeyId}/{@code signedAt} (also
      * {@code Instant.toString()}) — duplicated here rather than shared with {@code
      * ReceiptDigest} since that method is {@code private} to a different class (Phase 4/5).
+     *
+     * <p><b>Widened from {@code private} to {@code public static} (T19, Phase 3/4 Kimi Finding
+     * 12).</b> {@code receipt.ledger.LedgerService} needs this exact same 15-field map (plus two
+     * more fields it adds itself) for the ledger entry's own JSONB payload — reusing it here
+     * avoids a second, independently-written canonicalizer (`design.md` O4's own explicit
+     * "one shared canonicalizer" intent). {@code receipt.ledger} is a genuinely different Java
+     * package from {@code receipt} (package-private visibility does not span sub-packages), so
+     * nothing short of {@code public} would have let the caller in. {@code static} because the
+     * method never touches instance state — confirmed by inspection, not merely convenient.</p>
      */
-    private Map<String, Object> toCanonicalMap(ReceiptPayload payload, AttestationResult.Signed signed) {
+    public static Map<String, Object> toCanonicalMap(ReceiptPayload payload, AttestationResult.Signed signed) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("receiptUuid", payload.receiptUuid().toString());
         map.put("invoiceUuid", payload.invoiceUuid().toString());
