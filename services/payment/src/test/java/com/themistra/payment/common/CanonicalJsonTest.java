@@ -76,6 +76,37 @@ class CanonicalJsonTest {
         assertThat(json).isEqualTo("{\"items\":[\"zebra\",\"apple\",\"mango\"]}");
     }
 
+    /** Phase 11 Gap 4 (Kimi, real pass): map-inside-a-list is the one remaining combination in
+     * the supported type grammar - {@code shouldSortNestedMapKeys} covers maps-inside-maps,
+     * {@code shouldPreserveListElementOrderWithoutSorting} covers scalars-inside-lists, but
+     * neither covers this. */
+    @Test
+    void shouldSortMapKeysInsideAList() {
+        Map<String, Object> nested = new LinkedHashMap<>();
+        nested.put("z", 1);
+        nested.put("a", 2);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("items", List.of(nested));
+
+        String json = CanonicalJson.serialize(payload);
+
+        assertThat(json).isEqualTo("{\"items\":[{\"a\":2,\"z\":1}]}");
+    }
+
+    /** Phase 11 Gap 5 (Kimi, real pass, empty-collection half - the Boolean half was already
+     * closed by {@code shouldAcceptBooleanValue} below, added during an earlier, since-reverted
+     * self-produced pass and kept per the task's own real test content). */
+    @Test
+    void shouldSerializeEmptyMapAndEmptyListValues() {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("emptyMap", Map.of());
+        payload.put("emptyList", List.of());
+
+        String json = CanonicalJson.serialize(payload);
+
+        assertThat(json).isEqualTo("{\"emptyList\":[],\"emptyMap\":{}}");
+    }
+
     @Test
     void shouldRejectUuidValue() {
         Map<String, Object> payload = new LinkedHashMap<>();
