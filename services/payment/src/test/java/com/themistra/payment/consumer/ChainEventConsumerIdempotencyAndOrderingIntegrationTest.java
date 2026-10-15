@@ -19,6 +19,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -109,6 +110,22 @@ class ChainEventConsumerIdempotencyAndOrderingIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", () -> "payment_app");
         registry.add("spring.datasource.password", () -> PAYMENT_APP_PASSWORD);
+    }
+
+    /** Phase 11 Kimi Finding 5: this task's own approved design (Phase 4/9) relies on the real,
+     * already-running local Kafka broker, not a Testcontainers image - a missing broker
+     * previously failed only after a confusing 40-second {@code Awaitility} timeout deep inside
+     * the first test method. Failing fast here, with a clear message naming the exact compose
+     * command, is cheap and makes the real cause obvious immediately. */
+    @BeforeAll
+    static void checkKafkaBrokerIsReachable() throws IOException {
+        try (java.net.Socket socket = new java.net.Socket()) {
+            socket.connect(new java.net.InetSocketAddress("localhost", 9094), 2000);
+        } catch (IOException e) {
+            throw new IllegalStateException(
+                    "No Kafka broker reachable at localhost:9094 - this test needs the shared local "
+                            + "stack running first: docker compose -f services/auth/compose.local.yaml up -d", e);
+        }
     }
 
     @BeforeAll
@@ -248,6 +265,22 @@ class ChainEventConsumerIdempotencyAndOrderingIntegrationTest {
         }
     }
 
+    /** Phase 11 Kimi Finding 2: R14 also requires "the ignore is itself recorded" - proves a
+     * real {@code verification_records} row exists for the stale event's own idempotency key,
+     * not just that the payment's own state stayed unchanged. Not applicable to the
+     * unknown-payment scenario: {@code applyFinalized}'s own "no known payment" branch returns
+     * before any {@code Payment} row (and therefore any {@code VerificationRecord}, which has a
+     * {@code NOT NULL payment_id}) ever exists to attach one to - confirmed, not assumed. */
+    private static boolean verificationRecordExistsForTriggerEventKey(String idempotencyKey) throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT COUNT(*) FROM payments.verification_records WHERE trigger_event_key = '"
+                             + idempotencyKey + "'")) {
+            resultSet.next();
+            return resultSet.getInt(1) > 0;
+        }
+    }
+
     private static Connection adminConnection() throws SQLException {
         return DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }
@@ -346,6 +379,9 @@ class ChainEventConsumerIdempotencyAndOrderingIntegrationTest {
         assertThat(fetchPaymentState(txHash))
                 .as("a reorg of an already-finalized payment must leave its state unchanged")
                 .isEqualTo("FINALIZED");
+        assertThat(verificationRecordExistsForTriggerEventKey(idempotencyKey))
+                .as("R14 requires the ignore to be recorded, not just silently dropped")
+                .isTrue();
     }
 
     /** AC2, R14, named (keeps the exact name {@code package.md} §8 maps to R14 - Phase 8 Kimi
@@ -376,6 +412,9 @@ class ChainEventConsumerIdempotencyAndOrderingIntegrationTest {
         assertThat(fetchPaymentState(txHash))
                 .as("a confirmed event arriving after finalization must leave the state unchanged")
                 .isEqualTo("FINALIZED");
+        assertThat(verificationRecordExistsForTriggerEventKey(idempotencyKey))
+                .as("R14 requires the ignore to be recorded, not just silently dropped")
+                .isTrue();
     }
 
     /** AC3, O6 (reworded, Phase 4 Finding 6): proves the real listener wiring correctly reaches
@@ -393,11 +432,16 @@ class ChainEventConsumerIdempotencyAndOrderingIntegrationTest {
 
         try (Connection admin = adminConnection(); Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
-                     "SELECT amount, from_address, to_address FROM payments.payments WHERE tx_hash = '" + txHash + "'")) {
+                     "SELECT amount, from_address, to_address, address_poisoning_flag "
+                             + "FROM payments.payments WHERE tx_hash = '" + txHash + "'")) {
             assertThat(resultSet.next()).isTrue();
             assertThat(resultSet.getBigDecimal("amount")).isEqualByComparingTo("1000");
             assertThat(resultSet.getString("from_address")).isEqualTo("0xfrom");
             assertThat(resultSet.getString("to_address")).isEqualTo("0xdef");
+            // Phase 11 Kimi Finding 1: addressPoisoningFlag is persisted in the same atomic
+            // update as the other finalized fields - a regression dropping it would otherwise
+            // go unnoticed by this test.
+            assertThat(resultSet.getBoolean("address_poisoning_flag")).isFalse();
         }
         assertThat(fetchInvoiceState(payment.invoiceUuid())).isEqualTo("PAID");
     }
