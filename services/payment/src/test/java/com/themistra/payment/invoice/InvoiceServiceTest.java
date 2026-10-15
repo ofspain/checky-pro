@@ -415,4 +415,48 @@ class InvoiceServiceTest {
         assertThatThrownBy(() -> service.markOutcomeIfOpenOrExpired(INVOICE_ID, InvoiceState.HELD, NOW))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    // --- T17 (R20): findReceiptPrimitives / markHeldIfPaid ---
+
+    @Test
+    void shouldReturnReceiptViewWhenInvoiceExists() {
+        Invoice invoice = Invoice.create(INVOICE_UUID, MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0x111", (short) 6,
+                BigDecimal.valueOf(1000), "0xdef", null, EXPIRES_AT, WATCH_ID, NOW);
+        when(repository.findById(INVOICE_ID)).thenReturn(java.util.Optional.of(invoice));
+
+        java.util.Optional<InvoiceReceiptView> view = service.findReceiptPrimitives(INVOICE_ID);
+
+        assertThat(view).isPresent();
+        assertThat(view.get().merchantAccountUuid()).isEqualTo(MERCHANT_ACCOUNT_UUID);
+        assertThat(view.get().tokenDecimals()).isEqualTo((short) 6);
+    }
+
+    @Test
+    void shouldReturnEmptyReceiptViewWhenInvoiceDoesNotExist() {
+        when(repository.findById(INVOICE_ID)).thenReturn(java.util.Optional.empty());
+
+        assertThat(service.findReceiptPrimitives(INVOICE_ID)).isEmpty();
+    }
+
+    @Test
+    void shouldMarkHeldWhenPaid() {
+        when(repository.updateStateIfCurrentState(INVOICE_ID, InvoiceState.PAID, InvoiceState.HELD, NOW))
+                .thenReturn(1);
+
+        assertThat(service.markHeldIfPaid(INVOICE_ID, NOW)).isTrue();
+    }
+
+    @Test
+    void shouldNotMarkHeldWhenNotPaid() {
+        when(repository.updateStateIfCurrentState(INVOICE_ID, InvoiceState.PAID, InvoiceState.HELD, NOW))
+                .thenReturn(0);
+
+        assertThat(service.markHeldIfPaid(INVOICE_ID, NOW)).isFalse();
+    }
+
+    @Test
+    void markHeldIfPaidShouldThrowNullPointerExceptionForNullArguments() {
+        assertThatThrownBy(() -> service.markHeldIfPaid(null, NOW)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> service.markHeldIfPaid(INVOICE_ID, null)).isInstanceOf(NullPointerException.class);
+    }
 }

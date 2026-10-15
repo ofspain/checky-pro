@@ -281,6 +281,9 @@ class ChainEventConsumerTest {
         consumer.onChainTxFinalized(FINALIZED_JSON);
 
         verify(invoiceService).markOutcomeIfOpenOrExpired(7L, InvoiceState.PAID, NOW);
+        // T17 (R17, resolved scope): an exact-match outcome is the one case that requests a
+        // receipt - confirmed by exact payment/trigger-key argument match, not just any().
+        verify(receiptService).issueIfEligible(99L, "ETHEREUM:0xabc:chain.tx.finalized");
     }
 
     @Test
@@ -294,6 +297,8 @@ class ChainEventConsumerTest {
         consumer.onChainTxFinalized(FINALIZED_JSON);
 
         verify(invoiceService).markOutcomeIfOpenOrExpired(7L, InvoiceState.UNDERPAID, NOW);
+        // T17 (R17/R18, resolved scope): an underpaid outcome never requests a receipt at all.
+        verify(receiptService, never()).issueIfEligible(any(), any());
     }
 
     @Test
@@ -307,6 +312,8 @@ class ChainEventConsumerTest {
         consumer.onChainTxFinalized(FINALIZED_JSON);
 
         verify(invoiceService).markOutcomeIfOpenOrExpired(7L, InvoiceState.OVERPAID, NOW);
+        // T17 (R17/R18, resolved scope): an overpaid outcome never requests a receipt at all.
+        verify(receiptService, never()).issueIfEligible(any(), any());
     }
 
     /** Phase 4 Finding 1 (T13): a {@code false} return from {@code markOutcomeIfOpenOrExpired}

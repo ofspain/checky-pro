@@ -598,4 +598,57 @@ class PaymentServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.applyFinalized(openInvoice(), null))
                 .isInstanceOf(NullPointerException.class);
     }
+
+    // --- T17 (R20): findReceiptPrimitives / markHeldIfFinalized ---
+
+    @Test
+    void shouldReturnReceiptViewWhenPaymentExists() {
+        Payment payment = Payment.createSeen(INVOICE_ID, CHAIN, TX_HASH, PAY_TO_ADDRESS, TOKEN_CONTRACT_ADDRESS, 1, NOW);
+        when(repository.findById(99L)).thenReturn(Optional.of(payment));
+
+        Optional<PaymentReceiptView> view = service.findReceiptPrimitives(99L);
+
+        assertThat(view).isPresent();
+        assertThat(view.get().chain()).isEqualTo(CHAIN);
+        assertThat(view.get().txHash()).isEqualTo(TX_HASH);
+    }
+
+    @Test
+    void shouldReturnEmptyReceiptViewWhenPaymentDoesNotExist() {
+        when(repository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThat(service.findReceiptPrimitives(99L)).isEmpty();
+    }
+
+    @Test
+    void shouldMarkHeldAndRecordVerificationWhenFinalized() {
+        when(repository.markHeldIfFinalized(99L, PaymentState.FINALIZED, PaymentState.HELD, NOW)).thenReturn(1);
+
+        boolean result = service.markHeldIfFinalized(99L, "sanctioned counterparty", TRIGGER_EVENT_KEY, NOW);
+
+        assertThat(result).isTrue();
+        verify(verificationRecordService).record(99L, PaymentState.FINALIZED, PaymentState.HELD,
+                TRIGGER_EVENT_KEY, null, java.util.Map.of("blockedReason", "sanctioned counterparty"));
+    }
+
+    @Test
+    void shouldToleratesNullBlockedReasonWithoutThrowing() {
+        when(repository.markHeldIfFinalized(99L, PaymentState.FINALIZED, PaymentState.HELD, NOW)).thenReturn(1);
+
+        boolean result = service.markHeldIfFinalized(99L, null, TRIGGER_EVENT_KEY, NOW);
+
+        assertThat(result).isTrue();
+        verify(verificationRecordService).record(99L, PaymentState.FINALIZED, PaymentState.HELD,
+                TRIGGER_EVENT_KEY, null, java.util.Map.of("blockedReason", "(no reason provided)"));
+    }
+
+    @Test
+    void shouldNotRecordVerificationWhenNotFinalized() {
+        when(repository.markHeldIfFinalized(99L, PaymentState.FINALIZED, PaymentState.HELD, NOW)).thenReturn(0);
+
+        boolean result = service.markHeldIfFinalized(99L, "reason", TRIGGER_EVENT_KEY, NOW);
+
+        assertThat(result).isFalse();
+        verify(verificationRecordService, never()).record(any(), any(), any(), any(), any(), any());
+    }
 }
