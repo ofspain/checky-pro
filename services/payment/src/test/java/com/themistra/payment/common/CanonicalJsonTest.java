@@ -121,6 +121,40 @@ class CanonicalJsonTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    /** Phase 11 Gap 1 (self-produced): {@code Boolean} is an explicitly supported type with no
+     * prior positive test. */
+    @Test
+    void shouldAcceptBooleanValue() {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("flag", Boolean.TRUE);
+
+        String json = CanonicalJson.serialize(payload);
+
+        assertThat(json).isEqualTo("{\"flag\":true}");
+    }
+
+    /** Phase 11 Gap 2 (self-produced): the class's own Javadoc explicitly names
+     * {@code BigInteger} as rejected, but no test previously verified it. */
+    @Test
+    void shouldRejectBigIntegerValue() {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("value", java.math.BigInteger.TEN);
+
+        assertThatThrownBy(() -> CanonicalJson.serialize(payload))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /** Phase 11 Gap 3 (self-produced): an earlier Phase 8 review claimed arrays are rejected
+     * without ever being tested - verified empirically here. */
+    @Test
+    void shouldRejectArrayValue() {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("values", new String[] {"a", "b"});
+
+        assertThatThrownBy(() -> CanonicalJson.serialize(payload))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test
     void shouldAcceptIntegerLongShortByteNumberValues() {
         Map<String, Object> payload = new LinkedHashMap<>();

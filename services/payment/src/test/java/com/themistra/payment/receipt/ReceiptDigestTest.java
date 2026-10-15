@@ -94,6 +94,18 @@ class ReceiptDigestTest {
         assertThat(ReceiptDigest.digest(samplePayload())).isNotEqualTo(ReceiptDigest.digest(changed));
     }
 
+    /** Phase 11 Gap 4 (self-produced): {@code receiptUuid} has no entity source at all - it is
+     * generated fresh by the caller every time - making it the highest-value single field to
+     * prove sensitivity for among the seven not already covered. */
+    @Test
+    void shouldChangeDigestWhenReceiptUuidChanges() {
+        ReceiptPayload changed = new ReceiptPayload(UUID.randomUUID(), INVOICE_UUID, PAYMENT_UUID,
+                MERCHANT_ACCOUNT_UUID, "ETHEREUM", "0xabc123", "0xdef456", (short) 6,
+                new BigDecimal("1000000"), "0x789", "0x012", FINALIZED_AT);
+
+        assertThat(ReceiptDigest.digest(samplePayload())).isNotEqualTo(ReceiptDigest.digest(changed));
+    }
+
     @Test
     void shouldSerializeAmountAsDecimalStringNotJsonNumber() {
         String canonicalJson = canonicalJsonFor(samplePayload());
