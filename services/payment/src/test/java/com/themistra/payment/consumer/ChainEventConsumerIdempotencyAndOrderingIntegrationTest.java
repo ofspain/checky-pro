@@ -28,6 +28,9 @@ import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -40,20 +43,27 @@ import static org.awaitility.Awaitility.await;
  * <p><b>No existing precedent in this codebase combines Testcontainers-Postgres with a real
  * Kafka broker</b> (confirmed by direct search across all four services). This class adapts the
  * single-class/shared-container/{@code Awaitility} shape of {@code notification-service}'s own
- * {@code AuthEventConsumerIntegrationTest} - which, like this class, does not use a Testcontainers
- * Kafka image either, relying instead on the already-running local broker
- * ({@code services/auth/compose.local.yaml}, shared by every service in this monorepo) - with a
- * real Kafka Testcontainer swapped in here instead, {@code @MockBean CryptoClient}, and raw-JDBC
- * verification against {@code payments.payments}/{@code payments.invoices} in place of that
- * precedent's own projection-table checks (neither {@code Payment} nor {@code Invoice} is
+ * {@code AuthEventConsumerIntegrationTest} - which, like this class, deliberately does
+ * <b>not</b> use a Testcontainers Kafka image, relying instead on the already-running local
+ * broker ({@code services/auth/compose.local.yaml}, shared by every service in this monorepo,
+ * started for this session). This is Phase 4's own explicit, approved design (Finding 1's own
+ * reworded Decision 1; Finding 7 rejected the alternative of pre-creating topics via
+ * {@code AdminClient} for the same reason) - not a gap. {@code @MockBean CryptoClient}, and
+ * raw-JDBC verification against {@code payments.payments}/{@code payments.invoices} in place of
+ * that precedent's own projection-table checks (neither {@code Payment} nor {@code Invoice} is
  * reachable from this package, L12).</p>
  *
  * <p><b>Phase 4 Finding 2:</b> {@code auto-offset-reset=earliest} - without it, a message
  * published before the listener container's own initial partition assignment completes (a real,
  * asynchronous race at context startup) would silently never be read, timing out
- * {@code Awaitility} rather than failing clearly. <b>Finding 3:</b> background scheduling
- * disabled - removes {@code OutboxRelay}/{@code InvoiceExpirySweepJob} noise without touching
- * {@code @KafkaListener} container lifecycle (an entirely separate mechanism). <b>Finding 9:</b>
+ * {@code Awaitility} rather than failing clearly. <b>Finding 3, corrected at Phase 6:</b>
+ * {@code spring.task.scheduling.enabled=false} does <b>not</b> actually stop
+ * {@code OutboxRelay}/{@code InvoiceExpirySweepJob} from running, since
+ * {@code PaymentServiceApplication} declares {@code @EnableScheduling} explicitly (independent
+ * of the Boot auto-configuration property) - left in place as a harmless, documented no-op
+ * rather than a real fix, since neither job can affect this task's own assertions (every seeded
+ * invoice's own {@code expiresAt} is far beyond this test's own runtime; outbox-forwarded events
+ * are outbound, never consumed by this task's own listener-side checks). <b>Finding 9:</b>
  * {@code CryptoClient} is mocked because this task's own scope is dedupe/ordering/staleness, not
  * crypto-service availability - {@code onChainTxSeen}'s own held-open-connection behavior across
  * the real {@code unregisterWatch} call remains covered by existing unit tests and is out of
@@ -148,6 +158,21 @@ class ChainEventConsumerIdempotencyAndOrderingIntegrationTest {
         }
     }
 
+    /** Phase 8 Kimi Finding 2: {@code kafkaTemplate.send(...)} is fire-and-forget by default -
+     * a producer-side delivery failure would otherwise only surface as a later, less-specific
+     * {@code Awaitility} timeout. Waiting on the real send future surfaces it immediately, at
+     * the actual point of failure. */
+    private void sendAndWait(String topic, String key, String json) {
+        try {
+            kafkaTemplate.send(topic, key, json).get(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while sending to " + topic, e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new IllegalStateException("Failed to send to " + topic, e);
+        }
+    }
+
     private UUID seedInvoice(UUID watchId) {
         UUID invoiceUuid = UUID.randomUUID();
         invoiceService.create(invoiceUuid, MERCHANT_ACCOUNT_UUID, CHAIN, TOKEN_CONTRACT_ADDRESS,
@@ -212,33 +237,47 @@ class ChainEventConsumerIdempotencyAndOrderingIntegrationTest {
         }
     }
 
+    /** Phase 8 Kimi Finding 4: AC3 must also prove the real invoice-state transition
+     * ({@code InvoiceService.markOutcomeIfOpenOrExpired}, T13) that {@code onChainTxFinalized}'s
+     * own real wiring performs - not just the payment row's own fields. */
+    private static String fetchInvoiceState(UUID invoiceUuid) throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT state FROM payments.invoices WHERE invoice_uuid = '" + invoiceUuid + "'")) {
+            return resultSet.next() ? resultSet.getString(1) : null;
+        }
+    }
+
     private static Connection adminConnection() throws SQLException {
         return DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }
 
+    private record FinalizedPayment(UUID watchId, UUID invoiceUuid) {
+    }
+
     /** Drives a real payment, over the real broker, from nothing all the way to {@code FINALIZED}
-     * - the shared setup both {@code shouldHandleTheFullForwardSequenceAndReachFinalized} and two
-     * of {@code shouldIgnoreOutOfOrderOrStaleChainEvents}'s own three scenarios need. */
-    private UUID finalizeARealPayment(String txHash) {
+     * - the shared setup {@code shouldHandleTheFullForwardSequenceAndReachFinalized} and two of
+     * the three split R14 scenarios below need. */
+    private FinalizedPayment finalizeARealPayment(String txHash) {
         UUID watchId = UUID.randomUUID();
         UUID invoiceUuid = seedInvoice(watchId);
 
-        kafkaTemplate.send("chain.tx.seen", watchId.toString(),
+        sendAndWait("chain.tx.seen", watchId.toString(),
                 seenJson(CHAIN + ":" + txHash + ":seen", watchId, invoiceUuid, txHash));
         await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->
                 assertThat(fetchPaymentState(txHash)).isEqualTo("SEEN"));
 
-        kafkaTemplate.send("chain.tx.confirmed", watchId.toString(),
+        sendAndWait("chain.tx.confirmed", watchId.toString(),
                 confirmedJson(CHAIN + ":" + txHash + ":confirmed", watchId, invoiceUuid, txHash, 3));
         await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->
                 assertThat(fetchPaymentState(txHash)).isEqualTo("CONFIRMING"));
 
-        kafkaTemplate.send("chain.tx.finalized", watchId.toString(),
+        sendAndWait("chain.tx.finalized", watchId.toString(),
                 finalizedJson(CHAIN + ":" + txHash + ":finalized", watchId, invoiceUuid, txHash));
         await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->
                 assertThat(fetchPaymentState(txHash)).isEqualTo("FINALIZED"));
 
-        return watchId;
+        return new FinalizedPayment(watchId, invoiceUuid);
     }
 
     /** AC1, R13, named. The identical message, redelivered, must not create a second
@@ -253,73 +292,104 @@ class ChainEventConsumerIdempotencyAndOrderingIntegrationTest {
         String idempotencyKey = CHAIN + ":" + txHash + ":seen";
         String json = seenJson(idempotencyKey, watchId, invoiceUuid, txHash);
 
-        kafkaTemplate.send("chain.tx.seen", watchId.toString(), json);
+        sendAndWait("chain.tx.seen", watchId.toString(), json);
         await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->
                 assertThat(fetchPaymentState(txHash)).isEqualTo("SEEN"));
         assertThat(processedEventRepository.existsById(idempotencyKey)).isTrue();
 
-        kafkaTemplate.send("chain.tx.seen", watchId.toString(), json);
+        sendAndWait("chain.tx.seen", watchId.toString(), json);
         await().pollDelay(Duration.ofSeconds(3)).atMost(Duration.ofSeconds(10)).untilAsserted(() ->
                 assertThat(countPaymentsForTxHash(txHash))
                         .as("a redelivered, already-processed event must not create a second payment row")
                         .isEqualTo(1));
     }
 
-    /** AC2, R14, named. Three cross-topic scenarios (Phase 2 Decision 2 / Phase 4 Finding 6) -
-     * every same-event-type staleness scenario (e.g. a lower confirmation count) is contractually
-     * unreachable via real, dedupe-respecting delivery, since every {@code chain.tx.*} schema's
-     * own idempotency key is fixed per {@code (chain, txHash, eventtype)}: a second same-type
-     * message for the same transaction is indistinguishable from a plain duplicate before ever
-     * reaching the staleness comparison. The same limitation applies to {@code chain.tx.reorged}
-     * (documented in {@code ChainTxReorged}'s own Phase 9 Finding 9) - a second genuine reorg of
-     * the same transaction cannot be tested this way either. */
+    /** R14, scenario (a): {@code finalized} for a payment that was never seen - the "out of
+     * order" case named literally in the task's own text. No invoice needs seeding (Phase 8
+     * Kimi review, confirming self-review Finding 1): {@code applyFinalized}'s own "no known
+     * payment" branch is reached by correlating {@code (chain, txHash)}, before any invoice
+     * lookup is ever attempted. */
+    @Test
+    void shouldIgnoreFinalizedForAnUnknownPayment() throws SQLException {
+        String txHash = "0x" + UUID.randomUUID();
+        UUID watchId = UUID.randomUUID();
+        UUID invoiceUuid = UUID.randomUUID();
+        String idempotencyKey = CHAIN + ":" + txHash + ":finalized";
+
+        sendAndWait("chain.tx.finalized", watchId.toString(),
+                finalizedJson(idempotencyKey, watchId, invoiceUuid, txHash));
+
+        // Phase 8 Kimi Finding 3: first prove the message was actually consumed (not just that
+        // enough wall-clock time passed) before asserting the negative outcome - otherwise a
+        // lost/never-delivered message would make this assertion pass vacuously.
+        await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->
+                assertThat(processedEventRepository.existsById(idempotencyKey)).isTrue());
+        assertThat(fetchPaymentState(txHash))
+                .as("a finalized event with no prior seen must never create a payment row")
+                .isNull();
+    }
+
+    /** R14, scenario (b): {@code reorged} for a payment that has already reached
+     * {@code FINALIZED} - stale relative to current state, R14's own literal wording. */
+    @Test
+    void shouldIgnoreReorgedForAnAlreadyFinalizedPayment() throws SQLException {
+        String txHash = "0x" + UUID.randomUUID();
+        FinalizedPayment payment = finalizeARealPayment(txHash);
+        UUID reorgInvoiceUuid = UUID.randomUUID(); // not read by applyReorged's own stale path
+        String idempotencyKey = CHAIN + ":" + txHash + ":reorged";
+
+        sendAndWait("chain.tx.reorged", payment.watchId().toString(),
+                reorgedJson(idempotencyKey, payment.watchId(), reorgInvoiceUuid, txHash));
+
+        await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->
+                assertThat(processedEventRepository.existsById(idempotencyKey)).isTrue());
+        assertThat(fetchPaymentState(txHash))
+                .as("a reorg of an already-finalized payment must leave its state unchanged")
+                .isEqualTo("FINALIZED");
+    }
+
+    /** AC2, R14, named (keeps the exact name {@code package.md} §8 maps to R14 - Phase 8 Kimi
+     * review's own recommendation, splitting the former three-scenario bundle into independent
+     * methods for diagnostic granularity while keeping this one as the most interesting case).
+     * {@code confirmed} for a payment that has already reached {@code FINALIZED} - the real
+     * cross-topic race (Phase 4 Finding 6): {@code chain.tx.confirmed} and
+     * {@code chain.tx.finalized} are separate topics with no cross-topic ordering guarantee, so
+     * a confirmed event can genuinely arrive after finalization. Every same-event-type
+     * staleness scenario (e.g. a lower confirmation count, or a second genuine reorg - the
+     * identical limitation documented in {@code ChainTxReorged}'s own Phase 9 Finding 9) is
+     * contractually unreachable via real, dedupe-respecting delivery, since every
+     * {@code chain.tx.*} schema's own idempotency key is fixed per
+     * {@code (chain, txHash, eventtype)} - this cross-topic scenario is the real,
+     * end-to-end-testable proof of R14 instead. */
     @Test
     void shouldIgnoreOutOfOrderOrStaleChainEvents() throws SQLException {
-        // (a) finalized for a payment that was never seen.
-        String unknownTxHash = "0x" + UUID.randomUUID();
-        UUID unknownWatchId = UUID.randomUUID();
-        UUID unknownInvoiceUuid = seedInvoice(unknownWatchId);
-        kafkaTemplate.send("chain.tx.finalized", unknownWatchId.toString(),
-                finalizedJson(CHAIN + ":" + unknownTxHash + ":finalized", unknownWatchId, unknownInvoiceUuid, unknownTxHash));
-        await().pollDelay(Duration.ofSeconds(3)).atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(fetchPaymentState(unknownTxHash))
-                        .as("a finalized event with no prior seen must never create a payment row")
-                        .isNull());
-
-        // (b) reorged for an already-FINALIZED payment.
-        String reorgTxHash = "0x" + UUID.randomUUID();
-        UUID reorgWatchId = finalizeARealPayment(reorgTxHash);
-        UUID reorgInvoiceUuid = UUID.randomUUID(); // not read by applyReorged's own stale path
-        kafkaTemplate.send("chain.tx.reorged", reorgWatchId.toString(),
-                reorgedJson(CHAIN + ":" + reorgTxHash + ":reorged", reorgWatchId, reorgInvoiceUuid, reorgTxHash));
-        await().pollDelay(Duration.ofSeconds(3)).atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(fetchPaymentState(reorgTxHash))
-                        .as("a reorg of an already-finalized payment must leave its state unchanged")
-                        .isEqualTo("FINALIZED"));
-
-        // (c) confirmed for an already-FINALIZED payment - the real cross-topic race (Finding 6):
-        // chain.tx.confirmed and chain.tx.finalized are separate topics with no cross-topic
-        // ordering guarantee, so a confirmed event can genuinely arrive after finalization.
-        String crossRaceTxHash = "0x" + UUID.randomUUID();
-        UUID crossRaceWatchId = finalizeARealPayment(crossRaceTxHash);
+        String txHash = "0x" + UUID.randomUUID();
+        FinalizedPayment payment = finalizeARealPayment(txHash);
         UUID crossRaceInvoiceUuid = UUID.randomUUID(); // not read by applyConfirmed's own stale path
-        kafkaTemplate.send("chain.tx.confirmed", crossRaceWatchId.toString(),
-                confirmedJson(CHAIN + ":" + crossRaceTxHash + ":confirmed", crossRaceWatchId, crossRaceInvoiceUuid, crossRaceTxHash, 20));
-        await().pollDelay(Duration.ofSeconds(3)).atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(fetchPaymentState(crossRaceTxHash))
-                        .as("a confirmed event arriving after finalization must leave the state unchanged")
-                        .isEqualTo("FINALIZED"));
+        String idempotencyKey = CHAIN + ":" + txHash + ":confirmed";
+
+        sendAndWait("chain.tx.confirmed", payment.watchId().toString(),
+                confirmedJson(idempotencyKey, payment.watchId(), crossRaceInvoiceUuid, txHash, 20));
+
+        await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->
+                assertThat(processedEventRepository.existsById(idempotencyKey)).isTrue());
+        assertThat(fetchPaymentState(txHash))
+                .as("a confirmed event arriving after finalization must leave the state unchanged")
+                .isEqualTo("FINALIZED");
     }
 
     /** AC3, O6 (reworded, Phase 4 Finding 6): proves the real listener wiring correctly reaches
-     * {@code FINALIZED} via the full forward sequence with the real observed fields persisted -
-     * not a claim about proving Kafka's own cross-topic ordering guarantee, which is the
-     * broker's property, not this consumer's. */
+     * {@code FINALIZED} via the full forward sequence with the real observed fields persisted,
+     * including the real invoice-state transition (Phase 8 Kimi Finding 4) -
+     * {@code InvoiceService.markOutcomeIfOpenOrExpired} (T13) is as much a part of
+     * {@code onChainTxFinalized}'s own real wiring as the payment row's own fields. Not a claim
+     * about proving Kafka's own cross-topic ordering guarantee, which is the broker's property,
+     * not this consumer's. */
     @Test
     void shouldHandleTheFullForwardSequenceAndReachFinalized() throws SQLException {
         String txHash = "0x" + UUID.randomUUID();
 
-        finalizeARealPayment(txHash);
+        FinalizedPayment payment = finalizeARealPayment(txHash);
 
         try (Connection admin = adminConnection(); Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
@@ -329,5 +399,6 @@ class ChainEventConsumerIdempotencyAndOrderingIntegrationTest {
             assertThat(resultSet.getString("from_address")).isEqualTo("0xfrom");
             assertThat(resultSet.getString("to_address")).isEqualTo("0xdef");
         }
+        assertThat(fetchInvoiceState(payment.invoiceUuid())).isEqualTo("PAID");
     }
 }
