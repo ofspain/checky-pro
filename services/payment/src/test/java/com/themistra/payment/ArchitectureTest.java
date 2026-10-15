@@ -1,6 +1,7 @@
 package com.themistra.payment;
 
 import com.themistra.payment.archtestfixtures.RogueFloatingPointMoneyUser;
+import com.themistra.payment.archtestfixtures.RogueKmsAndChainClientUser;
 import com.themistra.payment.archtestfixtures.RogueUnmappedEntity;
 import com.themistra.payment.invoice.Invoice;
 import com.themistra.payment.payment.RogueInvoiceEntityReferencer;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -163,6 +165,30 @@ class ArchitectureTest {
         };
     }
 
+    /** T15 — L3: this service never touches a blockchain or KMS; the signature for a receipt is
+     * obtained only by calling the Crypto Service's own {@code POST /attest} endpoint
+     * ({@code CryptoClient}), never by signing locally or reading on-chain state directly. No
+     * custom {@link ArchCondition} is needed here (unlike the two rules above) - this is exactly
+     * the built-in {@code noClasses().should().dependOnClassesThat().resideInAPackage(...)} DSL
+     * shape, confirmed against {@code crypto-service}'s own {@code
+     * KmsSignerArchitectureTest.onlyKmsSignerMayUseTheKmsSigningSdk} rule, which bans the KMS SDK
+     * package the identical way. Unlike that rule, this one has no allowlist at all - this
+     * service has zero legitimate reason to ever import any of these three packages, so a
+     * blanket ban across the whole service is correct, mirroring {@code
+     * shouldRejectFloatingPointMoneyTypes}'s own blanket-ban shape rather than crypto's
+     * narrow-exception one. None of {@code org.web3j}/{@code org.tron}/
+     * {@code software.amazon.awssdk.services.kms} is an actual dependency of this module
+     * (confirmed against {@code pom.xml} - unlike {@code crypto-service}, which legitimately
+     * depends on all three) - the stub classes under those same package names in
+     * {@code src/test/java} exist solely so {@link RogueKmsAndChainClientUser} can compile a
+     * real violation to prove this rule against, without adding the real SDKs to this module. */
+    private static final ArchRule shouldBanKmsAndChainClientImports = noClasses()
+            .that().resideInAPackage(ANALYZED_PACKAGE + "..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "org.web3j..", "org.tron..", "software.amazon.awssdk.services.kms..")
+            .because("L3: this service never touches a blockchain or KMS - the receipt signature "
+                    + "is obtained only via CryptoClient's own POST /attest call");
+
     private static JavaClasses analyzedClasses() {
         return new ClassFileImporter()
                 .withImportOption(new ImportOption.DoNotIncludeTests())
@@ -177,6 +203,32 @@ class ArchitectureTest {
     @Test
     void shouldPreventCrossModuleEntityImportsIsCheckedDuringStandardBuild() {
         shouldPreventCrossModuleEntityImports.check(analyzedClasses());
+    }
+
+    @Test
+    void shouldBanKmsAndChainClientImportsIsCheckedDuringStandardBuild() {
+        shouldBanKmsAndChainClientImports.check(analyzedClasses());
+    }
+
+    /** The canary above only proves the rule passes on already-clean code - it says nothing
+     * about whether it can ever actually fail. {@link RogueKmsAndChainClientUser} is a real
+     * class, deliberately depending on all three banned SDK stand-ins, deliberately placed
+     * under {@code archtestfixtures} (outside every real feature module, mirroring {@link
+     * RogueFloatingPointMoneyUser}'s own placement) so this test exercises the actual violation
+     * path without ever risking the real canary above for anyone else. This test builds its own,
+     * separate, narrow {@code JavaClasses} set naming exactly the violating class. */
+    @Test
+    void shouldBanKmsAndChainClientImportsActuallyFailsAgainstAGenuineViolation() {
+        JavaClasses violatingClasses = new ClassFileImporter()
+                .importClasses(RogueKmsAndChainClientUser.class,
+                        org.web3j.StubWeb3jClass.class,
+                        org.tron.StubTronClass.class,
+                        software.amazon.awssdk.services.kms.StubKmsClass.class);
+
+        assertThatThrownBy(() -> shouldBanKmsAndChainClientImports.check(violatingClasses))
+                .as("a class depending on web3j/tron/the KMS SDK must fail this rule")
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueKmsAndChainClientUser");
     }
 
     /** The canary above only proves the rule passes on already-clean code - it says nothing
