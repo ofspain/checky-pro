@@ -268,12 +268,16 @@ class CryptoClientTest {
     void shouldSendCorrectBodyAndBearerTokenOnAttest() throws IOException {
         AtomicReference<String> capturedBody = new AtomicReference<>();
         AtomicReference<String> capturedAuthHeader = new AtomicReference<>();
+        AtomicReference<String> capturedMethod = new AtomicReference<>();
+        AtomicReference<String> capturedPath = new AtomicReference<>();
         when(tokenProvider.getAccessToken()).thenReturn("a-real-looking-token");
         CryptoClient client = startAttestServer(200,
                 "{\"outcome\":\"SIGNED\",\"signature\":\"sig\",\"kmsKeyId\":\"key\",\"signedAt\":\"2026-07-13T01:00:00Z\"}",
                 exchange -> {
                     capturedBody.set(readBody(exchange));
                     capturedAuthHeader.set(exchange.getRequestHeaders().getFirst("Authorization"));
+                    capturedMethod.set(exchange.getRequestMethod());
+                    capturedPath.set(exchange.getRequestURI().getPath());
                 });
 
         client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH);
@@ -283,6 +287,85 @@ class CryptoClientTest {
         assertThat(sentBody.get("chain").asText()).isEqualTo(CHAIN);
         assertThat(sentBody.get("txHash").asText()).isEqualTo(TX_HASH);
         assertThat(capturedAuthHeader.get()).isEqualTo("Bearer a-real-looking-token");
+        // Phase 11 Gap 4 (Kimi): the body/auth assertions above would still pass if the method
+        // or path were wrong (e.g. PUT, or a trailing-slash path).
+        assertThat(capturedMethod.get()).isEqualTo("POST");
+        assertThat(capturedPath.get()).isEqualTo("/internal/v1/attest");
+    }
+
+    /** Phase 11 Gap 1 (Kimi): {@code attest} matches {@code outcome} case-insensitively
+     * (mirrors {@code registerWatch}'s own {@code REGISTERED_STATUS} check) - this proves a
+     * regression to a case-sensitive {@code equals} would be caught. */
+    @Test
+    void shouldReturnSignedOutcomeWhenOutcomeIsLowercase() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(200,
+                "{\"outcome\":\"signed\",\"signature\":\"sig\",\"kmsKeyId\":\"key\","
+                        + "\"signedAt\":\"2026-07-13T01:00:00Z\"}", null);
+
+        AttestationResult result = client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH);
+
+        assertThat(result).isInstanceOf(AttestationResult.Signed.class);
+    }
+
+    @Test
+    void shouldReturnBlockedOutcomeWhenOutcomeIsLowercase() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(200, "{\"outcome\":\"blocked\",\"reason\":\"r\"}", null);
+
+        AttestationResult result = client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH);
+
+        assertThat(result).isInstanceOf(AttestationResult.Blocked.class);
+    }
+
+    /** Phase 11 Gap 2 (Kimi): {@code crypto-internal.yaml} does not mark {@code reason} as
+     * required even when {@code outcome} is {@code BLOCKED} - a null reason is a legal,
+     * explicitly-accepted shape (Phase 9's own confirmed disposition for why
+     * {@code AttestationResult.Blocked} gets no compact-constructor null-check, unlike
+     * {@code Signed}), not an error. */
+    @Test
+    void shouldReturnBlockedOutcomeWithNullReasonWhenReasonIsAbsent() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(200, "{\"outcome\":\"BLOCKED\"}", null);
+
+        AttestationResult result = client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH);
+
+        assertThat(result).isInstanceOf(AttestationResult.Blocked.class);
+        assertThat(((AttestationResult.Blocked) result).reason()).isNull();
+    }
+
+    /** Phase 11 Gap 3 (Kimi): the existing all-fields-missing test exercises the guard's overall
+     * branch but does not prove each of the three {@code ||} operands is actually checked - a
+     * mutation that dropped one operand (e.g. {@code signature() == null} only) would still
+     * pass that test. These three focused cases close that gap. */
+    @Test
+    void shouldThrowCryptoServiceUnavailableWhenOnlySignatureIsMissing() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(200,
+                "{\"outcome\":\"SIGNED\",\"kmsKeyId\":\"key\",\"signedAt\":\"2026-07-13T01:00:00Z\"}", null);
+
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
+    }
+
+    @Test
+    void shouldThrowCryptoServiceUnavailableWhenOnlyKmsKeyIdIsMissing() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(200,
+                "{\"outcome\":\"SIGNED\",\"signature\":\"sig\",\"signedAt\":\"2026-07-13T01:00:00Z\"}", null);
+
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
+    }
+
+    @Test
+    void shouldThrowCryptoServiceUnavailableWhenOnlySignedAtIsMissing() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(200,
+                "{\"outcome\":\"SIGNED\",\"signature\":\"sig\",\"kmsKeyId\":\"key\"}", null);
+
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
     }
 
     @Test
@@ -334,6 +417,22 @@ class CryptoClientTest {
         assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
                 .isInstanceOf(AttestationRefusedException.class)
                 .hasMessageContaining("Attestation preconditions not met");
+    }
+
+    /** Phase 11 Gap 5 (Kimi): the real crypto-service's own {@code 409} body is an RFC 9457
+     * {@code problem+json} object, not plain text - this proves the client's own deliberate
+     * "best-effort plain String, not a strict ProblemDetail parse" design (Phase 4, rejecting
+     * Kimi's own Phase 8 New Finding 4) carries that raw JSON through unmodified rather than
+     * failing to parse or silently dropping it. */
+    @Test
+    void shouldThrowAttestationRefusedExceptionOnConflictWithProblemJsonBody() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(409,
+                "{\"title\":\"Attestation refused\",\"detail\":\"preconditions not met\"}", null);
+
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(AttestationRefusedException.class)
+                .hasMessageContaining("preconditions not met");
     }
 
     @Test
