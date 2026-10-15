@@ -3,6 +3,7 @@ package com.themistra.payment.receipt.ledger;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -13,6 +14,12 @@ import java.util.Optional;
 interface LedgerEntryRepository extends JpaRepository<LedgerEntry, Long> {
 
     Optional<LedgerEntry> findTopByOrderBySeqDesc();
+
+    /** T20 (R22) - the full chain, head (highest {@code seq}) first, for {@code
+     * LedgerVerifier.verify()}'s own head-to-tail walk. Fetches the whole table into memory - a
+     * reasonable Phase 1/MVP choice (no pagination/streaming), matching this codebase's own
+     * established "no premature optimization" stance. */
+    List<LedgerEntry> findAllByOrderBySeqDesc();
 
     /**
      * Serializes every ledger append through one critical section - a fixed, namespaced
