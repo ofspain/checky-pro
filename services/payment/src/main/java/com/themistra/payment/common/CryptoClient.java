@@ -15,6 +15,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -140,7 +141,7 @@ public class CryptoClient {
                     .retrieve()
                     .body(AttestResponse.class);
         } catch (HttpClientErrorException.Conflict e) {
-            throw new AttestationRefusedException(e.getResponseBodyAsString());
+            throw new AttestationRefusedException(e.getResponseBodyAsString(StandardCharsets.UTF_8));
         } catch (RestClientException e) {
             throw new CryptoServiceUnavailableException(
                     "Failed to obtain attestation for " + chain + ":" + txHash, e);
@@ -151,6 +152,11 @@ public class CryptoClient {
                     "Crypto Service returned no attest outcome for " + chain + ":" + txHash, null);
         }
         if (SIGNED_OUTCOME.equalsIgnoreCase(response.outcome())) {
+            if (response.signature() == null || response.kmsKeyId() == null || response.signedAt() == null) {
+                throw new CryptoServiceUnavailableException(
+                        "Crypto Service returned SIGNED outcome with missing fields for "
+                                + chain + ":" + txHash, null);
+            }
             return new AttestationResult.Signed(response.signature(), response.kmsKeyId(), response.signedAt());
         }
         if (BLOCKED_OUTCOME.equalsIgnoreCase(response.outcome())) {
