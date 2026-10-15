@@ -97,6 +97,9 @@ class ReceiptServiceTest {
 
         assertThat(result).isInstanceOf(ReceiptIssueResult.Signed.class);
         verify(cryptoClient).attest(any(), eq(CHAIN), eq(TX_HASH));
+        // Phase 11 Gap 3 (Kimi): a SIGNED outcome must never also trigger the HELD transition.
+        verify(paymentService, never()).markHeldIfFinalized(any(), any(), any(), any());
+        verify(invoiceService, never()).markHeldIfPaid(any(), any());
     }
 
     @Test
@@ -168,6 +171,35 @@ class ReceiptServiceTest {
 
         assertThat(result.receiptUuid()).isNotNull();
         assertThat(result.signed().signature()).isEqualTo("sig");
+    }
+
+    /** Phase 11 Gap 4 (Kimi): proves {@code receiptUuid} is freshly generated per call, not a
+     * constant/cached value that would silently collide across two different receipts. */
+    @Test
+    void shouldGenerateADifferentReceiptUuidOnEachCall() {
+        stubEligiblePaymentAndInvoice();
+        when(cryptoClient.attest(any(), any(), any())).thenReturn(new AttestationResult.Signed("sig", "key", NOW));
+
+        ReceiptIssueResult.Signed first = (ReceiptIssueResult.Signed) service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
+        ReceiptIssueResult.Signed second = (ReceiptIssueResult.Signed) service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
+
+        assertThat(first.receiptUuid()).isNotEqualTo(second.receiptUuid());
+    }
+
+    /** Phase 11 Gap 1 (Kimi): the Phase 9 widened catch (self-review Finding 1) must also
+     * swallow a genuine, unrelated runtime failure from either HELD update - not just the
+     * intentional split-result {@code IllegalStateException}. */
+    @Test
+    void shouldReturnFailedWhenHeldUpdateThrowsAnUnrelatedRuntimeException() {
+        stubEligiblePaymentAndInvoice();
+        when(cryptoClient.attest(any(), any(), any())).thenReturn(new AttestationResult.Blocked("sanctioned"));
+        when(paymentService.markHeldIfFinalized(any(), any(), any(), any()))
+                .thenThrow(new RuntimeException("db down"));
+
+        ReceiptIssueResult result = service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
+
+        assertThat(result).isInstanceOf(ReceiptIssueResult.Failed.class);
+        verify(invoiceService, never()).markHeldIfPaid(any(), any());
     }
 
     // --- R20, named ---
