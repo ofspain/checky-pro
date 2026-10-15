@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import com.themistra.payment.common.config.CryptoClientProperties;
+import com.themistra.payment.common.crypto.AttestationResult;
 import com.themistra.payment.common.crypto.RegisterWatchResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -257,11 +258,175 @@ class CryptoClientTest {
                 .isInstanceOf(CryptoServiceUnavailableException.class);
     }
 
+    // --- T15 (R19): attest ---
+
+    private static final String RECEIPT_DIGEST = "a".repeat(64);
+    private static final String CHAIN = "ETHEREUM";
+    private static final String TX_HASH = "0xdeadbeef";
+
+    @Test
+    void shouldSendCorrectBodyAndBearerTokenOnAttest() throws IOException {
+        AtomicReference<String> capturedBody = new AtomicReference<>();
+        AtomicReference<String> capturedAuthHeader = new AtomicReference<>();
+        when(tokenProvider.getAccessToken()).thenReturn("a-real-looking-token");
+        CryptoClient client = startAttestServer(200,
+                "{\"outcome\":\"SIGNED\",\"signature\":\"sig\",\"kmsKeyId\":\"key\",\"signedAt\":\"2026-07-13T01:00:00Z\"}",
+                exchange -> {
+                    capturedBody.set(readBody(exchange));
+                    capturedAuthHeader.set(exchange.getRequestHeaders().getFirst("Authorization"));
+                });
+
+        client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH);
+
+        JsonNode sentBody = OBJECT_MAPPER.readTree(capturedBody.get());
+        assertThat(sentBody.get("receiptDigestSha256").asText()).isEqualTo(RECEIPT_DIGEST);
+        assertThat(sentBody.get("chain").asText()).isEqualTo(CHAIN);
+        assertThat(sentBody.get("txHash").asText()).isEqualTo(TX_HASH);
+        assertThat(capturedAuthHeader.get()).isEqualTo("Bearer a-real-looking-token");
+    }
+
+    @Test
+    void shouldReturnSignedOutcomeWhenAttestResponseIsSigned() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        Instant signedAt = Instant.parse("2026-07-13T01:00:00Z");
+        CryptoClient client = startAttestServer(200,
+                "{\"outcome\":\"SIGNED\",\"signature\":\"c2ln\",\"kmsKeyId\":\"key-1\",\"signedAt\":\""
+                        + signedAt + "\"}", null);
+
+        AttestationResult result = client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH);
+
+        assertThat(result).isInstanceOf(AttestationResult.Signed.class);
+        AttestationResult.Signed signed = (AttestationResult.Signed) result;
+        assertThat(signed.signature()).isEqualTo("c2ln");
+        assertThat(signed.kmsKeyId()).isEqualTo("key-1");
+        assertThat(signed.signedAt()).isEqualTo(signedAt);
+    }
+
+    @Test
+    void shouldReturnBlockedOutcomeWhenAttestResponseIsBlocked() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(200,
+                "{\"outcome\":\"BLOCKED\",\"reason\":\"sanctioned counterparty\"}", null);
+
+        AttestationResult result = client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH);
+
+        assertThat(result).isInstanceOf(AttestationResult.Blocked.class);
+        assertThat(((AttestationResult.Blocked) result).reason()).isEqualTo("sanctioned counterparty");
+    }
+
+    /** Phase 9 (self-review Finding 1 / Kimi Phase 8 confirming): a SIGNED outcome is not
+     * trusted blindly - a missing field must still fail loudly, not produce a hollow result. */
+    @Test
+    void shouldThrowCryptoServiceUnavailableWhenSignedOutcomeHasMissingFields() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(200, "{\"outcome\":\"SIGNED\"}", null);
+
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
+    }
+
+    @Test
+    void shouldThrowAttestationRefusedExceptionOnConflict() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(409,
+                "Attestation preconditions not met for " + CHAIN + ":" + TX_HASH, null);
+
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(AttestationRefusedException.class)
+                .hasMessageContaining("Attestation preconditions not met");
+    }
+
+    @Test
+    void shouldThrowCryptoServiceUnavailableOnAttestBadRequest() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(400, "bad request", null);
+
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
+    }
+
+    @Test
+    void shouldThrowCryptoServiceUnavailableOnAttestServerError() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(500, "error", null);
+
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
+    }
+
+    @Test
+    void shouldThrowCryptoServiceUnavailableOnAttestConnectionFailure() {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClientProperties properties = cryptoClientProperties("http://127.0.0.1:1");
+        CryptoClient client = new CryptoClient(RestClient.builder(), tokenProvider, properties);
+
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
+    }
+
+    @Test
+    void shouldThrowWhenAttestServerExceedsConfiguredReadTimeout() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/internal/v1/attest", exchange -> {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            respond(exchange, 200, "{\"outcome\":\"SIGNED\",\"signature\":\"s\",\"kmsKeyId\":\"k\","
+                    + "\"signedAt\":\"2026-07-13T01:00:00Z\"}");
+        });
+        server.start();
+
+        CryptoClientProperties properties = cryptoClientProperties(
+                "http://127.0.0.1:" + server.getAddress().getPort());
+        CryptoClient client = new CryptoClient(RestClient.builder(), tokenProvider, properties);
+
+        long start = System.nanoTime();
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+        // Mirrors the existing registerWatch read-timeout test's own bounded-time proof.
+        assertThat(elapsedMs).isLessThan(500);
+    }
+
+    @Test
+    void shouldThrowCryptoServiceUnavailableOnAttestMalformedResponseBody() throws IOException {
+        when(tokenProvider.getAccessToken()).thenReturn("test-token");
+        CryptoClient client = startAttestServer(200, "{\"notAnOutcomeField\":true}", null);
+
+        assertThatThrownBy(() -> client.attest(RECEIPT_DIGEST, CHAIN, TX_HASH))
+                .isInstanceOf(CryptoServiceUnavailableException.class);
+    }
+
     private CryptoClient startServer(int status, String responseBody,
                                       java.util.function.Consumer<com.sun.net.httpserver.HttpExchange> capture)
             throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/internal/v1/watches", exchange -> {
+            if (capture != null) {
+                capture.accept(exchange);
+            }
+            respond(exchange, status, responseBody);
+        });
+        server.start();
+
+        CryptoClientProperties properties =
+                cryptoClientProperties("http://127.0.0.1:" + server.getAddress().getPort());
+        return new CryptoClient(RestClient.builder(), tokenProvider, properties);
+    }
+
+    /** T15 (Kimi Phase 8 New Finding 1): the existing {@link #startServer} helper is hardcoded to
+     * the watch-registration path - this mirrors it exactly but for {@code /internal/v1/attest},
+     * added rather than generalizing {@code startServer} itself, to avoid touching any of the
+     * already-reviewed watch tests above. */
+    private CryptoClient startAttestServer(int status, String responseBody,
+                                            java.util.function.Consumer<com.sun.net.httpserver.HttpExchange> capture)
+            throws IOException {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/internal/v1/attest", exchange -> {
             if (capture != null) {
                 capture.accept(exchange);
             }
