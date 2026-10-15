@@ -224,13 +224,17 @@ class SchemaBaselineMigrationIntegrationTest {
      * its two granted tables, and the identity-column INSERT works without a separate
      * sequence-permission failure. */
     @Test
-    void paymentAppCanInsertAndSelectButNotUpdateOrDeleteOnTheTwoGrantedTables() throws SQLException {
+    void paymentAppCanInsertAndSelectButNotUpdateOrDeleteOnTheGrantedTables() throws SQLException {
         long paymentId = seedPaymentAsAdmin();
         long receiptId = seedReceiptAsAdmin(paymentId);
+        // T19 (V9): receipts' own grant needs a second, distinct payment row - payment_id is
+        // UNIQUE on receipts, and the first payment above already has an admin-seeded receipt.
+        long secondPaymentId = seedPaymentAsAdmin();
 
         try (Connection app = connectAsPaymentApp(PAYMENT_APP_PASSWORD)) {
             assertInsertAndSelectSucceedUpdateAndDeleteAreDenied(app, "ledger_entries", receiptId);
             assertInsertAndSelectSucceedUpdateAndDeleteAreDenied(app, "verification_records", paymentId);
+            assertInsertAndSelectSucceedUpdateAndDeleteAreDenied(app, "receipts", secondPaymentId);
         }
     }
 
@@ -529,6 +533,12 @@ class SchemaBaselineMigrationIntegrationTest {
                         + "VALUES (" + fkId + ", repeat('0', 64), repeat('a', 64), '{}')";
                 case "verification_records" -> "INSERT INTO payments.verification_records (payment_id, to_state) "
                         + "VALUES (" + fkId + ", 'SEEN')";
+                // T19 (V9): receipts' own first real grant - fkId here is a payment_id, not a
+                // receipt_id (receipts.payment_id is the FK this table itself carries).
+                case "receipts" -> "INSERT INTO payments.receipts "
+                        + "(receipt_uuid, payment_id, digest_sha256, signature, kms_key_id, s3_bucket, s3_key, signed_at) "
+                        + "VALUES (gen_random_uuid(), " + fkId + ", repeat('b', 64), 'app-sig', 'app-kms-key', "
+                        + "'app-bucket', 'app-key', now())";
                 default -> throw new IllegalArgumentException("no INSERT fixture for " + table);
             };
             statement.execute(insertSql);
@@ -541,8 +551,16 @@ class SchemaBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getInt(1)).as("SELECT on %s must see the row payment_app just inserted", table).isEqualTo(1);
             }
 
-            String updateColumn = table.equals("ledger_entries") ? "prev_hash" : "to_state";
-            String updateValue = table.equals("ledger_entries") ? "repeat('9', 64)" : "'CONFIRMING'";
+            String updateColumn = switch (table) {
+                case "ledger_entries" -> "prev_hash";
+                case "receipts" -> "kms_key_id";
+                default -> "to_state";
+            };
+            String updateValue = switch (table) {
+                case "ledger_entries" -> "repeat('9', 64)";
+                case "receipts" -> "'rotated-kms-key'";
+                default -> "'CONFIRMING'";
+            };
             assertThatThrownBy(() -> statement.execute(
                     "UPDATE payments." + table + " SET " + updateColumn + " = " + updateValue + " WHERE " + fkColumn + " = " + fkId))
                     .as("UPDATE on %s must be denied for payment_app", table)

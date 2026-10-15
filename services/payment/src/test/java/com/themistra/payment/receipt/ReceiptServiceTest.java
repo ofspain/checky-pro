@@ -219,6 +219,94 @@ class ReceiptServiceTest {
         assertThat(first.receiptUuid()).isNotEqualTo(second.receiptUuid());
     }
 
+    // --- R21/R23/R24/R25 (T19), named ---
+
+    @Test
+    void shouldTransitionToAttestedAfterReceiptStoredAndLedgerAppended() {
+        stubEligiblePaymentAndInvoice();
+        stubSuccessfulPersistence();
+        when(cryptoClient.attest(any(), any(), any())).thenReturn(new AttestationResult.Signed("sig", "key", NOW));
+
+        ReceiptIssueResult result = service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
+
+        assertThat(result).isInstanceOf(ReceiptIssueResult.Signed.class);
+        verify(receiptStore).store(any(), any());
+        ArgumentCaptor<Receipt> receiptCaptor = ArgumentCaptor.forClass(Receipt.class);
+        verify(receiptRepository).save(receiptCaptor.capture());
+        assertThat(receiptCaptor.getValue().getPaymentId()).isEqualTo(PAYMENT_ID);
+        verify(ledgerService).append(any(), any());
+        verify(paymentService).markAttestedIfFinalized(eq(PAYMENT_ID), eq(TRIGGER_EVENT_KEY), any(), any());
+    }
+
+    @Test
+    void shouldEmitReceiptIssuedAfterAttestation() {
+        stubEligiblePaymentAndInvoice();
+        stubSuccessfulPersistence();
+        when(cryptoClient.attest(any(), any(), any())).thenReturn(new AttestationResult.Signed("sig", "key", NOW));
+
+        service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
+
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(outboxPublisher).publish(eq("receipt"), any(), eq("receipt.issued"), payloadCaptor.capture());
+        com.themistra.payment.receipt.event.ReceiptIssuedPayload payload =
+                (com.themistra.payment.receipt.event.ReceiptIssuedPayload) payloadCaptor.getValue();
+        assertThat(payload.chain()).isEqualTo(CHAIN);
+        assertThat(payload.txHash()).isEqualTo(TX_HASH);
+        assertThat(payload.amount()).isEqualTo("1000");
+        assertThat(payload.kmsKeyId()).isEqualTo("key");
+        assertThat(payload.receiptUri()).startsWith("s3://bucket/receipts/uuid").endsWith(".json");
+    }
+
+    /** AC6, Phase 3/4 Kimi Finding 2: a concurrent reorg moving the payment out of
+     * {@code FINALIZED} between the eligibility check and this transaction must abort the whole
+     * persist sequence - no {@code receipt.issued} event for a payment that never actually
+     * reached {@code ATTESTED}. */
+    @Test
+    void shouldAbortAndReturnFailedWhenMarkAttestedIfFinalizedReturnsZeroRows() {
+        stubEligiblePaymentAndInvoice();
+        stubSuccessfulPersistence();
+        when(paymentService.markAttestedIfFinalized(any(), any(), any(), any())).thenReturn(false);
+        when(cryptoClient.attest(any(), any(), any())).thenReturn(new AttestationResult.Signed("sig", "key", NOW));
+
+        ReceiptIssueResult result = service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
+
+        assertThat(result).isInstanceOf(ReceiptIssueResult.Failed.class);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
+    }
+
+    /** Phase 7 self-review Finding 6 / Phase 9: an S3 failure before the DB transaction even
+     * opens must not be mistaken for a Signed result. */
+    @Test
+    void shouldReturnFailedWhenReceiptStoreThrows() {
+        stubEligiblePaymentAndInvoice();
+        when(receiptStore.store(any(), any())).thenThrow(new ReceiptStorageException("s3 down", null));
+        when(cryptoClient.attest(any(), any(), any())).thenReturn(new AttestationResult.Signed("sig", "key", NOW));
+
+        ReceiptIssueResult result = service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
+
+        assertThat(result).isInstanceOf(ReceiptIssueResult.Failed.class);
+        verify(receiptRepository, never()).save(any());
+    }
+
+    /** The S3 object was already written when the ledger append fails - the orphan-window risk
+     * `ReceiptService`'s own class Javadoc discloses, not solved here, but the method must still
+     * fail safely rather than claim success. */
+    @Test
+    void shouldReturnFailedWhenLedgerServiceThrows() {
+        stubEligiblePaymentAndInvoice();
+        when(receiptStore.store(any(), any())).thenReturn(
+                new ReceiptStorageLocation("bucket", "receipts/uuid", "receipts/uuid.json", "receipts/uuid.pdf"));
+        when(receiptRepository.save(any())).thenReturn(Receipt.create(UUID.randomUUID(), PAYMENT_ID, "digest",
+                "sig", "key", "bucket", "receipts/uuid", NOW, NOW));
+        when(ledgerService.append(any(), any())).thenThrow(new RuntimeException("ledger db down"));
+        when(cryptoClient.attest(any(), any(), any())).thenReturn(new AttestationResult.Signed("sig", "key", NOW));
+
+        ReceiptIssueResult result = service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
+
+        assertThat(result).isInstanceOf(ReceiptIssueResult.Failed.class);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
+    }
+
     /** Phase 11 Gap 1 (Kimi): the Phase 9 widened catch (self-review Finding 1) must also
      * swallow a genuine, unrelated runtime failure from either HELD update - not just the
      * intentional split-result {@code IllegalStateException}. */

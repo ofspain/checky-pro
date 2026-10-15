@@ -651,4 +651,44 @@ class PaymentServiceTest {
         assertThat(result).isFalse();
         verify(verificationRecordService, never()).record(any(), any(), any(), any(), any(), any());
     }
+
+    // --- T19 (R24): markAttestedIfFinalized ---
+
+    @Test
+    void shouldMarkAttestedAndRecordVerificationWhenFinalized() {
+        java.util.UUID receiptUuid = java.util.UUID.randomUUID();
+        when(repository.markAttestedIfFinalized(99L, PaymentState.FINALIZED, PaymentState.ATTESTED, NOW)).thenReturn(1);
+
+        boolean result = service.markAttestedIfFinalized(99L, TRIGGER_EVENT_KEY, receiptUuid, NOW);
+
+        assertThat(result).isTrue();
+        verify(verificationRecordService).record(99L, PaymentState.FINALIZED, PaymentState.ATTESTED,
+                TRIGGER_EVENT_KEY, null, java.util.Map.of("receiptUuid", receiptUuid.toString()));
+    }
+
+    @Test
+    void shouldNotRecordVerificationWhenMarkAttestedIfFinalizedFindsNoLongerFinalized() {
+        when(repository.markAttestedIfFinalized(99L, PaymentState.FINALIZED, PaymentState.ATTESTED, NOW)).thenReturn(0);
+
+        boolean result = service.markAttestedIfFinalized(99L, TRIGGER_EVENT_KEY, java.util.UUID.randomUUID(), NOW);
+
+        assertThat(result).isFalse();
+        verify(verificationRecordService, never()).record(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void markAttestedIfFinalizedShouldThrowNullPointerExceptionForNullArguments() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.markAttestedIfFinalized(null, TRIGGER_EVENT_KEY, java.util.UUID.randomUUID(), NOW))
+                .isInstanceOf(NullPointerException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.markAttestedIfFinalized(99L, null, java.util.UUID.randomUUID(), NOW))
+                .isInstanceOf(NullPointerException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.markAttestedIfFinalized(99L, TRIGGER_EVENT_KEY, null, NOW))
+                .isInstanceOf(NullPointerException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.markAttestedIfFinalized(99L, TRIGGER_EVENT_KEY, java.util.UUID.randomUUID(), null))
+                .isInstanceOf(NullPointerException.class);
+    }
 }
