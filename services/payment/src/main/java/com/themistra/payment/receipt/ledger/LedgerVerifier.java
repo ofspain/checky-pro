@@ -45,12 +45,25 @@ import java.util.Objects;
  * #verify()} reflects the committed ledger state at query-start time; it does not synchronize
  * with concurrent {@link LedgerService#append} calls (no transaction, no advisory lock) and
  * should be treated as a point-in-time audit, not a live stop-the-world check.</p>
+ *
+ * <p><b>Any unexpected failure while checking one entry is itself reported as {@code Broken},
+ * never left to propagate (Phase 9, Kimi Phase 8 Finding 1, confirming self-review Finding
+ * 1).</b> A row mutated by the exact "insider with database-owner access" threat this class
+ * exists to detect could in principle violate the column-level {@code NOT NULL}/JSON-shape
+ * guarantees the application itself always upholds (e.g. a {@code NULL} {@code payload}, or a
+ * value type {@link CanonicalJson#serialize} itself rejects) - such a row is corruption, exactly
+ * the kind of break this method's own contract promises to report via the sealed result type,
+ * not an exception a caller must separately catch.</p>
  */
 @Component
 public class LedgerVerifier {
 
     private static final String GENESIS_PREV_HASH = "0".repeat(64);
     private static final String SHA_256 = "SHA-256";
+
+    static final String REASON_ENTRY_HASH_MISMATCH = "stored entryHash does not match recomputed hash";
+    static final String REASON_PREV_HASH_MISMATCH = "stored prevHash does not match prior entry's stored entryHash";
+    static final String REASON_GENESIS_PREV_HASH_INVALID = "genesis prevHash is not 64 zeros";
 
     private final LedgerEntryRepository repository;
 
@@ -63,27 +76,40 @@ public class LedgerVerifier {
 
         for (int i = 0; i < entries.size(); i++) {
             LedgerEntry current = entries.get(i);
+            LedgerEntry priorEntry = i == entries.size() - 1 ? null : entries.get(i + 1);
 
-            String recomputedHash = sha256(CanonicalJson.serialize(current.getPayload()) + current.getPrevHash());
-            if (!recomputedHash.equals(current.getEntryHash())) {
-                return new LedgerVerificationResult.Broken(current.getSeq(),
-                        "stored entryHash does not match recomputed hash");
-            }
-
-            boolean isGenesis = i == entries.size() - 1;
-            if (!isGenesis) {
-                LedgerEntry priorEntry = entries.get(i + 1);
-                if (!current.getPrevHash().equals(priorEntry.getEntryHash())) {
-                    return new LedgerVerificationResult.Broken(current.getSeq(),
-                            "stored prevHash does not match prior entry's stored entryHash");
+            try {
+                LedgerVerificationResult.Broken failure = checkEntry(current, priorEntry);
+                if (failure != null) {
+                    return failure;
                 }
-            } else if (!current.getPrevHash().equals(GENESIS_PREV_HASH)) {
+            } catch (RuntimeException e) {
                 return new LedgerVerificationResult.Broken(current.getSeq(),
-                        "genesis prevHash is not 64 zeros");
+                        "entry could not be verified: " + e.getMessage());
             }
         }
 
         return new LedgerVerificationResult.Intact();
+    }
+
+    /** @return the {@code Broken} result if {@code current} fails any check, or {@code null} if
+     * it passes. {@code priorEntry} is {@code null} exactly when {@code current} is the genesis
+     * entry. */
+    private LedgerVerificationResult.Broken checkEntry(LedgerEntry current, LedgerEntry priorEntry) {
+        String recomputedHash = sha256(CanonicalJson.serialize(current.getPayload()) + current.getPrevHash());
+        if (!recomputedHash.equals(current.getEntryHash())) {
+            return new LedgerVerificationResult.Broken(current.getSeq(), REASON_ENTRY_HASH_MISMATCH);
+        }
+
+        if (priorEntry != null) {
+            if (!current.getPrevHash().equals(priorEntry.getEntryHash())) {
+                return new LedgerVerificationResult.Broken(current.getSeq(), REASON_PREV_HASH_MISMATCH);
+            }
+        } else if (!current.getPrevHash().equals(GENESIS_PREV_HASH)) {
+            return new LedgerVerificationResult.Broken(current.getSeq(), REASON_GENESIS_PREV_HASH_INVALID);
+        }
+
+        return null;
     }
 
     private static String sha256(String input) {
