@@ -130,6 +130,12 @@ public class ReceiptStore {
      * package from {@code receipt} (package-private visibility does not span sub-packages), so
      * nothing short of {@code public} would have let the caller in. {@code static} because the
      * method never touches instance state — confirmed by inspection, not merely convenient.</p>
+     *
+     * <p><b>Returns an unmodifiable map (Phase 8, Kimi Finding 7).</b> A public method returning
+     * a mutable {@code LinkedHashMap} invited an easy mistake for any future caller assuming it
+     * was already a safe, read-only canonical representation and mutating it directly before
+     * serialization, silently changing the resulting hash. Callers that need to add fields (e.g.
+     * {@code ReceiptService.buildLedgerPayload}) must copy into their own new map first.</p>
      */
     public static Map<String, Object> toCanonicalMap(ReceiptPayload payload, AttestationResult.Signed signed) {
         Map<String, Object> map = new LinkedHashMap<>();
@@ -148,7 +154,7 @@ public class ReceiptStore {
         map.put("signature", signed.signature());
         map.put("kmsKeyId", signed.kmsKeyId());
         map.put("signedAt", signed.signedAt().toString());
-        return map;
+        return java.util.Collections.unmodifiableMap(map);
     }
 
     private PutObjectRequest buildPutRequest(String key, Instant retainUntil, ReceiptPayload payload,
