@@ -99,7 +99,9 @@ class ReceiptStoreTest {
 
         assertThat(all).hasSize(2);
         assertThat(all.get(0).key()).endsWith(".json");
+        assertThat(all.get(0).contentType()).isEqualTo("application/json");
         assertThat(all.get(1).key()).endsWith(".pdf");
+        assertThat(all.get(1).contentType()).isEqualTo("application/pdf");
         for (PutObjectRequest request : all) {
             assertThat(request.bucket()).isEqualTo("my-bucket");
             assertThat(request.objectLockMode()).isEqualTo(ObjectLockMode.COMPLIANCE);
@@ -235,13 +237,17 @@ class ReceiptStoreTest {
         assertThat(actualJson).isEqualTo(expectedJson);
     }
 
-    /** AC3 - a direct, mechanical check rather than relying solely on code inspection. */
+    /** AC3 - a direct, mechanical check rather than relying solely on code inspection. Also
+     * forbids {@code copyObject} (Phase 11, Kimi Gap 3) - an S3 copy can overwrite an existing
+     * object's content/metadata just as a delete can, so it falls under AC3's "no delete/
+     * overwrite" text too, even though {@code ReceiptStore} never calls it today. */
     @Test
     void shouldNeverCallDeleteOrAnyOverwriteApi() {
         stubSuccessfulPutObject();
         store.store(samplePayload(), sampleSigned());
 
         verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+        verify(s3Client, never()).copyObject(any(software.amazon.awssdk.services.s3.model.CopyObjectRequest.class));
     }
 
     @Test
