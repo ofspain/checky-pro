@@ -202,6 +202,8 @@ class ConfigPropertiesBindingTest {
         new ApplicationContextRunner().withUserConfiguration(ReceiptConfig.class)
                 .withPropertyValues(
                         "themistra.payment.receipt.bucket=local-only-fake-receipt-bucket",
+                        "themistra.payment.receipt.prefix=receipts/",
+                        "themistra.payment.receipt.region=us-east-1",
                         "themistra.payment.receipt.kms-public-keys-url=http://localhost:9080/local-only-fake-verification-keys")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
@@ -209,6 +211,9 @@ class ConfigPropertiesBindingTest {
                     assertThat(props.bucket()).isEqualTo("local-only-fake-receipt-bucket");
                     // Phase 11 finding 4: the other bound field was never independently asserted.
                     assertThat(props.kmsPublicKeysUrl()).isEqualTo("http://localhost:9080/local-only-fake-verification-keys");
+                    // T18 (Phase 6): the two fields added for the S3 WORM store itself.
+                    assertThat(props.prefix()).isEqualTo("receipts/");
+                    assertThat(props.region()).isEqualTo("us-east-1");
                 });
     }
 
@@ -221,6 +226,8 @@ class ConfigPropertiesBindingTest {
         new ApplicationContextRunner().withUserConfiguration(ReceiptConfig.class)
                 .withPropertyValues(
                         "themistra.payment.receipt.bucket=",
+                        "themistra.payment.receipt.prefix=receipts/",
+                        "themistra.payment.receipt.region=us-east-1",
                         "themistra.payment.receipt.kms-public-keys-url=http://localhost:9080/local-only-fake-verification-keys")
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
@@ -233,12 +240,15 @@ class ConfigPropertiesBindingTest {
         new ApplicationContextRunner().withUserConfiguration(ReceiptConfig.class)
                 .withPropertyValues(
                         "themistra.payment.receipt.bucket=local-only-fake-receipt-bucket",
+                        "themistra.payment.receipt.prefix=receipts/",
+                        "themistra.payment.receipt.region=us-east-1",
                         "themistra.payment.receipt.kms-public-keys-url=")
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
                         .isInstanceOf(BindValidationException.class)
                         .hasMessageContaining("kmsPublicKeysUrl"));
     }
+
 
     /** Phase 8 finding 1: rootCause()-style assertion, not a bare hasFailed() - matching every
      * other negative test in this file, so a context failure for an unrelated reason (e.g. a
@@ -247,7 +257,10 @@ class ConfigPropertiesBindingTest {
     @Test
     void receiptPropertiesFailWhenBucketIsMissingEntirely() {
         new ApplicationContextRunner().withUserConfiguration(ReceiptConfig.class)
-                .withPropertyValues("themistra.payment.receipt.kms-public-keys-url=http://localhost:9080/local-only-fake-verification-keys")
+                .withPropertyValues(
+                        "themistra.payment.receipt.prefix=receipts/",
+                        "themistra.payment.receipt.region=us-east-1",
+                        "themistra.payment.receipt.kms-public-keys-url=http://localhost:9080/local-only-fake-verification-keys")
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
                         .isInstanceOf(BindValidationException.class)
@@ -261,7 +274,10 @@ class ConfigPropertiesBindingTest {
     @Test
     void receiptPropertiesFailWhenKmsPublicKeysUrlIsMissingEntirely() {
         new ApplicationContextRunner().withUserConfiguration(ReceiptConfig.class)
-                .withPropertyValues("themistra.payment.receipt.bucket=local-only-fake-receipt-bucket")
+                .withPropertyValues(
+                        "themistra.payment.receipt.bucket=local-only-fake-receipt-bucket",
+                        "themistra.payment.receipt.prefix=receipts/",
+                        "themistra.payment.receipt.region=us-east-1")
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
                         .isInstanceOf(BindValidationException.class)

@@ -64,6 +64,10 @@
          calls Crypto Service's own POST /attest for the signature. -->
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>s3</artifactId></dependency>
 
+    <!-- Receipt PDF rendering (design.md O4, task 18) - pure-Java, no native dependency, same
+         portability reasoning as the sidecars' own pure-Java preference elsewhere. -->
+    <dependency><groupId>org.apache.pdfbox</groupId><artifactId>pdfbox</artifactId><version>3.0.3</version></dependency>
+
     <!-- Observability -->
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>
     <dependency><groupId>io.micrometer</groupId><artifactId>micrometer-registry-prometheus</artifactId><scope>runtime</scope></dependency>
