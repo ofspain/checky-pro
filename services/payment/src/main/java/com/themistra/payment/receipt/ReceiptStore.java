@@ -13,7 +13,6 @@ import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.ObjectLockLegalHoldStatus;
 import software.amazon.awssdk.services.s3.model.ObjectLockMode;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
@@ -94,7 +93,7 @@ public class ReceiptStore {
         Objects.requireNonNull(payload, "payload must not be null");
         Objects.requireNonNull(signed, "signed must not be null");
 
-        String s3KeyPrefix = properties.prefix() + payload.receiptUuid();
+        String s3KeyPrefix = normalizedPrefix(properties.prefix()) + payload.receiptUuid();
         String jsonKey = s3KeyPrefix + ".json";
         String pdfKey = s3KeyPrefix + ".pdf";
         Instant retainUntil = clock.instant().plus(RETENTION_PERIOD);
@@ -151,7 +150,6 @@ public class ReceiptStore {
                 .contentType(contentType)
                 .objectLockMode(ObjectLockMode.COMPLIANCE)
                 .objectLockRetainUntilDate(retainUntil)
-                .objectLockLegalHoldStatus(ObjectLockLegalHoldStatus.OFF)
                 .metadata(Map.of(
                         "receipt-uuid", payload.receiptUuid().toString(),
                         "invoice-uuid", payload.invoiceUuid().toString(),
@@ -213,6 +211,18 @@ public class ReceiptStore {
         } catch (IOException e) {
             throw new ReceiptStorageException("Failed to render the PDF receipt object", e);
         }
+    }
+
+    /**
+     * Guarantees the returned prefix ends with {@code /} (Phase 8, Kimi New Finding 2) — a
+     * misconfigured {@code themistra.payment.receipt.prefix} without a trailing delimiter would
+     * otherwise silently produce a flat key like {@code receipts11111111-...-.json} instead of
+     * the intended {@code receipts/11111111-...-.json}. {@code ObservationSnapshotStore}'s own
+     * sibling precedent (crypto-service) has this identical gap, unfixed there; normalized here
+     * rather than left matching that precedent, since the fix is cheap and purely defensive.
+     */
+    private static String normalizedPrefix(String prefix) {
+        return prefix.endsWith("/") ? prefix : prefix + "/";
     }
 
     private static java.util.List<String> wrapSignature(String signature) {
