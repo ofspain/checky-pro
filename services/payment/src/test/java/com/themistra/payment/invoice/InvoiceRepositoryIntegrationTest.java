@@ -12,6 +12,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -49,9 +51,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * com.themistra.payment.SchemaBaselineMigrationIntegrationTest#grantedTablesHaveExactlyInsertAndSelectPrivilegesNoMore}
  * (before this task's own fix) was itself asserting the absence of exactly this grant. This class
  * is the first test that would have caught the gap by actually calling {@code
- * updateStateIfCurrentState} over a real {@code payment_app} connection - disclosed as a
- * carried-forward, Docker-unavailable verification gap identical to Phase 7/8/9/10's own
- * precedent until Docker (or Kimi's own Docker-enabled environment) confirms it green.</p>
+ * updateStateIfCurrentState} over a real {@code payment_app} connection.</p>
+ *
+ * <p><b>Confirmed green 2026-10-14</b> once Docker became available this session - this class
+ * itself had its own {@code TransactionRequiredException} bug (see the two
+ * {@code updateStateIfCurrentState*} tests' own Javadoc), unrelated to the V6 grant finding
+ * above; both are now fixed.</p>
  */
 @Testcontainers
 @SpringBootTest(classes = InvoiceRepositoryIntegrationTest.TestConfig.class,
@@ -90,6 +95,9 @@ class InvoiceRepositoryIntegrationTest {
 
     @Autowired
     private InvoiceRepository repository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @AfterEach
     void cleanUp() throws SQLException {
@@ -163,15 +171,30 @@ class InvoiceRepositoryIntegrationTest {
 
     /** Phase 11 (self-identified): proves the V6 grant actually exists and works - without it,
      * this call fails with a real "permission denied for table invoices" SQLException rather than
-     * returning 1. Also closes Gap 7: updated_at must advance. */
+     * returning 1. Also closes Gap 7: updated_at must advance.
+     *
+     * <p><b>Confirmed broken, then fixed, 2026-10-14 once Docker became available this
+     * session:</b> {@code updateStateIfCurrentState} is a {@code @Modifying} repository method -
+     * unlike the auto-generated {@code save}/{@code findById} CRUD methods Spring Data wraps in
+     * their own transaction automatically, a custom {@code @Modifying} query requires the
+     * caller to provide one; calling it directly (not through {@code InvoiceService}'s own
+     * {@code @Transactional} methods, the real production caller) threw {@code
+     * TransactionRequiredException}. Not a production defect - only this test's own direct call
+     * needed one. A bare {@code @Transactional} on the test method would not actually fix this
+     * either: Spring's test transactions roll back by default, and even with {@code @Commit}
+     * the commit only happens after the method returns - this test's own assertions run via a
+     * *separate* raw JDBC connection, so they would see pre-update data regardless. A {@link
+     * TransactionTemplate} scoped to just the repository call commits before the method
+     * continues, exactly as {@code ChainEventConsumer.onChainTxReorged} (T12) already uses the
+     * identical pattern for an identical reason.</p> */
     @Test
     void updateStateIfCurrentStateActuallyUpdatesStateAndUpdatedAtForARealOpenInvoice() throws SQLException {
         Invoice invoice = seedInvoice(InvoiceState.OPEN, PAST);
         Instant before = fetchUpdatedAt(invoice.getId());
         Instant now = Instant.now().plus(1, ChronoUnit.SECONDS);
 
-        int rowsUpdated = repository.updateStateIfCurrentState(
-                invoice.getId(), InvoiceState.OPEN, InvoiceState.EXPIRED, now);
+        int rowsUpdated = new TransactionTemplate(transactionManager).execute(status ->
+                repository.updateStateIfCurrentState(invoice.getId(), InvoiceState.OPEN, InvoiceState.EXPIRED, now));
 
         assertThat(rowsUpdated).isEqualTo(1);
         assertThat(fetchState(invoice.getId())).isEqualTo("EXPIRED");
@@ -180,13 +203,14 @@ class InvoiceRepositoryIntegrationTest {
 
     /** AC6 (Phase 9 correction): proves the WHERE-guard really prevents overwriting a real,
      * already-changed row (e.g. a payment became in-flight first) - not just a mocked-repository
-     * behavior. */
+     * behavior. See the test above for why a {@link TransactionTemplate}, not a bare {@code
+     * @Transactional}, is the real fix for this class's own {@code TransactionRequiredException}. */
     @Test
     void updateStateIfCurrentStateReturnsZeroAndLeavesRowUnchangedWhenNoLongerOpen() throws SQLException {
         Invoice invoice = seedInvoice(InvoiceState.PAID, PAST);
 
-        int rowsUpdated = repository.updateStateIfCurrentState(
-                invoice.getId(), InvoiceState.OPEN, InvoiceState.EXPIRED, Instant.now());
+        int rowsUpdated = new TransactionTemplate(transactionManager).execute(status ->
+                repository.updateStateIfCurrentState(invoice.getId(), InvoiceState.OPEN, InvoiceState.EXPIRED, Instant.now()));
 
         assertThat(rowsUpdated).isZero();
         assertThat(fetchState(invoice.getId())).isEqualTo("PAID");

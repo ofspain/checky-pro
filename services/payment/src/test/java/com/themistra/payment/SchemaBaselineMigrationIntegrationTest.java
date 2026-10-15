@@ -34,21 +34,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers
 class SchemaBaselineMigrationIntegrationTest {
 
-    // T06/V3: outbox, shedlock, payments, and (since V6, T08 Phase 11) invoices each have their
-    // own, differently-shaped privilege set (outbox: INSERT+SELECT+UPDATE; shedlock:
-    // SELECT+INSERT+UPDATE, T08; payments: SELECT-only, T08; invoices: INSERT+SELECT+UPDATE,
-    // T08 V6), so each is tracked and tested separately, not folded into GRANTED_TABLES's own
+    // T06/V3: outbox, shedlock, payments, invoices (since V6, T08 Phase 11), and processed_events
+    // (since V8, T11) each have their own, differently-shaped privilege set (outbox:
+    // INSERT+SELECT+UPDATE; shedlock: SELECT+INSERT+UPDATE, T08; payments: INSERT+SELECT+UPDATE,
+    // T08 V5/T11 V7; invoices: INSERT+SELECT+UPDATE, T08 V6; processed_events: INSERT+SELECT,
+    // T11 V8), so each is tracked and tested separately, not folded into GRANTED_TABLES's own
     // exactly-two-privileges check.
     private static final List<String> GRANTED_TABLES =
             List.of("ledger_entries", "verification_records");
     private static final List<String> ALL_GRANTED_TABLE_NAMES =
-            List.of("ledger_entries", "verification_records", "invoices", "outbox", "shedlock", "payments");
-    // The remaining three baseline tables (receipts, ledger_anchors, processed_events) get no
-    // grant at all in this task — each one's own grant lands in whichever later task first needs
-    // it (T17, deferred/T21-skipped, T11 respectively), mirroring crypto-service's own
-    // incremental V2-V9 pattern.
+            List.of("ledger_entries", "verification_records", "invoices", "outbox", "shedlock", "payments",
+                    "processed_events");
+    // The remaining two baseline tables (receipts, ledger_anchors) get no grant at all in this
+    // task — each one's own grant lands in whichever later task first needs it (T17,
+    // deferred/T21-skipped respectively), mirroring crypto-service's own incremental V2-V9
+    // pattern. processed_events moved here to ALL_GRANTED_TABLE_NAMES once T11's own V8 granted
+    // it (confirmed real, 2026-10-14, once Docker became available this session — this test had
+    // silently gone stale against V7/V8, never re-run since roughly T07).
     private static final List<String> UNGRANTED_TABLES =
-            List.of("receipts", "ledger_anchors", "processed_events");
+            List.of("receipts", "ledger_anchors");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -131,7 +135,9 @@ class SchemaBaselineMigrationIntegrationTest {
         return block.toString();
     }
 
-    /** AC2: both migrations applied and recorded as successful. */
+    /** AC2: all migrations applied and recorded as successful. Count updated to 8 (V7/V8, T11)
+     * - confirmed stale and fixed 2026-10-14, once Docker became available this session; this
+     * test had not actually run against a live Postgres since roughly T07. */
     @Test
     void bothMigrationsAreRecordedAsSuccessfulInFlywayHistory() throws SQLException {
         try (Connection admin = adminConnection();
@@ -144,7 +150,7 @@ class SchemaBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
         }
     }
 
@@ -225,7 +231,7 @@ class SchemaBaselineMigrationIntegrationTest {
         }
     }
 
-    /** AC5: payment_app has no access at all to any of the other seven tables — not just SELECT
+    /** AC5: payment_app has no access at all to any of the other two tables — not just SELECT
      * (Phase 11 finding 4: a stray INSERT-only grant without SELECT would otherwise slip past a
      * SELECT-only check here, even though the information_schema test would still catch it). */
     @Test
@@ -255,7 +261,7 @@ class SchemaBaselineMigrationIntegrationTest {
     }
 
     /** AC5, the real query form: a direct information_schema check proves zero grant rows exist for
-     * payment_app on any of the seven ungranted tables, not just that a SELECT happens to fail.
+     * payment_app on either ungranted table, not just that a SELECT happens to fail.
      * table_privileges returns one row per privilege type (so each granted table appears twice —
      * INSERT and SELECT), so the distinct table-name set, not the raw row list, is what must match
      * GRANTED_TABLES exactly. */
@@ -353,10 +359,14 @@ class SchemaBaselineMigrationIntegrationTest {
         }
     }
 
-    /** T08/V5: payments' own privilege set is SELECT-only (InvoiceExpirySweepJob's own native
-     * in-flight-payment check reads it; this task never writes to payments.payments). */
+    /** T08/V5 granted SELECT-only (InvoiceExpirySweepJob's own native in-flight-payment check
+     * reads it). T11/V7 (Phase 3 Finding 2) widened this to INSERT+UPDATE too -
+     * ChainEventConsumer creates a Payment row on chain.tx.seen and repeatedly updates it via
+     * PaymentRepository's own atomic conditional UPDATE queries. Confirmed stale and fixed
+     * 2026-10-14, once Docker became available this session - this test still asserted the
+     * pre-V7 SELECT-only set. */
     @Test
-    void paymentsTableHasExactlySelectPrivilegeNoMore() throws SQLException {
+    void paymentsTableHasExactlyInsertSelectAndUpdatePrivilegesNoMore() throws SQLException {
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
@@ -366,7 +376,27 @@ class SchemaBaselineMigrationIntegrationTest {
             while (resultSet.next()) {
                 privileges.add(resultSet.getString(1));
             }
-            assertThat(privileges).as("payments privilege set").containsExactly("SELECT");
+            assertThat(privileges).as("payments privilege set").containsExactlyInAnyOrder("INSERT", "SELECT", "UPDATE");
+        }
+    }
+
+    /** T11/V8: processed_events' own privilege set is INSERT+SELECT only - the table is
+     * append-only (a key is never revised or deleted once recorded), mirroring
+     * notification-service's own identical, already-proven grant precedent exactly. Confirmed
+     * stale and fixed 2026-10-14, once Docker became available this session - this table was
+     * previously (incorrectly) asserted to have zero grant at all, in `UNGRANTED_TABLES`. */
+    @Test
+    void processedEventsHasExactlyInsertAndSelectPrivilegesNoMore() throws SQLException {
+        try (Connection admin = adminConnection();
+             Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT privilege_type FROM information_schema.table_privileges "
+                             + "WHERE grantee = 'payment_app' AND table_schema = 'payments' AND table_name = 'processed_events'")) {
+            List<String> privileges = new ArrayList<>();
+            while (resultSet.next()) {
+                privileges.add(resultSet.getString(1));
+            }
+            assertThat(privileges).as("processed_events privilege set").containsExactlyInAnyOrder("INSERT", "SELECT");
         }
     }
 
@@ -473,9 +503,10 @@ class SchemaBaselineMigrationIntegrationTest {
         }
     }
 
-    /** The seven ungranted tables have no column in common ("id" doesn't exist on
-     * `processed_events`/`shedlock`, whose primary keys are named differently) — this maps each
-     * one to a real column safe to reference in a no-op `SET col = col` UPDATE. */
+    /** Neither ungranted table shares a column name with the other (and this switch keeps a few
+     * extra, now-granted tables' own entries too, harmless leftovers from before V7/V8 widened
+     * their grants) — this maps each one to a real column safe to reference in a no-op
+     * `SET col = col` UPDATE. */
     private static String anyRealColumnOf(String ungrantedTable) {
         return switch (ungrantedTable) {
             case "invoices", "payments" -> "state";
