@@ -12,6 +12,7 @@ import com.themistra.payment.payment.FinalizationOutcome;
 import com.themistra.payment.payment.PaymentService;
 import com.themistra.payment.payment.PaymentState;
 import com.themistra.payment.payment.ReorgOutcome;
+import com.themistra.payment.receipt.ReceiptIssueResult;
 import com.themistra.payment.receipt.ReceiptService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -275,6 +276,7 @@ class ChainEventConsumerTest {
         when(paymentService.findInvoiceIdByChainAndTxHash("ETHEREUM", "0xabc")).thenReturn(Optional.of(7L));
         when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
         when(paymentService.applyFinalized(any(), any())).thenReturn(Optional.of(new FinalizationOutcome(99L, 7L, null)));
+        when(receiptService.issueIfEligible(any(), any())).thenReturn(new ReceiptIssueResult.NotEligible());
 
         consumer.onChainTxFinalized(FINALIZED_JSON);
 
@@ -322,6 +324,7 @@ class ChainEventConsumerTest {
         when(invoiceService.findByIdAsWatchView(7L)).thenReturn(Optional.of(openInvoice()));
         when(paymentService.applyFinalized(any(), any())).thenReturn(Optional.of(new FinalizationOutcome(99L, 7L, null)));
         when(invoiceService.markOutcomeIfOpenOrExpired(7L, InvoiceState.PAID, NOW)).thenReturn(false);
+        when(receiptService.issueIfEligible(any(), any())).thenReturn(new ReceiptIssueResult.NotEligible());
 
         org.slf4j.Logger slf4jLogger = org.slf4j.LoggerFactory.getLogger(ChainEventConsumer.class);
         ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) slf4jLogger;

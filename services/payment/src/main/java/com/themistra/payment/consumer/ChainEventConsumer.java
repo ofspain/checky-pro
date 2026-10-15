@@ -15,6 +15,7 @@ import com.themistra.payment.payment.FinalizationOutcome;
 import com.themistra.payment.payment.PaymentService;
 import com.themistra.payment.payment.PaymentState;
 import com.themistra.payment.payment.ReorgOutcome;
+import com.themistra.payment.receipt.ReceiptIssueResult;
 import com.themistra.payment.receipt.ReceiptService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,14 +30,19 @@ import java.util.Optional;
 
 /**
  * T11. Mirrors {@code notification-service}'s own {@code AuthEventConsumer} shape: raw
- * {@code String} payloads, Spring Boot's autoconfigured {@link ObjectMapper}, one
- * {@code @Transactional} listener method per topic (Phase 3/4 Finding 4 — resolves {@code
- * design.md}'s own open O6 question: one listener per event type, same consumer group, every
- * event schema's own producer-side partition key is {@code watchId}, so per-payment ordering is
- * preserved within each topic). One deliberate divergence (Phase 8 Kimi Finding 2):
- * deserialization failures are caught and logged here, never left to propagate the way
- * {@code AuthEventConsumer}'s own listener methods still do — a poison message must never force
- * an infinite redelivery retry loop.
+ * {@code String} payloads, Spring Boot's autoconfigured {@link ObjectMapper}, one listener
+ * method per topic (Phase 3/4 Finding 4 — resolves {@code design.md}'s own open O6 question:
+ * one listener per event type, same consumer group, every event schema's own producer-side
+ * partition key is {@code watchId}, so per-payment ordering is preserved within each topic).
+ * <b>Two of the four listeners — {@code onChainTxReorged} (T12) and {@code onChainTxFinalized}
+ * (T17) — are deliberately NOT {@code @Transactional} on the method itself (Phase 9, Kimi Phase
+ * 8 New Finding 3, correcting this Javadoc's own earlier claim that only one was)</b>: each
+ * needs a post-commit best-effort step (a replacement watch registration; a receipt-issuance
+ * attempt) that must run after its own DB-side work commits, so both use an explicit {@link
+ * TransactionTemplate} split instead - see each method's own Javadoc for its specific shape.
+ * One deliberate divergence (Phase 8 Kimi Finding 2): deserialization failures are caught and
+ * logged here, never left to propagate the way {@code AuthEventConsumer}'s own listener methods
+ * still do — a poison message must never force an infinite redelivery retry loop.
  *
  * <p><b>{@code unregisterWatch} runs last, inside the transaction (Decision 4/Finding 6 — a
  * deliberate departure from {@code CryptoClient.registerWatch}'s own T06 precedent, which runs
@@ -176,7 +182,11 @@ public class ChainEventConsumer {
         });
 
         outcome.filter(o -> o.amountDiscrepancy() == null)
-                .ifPresent(o -> receiptService.issueIfEligible(o.paymentId(), event.idempotencyKey()));
+                .ifPresent(o -> {
+                    ReceiptIssueResult result = receiptService.issueIfEligible(o.paymentId(), event.idempotencyKey());
+                    log.info("Receipt issuance for payment {} completed with {}", o.paymentId(),
+                            result.getClass().getSimpleName());
+                });
     }
 
     /** Phase 9 Finding 1: extracted from {@code onChainTxFinalized}'s own body for readability -

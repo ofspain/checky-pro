@@ -372,11 +372,19 @@ public class PaymentService {
      * VerificationRecord} on success (Phase 3, Kimi Finding 4), with {@code blockedReason} in
      * its own {@code detail} map - every other transition in this class already gets one; this
      * was the one omission. {@code confirmations} is {@code null} - not applicable to this
-     * transition. */
+     * transition.
+     *
+     * <p>{@code blockedReason} is deliberately NOT {@code Objects.requireNonNull}-checked
+     * (Phase 9, Kimi Phase 8 New Finding 2, a real bug caught before release): the real
+     * crypto-service's own {@code AttestResponse.reason} is explicitly nullable even on a
+     * {@code BLOCKED} outcome, and {@code AttestationResult.Blocked} carries it through
+     * unchanged - a compliance block with no reason string is a legitimate wire response, not a
+     * caller bug. {@code Map.of} itself rejects a null value, so a literal fallback is
+     * substituted before building the detail map, rather than ever passing a possible null into
+     * it.</p> */
     @Transactional
     public boolean markHeldIfFinalized(Long paymentId, String blockedReason, String triggerEventKey, Instant now) {
         Objects.requireNonNull(paymentId, "paymentId must not be null");
-        Objects.requireNonNull(blockedReason, "blockedReason must not be null");
         Objects.requireNonNull(triggerEventKey, "triggerEventKey must not be null");
         Objects.requireNonNull(now, "now must not be null");
 
@@ -385,9 +393,10 @@ public class PaymentService {
             throw new IllegalStateException(
                     "FINALIZED -> HELD must always be permitted - PaymentStateMachine's own edge set changed unexpectedly");
         }
-        if (repository.markHeldIfFinalized(paymentId, now) > 0) {
+        if (repository.markHeldIfFinalized(paymentId, PaymentState.FINALIZED, PaymentState.HELD, now) > 0) {
+            String recordedReason = blockedReason == null ? "(no reason provided)" : blockedReason;
             verificationRecordService.record(paymentId, PaymentState.FINALIZED, PaymentState.HELD,
-                    triggerEventKey, null, Map.of("blockedReason", blockedReason));
+                    triggerEventKey, null, Map.of("blockedReason", recordedReason));
             return true;
         }
         return false;

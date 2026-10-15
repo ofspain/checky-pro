@@ -133,12 +133,15 @@ interface PaymentRepository extends JpaRepository<Payment, Long> {
      * {@code expectedCurrentState} parameter (unlike the reorg reversals above) because this
      * task's own resolved scope (a receipt is only ever requested for an already-{@code
      * FINALIZED} payment, re-checked fresh immediately before the {@code attest()} call) means
-     * {@code FINALIZED} is the only state this is ever called against - a literal {@code 'FINALIZED'}
-     * in the query, mirroring {@code InvoiceRepository.updateWatchIdIfOpen}'s own identical
-     * single-literal-state shape. */
+     * {@code FINALIZED} is the only state this is ever called against. The two states are still
+     * bound as {@code PaymentState} parameters, not literal strings (Phase 9, Kimi Phase 8 New
+     * Finding 5) - every other method in this file binds its enum values the same way; a
+     * literal here would have been the one inconsistent exception, not a match for an
+     * established convention. */
     @Modifying
-    @Query("UPDATE Payment p SET p.state = 'HELD', p.updatedAt = :now WHERE p.id = :id AND p.state = 'FINALIZED'")
-    int markHeldIfFinalized(@Param("id") Long id, @Param("now") Instant now);
+    @Query("UPDATE Payment p SET p.state = :newState, p.updatedAt = :now WHERE p.id = :id AND p.state = :expectedCurrentState")
+    int markHeldIfFinalized(@Param("id") Long id, @Param("expectedCurrentState") PaymentState expectedCurrentState,
+                             @Param("newState") PaymentState newState, @Param("now") Instant now);
 
     /* Phase 9 Finding 8 (Kimi, Low confidence, explicit decision rather than a silent default):
      * neither reversal above touches `confirmations` or `amount`. Both values are left exactly

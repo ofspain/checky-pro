@@ -51,6 +51,14 @@ import java.util.UUID;
  * fails to attest has no analogous natural recovery - it simply never reaches {@code ATTESTED}
  * until some future task adds a retry mechanism. No task in the current breakdown (15-21) adds
  * one; inventing one here would be scope creep beyond what this task's own text asks for.</p>
+ *
+ * <p><b>The narrower crash-window case (Phase 9, Kimi Phase 8 confirming self-review Finding
+ * 2).</b> If the process crashes after {@code ChainEventConsumer}'s own first transaction
+ * commits but before (or during) {@code issueIfEligible} ever runs, a receipt is never even
+ * attempted - not just attempted and failed. {@code dedupe()} already consumed the event's
+ * idempotency key in that already-committed transaction, so Kafka redelivery cannot retry this
+ * step either - the identical structural problem {@code onChainTxReorged}'s own Javadoc already
+ * names explicitly for {@code registerReplacementWatch} (Phase 9 Finding 5, T12).</p>
  */
 @Service
 public class ReceiptService {
@@ -134,9 +142,14 @@ public class ReceiptService {
                 }
             });
             return new ReceiptIssueResult.Blocked(reason);
-        } catch (IllegalStateException e) {
+        } catch (RuntimeException e) {
+            // Phase 9 (Kimi Phase 8, confirming self-review Finding 1): widened from
+            // IllegalStateException alone - a real JPA/DB failure from either HELD update would
+            // otherwise propagate uncaught out of onChainTxFinalized, even though dedupe()
+            // already committed in the first transaction, so a Kafka redelivery could not retry
+            // this step anyway (same root cause as the disclosed "no retry" gap above).
             log.error("HELD transition failed for payment {}", paymentId, e);
-            return new ReceiptIssueResult.Failed("held-transition-split: " + e.getMessage());
+            return new ReceiptIssueResult.Failed("held-transition-failed: " + e.getMessage());
         }
     }
 
