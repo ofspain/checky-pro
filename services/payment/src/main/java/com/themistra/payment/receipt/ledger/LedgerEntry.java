@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -33,8 +34,26 @@ import java.util.Map;
  * {@code @JdbcTypeCode(SqlTypes.JSON)} mapping and defensive-copy discipline (Phase 8, Kimi
  * Finding 1 on that class) - a {@code Map} is mutable by reference, so both {@link #create} and
  * {@link #getPayload()} copy it rather than sharing the caller's own instance.</p>
+ *
+ * <p><b>{@code @Immutable} is load-bearing, not decorative (Phase 11, a real bug found and fixed
+ * while adding the Phase 10 test suite).</b> Confirmed empirically: appending a payload whose
+ * {@code Map} contains any non-{@code String} value (e.g. {@code tokenDecimals} as a {@code
+ * Short} - exactly what the real {@code ReceiptStore.toCanonicalMap}-derived ledger payload
+ * always contains) made Hibernate issue a spurious {@code UPDATE ledger_entries SET ...} to the
+ * same row immediately after the correct {@code INSERT}, within the same transaction - rejected
+ * by {@code payment_app}'s own intentional no-{@code UPDATE} grant (L7), meaning every single
+ * real production {@code append()} call would have failed. Root cause: Hibernate's own dirty-
+ * checking for a {@code @JdbcTypeCode(SqlTypes.JSON)} {@code Map} field takes its "last known
+ * state" snapshot by round-tripping the value through JSON - a boxed {@code Short} survives
+ * serialization but comes back as a different boxed numeric type (e.g. {@code Integer}) on that
+ * round-trip, and {@code Short(6).equals(Integer(6))} is {@code false} in Java, so Hibernate
+ * concludes the field "changed" and re-flushes an UPDATE that was never actually needed. {@code
+ * @Immutable} tells Hibernate this entity is never updated after insert - skipping dirty-
+ * checking entirely - which both fixes this bug as a side effect and is the semantically correct
+ * annotation anyway: L7 itself says "no UPDATE/DELETE ever."</p>
  */
 @Entity
+@Immutable
 @Table(name = "ledger_entries")
 public class LedgerEntry {
 

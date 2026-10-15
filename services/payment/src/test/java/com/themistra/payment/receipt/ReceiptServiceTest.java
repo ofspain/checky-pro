@@ -24,6 +24,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -85,6 +86,8 @@ class ReceiptServiceTest {
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
+    private static final Long SAVED_RECEIPT_ID = 555L;
+
     /** T19 - the happy path through {@code persistSignedReceipt} now needs every new
      * collaborator stubbed; not every test needs this (the ineligibility/BLOCKED/409/
      * unavailable tests never reach this code path), so it's explicit per-test rather than a
@@ -95,17 +98,28 @@ class ReceiptServiceTest {
                 new ReceiptStorageLocation("bucket", "receipts/uuid", "receipts/uuid.json", "receipts/uuid.pdf"));
         Receipt savedReceipt = Receipt.create(UUID.randomUUID(), PAYMENT_ID, "digest", "sig", "key",
                 "bucket", "receipts/uuid", NOW, NOW);
+        // Phase 11 Gap 1 (Kimi): a real persisted Receipt always has a non-null, generated id -
+        // set one via reflection (no public setter exists, by design) so tests can verify
+        // ReceiptService actually passes THIS id to ledgerService.append, not just any value.
+        org.springframework.test.util.ReflectionTestUtils.setField(savedReceipt, "id", SAVED_RECEIPT_ID);
         when(receiptRepository.save(any())).thenReturn(savedReceipt);
         when(paymentService.markAttestedIfFinalized(any(), any(), any(), any())).thenReturn(true);
     }
 
+    // Phase 11 Gap 2 (Kimi): fixed, not freshly-random per call - shouldEmitReceiptIssuedAfterAttestation
+    // needs to assert the published event's fields against the SAME UUIDs the stub was given,
+    // not a second, independently-random set from calling these factories again.
+    private static final UUID PAYMENT_UUID = UUID.randomUUID();
+    private static final UUID INVOICE_UUID_VALUE = UUID.randomUUID();
+    private static final UUID MERCHANT_ACCOUNT_UUID = UUID.randomUUID();
+
     private static PaymentReceiptView finalizedPayment() {
-        return new PaymentReceiptView(PAYMENT_ID, UUID.randomUUID(), INVOICE_ID, CHAIN, TX_HASH, "0x111",
+        return new PaymentReceiptView(PAYMENT_ID, PAYMENT_UUID, INVOICE_ID, CHAIN, TX_HASH, "0x111",
                 BigDecimal.valueOf(1000), "0xfrom", NOW, PaymentState.FINALIZED);
     }
 
     private static InvoiceReceiptView paidInvoice() {
-        return new InvoiceReceiptView(INVOICE_ID, UUID.randomUUID(), UUID.randomUUID(), (short) 6, "0xdef",
+        return new InvoiceReceiptView(INVOICE_ID, INVOICE_UUID_VALUE, MERCHANT_ACCOUNT_UUID, (short) 6, "0xdef",
                 InvoiceState.PAID);
     }
 
@@ -230,12 +244,39 @@ class ReceiptServiceTest {
         ReceiptIssueResult result = service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
 
         assertThat(result).isInstanceOf(ReceiptIssueResult.Signed.class);
+        UUID receiptUuid = ((ReceiptIssueResult.Signed) result).receiptUuid();
         verify(receiptStore).store(any(), any());
+
+        // Phase 11 Gap 3 (Kimi): assert every field of the persisted Receipt, not just paymentId.
         ArgumentCaptor<Receipt> receiptCaptor = ArgumentCaptor.forClass(Receipt.class);
         verify(receiptRepository).save(receiptCaptor.capture());
-        assertThat(receiptCaptor.getValue().getPaymentId()).isEqualTo(PAYMENT_ID);
-        verify(ledgerService).append(any(), any());
-        verify(paymentService).markAttestedIfFinalized(eq(PAYMENT_ID), eq(TRIGGER_EVENT_KEY), any(), any());
+        Receipt savedReceipt = receiptCaptor.getValue();
+        assertThat(savedReceipt.getReceiptUuid()).isEqualTo(receiptUuid);
+        assertThat(savedReceipt.getPaymentId()).isEqualTo(PAYMENT_ID);
+        assertThat(savedReceipt.getSignature()).isEqualTo("sig");
+        assertThat(savedReceipt.getKmsKeyId()).isEqualTo("key");
+        assertThat(savedReceipt.getSignedAt()).isEqualTo(NOW);
+        assertThat(savedReceipt.getDigestSha256()).matches("[0-9a-f]{64}");
+
+        // Phase 11 Gap 1 (Kimi): the real, generated Receipt id must be the one passed to the
+        // ledger append - not just "some" id.
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> ledgerPayloadCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(ledgerService).append(eq(SAVED_RECEIPT_ID), ledgerPayloadCaptor.capture());
+
+        // Phase 11 Gap 3 (Kimi): the ledger payload must carry the full 17-field shape, not an
+        // arbitrary map.
+        Map<String, Object> ledgerPayload = ledgerPayloadCaptor.getValue();
+        assertThat(ledgerPayload)
+                .containsEntry("receiptUuid", receiptUuid.toString())
+                .containsEntry("chain", CHAIN)
+                .containsEntry("txHash", TX_HASH)
+                .containsEntry("signature", "sig")
+                .containsEntry("kmsKeyId", "key")
+                .containsEntry("s3Bucket", "bucket")
+                .containsEntry("s3KeyPrefix", "receipts/uuid");
+
+        verify(paymentService).markAttestedIfFinalized(eq(PAYMENT_ID), eq(TRIGGER_EVENT_KEY), eq(receiptUuid), any());
     }
 
     @Test
@@ -244,17 +285,27 @@ class ReceiptServiceTest {
         stubSuccessfulPersistence();
         when(cryptoClient.attest(any(), any(), any())).thenReturn(new AttestationResult.Signed("sig", "key", NOW));
 
-        service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
+        ReceiptIssueResult result = service.issueIfEligible(PAYMENT_ID, TRIGGER_EVENT_KEY);
+        UUID receiptUuid = ((ReceiptIssueResult.Signed) result).receiptUuid();
 
         ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(outboxPublisher).publish(eq("receipt"), any(), eq("receipt.issued"), payloadCaptor.capture());
+        verify(outboxPublisher).publish(eq("receipt"), eq(receiptUuid.toString()), eq("receipt.issued"),
+                payloadCaptor.capture());
         com.themistra.payment.receipt.event.ReceiptIssuedPayload payload =
                 (com.themistra.payment.receipt.event.ReceiptIssuedPayload) payloadCaptor.getValue();
+
+        // Phase 11 Gap 2 (Kimi): assert all 11 fields of the frozen schema, not a subset.
+        assertThat(payload.invoiceUuid()).isEqualTo(INVOICE_UUID_VALUE);
+        assertThat(payload.paymentUuid()).isEqualTo(PAYMENT_UUID);
+        assertThat(payload.receiptUuid()).isEqualTo(receiptUuid);
+        assertThat(payload.merchantAccountUuid()).isEqualTo(MERCHANT_ACCOUNT_UUID);
         assertThat(payload.chain()).isEqualTo(CHAIN);
         assertThat(payload.txHash()).isEqualTo(TX_HASH);
         assertThat(payload.amount()).isEqualTo("1000");
+        assertThat(payload.tokenContractAddress()).isEqualTo("0x111");
         assertThat(payload.kmsKeyId()).isEqualTo("key");
-        assertThat(payload.receiptUri()).startsWith("s3://bucket/receipts/uuid").endsWith(".json");
+        assertThat(payload.receiptUri()).isEqualTo("s3://bucket/receipts/uuid.json");
+        assertThat(payload.occurredAt()).isEqualTo(NOW);
     }
 
     /** AC6, Phase 3/4 Kimi Finding 2: a concurrent reorg moving the payment out of

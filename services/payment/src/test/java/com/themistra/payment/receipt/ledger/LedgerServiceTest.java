@@ -178,6 +178,72 @@ class LedgerServiceTest {
         assertThat(reloaded.getPayload()).containsEntry("s3Bucket", "my-bucket").containsEntry("s3KeyPrefix", "receipts/abc");
     }
 
+    /** Phase 11 Gap 5 (Kimi): the golden-hash tie test above only covers the genesis entry. A
+     * bug that reused the genesis {@code prevHash} (64 zeros) for every subsequent entry, instead
+     * of the real predecessor's {@code entryHash}, would still pass
+     * {@code shouldAppendLedgerEntryWithPrevHashChainingToHead} (which only checks the
+     * {@code prevHash} *field*, set correctly by construction) without this - ties the SECOND
+     * entry's {@code entryHash} to an independent recomputation using the FIRST entry's real,
+     * non-genesis {@code entryHash}. */
+    @Test
+    void shouldComputeSecondEntryHashUsingTheRealPredecessorHashNotGenesis() throws SQLException {
+        Map<String, Object> firstPayload = Map.of("seq", "first");
+        LedgerEntry first = ledgerService.append(seedReceipt(), firstPayload);
+
+        Map<String, Object> secondPayload = Map.of("seq", "second");
+        LedgerEntry second = ledgerService.append(seedReceipt(), secondPayload);
+
+        String expectedSecondHash = sha256(CanonicalJson.serialize(secondPayload) + first.getEntryHash());
+        assertThat(second.getEntryHash()).isEqualTo(expectedSecondHash);
+    }
+
+    /** Phase 11 Gap 7 (Kimi): the production payload is the real 17-field shape
+     * ({@code ReceiptStore.toCanonicalMap}'s 15 fields plus {@code s3Bucket}/{@code s3KeyPrefix}),
+     * not the minimal 1-2 key maps the other tests use for brevity - a regression that dropped
+     * a field from that real shape would change the real {@code entryHash} without failing any
+     * of those simpler tests. */
+    @Test
+    void shouldAppendTheRealSeventeenFieldLedgerPayloadShape() throws SQLException {
+        long receiptId = seedReceipt();
+        Map<String, Object> fullPayload = new java.util.LinkedHashMap<>();
+        fullPayload.put("receiptUuid", UUID.randomUUID().toString());
+        fullPayload.put("invoiceUuid", UUID.randomUUID().toString());
+        fullPayload.put("paymentUuid", UUID.randomUUID().toString());
+        fullPayload.put("merchantAccountUuid", UUID.randomUUID().toString());
+        fullPayload.put("chain", "ETHEREUM");
+        fullPayload.put("txHash", "0xabc123");
+        fullPayload.put("tokenContractAddress", "0xdef456");
+        fullPayload.put("tokenDecimals", (short) 6);
+        fullPayload.put("amount", "1000000");
+        fullPayload.put("payToAddress", "0x789");
+        fullPayload.put("fromAddress", "0x012");
+        fullPayload.put("finalizedAt", Instant.parse("2026-07-13T01:00:00Z").toString());
+        fullPayload.put("signature", "deadbeef");
+        fullPayload.put("kmsKeyId", "kms-key-1");
+        fullPayload.put("signedAt", Instant.parse("2026-10-15T00:00:01Z").toString());
+        fullPayload.put("s3Bucket", "my-bucket");
+        fullPayload.put("s3KeyPrefix", "receipts/abc");
+        assertThat(fullPayload).hasSize(17);
+
+        LedgerEntry saved = ledgerService.append(receiptId, fullPayload);
+
+        String expectedHash = sha256(CanonicalJson.serialize(fullPayload) + "0".repeat(64));
+        assertThat(saved.getEntryHash()).isEqualTo(expectedHash);
+        // Reloaded via a fresh SELECT (not the same managed instance) - Postgres JSONB round-trips
+        // every numeric value as the same logical number, but Hibernate's generic JSON reader
+        // may box it as a different Number subtype (e.g. Integer, not the original Short) -
+        // compare string forms for that one field rather than requiring exact boxed-type equality.
+        LedgerEntry reloaded = repository.findById(saved.getSeq()).orElseThrow();
+        Map<String, Object> reloadedPayload = reloaded.getPayload();
+        for (Map.Entry<String, Object> entry : fullPayload.entrySet()) {
+            if (entry.getKey().equals("tokenDecimals")) {
+                assertThat(reloadedPayload.get(entry.getKey())).asString().isEqualTo(entry.getValue().toString());
+            } else {
+                assertThat(reloadedPayload).containsEntry(entry.getKey(), entry.getValue());
+            }
+        }
+    }
+
     @Test
     void shouldRejectNullReceiptId() throws SQLException {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> ledgerService.append(null, Map.of()))
@@ -191,6 +257,19 @@ class LedgerServiceTest {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /** Phase 11 Gap 8 (Kimi): pins the advisory-lock key via the {@code @Query} annotation's own
+     * literal value - a future edit that silently changed the lock key (typo, different
+     * function, swapped to a different namespace string) would otherwise only surface as a
+     * subtle AC4 regression, never a compile or obvious runtime failure. */
+    @Test
+    void shouldAcquireTheAdvisoryLockUsingTheNamespacedKeyExpression() throws NoSuchMethodException {
+        org.springframework.data.jpa.repository.Query query = LedgerEntryRepository.class
+                .getMethod("acquireAppendLock")
+                .getAnnotation(org.springframework.data.jpa.repository.Query.class);
+        assertThat(query.value())
+                .isEqualTo("SELECT pg_advisory_xact_lock(hashtext('themistra.payment.ledger.append')::bigint)");
     }
 
     private static Connection adminConnection() throws SQLException {
