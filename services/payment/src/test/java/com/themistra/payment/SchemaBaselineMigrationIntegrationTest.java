@@ -137,10 +137,10 @@ class SchemaBaselineMigrationIntegrationTest {
         return block.toString();
     }
 
-    /** AC2: all migrations applied and recorded as successful. Count updated to 9 (V9, T19 -
-     * the receipts grant) - V7/V8 (T11) confirmed stale and fixed 2026-10-14, once Docker
-     * became available this session; this test had not actually run against a live Postgres
-     * since roughly T07. */
+    /** AC2: all migrations applied and recorded as successful. Count updated to 10 (V10, T22 -
+     * the export supporting index) - V7/V8 (T11) confirmed stale and fixed 2026-10-14, once
+     * Docker became available this session; this test had not actually run against a live
+     * Postgres since roughly T07. */
     @Test
     void bothMigrationsAreRecordedAsSuccessfulInFlywayHistory() throws SQLException {
         try (Connection admin = adminConnection();
@@ -153,7 +153,7 @@ class SchemaBaselineMigrationIntegrationTest {
                 assertThat(resultSet.getBoolean("success")).as("version %s must have succeeded", resultSet.getString("version")).isTrue();
                 succeededVersions.add(resultSet.getString("version"));
             }
-            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9");
+            assertThat(succeededVersions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10");
         }
     }
 
