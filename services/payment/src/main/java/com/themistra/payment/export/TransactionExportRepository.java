@@ -32,6 +32,10 @@ import java.util.UUID;
 @Repository
 class TransactionExportRepository {
 
+    // Phase 9 Kimi Finding 5, accepted: this column order is positional and must stay in exact
+    // sync with toRow(Object[]) below - reordering, adding, or removing a column here without
+    // updating that method compiles cleanly but fails at runtime (ClassCastException) or
+    // silently produces wrong data. Change both together.
     private static final String SQL = """
             SELECT i.invoice_uuid, p.payment_uuid, r.receipt_uuid, p.chain, p.tx_hash,
                    p.token_contract_address, i.token_decimals, p.amount, p.to_address,
@@ -62,6 +66,8 @@ class TransactionExportRepository {
         return rows.stream().map(TransactionExportRepository::toRow).toList();
     }
 
+    // Positional mapping - must stay in exact column-order sync with SQL above (Phase 9 Kimi
+    // Finding 5).
     private static TransactionExportRow toRow(Object[] row) {
         UUID invoiceUuid = (UUID) row[0];
         UUID paymentUuid = (UUID) row[1];
