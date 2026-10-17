@@ -146,6 +146,21 @@ class TransactionExportServiceIntegrationTest {
         assertThat(rows).hasSize(2);
     }
 
+    /** Phase 11 Kimi Gap 3: the existing boundary test uses two distinct instants (one on
+     * `from`, one on `to`) - this proves the single-instant case where `from == to ==
+     * finalizedAt` is itself included, not merely "a row equal to one of two different
+     * bounds". */
+    @Test
+    void shouldIncludePaymentWhenFromEqualsTo() throws SQLException {
+        Instant exact = Instant.parse("2026-06-15T12:00:00Z");
+        seedAttestedPayment(MERCHANT_A, "ETHEREUM", "0xtoken", (short) 6, new BigDecimal("1000"),
+                "0xinvoice", "0xobserved", new BigDecimal("1000"), exact, exact.plusSeconds(60), "bucket", "prefix");
+
+        List<TransactionExportRow> rows = exportService.export(MERCHANT_A, exact, exact);
+
+        assertThat(rows).hasSize(1);
+    }
+
     @Test
     void shouldExcludeFinalizedNotYetAttestedPayments() throws SQLException {
         seedPaymentWithState(MERCHANT_A, "FINALIZED", Instant.parse("2026-06-01T00:00:00Z"), null);
@@ -184,6 +199,33 @@ class TransactionExportServiceIntegrationTest {
         assertThat(rows).hasSize(2);
         assertThat(rows.get(0).paymentUuid()).isEqualTo(earlierRow.paymentUuid);
         assertThat(rows.get(1).paymentUuid()).isEqualTo(laterRow.paymentUuid);
+    }
+
+    /** Phase 11 Kimi Gap 4: the test above seeds different {@code finalizedAt} values, so it
+     * would still pass even if the {@code paymentUuid} tie-breaker (AC10) were wrong or absent.
+     * Both rows share the exact same {@code finalizedAt}; the expected order is derived from the
+     * two real, randomly-generated {@code paymentUuid}s' own canonical string order - the same
+     * byte-wise comparison Postgres's {@code uuid ASC} performs - not a hand-picked pair, so the
+     * test is not coincidentally correct regardless of which UUID sorts first. */
+    @Test
+    void shouldTieBreakByPaymentUuidWhenFinalizedAtIsEqual() throws SQLException {
+        Instant sameInstant = Instant.parse("2026-06-10T00:00:00Z");
+        Seeded first = seedAttestedPayment(MERCHANT_A, "ETHEREUM", "0xtoken", (short) 6,
+                new BigDecimal("1000"), "0xinvoice", "0xfirst", new BigDecimal("1000"), sameInstant,
+                sameInstant.plusSeconds(60), "bucket", "first");
+        Seeded second = seedAttestedPayment(MERCHANT_A, "ETHEREUM", "0xtoken", (short) 6,
+                new BigDecimal("1000"), "0xinvoice", "0xsecond", new BigDecimal("1000"), sameInstant,
+                sameInstant.plusSeconds(60), "bucket", "second");
+        UUID expectedFirst = first.paymentUuid.toString().compareTo(second.paymentUuid.toString()) <= 0
+                ? first.paymentUuid : second.paymentUuid;
+        UUID expectedSecond = expectedFirst.equals(first.paymentUuid) ? second.paymentUuid : first.paymentUuid;
+
+        List<TransactionExportRow> rows = exportService.export(MERCHANT_A,
+                Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-12-31T23:59:59Z"));
+
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0).paymentUuid()).isEqualTo(expectedFirst);
+        assertThat(rows.get(1).paymentUuid()).isEqualTo(expectedSecond);
     }
 
     /** Phase 3 Kimi Finding 2 (accepted at Phase 4): proves, not just documents, that

@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -119,17 +120,33 @@ class ExportControllerTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("ETHEREUM,0xhash,0xtoken,6,1000,0xdest")));
     }
 
-    /** Phase 9 Kimi Finding 6: a CSV response must carry a download-triggering header. */
+    /** Phase 9 Kimi Finding 6: a CSV response must carry a download-triggering header. Phase 11
+     * Kimi Gap 8 (corrected): asserts the exact header, not just a prefix/suffix - Kimi's own
+     * suggested exact string assumed the raw ISO instant form, but {@code ExportController} uses
+     * epoch seconds specifically to avoid the colons an ISO instant contains, which Windows
+     * forbids in filenames (see the controller's own comment at the filename-building line). */
     @Test
     void shouldAddContentDispositionHeaderForCsvResponse() throws Exception {
         when(exportService.export(any(), any(), any())).thenReturn(List.of());
 
         mockMvc.perform(get(PATH + query() + "&format=csv").with(merchantJwt()))
                 .andExpect(status().isOk())
-                .andExpect(header().string("Content-Disposition",
-                        org.hamcrest.Matchers.allOf(
-                                org.hamcrest.Matchers.startsWith("attachment; filename=\"transactions-"),
-                                org.hamcrest.Matchers.endsWith(".csv\""))));
+                .andExpect(header().string("Content-Disposition", "attachment; filename=\"transactions-"
+                        + FROM.getEpochSecond() + "-" + TO.getEpochSecond() + ".csv\""));
+    }
+
+    /** Phase 11 Kimi Gap 1: AC6 requires a header-only CSV (not an error) when nothing matches -
+     * previously only the empty-JSON path was tested. */
+    @Test
+    void shouldReturnCsvHeaderOnlyWhenNoMatchingRows() throws Exception {
+        when(exportService.export(any(), any(), any())).thenReturn(List.of());
+
+        mockMvc.perform(get(PATH + query() + "&format=csv").with(merchantJwt()))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/csv"))
+                .andExpect(content().string(
+                        "invoiceUuid,paymentUuid,receiptUuid,chain,txHash,tokenContractAddress,"
+                                + "tokenDecimals,amount,payToAddress,finalizedAt,attestedAt,receiptUri\n"));
     }
 
     @Test
@@ -221,6 +238,15 @@ class ExportControllerTest {
                 .andExpect(jsonPath("$.title").value("Malformed request parameter"));
     }
 
+    /** Phase 11 Kimi Gap 5: the existing malformed-value test only covered `from` - a Spring-
+     * binding bug affecting only the second parameter would not otherwise be caught. */
+    @Test
+    void shouldReturn400ForMalformedToValue() throws Exception {
+        mockMvc.perform(get(PATH + "?from=" + FROM + "&to=not-an-instant").with(merchantJwt()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Malformed request parameter"));
+    }
+
     @Test
     void shouldReturn400ForMissingSubClaim() throws Exception {
         RequestPostProcessor missingSubJwt = SecurityMockMvcRequestPostProcessors.jwt()
@@ -232,6 +258,22 @@ class ExportControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title").value("Invalid export request"))
                 .andExpect(jsonPath("$.detail").value("sub claim is missing"));
+    }
+
+    /** Phase 11 Kimi Gap 2: the missing-sub branch was tested, but
+     * {@code merchantAccountUuidFrom}'s second branch (a present but non-UUID subject) was not -
+     * a regression that broke that catch block would otherwise return 500, not the typed 400
+     * AC7 requires. */
+    @Test
+    void shouldReturn400ForMalformedSubClaim() throws Exception {
+        RequestPostProcessor malformedSubJwt = SecurityMockMvcRequestPostProcessors.jwt()
+                .jwt(builder -> builder.subject("not-a-uuid").claim("roles", List.of("MERCHANT")))
+                .authorities(new SimpleGrantedAuthority("ROLE_MERCHANT"));
+
+        mockMvc.perform(get(PATH + query()).with(malformedSubJwt))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Invalid export request"))
+                .andExpect(jsonPath("$.detail").value("sub claim is not a valid UUID: not-a-uuid"));
     }
 
     @Test
@@ -253,9 +295,10 @@ class ExportControllerTest {
      * insert a malformed row into a real database to prove the escaping logic itself. */
     @Test
     void shouldEscapeCsvFieldsContainingSpecialCharacters() throws Exception {
+        String dirtyValue = "0xdest,with\"quote\nand\rbreaks";
         TransactionExportRow dirtyRow = new TransactionExportRow(
                 OTHER_UUID, OTHER_UUID, OTHER_UUID, "ETHEREUM", "0xhash", "0xtoken", (short) 6,
-                "1000", "0xdest,with\"quote\nand\rbreaks", Instant.parse("2026-06-01T00:00:00Z"),
+                "1000", dirtyValue, Instant.parse("2026-06-01T00:00:00Z"),
                 Instant.parse("2026-06-01T01:00:00Z"), "s3://bucket/prefix.json");
         when(exportService.export(any(), any(), any())).thenReturn(List.of(dirtyRow));
 
@@ -265,5 +308,62 @@ class ExportControllerTest {
 
         String expectedEscapedField = "\"0xdest,with\"\"quote\nand\rbreaks\"";
         org.assertj.core.api.Assertions.assertThat(body).contains(expectedEscapedField);
+
+        // Phase 11 Kimi Gap 6: a substring match alone would still pass if an extra, unescaped
+        // comma shifted every column after it - parse the body structurally (respecting quoted
+        // newlines/commas, RFC 4180) and assert the exact column count and the exact round-trip
+        // of the original, unescaped value, not just that the escaped text appears somewhere.
+        List<List<String>> records = parseCsv(body);
+        assertThat(records).hasSize(2);
+        List<String> dataRow = records.get(1);
+        assertThat(dataRow).hasSize(12);
+        assertThat(dataRow.get(8)).isEqualTo(dirtyValue);
+    }
+
+    /** Minimal RFC 4180 parser, test-only: respects quoted fields that themselves contain a
+     * comma or a literal newline/carriage-return - a naive {@code split("\n")} would break the
+     * dirty row above apart incorrectly, since its one quoted field contains a real {@code \n}. */
+    private static List<List<String>> parseCsv(String body) {
+        List<List<String>> records = new java.util.ArrayList<>();
+        List<String> fields = new java.util.ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        int i = 0;
+        while (i < body.length()) {
+            char c = body.charAt(i);
+            if (inQuotes) {
+                if (c == '"' && i + 1 < body.length() && body.charAt(i + 1) == '"') {
+                    current.append('"');
+                    i += 2;
+                } else if (c == '"') {
+                    inQuotes = false;
+                    i++;
+                } else {
+                    current.append(c);
+                    i++;
+                }
+            } else if (c == '"') {
+                inQuotes = true;
+                i++;
+            } else if (c == ',') {
+                fields.add(current.toString());
+                current.setLength(0);
+                i++;
+            } else if (c == '\n') {
+                fields.add(current.toString());
+                current.setLength(0);
+                records.add(new java.util.ArrayList<>(fields));
+                fields.clear();
+                i++;
+            } else {
+                current.append(c);
+                i++;
+            }
+        }
+        if (current.length() > 0 || !fields.isEmpty()) {
+            fields.add(current.toString());
+            records.add(fields);
+        }
+        return records;
     }
 }
