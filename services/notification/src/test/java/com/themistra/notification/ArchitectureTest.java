@@ -57,14 +57,14 @@ class ArchitectureTest {
     /** Single source of truth for the package {@link #analyzedClasses()} scans. */
     private static final String ANALYZED_PACKAGE = "com.themistra.notification";
 
-    /** The 6 real top-level feature-module packages under {@code com.themistra.notification} today
+    /** The 7 real top-level feature-module packages under {@code com.themistra.notification} today
      * (confirmed directly, Phase 3/4). {@code common} is deliberately excluded - its own design
      * purpose (L11: "shared plumbing lives in common") is to be usable by every module, unlike a
      * feature module's own entity. <b>When adding a new top-level package, add it here too</b> -
      * {@link #shouldPreventCrossModuleEntityImports} fails fast, not silently, if an {@code @Entity}
      * is found outside every module listed here. */
     private static final List<String> FEATURE_MODULES = List.of(
-            "channel", "consumer", "delivery", "inapp", "preference", "template");
+            "channel", "consumer", "delivery", "inapp", "preference", "routing", "template");
 
     private static String featureModuleOf(JavaClass javaClass) {
         String packageName = javaClass.getPackageName();

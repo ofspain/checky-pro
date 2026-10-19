@@ -111,9 +111,11 @@ class NotificationBaselineMigrationIntegrationTest {
     }
 
     @Test
-    void allEightBaselineTablesExistAndNoOthers() throws SQLException {
+    void allTenSchemaTablesExistAndNoOthers() throws SQLException {
+        // T07's V12 added the two payment-routing projection tables (frozen brief D2).
         List<String> expected = List.of("contact_projection", "channel_preferences", "templates",
-                "processed_events", "delivery_log", "inapp_notifications", "delivery_retry", "shedlock");
+                "processed_events", "delivery_log", "inapp_notifications", "delivery_retry", "shedlock",
+                "invoice_routes", "payment_routes");
 
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
@@ -180,7 +182,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 succeededVersions.add(resultSet.getString("version"));
             }
             assertThat(succeededVersions).containsExactly(
-                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11");
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14");
         }
     }
 
@@ -711,7 +713,8 @@ class NotificationBaselineMigrationIntegrationTest {
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
-                     "SELECT name, channel, version, subject FROM notifications.templates")) {
+                     "SELECT name, channel, version, subject FROM notifications.templates WHERE version = 1")) {
+            // T07's V14 adds version-2 payment rows; this test keeps guarding V3's version-1 seed.
             List<String> actualPairs = new ArrayList<>();
             Set<String> distinctNames = new HashSet<>();
             int rowCount = 0;
@@ -812,5 +815,82 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static Connection connectAsNotificationApp(String password) throws SQLException {
         return DriverManager.getConnection(POSTGRES.getJdbcUrl(), "notification_app", password);
+    }
+
+    /** T07 (frozen brief D2): the routing projection is insert-once. notification_app may INSERT
+     * and SELECT both tables, and the insert-if-absent write needs nothing more, but UPDATE and
+     * DELETE are denied. */
+    @Test
+    void notificationAppCanInsertAndSelectButNotUpdateOrDeleteOnThePaymentRoutingTables() throws SQLException {
+        String invoice = java.util.UUID.randomUUID().toString();
+        String payment = java.util.UUID.randomUUID().toString();
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
+            try (PreparedStatement insert = app.prepareStatement(
+                    "INSERT INTO notifications.invoice_routes (invoice_uuid, merchant_account_uuid, token_decimals) "
+                            + "VALUES (?::uuid, ?::uuid, 6) ON CONFLICT (invoice_uuid) DO NOTHING")) {
+                insert.setString(1, invoice);
+                insert.setString(2, java.util.UUID.randomUUID().toString());
+                assertThat(insert.executeUpdate()).isEqualTo(1);
+                assertThat(insert.executeUpdate()).as("a repeat insert is a no-op, not an error").isZero();
+            }
+            try (PreparedStatement insert = app.prepareStatement(
+                    "INSERT INTO notifications.payment_routes (payment_uuid, invoice_uuid) "
+                            + "VALUES (?::uuid, ?::uuid) ON CONFLICT (payment_uuid) DO NOTHING")) {
+                insert.setString(1, payment);
+                insert.setString(2, invoice);
+                assertThat(insert.executeUpdate()).isEqualTo(1);
+            }
+            for (String table : List.of("invoice_routes", "payment_routes")) {
+                try (Statement select = app.createStatement();
+                     ResultSet resultSet = select.executeQuery("SELECT count(*) FROM notifications." + table)) {
+                    resultSet.next();
+                    assertThat(resultSet.getInt(1)).as("SELECT on %s", table).isPositive();
+                }
+                assertThatThrownBy(() -> {
+                    try (Statement update = app.createStatement()) {
+                        update.execute("UPDATE notifications." + table + " SET created_at = now()");
+                    }
+                }).as("UPDATE on %s must be denied", table)
+                        .isInstanceOf(SQLException.class).hasMessageContaining("permission denied");
+                assertThatThrownBy(() -> {
+                    try (Statement delete = app.createStatement()) {
+                        delete.execute("DELETE FROM notifications." + table);
+                    }
+                }).as("DELETE on %s must be denied", table)
+                        .isInstanceOf(SQLException.class).hasMessageContaining("permission denied");
+            }
+        }
+    }
+
+    /** T07 (frozen brief D1, D3, F7): V14 adds exactly one version-2 row per payment template and
+     * channel, keeping V3's EMAIL-has-subject convention. The v2 bodies drop the placeholders no
+     * event fills: currency, displayName and the receipt link. */
+    @Test
+    void paymentTemplatesHaveAVersionTwoWithoutUnfillablePlaceholders() throws SQLException {
+        Set<String> expected = Set.of(
+                "invoice.created:EMAIL", "invoice.created:IN_APP",
+                "payment.seen:EMAIL", "payment.seen:IN_APP",
+                "payment.finalized:EMAIL", "payment.finalized:IN_APP",
+                "receipt.issued:EMAIL", "receipt.issued:IN_APP");
+        try (Connection admin = adminConnection();
+             Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT name, channel, subject, body FROM notifications.templates WHERE version = 2")) {
+            List<String> pairs = new ArrayList<>();
+            while (resultSet.next()) {
+                String name = resultSet.getString("name");
+                String channel = resultSet.getString("channel");
+                String body = resultSet.getString("body");
+                pairs.add(name + ":" + channel);
+                if ("EMAIL".equals(channel)) {
+                    assertThat(resultSet.getString("subject")).as("%s EMAIL subject", name).isNotNull();
+                } else {
+                    assertThat(resultSet.getString("subject")).as("%s IN_APP subject", name).isNull();
+                }
+                assertThat(body).as("%s:%s body", name, channel)
+                        .doesNotContain("{{currency}}", "{{displayName}}", "{{receiptLink}}");
+            }
+            assertThat(pairs).containsExactlyInAnyOrderElementsOf(expected);
+        }
     }
 }

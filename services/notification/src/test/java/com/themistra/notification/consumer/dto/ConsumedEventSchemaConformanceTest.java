@@ -53,11 +53,41 @@ class ConsumedEventSchemaConformanceTest {
                 Instant.parse("2026-07-13T00:00:00Z"));
         JsonNode userLifecycleSchema = readSchema("../../contracts/events/auth/user-lifecycle.v1.schema.json");
 
+        // T07: the four consumed payment events, fully populated.
+        UUID invoice = UUID.randomUUID();
+        UUID payment = UUID.randomUUID();
+        Instant at = Instant.parse("2026-10-19T00:00:00Z");
+        InvoiceCreatedEvent invoiceCreated = new InvoiceCreatedEvent(invoice, UUID.randomUUID(), "ETHEREUM",
+                "0xtoken", (short) 6, "1500000", "0xpayto", "order-1", at);
+        PaymentSeenEvent paymentSeen = new PaymentSeenEvent(payment, invoice, "ETHEREUM", "0xtx", "0xtoken", 1, at);
+        PaymentFinalizedEvent paymentFinalized = new PaymentFinalizedEvent(payment, "ETHEREUM", "0xtx", "0xfrom",
+                "0xpayto", "0xtoken", "1500000", 12, false, at);
+        ReceiptIssuedEvent receiptIssued = new ReceiptIssuedEvent(invoice, payment, UUID.randomUUID(),
+                UUID.randomUUID(), "ETHEREUM", "0xtx", "1500000", "0xtoken", "kms-1", "s3://bucket/key.json", at);
+        // The schemas' nullable fields (["string","null"]) also accept an explicit null.
+        InvoiceCreatedEvent invoiceCreatedWithoutReference = new InvoiceCreatedEvent(invoice, UUID.randomUUID(),
+                "ETHEREUM", "0xtoken", (short) 6, "1500000", "0xpayto", null, at);
+        String payments = "../../contracts/events/payments/";
+        JsonNode invoiceCreatedSchema = readSchema(payments + "invoice-created.v1.schema.json");
+        JsonNode paymentSeenSchema = readSchema(payments + "payment-seen.v1.schema.json");
+        JsonNode paymentFinalizedSchema = readSchema(payments + "payment-finalized.v1.schema.json");
+        JsonNode receiptIssuedSchema = readSchema(payments + "receipt-issued.v1.schema.json");
+
         SoftAssertions.assertSoftly(softly -> {
             assertConformsToSchema(softly, objectMapper.valueToTree(emailRequested),
                     emailRequestedSchema, "email-requested.v1.schema.json");
             assertConformsToSchema(softly, objectMapper.valueToTree(userLifecycle),
                     userLifecycleSchema, "user-lifecycle.v1.schema.json");
+            assertConformsToSchema(softly, objectMapper.valueToTree(invoiceCreated),
+                    invoiceCreatedSchema, "invoice-created.v1.schema.json");
+            assertConformsToSchema(softly, objectMapper.valueToTree(invoiceCreatedWithoutReference),
+                    invoiceCreatedSchema, "invoice-created.v1.schema.json (null reference)");
+            assertConformsToSchema(softly, objectMapper.valueToTree(paymentSeen),
+                    paymentSeenSchema, "payment-seen.v1.schema.json");
+            assertConformsToSchema(softly, objectMapper.valueToTree(paymentFinalized),
+                    paymentFinalizedSchema, "payment-finalized.v1.schema.json");
+            assertConformsToSchema(softly, objectMapper.valueToTree(receiptIssued),
+                    receiptIssuedSchema, "receipt-issued.v1.schema.json");
         });
     }
 
@@ -81,25 +111,35 @@ class ConsumedEventSchemaConformanceTest {
 
         declaredProperties.fieldNames().forEachRemaining(field -> {
             if (serialized.has(field)) {
-                String declaredType = declaredProperties.get(field).get("type").asText();
+                JsonNode declaredType = declaredProperties.get(field).get("type");
                 softly.assertThat(matchesJsonSchemaType(serialized.get(field), declaredType))
                         .as("serialized field '%s' type matches schema declared type '%s' (schema=%s)",
-                                field, declaredType, schemaName)
+                                field, declaredType != null && declaredType.isTextual()
+                                        ? declaredType.asText() : declaredType, schemaName)
                         .isTrue();
             }
         });
     }
 
-    /** Phase 8 Finding #1 (self-review Finding #1, disclosed, not fixed): assumes {@code type} is
-     * always a single JSON string, matching every real schema under {@code contracts/events/auth/}
-     * today (confirmed directly - none uses the also-legal JSON Schema array form, e.g.
-     * {@code ["string","null"]}, for a nullable field). If a future schema revision ever used that
-     * form, {@code declaredType} would arrive here as {@code ""} ({@code JsonNode.asText()}'s own
-     * default for a non-scalar node) and fall into the {@code default} branch below, failing with a
-     * confusing message rather than correctly validating against either allowed type - not fixed
-     * speculatively for a case no real schema uses today. */
+    /** A declared {@code type} is either one JSON Schema type name or, for a nullable field, an
+     * array of them such as {@code ["string","null"]}; the node matches when it matches any one.
+     * T15 disclosed the array form as unsupported because no auth schema used it; the payments
+     * schemas (notification T07) do, so it is supported now. */
+    private static boolean matchesJsonSchemaType(JsonNode node, JsonNode declaredType) {
+        if (declaredType != null && declaredType.isArray()) {
+            for (JsonNode alternative : declaredType) {
+                if (matchesJsonSchemaType(node, alternative.asText())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return matchesJsonSchemaType(node, declaredType == null ? "" : declaredType.asText());
+    }
+
     private static boolean matchesJsonSchemaType(JsonNode node, String declaredType) {
         return switch (declaredType) {
+            case "null" -> node.isNull();
             case "string" -> node.isTextual();
             case "integer" -> node.isIntegralNumber();
             case "number" -> node.isNumber();
@@ -134,9 +174,23 @@ class ConsumedEventSchemaConformanceTest {
 
     @Test
     void matchesJsonSchemaTypeThrowsForAnUnrecognizedDeclaredType() {
-        assertThatThrownBy(() -> matchesJsonSchemaType(objectMapper.valueToTree("x"), "null"))
+        // T07: "null" became a recognised type with the nullable array form; "date" is not a
+        // JSON Schema type at all.
+        assertThatThrownBy(() -> matchesJsonSchemaType(objectMapper.valueToTree("x"), "date"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("null");
+                .hasMessageContaining("date");
+    }
+
+    /** T07: the nullable form the payments schemas use, {@code ["string","null"]}. */
+    @Test
+    void matchesJsonSchemaTypeAcceptsAnyAlternativeOfANullableTypeArray() throws IOException {
+        JsonNode nullableString = objectMapper.readTree("[\"string\",\"null\"]");
+
+        assertThat(matchesJsonSchemaType(objectMapper.valueToTree("x"), nullableString)).isTrue();
+        assertThat(matchesJsonSchemaType(objectMapper.readTree("null"), nullableString)).isTrue();
+        assertThat(matchesJsonSchemaType(objectMapper.valueToTree(1), nullableString)).isFalse();
+        assertThat(matchesJsonSchemaType(objectMapper.readTree("null"), objectMapper.readTree("\"string\"")))
+                .as("a plain, non-nullable string type still rejects null").isFalse();
     }
 
     /** Proves the mechanism `shouldConformToConsumedEventSchemas` relies on actually catches a real

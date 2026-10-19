@@ -220,7 +220,9 @@ class T01SkeletonRegressionTest {
      * the Phase 5 plan's own named files, mirroring how every prior task's own "exact Maven
      * coordinates confirmed during implementation" note anticipated similarly small wiring details;
      * {@code delivery/DeliveryRetry.java}, {@code delivery/DeliveryRetryRepository.java},
-     * {@code delivery/RetryScheduler.java}) and removes none. This list is updated to name all 50
+     * {@code delivery/RetryScheduler.java}) and removes none. T07 adds 11 more: the payment
+     * consumer and {@code AmountFormatter}, four payment DTOs, and the five-file {@code routing}
+     * projection (frozen brief D2). This list is updated to name all 61
      * explicitly rather than loosened to "at least N files" - an unnamed-count assertion would
      * silently tolerate a stray file no task ever authorized. */
     @Test
@@ -256,12 +258,18 @@ class T01SkeletonRegressionTest {
                     "common/config/RetryProperties.java",
                     "common/config/SesClientConfig.java",
                     "common/config/ShedLockConfig.java",
+                    "consumer/AmountFormatter.java",
                     "consumer/AuthEventConsumer.java",
                     "consumer/IdempotencyGuard.java",
                     "consumer/NotificationDispatcher.java",
+                    "consumer/PaymentEventConsumer.java",
                     "consumer/ProcessedEvent.java",
                     "consumer/ProcessedEventRepository.java",
                     "consumer/dto/EmailRequestedEvent.java",
+                    "consumer/dto/InvoiceCreatedEvent.java",
+                    "consumer/dto/PaymentFinalizedEvent.java",
+                    "consumer/dto/PaymentSeenEvent.java",
+                    "consumer/dto/ReceiptIssuedEvent.java",
                     "consumer/dto/UserLifecycleEvent.java",
                     "delivery/DeliveryLog.java",
                     "delivery/DeliveryLogRepository.java",
@@ -281,6 +289,11 @@ class T01SkeletonRegressionTest {
                     "preference/ContactProjectionRepository.java",
                     "preference/ContactProjectionUpdater.java",
                     "preference/PreferenceResolver.java",
+                    "routing/InvoiceRoute.java",
+                    "routing/InvoiceRouteRepository.java",
+                    "routing/PaymentRoute.java",
+                    "routing/PaymentRouteRepository.java",
+                    "routing/PaymentRouting.java",
                     "template/Template.java",
                     "template/TemplateRenderer.java",
                     "template/TemplateRepository.java");
