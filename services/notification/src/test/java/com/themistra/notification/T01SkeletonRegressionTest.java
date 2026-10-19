@@ -584,10 +584,19 @@ class T01SkeletonRegressionTest {
         int end = spec.indexOf("## 9. ", start);
         assertThat(start).as("package.md must have its §8 test plan").isNotNegative();
         assertThat(end).as("§8 must be followed by §9").isGreaterThan(start);
-        List<String> names = Pattern.compile("(?m)^- `(should[A-Za-z0-9_]+)` → ")
-                .matcher(spec.substring(start, end)).results().map(match -> match.group(1)).toList();
-        assertThat(names).as("§8 names exactly 20 tests").hasSize(20)
+        List<java.util.regex.MatchResult> entries = Pattern.compile("(?m)^- `(should[A-Za-z0-9_]+)` → ([RL][0-9]+)\\s*$")
+                .matcher(spec.substring(start, end)).results().toList();
+        List<String> names = entries.stream().map(match -> match.group(1)).toList();
+        assertThat(names).as("§8 names exactly 20 distinct tests").hasSize(20).doesNotHaveDuplicates()
                 .contains("shouldPreventCrossModuleEntityImports");
+        // Phase 11 Gap 4: one named test per requirement R1-R19, plus L11, none listed twice.
+        List<String> expectedTargets = new ArrayList<>();
+        for (int requirement = 1; requirement <= 19; requirement++) {
+            expectedTargets.add("R" + requirement);
+        }
+        expectedTargets.add("L11");
+        assertThat(entries.stream().map(match -> match.group(2)).toList())
+                .as("§8 maps exactly once to each of R1-R19 and L11").containsExactlyInAnyOrderElementsOf(expectedTargets);
 
         Map<String, String> sources = testSourcesByClass();
         assertThat(names).as("§8 names tests that do not exist or are disabled")

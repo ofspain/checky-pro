@@ -205,6 +205,11 @@ class SecretLeakEndToEndIntegrationTest {
         assertThat(occurrences(body, RAW_VERIFY_TOKEN)).as("the token appears only inside its one link").isEqualTo(1);
         assertThat(emails.get(0).subject()).doesNotContain(RAW_VERIFY_TOKEN);
 
+        // Phase 11 Gap 3: the link-bearing in-app copy is V3's user.verify version 1. When FU-T20-1
+        // seeds a version 2 without the link, this line fails first and says why.
+        assertThat(queryStrings("SELECT channel || ':' || template_name || ':' || template_version "
+                + "FROM notifications.delivery_log WHERE account_uuid = ?", accountUuid))
+                .containsExactlyInAnyOrder("EMAIL:email.verify:1", "IN_APP:user.verify:1");
         List<String> inAppBodies = queryStrings(
                 "SELECT body FROM notifications.inapp_notifications WHERE account_uuid = ?", accountUuid);
         assertThat(inAppBodies).singleElement().satisfies(inAppBody -> {
