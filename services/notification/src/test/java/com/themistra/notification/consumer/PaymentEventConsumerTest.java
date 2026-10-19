@@ -20,6 +20,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -268,6 +269,61 @@ class PaymentEventConsumerTest {
         assertThat(lines).allSatisfy(line -> assertThat(line).doesNotContain(
                 "0xpayto", "0xfrom", "0xtoken", "0xtx", "s3://", "receipts-bucket", "kms-1",
                 "1500000", "order-1", "{"));
+    }
+
+    /** Phase 10 (AC6): an event with a valid key but no invoice is recorded once (so a redelivery
+     * is a no-op) and neither routed nor dispatched. */
+    @Test
+    void shouldRecordButNotRouteOrDispatchAnEventThatNamesNoInvoice() throws Exception {
+        consumer.onPaymentSeen(paymentSeenJson().replace("\"invoiceUuid\":\"" + INVOICE + "\",", ""));
+        consumer.onReceiptIssued(receiptIssuedJson(true).replace("\"invoiceUuid\":\"" + INVOICE + "\",", ""));
+
+        verify(idempotencyGuard).recordIfNew("payment.seen:" + PAYMENT, "payment.seen");
+        verify(idempotencyGuard).recordIfNew("receipt.issued:" + RECEIPT, "receipt.issued");
+        verifyNoInteractions(paymentRouting, dispatcher);
+    }
+
+    /** Phase 10 (AC3): the event's own merchantAccountUuid is the authority; the routed merchant
+     * is only a fallback for when the event omits it. */
+    @Test
+    void shouldPreferTheReceiptEventsMerchantOverARoutedOne() throws Exception {
+        UUID otherMerchant = UUID.fromString("55555555-5555-5555-5555-555555555555");
+        when(paymentRouting.findMerchantForInvoice(INVOICE)).thenReturn(Optional.of(otherMerchant));
+
+        consumer.onReceiptIssued(receiptIssuedJson(true));
+
+        verify(dispatcher).dispatch(eq(MERCHANT), eq("receipt.issued"), anyMap());
+        verify(dispatcher, never()).dispatch(eq(otherMerchant), anyString(), anyMap());
+    }
+
+    /** Phase 10 (AC4, AC6): payment.finalized resolves in two steps. A known payment route whose
+     * invoice route is missing still resolves no merchant, so nothing is dispatched. */
+    @Test
+    void shouldNotDispatchPaymentFinalizedWhenOnlyTheSecondRouteIsMissing() throws Exception {
+        when(paymentRouting.findInvoiceForPayment(PAYMENT)).thenReturn(Optional.of(INVOICE));
+        when(paymentRouting.findMerchantForInvoice(INVOICE)).thenReturn(Optional.empty());
+
+        consumer.onPaymentFinalized(paymentFinalizedJson());
+
+        verify(paymentRouting).findMerchantForInvoice(INVOICE);
+        verifyNoInteractions(dispatcher);
+    }
+
+    /** Phase 10: malformed JSON propagates, the same disposition as AuthEventConsumer (the
+     * container's default error handler retries, then skips). Nothing is recorded first, so the
+     * retry isn't swallowed by dedupe. */
+    @Test
+    void shouldThrowOnMalformedJsonWithoutRecordingAnything() {
+        assertThatThrownBy(() -> consumer.onInvoiceCreated("{not valid json"))
+                .isInstanceOf(com.fasterxml.jackson.core.JsonProcessingException.class);
+        assertThatThrownBy(() -> consumer.onPaymentSeen("{not valid json"))
+                .isInstanceOf(com.fasterxml.jackson.core.JsonProcessingException.class);
+        assertThatThrownBy(() -> consumer.onPaymentFinalized("{not valid json"))
+                .isInstanceOf(com.fasterxml.jackson.core.JsonProcessingException.class);
+        assertThatThrownBy(() -> consumer.onReceiptIssued("{not valid json"))
+                .isInstanceOf(com.fasterxml.jackson.core.JsonProcessingException.class);
+
+        verifyNoInteractions(idempotencyGuard, paymentRouting, dispatcher);
     }
 
     /** L1: each listener is transactional and bound to its real topic. */
