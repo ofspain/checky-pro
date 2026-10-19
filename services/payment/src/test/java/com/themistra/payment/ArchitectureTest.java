@@ -376,7 +376,8 @@ class ArchitectureTest {
 
     /** D2 part (b). Applies to every class, the two allowed ones included. The only accesses to
      * the S3 SDK outside its request/response model package ({@code s3.model}) are:
-     * {@code putObject} on {@code S3Client}/{@code S3AsyncClient}; and, from
+     * {@code S3Client.putObject}, from {@code ReceiptStore} only (Phase 11, Kimi Gaps 1/2: not from
+     * the config class, and never through {@code S3AsyncClient}); and, from
      * {@code ReceiptStoreConfig} only, {@code S3Client.builder()} plus the {@code S3ClientBuilder}
      * chain. So inside {@code ReceiptStore} too, nothing may use the presigner, the utilities or
      * any other S3 class (Phase 9, Kimi Phase 8 F5). */
@@ -384,6 +385,7 @@ class ArchitectureTest {
             new ArchCondition<>("access no S3 SDK operation other than putObject") {
                 @Override
                 public void check(JavaClass javaClass, ConditionEvents events) {
+                    boolean isStore = javaClass.getName().equals(RECEIPT_STORE);
                     boolean isConfig = javaClass.getName().equals(RECEIPT_STORE_CONFIG);
                     javaClass.getAccessesFromSelf().forEach(access -> {
                         JavaClass owner = access.getTargetOwner();
@@ -393,10 +395,9 @@ class ArchitectureTest {
                         if (!inS3Sdk) {
                             return;
                         }
-                        boolean onS3Client = owner.isAssignableTo("software.amazon.awssdk.services.s3.S3Client")
-                                || owner.isAssignableTo("software.amazon.awssdk.services.s3.S3AsyncClient");
-                        boolean allowed = (onS3Client && access.getName().equals("putObject"))
-                                || (isConfig && onS3Client && access.getName().equals("builder"))
+                        boolean onSyncClient = owner.isAssignableTo("software.amazon.awssdk.services.s3.S3Client");
+                        boolean allowed = (isStore && onSyncClient && access.getName().equals("putObject"))
+                                || (isConfig && onSyncClient && access.getName().equals("builder"))
                                 || (isConfig && owner.isAssignableTo("software.amazon.awssdk.services.s3.S3ClientBuilder"));
                         if (!allowed) {
                             events.add(SimpleConditionEvent.violated(access, access.getDescription()));
@@ -407,8 +408,8 @@ class ArchitectureTest {
 
     /**
      * T28 (frozen brief D2; threat #5, L9/R23). Only {@code ReceiptStore} and
-     * {@code ReceiptStoreConfig} use the S3 SDK at all, and the only client operation anything
-     * calls is {@code putObject}. {@code S3Client.builder()} and the {@code S3ClientBuilder} chain
+     * {@code ReceiptStoreConfig} use the S3 SDK at all, and the only client operation called is
+     * {@code S3Client.putObject}, from {@code ReceiptStore} alone. {@code S3Client.builder()} and the {@code S3ClientBuilder} chain
      * are allowed only from {@code ReceiptStoreConfig}, which builds the one client bean. The
      * {@code putObject} match is exact, so {@code putObjectRetention}, {@code putObjectLegalHold},
      * {@code putObjectAcl} and {@code putObjectTagging} are all banned.
@@ -658,7 +659,10 @@ class ArchitectureTest {
                 Class.forName("com.themistra.payment.receipt.ledger.RogueModifyingLedgerEntryRepository"),
                 Class.forName("com.themistra.payment.receipt.ledger.RogueIndirectLedgerEntryRepository"),
                 Class.forName("com.themistra.payment.receipt.ledger.RogueLedgerEntryRepositoryBase"),
-                Class.forName("com.themistra.payment.receipt.ledger.LedgerEntryRepository"));
+                Class.forName("com.themistra.payment.receipt.ledger.LedgerEntryRepository"),
+                Class.forName("com.themistra.payment.receipt.RogueReceiptRepositoryUser"),
+                Class.forName("com.themistra.payment.receipt.RogueModifyingReceiptRepository"),
+                Class.forName("com.themistra.payment.receipt.ReceiptRepository"));
 
         assertThatThrownBy(() -> shouldForbidLedgerAndReceiptRepositoryDeletesAndModifyingQueries.check(violatingClasses))
                 .as("repository deletes in all three forms, and a @Modifying ledger query, must fail this rule")
@@ -671,7 +675,24 @@ class ArchitectureTest {
                 .hasMessageContaining("rewriteEveryPrevHash")
                 // Phase 9: a derived removeBy... delete, on a repository typed through a base interface.
                 .hasMessageContaining("RogueLedgerEntryRepositoryUser.removeThroughADerivedQuery(")
-                .hasMessageContaining("RogueIndirectLedgerEntryRepository.removeByReceiptId(java.lang.Long) is a derived delete");
+                .hasMessageContaining("RogueIndirectLedgerEntryRepository.removeByReceiptId(java.lang.Long) is a derived delete")
+                // Phase 11 (Gaps 3, 4): the receipt side.
+                .hasMessageContaining("calls method <com.themistra.payment.receipt.ReceiptRepository.delete(")
+                .hasMessageContaining("RogueReceiptRepositoryUser.deleteInsideALambda(")
+                .hasMessageContaining("RogueModifyingReceiptRepository.rewriteEverySignature(java.lang.String) is @Modifying")
+                .hasMessageContaining("RogueModifyingReceiptRepository.removeByPaymentId(java.lang.Long) is a derived delete");
+    }
+
+    /** T28 Phase 11 (Kimi Gaps 3/4). The real-code canary would pass vacuously if
+     * {@code GUARDED_ENTITY_TYPES} held a typo or the detection missed a real repository. This
+     * pins the guarded set in the real code to exactly the two append-only repositories. */
+    @Test
+    void shouldForbidLedgerAndReceiptRepositoryDeletesAndModifyingQueriesGuardsTheRealRepositories() {
+        assertThat(analyzedClasses().stream().filter(ArchitectureTest::isGuardedRepository).map(JavaClass::getName))
+                .as("the guarded repositories in the real code")
+                .containsExactlyInAnyOrder(
+                        "com.themistra.payment.receipt.ledger.LedgerEntryRepository",
+                        "com.themistra.payment.receipt.ReceiptRepository");
     }
 
     @Test
@@ -705,7 +726,11 @@ class ArchitectureTest {
                 .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3Client.builder()")
                 .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3ClientBuilder.build()")
                 // Phase 9 (F5): a non-client S3 class is caught by part (b) too.
-                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.presigner.S3Presigner.close()");
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.presigner.S3Presigner.close()")
+                // Phase 11 (Gaps 1, 2, 5): putObject is allowed only from ReceiptStore, and never async.
+                .hasMessageContaining("RogueS3ObjectMutator.putObjectOutsideReceiptStore(")
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3Client.putObject(")
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3AsyncClient.putObject(");
     }
 
     @Test

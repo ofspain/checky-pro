@@ -74,6 +74,20 @@ These are disclosed in row #5:
 - **The export's SQL text.** It is bounded by the DB grant.
 - **Real-AWS bucket and IAM.**
 
+## Open follow-ups (Phase 11 Gap 8)
+
+These are human-owned and recorded in the frozen brief. They are deliberately not written as
+`@Disabled` placeholder tests.
+
+- **FU-T28-1.** A conditional `If-None-Match: *` put in `ReceiptStore`, so S3 refuses a same-key
+  receipt write.
+- **FU-T28-2.** A production trigger for `LedgerVerifier`: a scheduled job or an ops endpoint,
+  with alerting on `Broken`.
+- **FU-T28-3.** R26, the on-chain anchor (task 21, deferred). Until it lands, consider an
+  automated reconciliation of DB and S3 digests.
+- **Infrastructure.** Real-AWS bucket Object Lock configuration and IAM. These are owned by the
+  infra workstream.
+
 ## Open Questions
 
 None.

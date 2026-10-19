@@ -1,10 +1,13 @@
 package com.themistra.payment.archtestfixtures;
 
+import software.amazon.awssdk.core.async.AsyncRequestBody;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectResponse;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 import java.util.List;
@@ -16,6 +19,8 @@ import java.util.function.Function;
  * than {@code ReceiptStore}/{@code ReceiptStoreConfig} that uses the S3 SDK, and it calls
  * operations other than {@code putObject}: directly, inside a lambda, by method reference, and
  * through the async client. It also builds its own client and depends on {@link S3Presigner}.
+ * Phase 11 (Kimi Gaps 1, 2, 5) adds a {@code putObject} outside {@code ReceiptStore}, and an async
+ * {@code putObject}.
  * Never referenced by production code.
  */
 public class RogueS3ObjectMutator {
@@ -42,5 +47,13 @@ public class RogueS3ObjectMutator {
 
     public void presign(S3Presigner presigner) {
         presigner.close();
+    }
+
+    public void putObjectOutsideReceiptStore(S3Client s3, PutObjectRequest request) {
+        s3.putObject(request, RequestBody.empty());
+    }
+
+    public void putObjectAsync(S3AsyncClient s3, PutObjectRequest request) {
+        s3.putObject(request, AsyncRequestBody.empty());
     }
 }
