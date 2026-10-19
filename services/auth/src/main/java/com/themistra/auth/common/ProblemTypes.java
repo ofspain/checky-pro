@@ -16,6 +16,8 @@ public final class ProblemTypes {
     public static final URI CONFLICT = URI.create(BASE + "conflict");
     public static final URI INVALID_STATE = URI.create(BASE + "invalid-state");
     public static final URI INTERNAL_ERROR = URI.create(BASE + "internal-error");
+    /** Open-issues sweep (2026-10-19): a method-level {@code @PreAuthorize} denial. */
+    public static final URI FORBIDDEN = URI.create(BASE + "forbidden");
     /** Uniform rejection for a verification token that is invalid, expired, or already used —
      * deliberately a single type covering every rejection reason (R5, enumeration safety). */
     public static final URI INVALID_TOKEN = URI.create(BASE + "invalid-token");

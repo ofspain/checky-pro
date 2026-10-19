@@ -9,6 +9,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -62,6 +63,19 @@ public class ApiExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
         problem.setType(ProblemTypes.MALFORMED_REQUEST);
         problem.setTitle("Malformed request body");
+        return problem;
+    }
+
+    /** Open-issues sweep (2026-10-19): an {@code @PreAuthorize} denial throws {@code
+     * AuthorizationDeniedException}, not the filter chain's {@code AccessDeniedException}, so it used
+     * to reach {@link #onUnexpected} and return 500 for a caller who simply lacks the role. Mirrors
+     * payment-service's handler. */
+    @ExceptionHandler(AuthorizationDeniedException.class)
+    ProblemDetail onAuthorizationDenied(AuthorizationDeniedException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setType(ProblemTypes.FORBIDDEN);
+        problem.setTitle("Forbidden");
+        problem.setDetail("The token does not carry the required access.");
         return problem;
     }
 
