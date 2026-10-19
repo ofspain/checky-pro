@@ -114,6 +114,17 @@ class PaymentEventPayloadContractTest {
         }
     }
 
+    /** Phase 11 (Kimi Gap 6, partial): the non-pinned event amounts state whole base units.
+     * {@code receipt-issued} keeps {@code design.md} §4c's pinned wording (Phase 4 G1). */
+    @Test
+    void nonPinnedAmountDescriptionsStateWholeBaseUnits() throws IOException {
+        for (String file : new String[] {"invoice-created.v1.schema.json", "payment-finalized.v1.schema.json"}) {
+            assertThat(readSchema(file).get("properties").get("amount").get("description").asText())
+                    .as("%s amount description", file)
+                    .contains("whole number of token base units");
+        }
+    }
+
     private void assertMatches(String file, Class<? extends Record> type, Set<String> expectedRequired,
                                Set<String> expectedNullable, String partitionKey, Object... instances)
             throws IOException {

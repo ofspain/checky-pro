@@ -310,17 +310,69 @@ class PaymentsOpenApiContractTest {
         assertThat(textSet(problem.get("required"))).isEqualTo(Set.of("type", "title", "status"));
     }
 
-    /** The CSV variant's documented column list is {@link TransactionExportRow}'s own component
-     * order, which is the order {@code ExportController.toCsv} writes (design.md O5). */
+    /** The CSV variant's documented column list is exactly {@link TransactionExportRow}'s own
+     * component order, which is the order {@code ExportController.toCsv} writes (design.md O5).
+     * Parsed and compared as a list, so an extra or missing column fails (Phase 11, Kimi Gap 1). */
     @Test
     void csvDescriptionListsTheExportColumnsInRecordOrder() throws Exception {
         String description = operation(contract(), new Route("GET", "/api/v1/exports/transactions"))
                 .get("responses").get("200").get("content").get("text/csv").get("schema")
                 .get("description").asText().replaceAll("\\s+", " ");
-        String columns = Arrays.stream(TransactionExportRow.class.getRecordComponents())
+        String marker = "columns in this order: ";
+        int start = description.indexOf(marker);
+        assertThat(start).as("CSV description introduces its column list with '%s'", marker).isNotNegative();
+        int end = description.indexOf('.', start);
+        assertThat(end).as("CSV column list ends with a period").isPositive();
+        List<String> documented = Arrays.stream(description.substring(start + marker.length(), end).split(","))
+                .map(String::trim)
+                .toList();
+        List<String> columns = Arrays.stream(TransactionExportRow.class.getRecordComponents())
                 .map(RecordComponent::getName)
-                .collect(Collectors.joining(", "));
-        assertThat(description).contains(columns);
+                .toList();
+        assertThat(documented).containsExactlyElementsOf(columns);
+    }
+
+    /** Dependency-free OpenAPI 3.0 structural check (Phase 11, Kimi Gap 4): version and info
+     * present, every operation documents responses, every security requirement names a defined
+     * scheme, and every {@code $ref} resolves inside this file. A full validator library is
+     * deliberately not added (AC5: exactly one new dependency). */
+    @Test
+    void paymentsYamlIsStructurallyValidOpenApi3() throws Exception {
+        JsonNode contract = contract();
+        assertThat(contract.get("openapi").asText()).isEqualTo("3.0.3");
+        assertThat(contract.path("info").path("title").asText()).isNotBlank();
+        assertThat(contract.path("info").path("version").asText()).isNotBlank();
+
+        JsonNode schemes = contract.get("components").get("securitySchemes");
+        for (Route route : yamlRoutes()) {
+            JsonNode operation = operation(contract, route);
+            assertThat(operation.path("responses").isObject() && !operation.get("responses").isEmpty())
+                    .as("%s documents at least one response", route).isTrue();
+            operation.path("security").forEach(requirement -> requirement.fieldNames().forEachRemaining(
+                    scheme -> assertThat(schemes.has(scheme)).as("%s security scheme '%s' is defined", route, scheme)
+                            .isTrue()));
+        }
+
+        List<String> refs = new java.util.ArrayList<>();
+        collectRefs(contract, refs);
+        assertThat(refs).as("the contract uses $refs").isNotEmpty();
+        for (String ref : refs) {
+            assertThat(ref).as("$ref is local").startsWith("#/");
+            assertThat(contract.at(ref.substring(1)).isMissingNode()).as("$ref %s resolves", ref).isFalse();
+        }
+    }
+
+    /** Phase 11 (Kimi Gap 6, partial): every amount description states whole base units. No
+     * outbound {@code pattern} is added (Phase 9 human decision); only the request carries one. */
+    @Test
+    void everyAmountDescriptionStatesWholeBaseUnits() throws Exception {
+        JsonNode schemas = contract().get("components").get("schemas");
+        for (String component : List.of("CreateInvoiceRequest", "InvoiceResponse", "TransactionExportRow")) {
+            assertThat(schemas.get(component).get("properties").get("amount").get("description").asText()
+                    .replaceAll("\\s+", " "))
+                    .as("%s.amount description", component)
+                    .contains("whole number of token base units");
+        }
     }
 
     /** The named test: {@code shouldConformToPaymentsOpenApiContract} (R31). */
@@ -344,6 +396,8 @@ class PaymentsOpenApiContractTest {
         createInvoiceRequestAmountPatternAdmitsOnlyPositiveWholeBaseUnits();
         problemExtensionMembersMatchWhatTheHandlersEmit();
         csvDescriptionListsTheExportColumnsInRecordOrder();
+        paymentsYamlIsStructurallyValidOpenApi3();
+        everyAmountDescriptionStatesWholeBaseUnits();
     }
 
     /** Guards against silently forgetting to update {@link #expectedResponseSchemas()} when a
@@ -547,6 +601,20 @@ class PaymentsOpenApiContractTest {
             routes.add(new Route(httpMethod.name(), basePath + subPath));
         }
         return routes;
+    }
+
+    private static void collectRefs(JsonNode node, List<String> refs) {
+        if (node.isObject()) {
+            node.fields().forEachRemaining(field -> {
+                if ("$ref".equals(field.getKey())) {
+                    refs.add(field.getValue().asText());
+                } else {
+                    collectRefs(field.getValue(), refs);
+                }
+            });
+        } else if (node.isArray()) {
+            node.forEach(child -> collectRefs(child, refs));
+        }
     }
 
     private static Set<String> fieldNames(JsonNode node) {

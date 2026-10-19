@@ -113,9 +113,12 @@ class PaymentServiceTest {
 
         service.applySeen(openInvoice(), seenEvent());
 
+        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(outboxPublisher).publish(eq("payment-seen"), any(String.class), eq("payment.seen"), payloadCaptor.capture());
+        verify(outboxPublisher).publish(eq("payment-seen"), keyCaptor.capture(), eq("payment.seen"), payloadCaptor.capture());
         PaymentSeenPayload payload = (PaymentSeenPayload) payloadCaptor.getValue();
+        // T24 Phase 11 (Kimi Gap 3): the Kafka key payment-seen.v1.schema.json documents.
+        assertThat(keyCaptor.getValue()).isEqualTo(payload.paymentUuid().toString());
         assertThat(payload.invoiceUuid()).isEqualTo(INVOICE_UUID);
         assertThat(payload.chain()).isEqualTo(CHAIN);
         assertThat(payload.txHash()).isEqualTo(TX_HASH);
@@ -351,9 +354,13 @@ class PaymentServiceTest {
 
         verify(repository).markFinalizedIfCurrentState(any(), eq(PaymentState.CONFIRMING), eq(PaymentState.FINALIZED),
                 any(), any(), any(), any(Integer.class), eq(true), isNull(), eq(NOW));
+        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(outboxPublisher).publish(eq("payment-finalized"), any(String.class), eq("payment.finalized"), payloadCaptor.capture());
-        assertThat(((PaymentFinalizedPayload) payloadCaptor.getValue()).addressPoisoningFlag()).isTrue();
+        verify(outboxPublisher).publish(eq("payment-finalized"), keyCaptor.capture(), eq("payment.finalized"), payloadCaptor.capture());
+        PaymentFinalizedPayload payload = (PaymentFinalizedPayload) payloadCaptor.getValue();
+        assertThat(payload.addressPoisoningFlag()).isTrue();
+        // T24 Phase 11 (Kimi Gap 3): the Kafka key payment-finalized.v1.schema.json documents.
+        assertThat(keyCaptor.getValue()).isEqualTo(payload.paymentUuid().toString());
     }
 
     @Test
