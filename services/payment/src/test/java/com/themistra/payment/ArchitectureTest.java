@@ -200,12 +200,18 @@ class ArchitectureTest {
      * catalogue" (R29, agents.md). {@code doNotBelongToAnyOf(ProblemTypes.class)} is the
      * exclusion - {@code ProblemTypes} itself is the one class allowed to call
      * {@code URI.create}, since it IS the catalogue. */
+    /** Phase 11 Kimi Gap 8, accepted: also bans {@code new URI(String)} directly, not just the
+     * {@code URI.create(String)} static factory - {@link java.net.URI} has a public constructor
+     * with an identical effect that the original rule didn't cover, a real, demonstrated way to
+     * bypass it without ever calling {@code create}. */
     private static final ArchRule shouldNotInlineProblemTypeUris = noClasses()
             .that().resideInAPackage(ANALYZED_PACKAGE + "..")
             .and().doNotBelongToAnyOf(com.themistra.payment.common.ProblemTypes.class)
             .should().callMethod(java.net.URI.class, "create", String.class)
+            .orShould().callConstructor(java.net.URI.class, String.class)
             .because("T23/R29: every problem-type URI must be a named ProblemTypes constant, "
-                    + "never an inline literal - the whole point of a stable type catalogue");
+                    + "never an inline literal (via URI.create or the URI(String) constructor) - "
+                    + "the whole point of a stable type catalogue");
 
     private static JavaClasses analyzedClasses() {
         return new ClassFileImporter()

@@ -296,7 +296,9 @@ class ExportControllerTest {
     @Test
     void shouldRejectUnauthenticatedCallerWithUnauthorized() throws Exception {
         mockMvc.perform(get(PATH + query()))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.type").value(ProblemTypes.UNAUTHORIZED.toString()))
+                .andExpect(jsonPath("$.title").value("Unauthorized"));
     }
 
     /** Phase 9 Kimi Finding 1 (widened at Phase 4/9): a comma, quote, newline, or bare carriage

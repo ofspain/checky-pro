@@ -289,12 +289,35 @@ class InvoiceControllerTest {
                 .andExpect(jsonPath("$.status").value(400))
                 .andReturn().getResponse().getContentAsString();
 
+        assertNoInternalDetailLeak(body, "MethodArgumentNotValidException");
+    }
+
+    /** Phase 11 Kimi Gap 4: the test above only exercises {@code VALIDATION_ERROR}/400 - R29
+     * applies to every 4xx path in the service, not just this one. A second, differently-shaped
+     * 4xx ({@code NOT_FOUND}/404) proves the "no internal detail" invariant generalizes, not
+     * something specific to bean-validation's own response shape. */
+    @Test
+    void shouldReturnProblemJsonWithNoInternalDetailOn404() throws Exception {
+        when(invoiceService.getForMerchant(MERCHANT_ACCOUNT_UUID, INVOICE_UUID))
+                .thenThrow(new InvoiceNotFoundException());
+
+        String body = mockMvc.perform(get("/api/v1/invoices/" + INVOICE_UUID).with(merchantJwt()))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.NOT_FOUND.toString()))
+                .andExpect(jsonPath("$.title").value("Invoice not found"))
+                .andExpect(jsonPath("$.status").value(404))
+                .andReturn().getResponse().getContentAsString();
+
+        assertNoInternalDetailLeak(body, "InvoiceNotFoundException");
+    }
+
+    private static void assertNoInternalDetailLeak(String body, String exceptionClassName) {
         assertThat(body).as("type must be a real catalogue URI, never the generic placeholder")
                 .doesNotContain("about:blank");
         assertThat(body).as("no stack trace or exception class name may appear in a 4xx body")
-                .doesNotContainIgnoringCase("exception")
                 .doesNotContainIgnoringCase("stacktrace")
-                .doesNotContainIgnoringCase("MethodArgumentNotValidException")
+                .doesNotContain(exceptionClassName)
                 .doesNotContain(".java:");
     }
 
@@ -386,6 +409,7 @@ class InvoiceControllerTest {
         String nonOwningBody = mockMvc.perform(get("/api/v1/invoices/" + INVOICE_UUID).with(merchantJwt()))
                 .andExpect(status().isNotFound())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.NOT_FOUND.toString()))
                 .andExpect(jsonPath("$.title").value("Invoice not found"))
                 .andReturn().getResponse().getContentAsString();
 
@@ -431,6 +455,41 @@ class InvoiceControllerTest {
         mockMvc.perform(get("/api/v1/invoices/not-a-uuid").with(merchantJwt()))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.MALFORMED_REQUEST_PARAMETER.toString()))
                 .andExpect(jsonPath("$.title").value("Malformed request parameter"));
+    }
+
+    /** Phase 11 Kimi Gap 5: no existing test anywhere exercises {@code MALFORMED_REQUEST}
+     * ({@code HttpMessageNotReadableException}) - syntactically invalid JSON, not a validation
+     * failure on an otherwise well-formed body. */
+    @Test
+    void shouldReturn400ForMalformedRequestBody() throws Exception {
+        mockMvc.perform(post("/api/v1/invoices").with(merchantJwt())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"chain\":"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.MALFORMED_REQUEST.toString()))
+                .andExpect(jsonPath("$.title").value("Malformed request body"));
+    }
+
+    /** Phase 11 Kimi Gap 6: no existing test exercises {@code INTERNAL_ERROR}/the 500 catch-all,
+     * nor proves it doesn't leak the raw exception message, class name, or a stack trace line. */
+    @Test
+    void shouldReturn500WithNoInternalDetailForUnexpectedFailure() throws Exception {
+        when(invoiceService.computeExpiresAt())
+                .thenThrow(new RuntimeException("sensitive internal detail: db password=secret"));
+
+        String body = mockMvc.perform(post("/api/v1/invoices").with(merchantJwt())
+                        .contentType(MediaType.APPLICATION_JSON).content(VALID_REQUEST_JSON))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.INTERNAL_ERROR.toString()))
+                .andExpect(jsonPath("$.title").value("Internal error"))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(body).doesNotContain("sensitive internal detail")
+                .doesNotContain("db password")
+                .doesNotContainIgnoringCase("RuntimeException")
+                .doesNotContain(".java:");
     }
 }
