@@ -28,6 +28,7 @@ class T01SkeletonRegressionTest {
     private static final Path MODULE_POM = Path.of("pom.xml");
     private static final Path ROOT_POM = Path.of("../../pom.xml");
     private static final Path AUTH_POM = Path.of("../auth/pom.xml");
+    private static final Path DOCKERFILE = Path.of("Dockerfile");
     private static final Path APPLICATION_SOURCE =
             Path.of("src/main/java/com/themistra/payment/PaymentServiceApplication.java");
 
@@ -255,6 +256,54 @@ class T01SkeletonRegressionTest {
 
         String rootPom = stripXmlComments(Files.readString(ROOT_POM));
         assertThat(rootPom).doesNotContainPattern("(?i)<password>|<secret>|<apiKey>|<accessKey>");
+    }
+
+    /** T27 (frozen brief D4, Phase 3 F4). A permanent guard on {@code services/payment/Dockerfile}.
+     * The {@code agents.md} Deployment rule and L13 would otherwise be checked only once, by hand,
+     * at T27, and a later edit could silently break them.
+     *
+     * <p>The module-pom check reads the root pom's own {@code <module>} list rather than
+     * hard-coding four names. So adding a module fails this test until its pom is copied. That is
+     * the bug that broke the auth, crypto and notification Dockerfiles (follow-up FU-T27-1). */
+    @Test
+    void paymentDockerfileHonoursBuildContextAndSecurityRules() throws IOException {
+        java.util.List<String> lines = stripDockerfileComments(Files.readString(DOCKERFILE));
+
+        java.util.List<String> fromLines = lines.stream().filter(line -> line.startsWith("FROM ")).toList();
+        assertThat(fromLines).as("multi-stage build").hasSizeGreaterThanOrEqualTo(2);
+        String finalFrom = fromLines.get(fromLines.size() - 1);
+        assertThat(finalFrom).as("the runtime stage is distroless JRE 21, non-root (agents.md Deployment)")
+                .isEqualTo("FROM gcr.io/distroless/java21-debian12:nonroot");
+        assertThat(lines.subList(lines.indexOf(finalFrom), lines.size()))
+                .as("the runtime stage runs as nonroot").contains("USER nonroot");
+
+        assertThat(lines).as("only explicit paths are copied, never the whole context")
+                .noneMatch(line -> line.matches("COPY\\s+\\.\\s.*") || line.startsWith("ADD "));
+        assertThat(lines).as("L13: no ENV instruction, so no value can be baked into a layer")
+                .noneMatch(line -> line.startsWith("ENV "));
+
+        Matcher modules = Pattern.compile("<module>([^<]+)</module>")
+                .matcher(stripXmlComments(Files.readString(ROOT_POM)));
+        java.util.List<String> declaredModules = new java.util.ArrayList<>();
+        while (modules.find()) {
+            declaredModules.add(modules.group(1).trim());
+        }
+        assertThat(declaredModules).as("the root pom's module list was read").isNotEmpty();
+        for (String module : declaredModules) {
+            assertThat(lines).as("Maven validates every reactor module even with -pl, so %s/pom.xml "
+                            + "must be in the build context", module)
+                    .contains("COPY " + module + "/pom.xml " + module + "/");
+        }
+
+        assertThat(lines).as("server.port default (application.properties)").contains("EXPOSE 8083");
+    }
+
+    /** Drops Dockerfile comment lines and blank lines, and trims the rest. The header comment
+     * explains the rules this test checks, and may name the very instructions it bans. */
+    private static java.util.List<String> stripDockerfileComments(String dockerfile) {
+        return dockerfile.lines().map(String::trim)
+                .filter(line -> !line.isEmpty() && !line.startsWith("#"))
+                .toList();
     }
 
     /** Strips XML comments before a negative-proof substring/pattern check. Both this pom and the
