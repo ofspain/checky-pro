@@ -95,6 +95,14 @@
          managed by Spring Boot's own dependency BOM, matching services/auth's, services/crypto's
          and services/notification's identical addition. -->
     <dependency><groupId>com.fasterxml.jackson.dataformat</groupId><artifactId>jackson-dataformat-yaml</artifactId><scope>test</scope></dependency>
+
+    <!-- T26: PaymentEndToEndIntegrationTest. WireMock stands in for Crypto Service and the auth
+         token endpoint (tasks.md task 26, package.md:74). The standalone artifact is shaded, so
+         its Jetty never clashes with Spring Boot's managed versions. LocalStack provides a real
+         S3 API with Object Lock for the WORM receipt store (L9), mirroring services/crypto's own
+         LocalStack integration test; its version is BOM-managed. -->
+    <dependency><groupId>org.wiremock</groupId><artifactId>wiremock-standalone</artifactId><version>3.9.1</version><scope>test</scope></dependency>
+    <dependency><groupId>org.testcontainers</groupId><artifactId>localstack</artifactId><scope>test</scope></dependency>
   </dependencies>
 
   <build>
