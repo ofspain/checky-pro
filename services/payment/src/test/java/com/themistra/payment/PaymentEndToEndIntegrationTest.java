@@ -16,6 +16,8 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -357,6 +359,7 @@ class PaymentEndToEndIntegrationTest {
         String txHash = "0x" + UUID.randomUUID();
 
         // 1. R1, R2, R6: invoice creation and the watch-ack.
+        Instant beforeCreation = Instant.now();
         UUID invoiceUuid = createInvoice();
         // Phase 9 (Kimi F2, F8): the outbound watch request honours the Crypto Service
         // contract (design.md section 4c), and it carries the service-to-service token.
@@ -370,18 +373,39 @@ class PaymentEndToEndIntegrationTest {
         assertThat(watchBody.get("tokenContractAddress").asText()).isEqualTo(TOKEN_CONTRACT_ADDRESS);
         assertThat(watchBody.get("expectedAmount").isTextual()).as("L6: expectedAmount is a decimal string").isTrue();
         assertThat(watchBody.get("expectedAmount").asText()).isEqualTo("1000");
+        // Phase 11 (Kimi Gap 9): the last field of the watch contract.
+        assertThat(Instant.parse(watchBody.get("expiresAt").asText()))
+                .as("the watch expires after the invoice was created").isAfter(beforeCreation);
         assertThat(invoiceWatchId(invoiceUuid)).as("the acked watchId is persisted on the invoice").isEqualTo(firstWatchId);
         assertThat(outboxCount("invoice.created", invoiceUuid.toString())).isEqualTo(1);
         // Phase 9 (Kimi F3): the fourth outbox event also reaches the broker.
-        awaitOutboundRecord("payments.invoice.created", invoiceUuid.toString());
+        // Phase 11 (Kimi Gap 2): its values match what was sent.
+        JsonNode invoiceCreatedBody = OBJECT_MAPPER.readTree(
+                awaitOutboundRecord("payments.invoice.created", invoiceUuid.toString()).value());
+        assertThat(invoiceCreatedBody.get("invoiceUuid").asText()).isEqualTo(invoiceUuid.toString());
+        assertThat(invoiceCreatedBody.get("merchantAccountUuid").asText()).isEqualTo(merchantAccountUuid.toString());
+        assertThat(invoiceCreatedBody.get("amount").isTextual()).as("L6: amount is a decimal string").isTrue();
+        assertThat(invoiceCreatedBody.get("amount").asText()).isEqualTo("1000");
+        assertThat(invoiceCreatedBody.get("payToAddress").asText()).isEqualTo(PAY_TO_ADDRESS);
+        assertThat(invoiceCreatedBody.get("tokenDecimals").asInt()).isEqualTo(6);
+        assertThat(invoiceCreatedBody.get("reference").asText()).isEqualTo("e2e");
 
         // 2. R7, R7a, R8: seen.
         sendAndWait("chain.tx.seen", firstWatchId.toString(), seenJson(txHash, invoiceUuid));
         awaitPaymentState(txHash, "SEEN");
         UUID paymentUuid = paymentUuid(txHash);
+        // Phase 11 (Kimi Gap 1): the unregister call carries the service-to-service token too.
         await().atMost(ASYNC_TIMEOUT).untilAsserted(() ->
-                WIREMOCK.verify(1, deleteRequestedFor(urlEqualTo(WATCHES_PATH + "/" + firstWatchId))));
-        awaitOutboundRecord("payments.payment.seen", paymentUuid.toString());
+                WIREMOCK.verify(1, deleteRequestedFor(urlEqualTo(WATCHES_PATH + "/" + firstWatchId))
+                        .withHeader("Authorization", equalTo(CRYPTO_BEARER))));
+        // Phase 11 (Kimi Gap 2).
+        JsonNode seenBody = OBJECT_MAPPER.readTree(
+                awaitOutboundRecord("payments.payment.seen", paymentUuid.toString()).value());
+        assertThat(seenBody.get("paymentUuid").asText()).isEqualTo(paymentUuid.toString());
+        assertThat(seenBody.get("invoiceUuid").asText()).isEqualTo(invoiceUuid.toString());
+        assertThat(seenBody.get("chain").asText()).isEqualTo(CHAIN);
+        assertThat(seenBody.get("txHash").asText()).isEqualTo(txHash);
+        assertThat(seenBody.get("tokenContractAddress").asText()).isEqualTo(TOKEN_CONTRACT_ADDRESS);
 
         // 3. R9: confirmed.
         sendAndWait("chain.tx.confirmed", firstWatchId.toString(), confirmedJson(txHash, invoiceUuid));
@@ -415,6 +439,10 @@ class PaymentEndToEndIntegrationTest {
         assertThat(pdfHead.contentType()).isEqualTo("application/pdf");
         byte[] pdfBytes = s3.getObjectAsBytes(b -> b.bucket(BUCKET).key(pdfKey)).asByteArray();
         assertThat(new String(pdfBytes, 0, 4, StandardCharsets.US_ASCII)).isEqualTo("%PDF");
+        // Phase 11 (Kimi Gap 8): a complete, parseable PDF, not just the right header.
+        try (PDDocument document = Loader.loadPDF(pdfBytes)) {
+            assertThat(document.getNumberOfPages()).isEqualTo(1);
+        }
         // Phase 9 (Kimi F6): the payment-uuid metadata that assertNoReceiptIssued relies on is
         // really written, so the reorg tests' S3 check can't silently go blind.
         for (HeadObjectResponse head : List.of(jsonHead, pdfHead)) {
@@ -453,6 +481,12 @@ class PaymentEndToEndIntegrationTest {
         assertThat(finalizedBody.get("chain").asText()).isEqualTo(CHAIN);
         assertThat(finalizedBody.get("txHash").asText()).isEqualTo(txHash);
         assertThat(finalizedBody.get("amount").isTextual()).as("L6: amount is a decimal string").isTrue();
+        // Phase 11 (Kimi Gap 4): the values carried through from the chain.tx.finalized event.
+        assertThat(finalizedBody.get("amount").asText()).isEqualTo("1000");
+        assertThat(finalizedBody.get("fromAddress").asText()).isEqualTo("0xfrom");
+        assertThat(finalizedBody.get("toAddress").asText()).isEqualTo(PAY_TO_ADDRESS);
+        assertThat(finalizedBody.get("confirmations").asInt()).isEqualTo(12);
+        assertThat(finalizedBody.hasNonNull("occurredAt")).isTrue();
         ConsumerRecord<String, String> receiptIssued =
                 awaitOutboundRecord("payments.receipt.issued", receipt.receiptUuid().toString());
         JsonNode receiptIssuedBody = OBJECT_MAPPER.readTree(receiptIssued.value());
@@ -465,6 +499,33 @@ class PaymentEndToEndIntegrationTest {
         assertThat(receiptIssuedBody.get("kmsKeyId").asText()).isEqualTo("e2e-kms-key");
         assertThat(receiptIssuedBody.get("amount").isTextual()).as("L6: amount is a decimal string").isTrue();
         assertThat(receiptIssuedBody.get("amount").asText()).isEqualTo("1000");
+        // Phase 11 (Kimi Gap 3).
+        assertThat(receiptIssuedBody.get("merchantAccountUuid").asText()).isEqualTo(merchantAccountUuid.toString());
+        assertThat(receiptIssuedBody.get("tokenContractAddress").asText()).isEqualTo(TOKEN_CONTRACT_ADDRESS);
+        assertThat(receiptIssuedBody.hasNonNull("occurredAt")).isTrue();
+
+        // Phase 11 (Kimi Gap 5): the relay marks every relayed outbox row published.
+        await().atMost(ASYNC_TIMEOUT).untilAsserted(() -> {
+            assertThat(outboxPublished("invoice.created", invoiceUuid.toString())).isTrue();
+            assertThat(outboxPublished("payment.seen", paymentUuid.toString())).isTrue();
+            assertThat(outboxPublished("payment.finalized", paymentUuid.toString())).isTrue();
+            assertThat(outboxPublished("receipt.issued", receipt.receiptUuid().toString())).isTrue();
+        });
+
+        // Phase 11 (Kimi Gap 6): R13 and R17 together on the real receipt path. A redelivered
+        // chain.tx.finalized must not attest, store, or append a second time. Its key is already
+        // in processed_events, so that can't show it was consumed. Instead a sentinel finalized
+        // event (an unknown txHash with a fresh key) is sent after it on the same single-partition
+        // topic. Once the sentinel is processed, the replay was consumed before it.
+        sendAndWait("chain.tx.finalized", firstWatchId.toString(), finalizedJson(txHash, invoiceUuid));
+        String sentinelTxHash = "0x" + UUID.randomUUID();
+        sendAndWait("chain.tx.finalized", firstWatchId.toString(), finalizedJson(sentinelTxHash, invoiceUuid));
+        awaitProcessed(CHAIN + ":" + sentinelTxHash + ":finalized");
+        WIREMOCK.verify(1, postRequestedFor(urlEqualTo(ATTEST_PATH)));
+        assertThat(countForPayment("receipts", txHash)).as("still exactly one receipt").isEqualTo(1);
+        assertThat(countLedgerEntries()).as("still exactly one ledger entry").isEqualTo(1);
+        assertThat(paymentState(txHash)).isEqualTo("ATTESTED");
+        assertThat(s3ObjectsForPayment(paymentUuid)).as("still exactly one JSON and PDF pair").isEqualTo(2);
     }
 
     /** AC2 (R11, R18; L11). A reorg of a {@code CONFIRMING} payment walks it back to
@@ -485,6 +546,11 @@ class PaymentEndToEndIntegrationTest {
         assertThat(paymentState(txHash)).isEqualTo("SEEN");
         assertThat(verificationRecordExists(txHash, "CONFIRMING", "SEEN"))
                 .as("R11: the reversal is recorded").isTrue();
+        // Phase 11 (Kimi Gap 7): CONFIRMING -> SEEN has no watch side effects. There is no
+        // replacement registration, and no unregister beyond the original first-SEEN one.
+        WIREMOCK.verify(1, postRequestedFor(urlEqualTo(WATCHES_PATH)));
+        WIREMOCK.verify(1, deleteRequestedFor(urlPathMatching(WATCHES_PATH + "/.*")));
+        WIREMOCK.verify(1, deleteRequestedFor(urlEqualTo(WATCHES_PATH + "/" + firstWatchId)));
         assertNoReceiptIssued(txHash);
     }
 
@@ -506,7 +572,8 @@ class PaymentEndToEndIntegrationTest {
                 .as("R12: the reversal is recorded").isTrue();
         // Phase 9 (Kimi F1): only the original watch was unregistered, on first SEEN (R7a); the
         // replacement watch stays live.
-        WIREMOCK.verify(1, deleteRequestedFor(urlEqualTo(WATCHES_PATH + "/" + firstWatchId)));
+        WIREMOCK.verify(1, deleteRequestedFor(urlEqualTo(WATCHES_PATH + "/" + firstWatchId))
+                .withHeader("Authorization", equalTo(CRYPTO_BEARER)));
         await().atMost(ASYNC_TIMEOUT).untilAsserted(() -> {
             WIREMOCK.verify(2, postRequestedFor(urlEqualTo(WATCHES_PATH)).withHeader("Authorization", equalTo(CRYPTO_BEARER)));
             assertThat(invoiceWatchId(invoiceUuid))
@@ -614,6 +681,17 @@ class PaymentEndToEndIntegrationTest {
         }
     }
 
+    private static int s3ObjectsForPayment(UUID paymentUuid) {
+        int count = 0;
+        for (S3Object object : s3.listObjectsV2(b -> b.bucket(BUCKET).prefix(RECEIPT_PREFIX)).contents()) {
+            Map<String, String> metadata = s3.headObject(b -> b.bucket(BUCKET).key(object.key())).metadata();
+            if (paymentUuid.toString().equals(metadata.get("payment-uuid"))) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     // --- Event fixtures (amounts are always quoted strings; keys are chain:txhash:eventtype) ---
 
     private String seenJson(String txHash, UUID invoiceUuid) {
@@ -699,6 +777,11 @@ class PaymentEndToEndIntegrationTest {
     private static int outboxCount(String eventType, String aggregateId) throws SQLException {
         return queryCount("SELECT COUNT(*) FROM payments.outbox WHERE event_type = ? AND aggregate_id = ?",
                 eventType, aggregateId);
+    }
+
+    private static boolean outboxPublished(String eventType, String aggregateId) throws SQLException {
+        return queryCount("SELECT COUNT(*) FROM payments.outbox WHERE event_type = ? AND aggregate_id = ? "
+                + "AND published_at IS NOT NULL", eventType, aggregateId) == 1;
     }
 
     private static boolean processedEventExists(String idempotencyKey) throws SQLException {
