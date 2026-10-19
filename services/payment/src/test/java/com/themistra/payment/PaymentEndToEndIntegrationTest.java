@@ -8,7 +8,10 @@ import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import com.github.tomakehurst.wiremock.verification.LoggedRequest;
 import com.themistra.payment.common.CanonicalJson;
 import com.themistra.payment.receipt.ledger.LedgerVerificationResult;
+import com.themistra.payment.receipt.LedgerIntegrityJob;
+import com.themistra.payment.receipt.ReceiptReconciler;
 import com.themistra.payment.receipt.ledger.LedgerVerifier;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -283,6 +286,15 @@ class PaymentEndToEndIntegrationTest {
     @Autowired
     private LedgerVerifier ledgerVerifier;
 
+    @Autowired
+    private ReceiptReconciler receiptReconciler;
+
+    @Autowired
+    private LedgerIntegrityJob ledgerIntegrityJob;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
+
     @MockBean
     private JwtDecoder jwtDecoder;
 
@@ -473,6 +485,27 @@ class PaymentEndToEndIntegrationTest {
                 .containsExactly(GENESIS_PREV_HASH);
         assertThat(ledgerEntryCountForReceipt(receipt.receiptUuid())).isEqualTo(1);
         assertThat(ledgerVerifier.verify()).isInstanceOf(LedgerVerificationResult.Intact.class);
+
+        // Threat #5 (FU-T28-2/3): the DB-vs-S3 reconciliation, through real JSONB and LocalStack,
+        // finds the row, the ledger payload and the locked original in agreement.
+        assertThat(receiptReconciler.reconcile().discrepancies()).as("a fresh receipt reconciles").isEmpty();
+        // An owner-level rewrite of the signed digest leaves the hash chain intact, but the
+        // reconciliation and the scheduled job's metrics catch it. run() is called once only:
+        // ShedLock's lockAtLeastFor would skip a second call within the minute.
+        setReceiptDigest(receipt.receiptUuid(), "f".repeat(64));
+        assertThat(ledgerVerifier.verify()).isInstanceOf(LedgerVerificationResult.Intact.class);
+        assertThat(receiptReconciler.reconcile().discrepancies()).singleElement().satisfies(d -> {
+            assertThat(d.receiptUuid()).isEqualTo(receipt.receiptUuid());
+            assertThat(d.reason()).contains("digest_sha256");
+        });
+        ledgerIntegrityJob.run();
+        assertThat(meterRegistry.get("themistra.payment.ledger.integrity.chain.intact").gauge().value()).isEqualTo(1);
+        assertThat(meterRegistry.get("themistra.payment.ledger.integrity.receipt.discrepancies").gauge().value())
+                .isEqualTo(1);
+        assertThat(meterRegistry.get("themistra.payment.ledger.integrity.runs").tag("outcome", "tampered")
+                .counter().count()).isEqualTo(1);
+        setReceiptDigest(receipt.receiptUuid(), receipt.digest());
+        assertThat(receiptReconciler.reconcile().discrepancies()).as("restored").isEmpty();
 
         // R10, R25, R30 (Phase 3 F3): payment.finalized and receipt.issued arrive on Kafka.
         // Phase 9 (Kimi F5): payload fields as well as keys.
@@ -730,6 +763,16 @@ class PaymentEndToEndIntegrationTest {
     // --- Raw admin-JDBC reads (L12: no entity is reachable from this cross-module test) ---
 
     private record ReceiptRow(UUID receiptUuid, String digest, String s3Key) {
+    }
+
+    /** Simulates the database-owner rewrite threat #5 describes, through the owner role. */
+    private static void setReceiptDigest(UUID receiptUuid, String digest) throws SQLException {
+        try (Connection admin = adminConnection(); PreparedStatement statement = admin.prepareStatement(
+                "UPDATE payments.receipts SET digest_sha256 = ? WHERE receipt_uuid = ?")) {
+            statement.setString(1, digest);
+            statement.setObject(2, receiptUuid);
+            assertThat(statement.executeUpdate()).isEqualTo(1);
+        }
     }
 
     private static Connection adminConnection() throws SQLException {

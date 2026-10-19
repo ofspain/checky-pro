@@ -13,17 +13,26 @@ import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.ObjectLockMode;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
@@ -32,16 +41,21 @@ import java.util.function.Supplier;
  * injected {@link S3Client}/{@link ReceiptProperties}/{@link Clock}, consistent with every other
  * service class in this codebase.
  *
- * <p><b>No defensive pre-write existence check (Phase 2/3/4, Kimi Finding 9).</b> The no-
- * duplicate-write guarantee is structural, not SDK-enforced: a {@code receiptUuid} is generated
- * fresh exactly once per successful {@code attest()} call (T17's own {@code ReceiptService}),
- * so a second write to the same key cannot occur through correct application code — L9's own
- * text frames this as "a bug, not an update." Note the nuance Kimi's Finding 9 raised: on a
- * versioned Object Lock bucket, a second {@code putObject} to the same key creates a <i>new
- * version</i> rather than being rejected as an overwrite — Object Lock compliance mode prevents
- * deleting or overwriting an existing, already-retained object version, but does not prevent a
- * second version from being created. The guarantee this class relies on is therefore "the
- * caller never does this," not "the platform would reject it if the caller did."</p>
+ * <p><b>S3 itself refuses a second write to the same key (threat #5 follow-up FU-T28-1).</b>
+ * Every put carries {@code If-None-Match: *}, a conditional write: S3 accepts it only when no
+ * object exists at that key, and otherwise answers {@code 412 Precondition Failed}. On a
+ * versioned Object Lock bucket an unconditional second put would not overwrite the locked
+ * original, but it would add a new <i>current</i> version, so a reader fetching the key would see
+ * different content. The conditional put closes that: the first write is the only write, as L9
+ * says ("a second write to the same key is a bug, not an update"). A {@code receiptUuid} is still
+ * generated fresh per {@code attest()} call, so the refusal should never fire through correct
+ * code; when it does, {@link #store} reports it as a {@link ReceiptStorageException} saying the
+ * object already exists.</p>
+ *
+ * <p><b>Reads exist only for the integrity check.</b> {@link #readJsonObject} and
+ * {@link #listStoredReceiptPrefixes} let {@code ReceiptReconciler} compare the database against
+ * the locked originals (FU-T28-3). This class never deletes, copies or re-configures an object;
+ * {@code ArchitectureTest.shouldConfineS3SdkToReceiptStoreCreateAndReadOnly} enforces that.</p>
  *
  * <p>Unlike {@code ObservationSnapshotStore}'s (crypto-service) own "S3 is supplementary, never
  * throws" stance, this task's S3 write is the load-bearing operation R23's "SHALL store" text
@@ -70,6 +84,7 @@ public class ReceiptStore {
     private static final int FONT_SIZE = 12;
     private static final int LEADING = 16;
     private static final int SIGNATURE_WRAP_WIDTH = 64;
+    private static final int HTTP_PRECONDITION_FAILED = 412;
 
     private final S3Client s3Client;
     private final ReceiptProperties properties;
@@ -163,6 +178,7 @@ public class ReceiptStore {
                 .bucket(properties.bucket())
                 .key(key)
                 .contentType(contentType)
+                .ifNoneMatch("*")
                 .objectLockMode(ObjectLockMode.COMPLIANCE)
                 .objectLockRetainUntilDate(retainUntil)
                 .metadata(Map.of(
@@ -175,9 +191,61 @@ public class ReceiptStore {
     private <T> T putOrThrow(Supplier<T> s3Call, String artifactDescription) {
         try {
             return s3Call.get();
+        } catch (S3Exception e) {
+            if (e.statusCode() == HTTP_PRECONDITION_FAILED) {
+                throw new ReceiptStorageException("Refused to store " + artifactDescription
+                        + ": an object already exists at that key, and receipts are written exactly once (L9)", e);
+            }
+            throw new ReceiptStorageException("Failed to store " + artifactDescription, e);
         } catch (SdkException e) {
             throw new ReceiptStorageException("Failed to store " + artifactDescription, e);
         }
+    }
+
+    /**
+     * Reads the canonical JSON object for one receipt, for the integrity check. Returns empty when
+     * no object exists at {@code s3KeyPrefix + ".json"}; any other S3 failure is wrapped as
+     * {@link ReceiptStorageException}.
+     */
+    public Optional<byte[]> readJsonObject(String bucket, String s3KeyPrefix) {
+        Objects.requireNonNull(bucket, "bucket must not be null");
+        Objects.requireNonNull(s3KeyPrefix, "s3KeyPrefix must not be null");
+        try {
+            return Optional.of(s3Client.getObjectAsBytes(GetObjectRequest.builder()
+                    .bucket(bucket).key(s3KeyPrefix + ".json").build()).asByteArray());
+        } catch (NoSuchKeyException e) {
+            return Optional.empty();
+        } catch (SdkException e) {
+            throw new ReceiptStorageException("Failed to read receipt object " + s3KeyPrefix + ".json", e);
+        }
+    }
+
+    /**
+     * Lists every stored receipt in the configured bucket and prefix, as the key prefix the
+     * {@code receipts.s3_key} column holds (the {@code .json} key without its extension). Follows
+     * continuation tokens, so it returns the full set, not only the first page.
+     */
+    public List<String> listStoredReceiptPrefixes() {
+        List<String> prefixes = new ArrayList<>();
+        String continuationToken = null;
+        try {
+            do {
+                ListObjectsV2Response page = s3Client.listObjectsV2(ListObjectsV2Request.builder()
+                        .bucket(properties.bucket())
+                        .prefix(normalizedPrefix(properties.prefix()))
+                        .continuationToken(continuationToken)
+                        .build());
+                for (S3Object object : page.contents()) {
+                    if (object.key().endsWith(".json")) {
+                        prefixes.add(object.key().substring(0, object.key().length() - ".json".length()));
+                    }
+                }
+                continuationToken = Boolean.TRUE.equals(page.isTruncated()) ? page.nextContinuationToken() : null;
+            } while (continuationToken != null);
+        } catch (SdkException e) {
+            throw new ReceiptStorageException("Failed to list stored receipt objects", e);
+        }
+        return prefixes;
     }
 
     /**

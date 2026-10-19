@@ -12,13 +12,21 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.ObjectLockMode;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectResponse;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +35,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -248,6 +257,106 @@ class ReceiptStoreTest {
 
         verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
         verify(s3Client, never()).copyObject(any(software.amazon.awssdk.services.s3.model.CopyObjectRequest.class));
+    }
+
+    /** FU-T28-1: every put is a conditional create, so S3 itself refuses a same-key re-put. */
+    @Test
+    void shouldMakeEveryPutConditionalOnNoExistingObject() {
+        stubSuccessfulPutObject();
+        store.store(samplePayload(), sampleSigned());
+
+        ArgumentCaptor<PutObjectRequest> requests = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(s3Client, times(2)).putObject(requests.capture(), any(RequestBody.class));
+        for (PutObjectRequest request : requests.getAllValues()) {
+            assertThat(request.ifNoneMatch()).isEqualTo("*");
+        }
+    }
+
+    @Test
+    void shouldReportARefusedSameKeyPutAsAlreadyExisting() {
+        S3Exception preconditionFailed = (S3Exception) S3Exception.builder()
+                .statusCode(412).message("At least one of the pre-conditions you specified did not hold").build();
+        when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class))).thenThrow(preconditionFailed);
+
+        assertThatThrownBy(() -> store.store(samplePayload(), sampleSigned()))
+                .isInstanceOf(ReceiptStorageException.class)
+                .hasMessageContaining("Refused to store the JSON receipt object")
+                .hasMessageContaining("already exists")
+                .hasCause(preconditionFailed);
+        verify(s3Client, times(1)).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
+    @Test
+    void shouldWrapAnyOtherS3ErrorStatusAsAPlainStorageFailure() {
+        when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .thenThrow(S3Exception.builder().statusCode(500).message("internal").build());
+
+        assertThatThrownBy(() -> store.store(samplePayload(), sampleSigned()))
+                .isInstanceOf(ReceiptStorageException.class)
+                .hasMessageContaining("Failed to store the JSON receipt object")
+                .hasMessageNotContaining("already exists");
+    }
+
+    @Test
+    void shouldReadTheJsonObjectAtThePrefixPlusJson() {
+        byte[] content = "{\"receiptUuid\":\"x\"}".getBytes(StandardCharsets.UTF_8);
+        when(s3Client.getObjectAsBytes(any(GetObjectRequest.class)))
+                .thenReturn(ResponseBytes.fromByteArray(GetObjectResponse.builder().build(), content));
+
+        Optional<byte[]> read = store.readJsonObject("my-bucket", "receipts/" + RECEIPT_UUID);
+
+        assertThat(read).hasValueSatisfying(bytes -> assertThat(bytes).isEqualTo(content));
+        ArgumentCaptor<GetObjectRequest> request = ArgumentCaptor.forClass(GetObjectRequest.class);
+        verify(s3Client).getObjectAsBytes(request.capture());
+        assertThat(request.getValue().bucket()).isEqualTo("my-bucket");
+        assertThat(request.getValue().key()).isEqualTo("receipts/" + RECEIPT_UUID + ".json");
+    }
+
+    @Test
+    void shouldReturnEmptyWhenTheJsonObjectDoesNotExist() {
+        when(s3Client.getObjectAsBytes(any(GetObjectRequest.class)))
+                .thenThrow(NoSuchKeyException.builder().statusCode(404).message("missing").build());
+
+        assertThat(store.readJsonObject("my-bucket", "receipts/" + RECEIPT_UUID)).isEmpty();
+    }
+
+    @Test
+    void shouldWrapAnyOtherReadFailureAsReceiptStorageException() {
+        when(s3Client.getObjectAsBytes(any(GetObjectRequest.class))).thenThrow(SdkException.create("boom", null));
+
+        assertThatThrownBy(() -> store.readJsonObject("my-bucket", "receipts/" + RECEIPT_UUID))
+                .isInstanceOf(ReceiptStorageException.class)
+                .hasCauseInstanceOf(SdkException.class);
+    }
+
+    @Test
+    void shouldListEveryStoredJsonReceiptPrefixAcrossPages() {
+        when(s3Client.listObjectsV2(any(ListObjectsV2Request.class)))
+                .thenReturn(ListObjectsV2Response.builder().isTruncated(true).nextContinuationToken("page-2")
+                        .contents(S3Object.builder().key("receipts/a.json").build(),
+                                S3Object.builder().key("receipts/a.pdf").build())
+                        .build())
+                .thenReturn(ListObjectsV2Response.builder().isTruncated(false)
+                        .contents(S3Object.builder().key("receipts/b.json").build())
+                        .build());
+
+        assertThat(store.listStoredReceiptPrefixes()).containsExactly("receipts/a", "receipts/b");
+
+        ArgumentCaptor<ListObjectsV2Request> requests = ArgumentCaptor.forClass(ListObjectsV2Request.class);
+        verify(s3Client, times(2)).listObjectsV2(requests.capture());
+        assertThat(requests.getAllValues().get(0).bucket()).isEqualTo("my-bucket");
+        assertThat(requests.getAllValues().get(0).prefix()).isEqualTo("receipts/");
+        assertThat(requests.getAllValues().get(0).continuationToken()).isNull();
+        assertThat(requests.getAllValues().get(1).continuationToken()).isEqualTo("page-2");
+    }
+
+    @Test
+    void shouldWrapAListingFailureAsReceiptStorageException() {
+        when(s3Client.listObjectsV2(any(ListObjectsV2Request.class))).thenThrow(SdkException.create("boom", null));
+
+        assertThatThrownBy(() -> store.listStoredReceiptPrefixes())
+                .isInstanceOf(ReceiptStorageException.class)
+                .hasCauseInstanceOf(SdkException.class);
     }
 
     @Test

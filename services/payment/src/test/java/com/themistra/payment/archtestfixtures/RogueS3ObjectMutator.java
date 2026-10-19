@@ -7,6 +7,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectResponse;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
@@ -15,7 +16,7 @@ import java.util.function.Function;
 
 /**
  * T28 (frozen brief D2, Phase 3 F2/F5). A deliberate violation of
- * {@code ArchitectureTest.shouldConfineS3SdkToReceiptStorePutObjectOnly}. It is a class other
+ * {@code ArchitectureTest.shouldConfineS3SdkToReceiptStoreCreateAndReadOnly}. It is a class other
  * than {@code ReceiptStore}/{@code ReceiptStoreConfig} that uses the S3 SDK, and it calls
  * operations other than {@code putObject}: directly, inside a lambda, by method reference, and
  * through the async client. It also builds its own client and depends on {@link S3Presigner}.
@@ -55,5 +56,10 @@ public class RogueS3ObjectMutator {
 
     public void putObjectAsync(S3AsyncClient s3, PutObjectRequest request) {
         s3.putObject(request, AsyncRequestBody.empty());
+    }
+
+    /** FU-T28-3: reads are allowed in {@code ReceiptStore} only, not anywhere else. */
+    public byte[] readOutsideReceiptStore(S3Client s3, GetObjectRequest request) {
+        return s3.getObjectAsBytes(request).asByteArray();
     }
 }

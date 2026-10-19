@@ -268,6 +268,13 @@ class ArchitectureTest {
     private static final String TRANSACTION_EXPORT_REPOSITORY =
             "com.themistra.payment.export.TransactionExportRepository";
 
+    /** The S3 client operations {@code ReceiptStore} may call: the conditional create, plus the
+     * two reads the integrity check needs (FU-T28-3). Exact names, so {@code putObjectRetention},
+     * {@code putObjectLegalHold}, {@code putObjectAcl}, {@code putObjectTagging} and every delete
+     * or copy stay banned. */
+    private static final Set<String> RECEIPT_STORE_S3_OPERATIONS =
+            Set.of("putObject", "getObjectAsBytes", "listObjectsV2");
+
     private static final Set<String> ENTITY_MANAGER_BANNED_METHODS =
             Set.of("remove", "merge", "createQuery", "createNamedQuery", "createStoredProcedureQuery");
 
@@ -376,13 +383,14 @@ class ArchitectureTest {
 
     /** D2 part (b). Applies to every class, the two allowed ones included. The only accesses to
      * the S3 SDK outside its request/response model package ({@code s3.model}) are:
-     * {@code S3Client.putObject}, from {@code ReceiptStore} only (Phase 11, Kimi Gaps 1/2: not from
-     * the config class, and never through {@code S3AsyncClient}); and, from
+     * the {@link #RECEIPT_STORE_S3_OPERATIONS} on {@code S3Client}, from {@code ReceiptStore} only
+     * (Phase 11, Kimi Gaps 1/2: not from the config class, and never through
+     * {@code S3AsyncClient}); and, from
      * {@code ReceiptStoreConfig} only, {@code S3Client.builder()} plus the {@code S3ClientBuilder}
      * chain. So inside {@code ReceiptStore} too, nothing may use the presigner, the utilities or
      * any other S3 class (Phase 9, Kimi Phase 8 F5). */
     private static final ArchCondition<JavaClass> callOnlyPutObjectOnS3Clients =
-            new ArchCondition<>("access no S3 SDK operation other than putObject") {
+            new ArchCondition<>("access no S3 SDK operation other than ReceiptStore's create and reads") {
                 @Override
                 public void check(JavaClass javaClass, ConditionEvents events) {
                     boolean isStore = javaClass.getName().equals(RECEIPT_STORE);
@@ -396,7 +404,7 @@ class ArchitectureTest {
                             return;
                         }
                         boolean onSyncClient = owner.isAssignableTo("software.amazon.awssdk.services.s3.S3Client");
-                        boolean allowed = (isStore && onSyncClient && access.getName().equals("putObject"))
+                        boolean allowed = (isStore && onSyncClient && RECEIPT_STORE_S3_OPERATIONS.contains(access.getName()))
                                 || (isConfig && onSyncClient && access.getName().equals("builder"))
                                 || (isConfig && owner.isAssignableTo("software.amazon.awssdk.services.s3.S3ClientBuilder"));
                         if (!allowed) {
@@ -408,10 +416,12 @@ class ArchitectureTest {
 
     /**
      * T28 (frozen brief D2; threat #5, L9/R23). Only {@code ReceiptStore} and
-     * {@code ReceiptStoreConfig} use the S3 SDK at all, and the only client operation called is
-     * {@code S3Client.putObject}, from {@code ReceiptStore} alone. {@code S3Client.builder()} and the {@code S3ClientBuilder} chain
+     * {@code ReceiptStoreConfig} use the S3 SDK at all. The only client operations called are
+     * {@code ReceiptStore}'s: {@code putObject} (a conditional create, {@code If-None-Match: *}),
+     * and the integrity check's two reads, {@code getObjectAsBytes} and {@code listObjectsV2}.
+     * Nothing deletes, copies, re-configures or overwrites an object. {@code S3Client.builder()} and the {@code S3ClientBuilder} chain
      * are allowed only from {@code ReceiptStoreConfig}, which builds the one client bean. The
-     * {@code putObject} match is exact, so {@code putObjectRetention}, {@code putObjectLegalHold},
+     * operation names match exactly, so {@code putObjectRetention}, {@code putObjectLegalHold},
      * {@code putObjectAcl} and {@code putObjectTagging} are all banned.
      *
      * <p>Covers the whole {@code software.amazon.awssdk.services.s3} package, so
@@ -422,15 +432,16 @@ class ArchitectureTest {
      * <p><b>Not this rule's claim (F6).</b> That every put carries COMPLIANCE mode and a
      * retain-until date is proven by {@code ReceiptStoreTest.shouldStoreReceiptInS3ObjectLockWorm}
      * and the T26 end-to-end test. That a same-key put is never issued rests on a fresh
-     * {@code receiptUuid} per receipt: on a versioned bucket S3 would accept it as a new version.
-     * Making S3 refuse it (a conditional {@code If-None-Match} put) is a logged follow-up.</p>
+     * {@code receiptUuid} per receipt, and S3 itself refuses it: every put is conditional
+     * ({@code If-None-Match: *}), which {@code ReceiptStoreTest} and
+     * {@code ReceiptStoreObjectLockIntegrationTest} prove.</p>
      */
-    private static final ArchRule shouldConfineS3SdkToReceiptStorePutObjectOnly = classes()
+    private static final ArchRule shouldConfineS3SdkToReceiptStoreCreateAndReadOnly = classes()
             .that().resideInAPackage(ANALYZED_PACKAGE + "..")
             .should(useTheS3SdkOnlyFromTheReceiptStore)
             .andShould(callOnlyPutObjectOnS3Clients)
             .because("L9/R23 and threat #5: receipt objects are written once and never deleted, "
-                    + "copied over or re-configured by application code");
+                    + "copied over, overwritten or re-configured by application code");
 
     /**
      * T28 (frozen brief D5; Phase 3 F1). Database writes go through repositories only. No class
@@ -696,15 +707,15 @@ class ArchitectureTest {
     }
 
     @Test
-    void shouldConfineS3SdkToReceiptStorePutObjectOnlyIsCheckedDuringStandardBuild() {
-        shouldConfineS3SdkToReceiptStorePutObjectOnly.check(analyzedClasses());
+    void shouldConfineS3SdkToReceiptStoreCreateAndReadOnlyIsCheckedDuringStandardBuild() {
+        shouldConfineS3SdkToReceiptStoreCreateAndReadOnly.check(analyzedClasses());
     }
 
     @Test
-    void shouldConfineS3SdkToReceiptStorePutObjectOnlyActuallyFailsAgainstAGenuineViolation() {
+    void shouldConfineS3SdkToReceiptStoreCreateAndReadOnlyActuallyFailsAgainstAGenuineViolation() {
         JavaClasses violatingClasses = new ClassFileImporter().importClasses(RogueS3ObjectMutator.class);
 
-        assertThatThrownBy(() -> shouldConfineS3SdkToReceiptStorePutObjectOnly.check(violatingClasses))
+        assertThatThrownBy(() -> shouldConfineS3SdkToReceiptStoreCreateAndReadOnly.check(violatingClasses))
                 .as("S3 use outside ReceiptStore must fail this rule")
                 .isInstanceOf(AssertionError.class)
                 .hasMessageContaining("RogueS3ObjectMutator.presign(")
@@ -730,7 +741,10 @@ class ArchitectureTest {
                 // Phase 11 (Gaps 1, 2, 5): putObject is allowed only from ReceiptStore, and never async.
                 .hasMessageContaining("RogueS3ObjectMutator.putObjectOutsideReceiptStore(")
                 .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3Client.putObject(")
-                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3AsyncClient.putObject(");
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3AsyncClient.putObject(")
+                // FU-T28-3: the integrity check's reads are allowed in ReceiptStore only.
+                .hasMessageContaining("RogueS3ObjectMutator.readOutsideReceiptStore(")
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3Client.getObjectAsBytes(");
     }
 
     @Test

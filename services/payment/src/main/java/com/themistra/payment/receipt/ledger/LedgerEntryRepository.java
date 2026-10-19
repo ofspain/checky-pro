@@ -15,6 +15,9 @@ interface LedgerEntryRepository extends JpaRepository<LedgerEntry, Long> {
 
     Optional<LedgerEntry> findTopByOrderBySeqDesc();
 
+    /** For the integrity check: {@code receipt_id} is {@code UNIQUE}, so at most one entry. */
+    Optional<LedgerEntry> findByReceiptId(Long receiptId);
+
     /** T20 (R22) - the full chain, head (highest {@code seq}) first, for {@code
      * LedgerVerifier.verify()}'s own head-to-tail walk. Fetches the whole table into memory - a
      * reasonable Phase 1/MVP choice (no pagination/streaming), matching this codebase's own

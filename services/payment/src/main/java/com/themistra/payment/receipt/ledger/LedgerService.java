@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * T19 (R21, L7). Appends one entry to the tamper-evident hash chain: {@code prevHash} = the
@@ -83,6 +84,14 @@ public class LedgerService {
         String canonicalJson = CanonicalJson.serialize(payload);
         String entryHash = sha256(canonicalJson + prevHash);
         return repository.save(LedgerEntry.create(receiptId, prevHash, entryHash, payload, clock.instant()));
+    }
+
+    /** Read-only lookup for the integrity check (FU-T28-3): the ledger payload recorded for one
+     * receipt, as a defensive copy, or empty when the receipt has no ledger entry. */
+    @Transactional(readOnly = true)
+    public Optional<Map<String, Object>> findPayloadByReceiptId(Long receiptId) {
+        Objects.requireNonNull(receiptId, "receiptId must not be null");
+        return repository.findByReceiptId(receiptId).map(LedgerEntry::getPayload);
     }
 
     private static String sha256(String input) {
