@@ -70,6 +70,7 @@ class SecretLeakEndToEndIntegrationTest {
 
     private static final String NOTIFICATION_APP_PASSWORD = "it-notification-app-password";
     private static final String RAW_TOKEN = "r15RawResetToken7f3a9c";
+    private static final String RAW_VERIFY_TOKEN = "r15RawVerifyToken2b8e4d";
     private static final List<String> TOPICS = List.of(
             "auth.email.requested", "auth.user.lifecycle", "payments.invoice.created",
             "payments.payment.seen", "payments.payment.finalized", "payments.receipt.issued");
@@ -176,6 +177,48 @@ class SecretLeakEndToEndIntegrationTest {
         assertThat(logLines).as("the capture saw this service's own log output")
                 .anySatisfy(line -> assertThat(line).contains("Email sent: accountUuid=" + accountUuid));
         assertThat(logLines).allSatisfy(line -> assertThat(line).doesNotContain(RAW_TOKEN));
+    }
+
+    /** Phase 9 (self-review S3, Kimi Phase 8 F4): the verification token takes the same renderer
+     * path to a different link. Unlike password reset, the in-app {@code user.verify} template
+     * (V3) also carries the link, so the token appears once in each channel's body, always inside
+     * its link. This test pins that current behaviour (package.md §9 item 6 is partial; follow-up
+     * FU-T20-1 drops the link from the in-app copy). It must never reach a title, a delivery-log
+     * row or any log line. */
+    @Test
+    void shouldNotLeakTheVerificationTokenIntoRenderedMessagesOrLogs() throws SQLException {
+        UUID accountUuid = UUID.randomUUID();
+        String json = "{\"accountUuid\":\"" + accountUuid + "\",\"purpose\":\"verify_email\","
+                + "\"token\":\"" + RAW_VERIFY_TOKEN + "\",\"email\":\"r15-verify@example.com\","
+                + "\"occurredAt\":\"2026-10-19T12:05:00Z\"}";
+
+        kafkaTemplate.send("auth.email.requested", accountUuid.toString(), json);
+
+        await().atMost(Duration.ofSeconds(60)).untilAsserted(() ->
+                assertThat(deliveryOutcomes(accountUuid)).containsExactlyInAnyOrder("EMAIL:SENT", "IN_APP:SENT"));
+
+        List<EmailMessage> emails = fakeEmailTransport.sentMessages().stream()
+                .filter(message -> accountUuid.equals(message.accountUuid())).toList();
+        assertThat(emails).hasSize(1);
+        String body = emails.get(0).body();
+        assertThat(body).contains("https://app.example.test/verify-email?token=" + RAW_VERIFY_TOKEN);
+        assertThat(occurrences(body, RAW_VERIFY_TOKEN)).as("the token appears only inside its one link").isEqualTo(1);
+        assertThat(emails.get(0).subject()).doesNotContain(RAW_VERIFY_TOKEN);
+
+        List<String> inAppBodies = queryStrings(
+                "SELECT body FROM notifications.inapp_notifications WHERE account_uuid = ?", accountUuid);
+        assertThat(inAppBodies).singleElement().satisfies(inAppBody -> {
+            assertThat(inAppBody).contains("https://app.example.test/verify-email?token=" + RAW_VERIFY_TOKEN);
+            assertThat(occurrences(inAppBody, RAW_VERIFY_TOKEN)).isEqualTo(1);
+        });
+        assertThat(queryStrings("SELECT title || ' ' || coalesce(link, '') FROM notifications.inapp_notifications "
+                + "WHERE account_uuid = ?", accountUuid))
+                .allSatisfy(text -> assertThat(text).doesNotContain(RAW_VERIFY_TOKEN));
+        assertThat(errorDetails(accountUuid)).allSatisfy(detail -> assertThat(detail).doesNotContain(RAW_VERIFY_TOKEN));
+
+        List<String> logLines = new ArrayList<>(appender.lines);
+        assertThat(logLines).anySatisfy(line -> assertThat(line).contains("Email sent: accountUuid=" + accountUuid));
+        assertThat(logLines).allSatisfy(line -> assertThat(line).doesNotContain(RAW_VERIFY_TOKEN));
     }
 
     private static int occurrences(String text, String needle) {

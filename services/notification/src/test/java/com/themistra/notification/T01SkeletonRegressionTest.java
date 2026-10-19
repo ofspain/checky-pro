@@ -430,22 +430,16 @@ class T01SkeletonRegressionTest {
         assertThat(Pattern.compile("(?m)^\\| Status \\|").matcher(header).results().count())
                 .as("the header has exactly one Status row").isEqualTo(1);
         // The disclosure names the gaps that make items 1-3 partial (D1, Kimi Phase 3 F3).
-        assertThat(header).contains("FU-T07-1", "FU-T07-2", "FU-T29-1", "FU-T07-4");
+        assertThat(header).contains("FU-T07-1", "FU-T07-2", "FU-T29-1", "FU-T07-4", "FU-T20-1");
     }
 
     /** T20 AC3/AC6: every test §9 cites as evidence exists as a JUnit test in that class's own
-     * file, so a rename can't leave the spec pointing at nothing. The one exception: an ArchUnit
+     * file and is enabled, so a rename can't leave the spec pointing at nothing. The one exception: an ArchUnit
      * rule field is accepted where the class runs it from a plain-test canary (the Surefire
      * {@code @ArchTest} workaround). */
     @Test
     void everyTestNamedInTheVerificationChecklistExists() throws IOException {
-        Map<String, String> testSourcesByClass = new HashMap<>();
-        try (Stream<Path> files = Files.walk(TEST_SOURCES)) {
-            for (Path file : files.filter(f -> f.toString().endsWith(".java")).toList()) {
-                String name = file.getFileName().toString();
-                testSourcesByClass.put(name.substring(0, name.length() - ".java".length()), Files.readString(file));
-            }
-        }
+        Map<String, String> testSourcesByClass = testSourcesByClass();
         List<String> missing = new ArrayList<>();
         int citations = 0;
         for (String item : verificationChecklistItems()) {
@@ -463,8 +457,9 @@ class T01SkeletonRegressionTest {
         assertThat(missing).as("§9 cites tests that do not exist").isEmpty();
     }
 
-    /** T20 AC3 (Kimi Phase 3 F4): items 1-3 stay visibly partial, each keeping the reason that
-     * makes it partial; items 4-11 stay ticked. Nothing can be ticked silently. */
+    /** T20 AC3 (Kimi Phase 3 F4): items 1-3 and 6 stay visibly partial, each keeping the reason
+     * that makes it partial; the other seven stay ticked. Nothing can be ticked silently. Item 6
+     * became partial at Phase 9: the in-app verify body carries its link (FU-T20-1). */
     @Test
     void verificationChecklistKeepsItsPartialItemsUnticked() throws IOException {
         List<String> items = verificationChecklistItems();
@@ -478,11 +473,13 @@ class T01SkeletonRegressionTest {
                 .contains("merchant-only", "**no link**", "FU-T07-1", "FU-T07-2");
         assertThat(items.get(1)).as("item 2 names the L2 interpretation").contains("L2", "interpreted");
         assertThat(items.get(2)).as("item 3 names the recipients deviation").contains("merchant only");
-        for (int itemNumber = 4; itemNumber <= 11; itemNumber++) {
+        assertThat(items.get(5)).as("§9 item 6 stays visibly partial").startsWith("- [ ] **Partial —** ")
+                .contains("FU-T20-1");
+        for (int itemNumber : new int[] {4, 5, 7, 8, 9, 10, 11}) {
             assertThat(items.get(itemNumber - 1)).as("§9 item %d stays ticked", itemNumber).startsWith("- [x] ");
         }
         assertThat(items.stream().filter(item -> item.startsWith("- [x] ")).count())
-                .as("exactly 8 §9 items are ticked").isEqualTo(8);
+                .as("exactly 7 §9 items are ticked").isEqualTo(7);
         assertThat(items).as("every §9 marker is a GFM checkbox")
                 .allMatch(item -> item.startsWith("- [ ] ") || item.startsWith("- [x] "));
     }
@@ -505,17 +502,65 @@ class T01SkeletonRegressionTest {
         assertThat(HexFormat.of().formatHex(digest)).isEqualTo(SECTION_4C_VERBATIM_SHA256);
     }
 
-    /** True when {@code source} declares {@code member} as a JUnit test method, or as an ArchUnit
-     * rule field that the same class runs through {@code member.check(}. */
+    /** {@code @Disabled}, simple or fully qualified. */
+    private static final String DISABLED = "@(?:[A-Za-z0-9_]+\\.)*Disabled\\b";
+
+    /** True when {@code source} declares {@code member} as an enabled JUnit test method, or as an
+     * ArchUnit rule field the same class runs through {@code member.check(}. The method's
+     * annotations may come in any order (Kimi Phase 8 F2). Neither the method nor its class may
+     * be {@code @Disabled}, so "exists" also means "runs" (F5). */
     private static boolean declaresTestMethod(String source, String member) {
-        if (source == null) {
+        if (source == null || Pattern.compile(DISABLED + "[^{]*\\bclass\\s").matcher(source).find()) {
             return false;
         }
-        boolean testMethod = Pattern.compile("@(?:Test|ParameterizedTest)\\b(?:\\s*@[A-Za-z0-9_.]+(?:\\([^)]*\\))?)*"
-                + "\\s+(?:public\\s+|protected\\s+)?void\\s+" + Pattern.quote(member) + "\\s*\\(").matcher(source).find();
-        boolean checkedRule = Pattern.compile("ArchRule\\s+" + Pattern.quote(member) + "\\s*=").matcher(source).find()
+        Matcher method = Pattern.compile("((?:@[A-Za-z0-9_.]+(?:\\([^)]*\\))?\\s*)+)"
+                + "(?:public\\s+|protected\\s+)?void\\s+" + Pattern.quote(member) + "\\s*\\(").matcher(source);
+        while (method.find()) {
+            String annotations = method.group(1);
+            if (Pattern.compile("@(?:[A-Za-z0-9_]+\\.)*(?:Test|ParameterizedTest)\\b").matcher(annotations).find()
+                    && !Pattern.compile(DISABLED).matcher(annotations).find()) {
+                return true;
+            }
+        }
+        return Pattern.compile("ArchRule\\s+" + Pattern.quote(member) + "\\s*=").matcher(source).find()
                 && source.contains(member + ".check(");
-        return testMethod || checkedRule;
+    }
+
+    /** True when {@code member} is declared as an enabled test (or checked rule) in any test file. */
+    private static boolean declaredInAnyTestFile(Map<String, String> testSourcesByClass, String member) {
+        return testSourcesByClass.values().stream().anyMatch(source -> declaresTestMethod(source, member));
+    }
+
+    /** All test sources under {@code src/test/java}, keyed by class name. */
+    private static Map<String, String> testSourcesByClass() throws IOException {
+        Map<String, String> testSourcesByClass = new HashMap<>();
+        try (Stream<Path> files = Files.walk(TEST_SOURCES)) {
+            for (Path file : files.filter(f -> f.toString().endsWith(".java")).toList()) {
+                String name = file.getFileName().toString();
+                testSourcesByClass.put(name.substring(0, name.length() - ".java".length()), Files.readString(file));
+            }
+        }
+        return testSourcesByClass;
+    }
+
+    /** T20 Phase 9 (self-review S1, Kimi Phase 8 F1/F3): every test §8 names exists and is enabled
+     * somewhere under {@code src/test/java}, so §9 item 1's "all 20 names exist" is enforced.
+     * L11's name is an ArchUnit rule field run by a canary, which exercises the rule-field branch. */
+    @Test
+    void everyTestNamedInTheTestPlanExists() throws IOException {
+        String spec = Files.readString(NOTIFICATION_PACKAGE_SPEC);
+        int start = spec.indexOf("## 8. Test plan");
+        int end = spec.indexOf("## 9. ", start);
+        assertThat(start).as("package.md must have its §8 test plan").isNotNegative();
+        assertThat(end).as("§8 must be followed by §9").isGreaterThan(start);
+        List<String> names = Pattern.compile("(?m)^- `(should[A-Za-z0-9_]+)` → ")
+                .matcher(spec.substring(start, end)).results().map(match -> match.group(1)).toList();
+        assertThat(names).as("§8 names exactly 20 tests").hasSize(20)
+                .contains("shouldPreventCrossModuleEntityImports");
+
+        Map<String, String> sources = testSourcesByClass();
+        assertThat(names).as("§8 names tests that do not exist or are disabled")
+                .allMatch(name -> declaredInAnyTestFile(sources, name));
     }
 
     /** The {@code - [} item lines of {@code package.md} §9, in order. */
