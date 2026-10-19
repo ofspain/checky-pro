@@ -16,8 +16,8 @@ class SecretSafeLoggingTest {
 
     @Test
     void redactMasksASingleTokenParameter() {
-        assertThat(SecretSafeLogging.redact("https://checky.pro/verify-email?token=abc123"))
-                .isEqualTo("https://checky.pro/verify-email?token=***");
+        assertThat(SecretSafeLogging.redact("https://checky.pro/app/verify?token=abc123"))
+                .isEqualTo("https://checky.pro/app/verify?token=***");
     }
 
     @Test

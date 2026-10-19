@@ -75,8 +75,8 @@ class TemplateRendererIntegrationTest {
         assertThat(message.body()).contains("Hi Ada,");
         assertThat(message.body())
                 .as("a single slash at the join point, not the double slash a raw trailing-slash baseUrl would produce")
-                .contains("https://checky.pro/verify-email?token=abc123")
-                .doesNotContain("checky.pro//verify-email");
+                .contains("https://checky.pro/app/verify?token=abc123")
+                .doesNotContain("checky.pro//app");
         assertThat(message.version()).isEqualTo(1);
     }
 
@@ -95,7 +95,7 @@ class TemplateRendererIntegrationTest {
                 Map.of("token", "tok"));
 
         assertThat(message.subject()).isNull();
-        assertThat(message.body()).contains("https://checky.pro/verify-email?token=tok");
+        assertThat(message.body()).contains("https://checky.pro/app/verify?token=tok");
     }
 
     /** Kimi Phase 8 Finding #4/AC2: a dedicated, non-seeded name so this test's own inserted second

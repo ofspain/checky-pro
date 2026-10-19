@@ -118,7 +118,7 @@ class TemplateRendererTest {
         TemplateRenderer.RenderedMessage message = renderer.render("x", "EMAIL",
                 Map.of("verificationLink", "CALLER_SUPPLIED", "token", "abc"));
 
-        assertThat(message.body()).isEqualTo("https://checky.pro/verify-email?token=abc");
+        assertThat(message.body()).isEqualTo("https://checky.pro/app/verify?token=abc");
     }
 
     /** Kimi Phase 11 Gap #1: a permanent, cheap static guard for the exact merge-order shape the
@@ -140,9 +140,41 @@ class TemplateRendererTest {
                 .isLessThan(computedOverlayIndex);
     }
 
+    /** Open-issues sweep (2026-10-19): every computed link targets a real SPA route. */
+    @Test
+    void everyComputedLinkTargetsTheSpaRoutes() {
+        Template template = template(null,
+                "{{verificationLink}} {{resetLink}} {{invoiceLink}} {{receiptLink}}", 1);
+        when(repository.findTopByNameAndChannelOrderByVersionDesc("x", "EMAIL")).thenReturn(Optional.of(template));
+
+        TemplateRenderer.RenderedMessage message = renderer.render("x", "EMAIL", Map.of(
+                "token", "tok", "invoiceUuid", "inv-1", "receiptUuid", "rcpt-1"));
+
+        assertThat(message.body()).isEqualTo("https://checky.pro/app/verify?token=tok "
+                + "https://checky.pro/app/reset?token=tok "
+                + "https://checky.pro/app/invoices/inv-1 "
+                + "https://checky.pro/app/receipts/rcpt-1");
+    }
+
+    /** Open-issues sweep (2026-10-19): the link paths must stay in the frontend's route set
+     * ({@code spec/frontend/design.md} §4c and its 2026-10-19 note). A renamed route on either side
+     * fails here instead of shipping dead email links again. */
+    @Test
+    void everyLinkPathIsAFrontendRoute() throws IOException {
+        String frontendDesign = Files.readString(Path.of("../../spec/frontend/design.md"));
+
+        assertThat(frontendDesign)
+                .contains("`/app/verify?token=<token>`", "`/app/reset?token=<token>`",
+                        "`/app/invoices/:id`", "`/app/receipts/:id`");
+        assertThat(TemplateRenderer.VERIFY_PATH).isEqualTo("/app/verify?token=");
+        assertThat(TemplateRenderer.RESET_PATH).isEqualTo("/app/reset?token=");
+        assertThat(TemplateRenderer.INVOICE_PATH).isEqualTo("/app/invoices/");
+        assertThat(TemplateRenderer.RECEIPT_PATH).isEqualTo("/app/receipts/");
+    }
+
     /** Kimi Phase 11 Gap #3: locks the {@code resetLink} path convention specifically - the URL-
      * encoding test alone would still pass if a future edit accidentally reused
-     * {@code /verify-email} for both link types. */
+     * the verify path for both link types. */
     @Test
     void resetLinkUsesTheResetPasswordPathNotVerifyEmail() {
         Template template = template(null, "{{resetLink}}", 1);
@@ -150,7 +182,7 @@ class TemplateRendererTest {
 
         TemplateRenderer.RenderedMessage message = renderer.render("x", "EMAIL", Map.of("token", "abc"));
 
-        assertThat(message.body()).isEqualTo("https://checky.pro/reset-password?token=abc");
+        assertThat(message.body()).isEqualTo("https://checky.pro/app/reset?token=abc");
     }
 
     /** Kimi Phase 11 Gap #4: a naive {@code toString()} could still leak the literal string
@@ -170,13 +202,13 @@ class TemplateRendererTest {
      * path prefix (a plausible real deployment shape) must survive untouched. */
     @Test
     void baseUrlWithAPathPrefixIsPreservedInTheComputedLink() {
-        TemplateRenderer prefixedRenderer = new TemplateRenderer(repository, new LinkProperties("https://checky.pro/app"));
+        TemplateRenderer prefixedRenderer = new TemplateRenderer(repository, new LinkProperties("https://checky.pro/base"));
         Template template = template(null, "{{verificationLink}}", 1);
         when(repository.findTopByNameAndChannelOrderByVersionDesc("x", "EMAIL")).thenReturn(Optional.of(template));
 
         TemplateRenderer.RenderedMessage message = prefixedRenderer.render("x", "EMAIL", Map.of("token", "abc"));
 
-        assertThat(message.body()).isEqualTo("https://checky.pro/app/verify-email?token=abc");
+        assertThat(message.body()).isEqualTo("https://checky.pro/base/app/verify?token=abc");
     }
 
     /** Kimi Phase 11 Gap #6: an explicit empty string is a valid value, distinct from a missing
@@ -241,7 +273,7 @@ class TemplateRendererTest {
 
         TemplateRenderer.RenderedMessage message = localRenderer.render("x", "EMAIL", Map.of("token", "abc"));
 
-        assertThat(message.body()).isEqualTo("/verify-email?token=abc");
+        assertThat(message.body()).isEqualTo("/app/verify?token=abc");
     }
 
     /** Same as above, defensively, for a {@code null} {@code baseUrl} - should not occur in

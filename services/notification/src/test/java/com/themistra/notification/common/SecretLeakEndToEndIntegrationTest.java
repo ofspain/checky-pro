@@ -166,7 +166,7 @@ class SecretLeakEndToEndIntegrationTest {
                 .filter(message -> accountUuid.equals(message.accountUuid())).toList();
         assertThat(emails).hasSize(1);
         String body = emails.get(0).body();
-        assertThat(body).contains("https://app.example.test/reset-password?token=" + RAW_TOKEN);
+        assertThat(body).contains("https://app.example.test/app/reset?token=" + RAW_TOKEN);
         assertThat(occurrences(body, RAW_TOKEN)).as("the token appears only inside its one link").isEqualTo(1);
         assertThat(emails.get(0).subject()).doesNotContain(RAW_TOKEN);
 
@@ -201,7 +201,7 @@ class SecretLeakEndToEndIntegrationTest {
                 .filter(message -> accountUuid.equals(message.accountUuid())).toList();
         assertThat(emails).hasSize(1);
         String body = emails.get(0).body();
-        assertThat(body).contains("https://app.example.test/verify-email?token=" + RAW_VERIFY_TOKEN);
+        assertThat(body).contains("https://app.example.test/app/verify?token=" + RAW_VERIFY_TOKEN);
         assertThat(occurrences(body, RAW_VERIFY_TOKEN)).as("the token appears only inside its one link").isEqualTo(1);
         assertThat(emails.get(0).subject()).doesNotContain(RAW_VERIFY_TOKEN);
 
@@ -213,7 +213,7 @@ class SecretLeakEndToEndIntegrationTest {
         List<String> inAppBodies = queryStrings(
                 "SELECT body FROM notifications.inapp_notifications WHERE account_uuid = ?", accountUuid);
         assertThat(inAppBodies).singleElement().satisfies(inAppBody -> {
-            assertThat(inAppBody).contains("https://app.example.test/verify-email?token=" + RAW_VERIFY_TOKEN);
+            assertThat(inAppBody).contains("https://app.example.test/app/verify?token=" + RAW_VERIFY_TOKEN);
             assertThat(occurrences(inAppBody, RAW_VERIFY_TOKEN)).isEqualTo(1);
         });
         assertThat(queryStrings("SELECT title || ' ' || coalesce(link, '') FROM notifications.inapp_notifications "

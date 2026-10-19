@@ -20,7 +20,8 @@ import java.util.regex.Pattern;
  * <p><strong>Link placeholders</strong> (Kimi Phase 3 Finding #2, {@code design.md} §11 Q4):
  * {@code verificationLink}/{@code resetLink}/{@code getStartedLink}/{@code invoiceLink}/
  * {@code receiptLink} are computed by this class itself from {@link LinkProperties#baseUrl()} plus
- * a fixed, disclosed-as-provisional path convention - never read directly from the caller's own
+ * the fixed SPA routes below (confirmed 2026-10-19 against {@code spec/frontend/design.md}'s route
+ * set, Q6) - never read directly from the caller's own
  * {@code eventData}, even if a caller happened to supply a value under one of those 5 keys. The
  * raw source keys for the two invoice/receipt links ({@code invoiceUuid}/{@code receiptUuid})
  * match {@code spec/payment-service/design.md}'s own {@code receipt.issued} event schema - the
@@ -33,6 +34,15 @@ import java.util.regex.Pattern;
  */
 @Service
 public class TemplateRenderer {
+
+    /** Open-issues sweep (2026-10-19): the SPA's routes, all under {@code /app}. The old paths
+     * ({@code /verify-email}, {@code /reset-password}, {@code /invoices/}, {@code /receipts/})
+     * matched no frontend route, so every verification and reset link was dead. The invoice and
+     * receipt detail routes are recorded in the frontend spec as dated notes. */
+    static final String VERIFY_PATH = "/app/verify?token=";
+    static final String RESET_PATH = "/app/reset?token=";
+    static final String INVOICE_PATH = "/app/invoices/";
+    static final String RECEIPT_PATH = "/app/receipts/";
 
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{([a-zA-Z][a-zA-Z0-9_]*)}}");
 
@@ -96,20 +106,20 @@ public class TemplateRenderer {
         String token = eventData.get("token");
         if (token != null) {
             String encodedToken = urlEncode(token);
-            links.put("verificationLink", baseUrl + "/verify-email?token=" + encodedToken);
-            links.put("resetLink", baseUrl + "/reset-password?token=" + encodedToken);
+            links.put("verificationLink", baseUrl + VERIFY_PATH + encodedToken);
+            links.put("resetLink", baseUrl + RESET_PATH + encodedToken);
         }
 
         links.put("getStartedLink", baseUrl);
 
         String invoiceUuid = eventData.get("invoiceUuid");
         if (invoiceUuid != null) {
-            links.put("invoiceLink", baseUrl + "/invoices/" + urlEncode(invoiceUuid));
+            links.put("invoiceLink", baseUrl + INVOICE_PATH + urlEncode(invoiceUuid));
         }
 
         String receiptUuid = eventData.get("receiptUuid");
         if (receiptUuid != null) {
-            links.put("receiptLink", baseUrl + "/receipts/" + urlEncode(receiptUuid));
+            links.put("receiptLink", baseUrl + RECEIPT_PATH + urlEncode(receiptUuid));
         }
 
         return links;

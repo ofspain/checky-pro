@@ -141,6 +141,13 @@ Scope tags: `[ALL]` platform-level, enduring across every phase. `[P1]`…`[P5]`
   `/app/invoices`, `/app/payments`, `/app/notifications`. `/app/evidence`, `/app/disputes`, `/app/reputation`, `/app/fraud` are
   reserved names for Phases 2–5, **deferred, out of MVP scope (2026-10-10)** — not part of this spec revision's route set.
 
+> **Note (2026-10-19, open-issues sweep — notification email links):** three additions to the route set above, confirmed by
+> the author. (1) `/app/verify` and `/app/reset` take the one-time token as a query parameter: `/app/verify?token=<token>` and
+> `/app/reset?token=<token>`. (2) An invoice detail route, `/app/invoices/:id` (`:id` = the invoice UUID), the target of the
+> `invoice.created` email link. (3) A receipt detail route, `/app/receipts/:id` (`:id` = the receipt UUID), the target of the
+> `receipt.issued` email link once `GET /payments/receipts/{uuid}` exists (payment FU-T29-1). notification-service builds
+> these links from `themistra.notification.link.base-url` (the SPA origin) plus exactly these paths (`TemplateRenderer`).
+
 **Requested scopes**: `openid profile email`.
 
 **Access-token claims** — `contracts/api/token-claims.md`. The SPA depends on no claim outside that table for a given issuance path.
