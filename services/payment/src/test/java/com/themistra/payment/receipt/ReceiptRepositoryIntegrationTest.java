@@ -126,6 +126,20 @@ class ReceiptRepositoryIntegrationTest {
         assertThat(reloaded.getCreatedAt()).isEqualTo(createdAt);
     }
 
+    /** FU-T29-1: the receipt read looks receipts up by their public UUID. */
+    @Test
+    void shouldFindReceiptByItsReceiptUuid() throws SQLException {
+        long paymentId = seedPayment();
+        UUID receiptUuid = UUID.randomUUID();
+        Instant at = Instant.parse("2026-10-19T00:00:00Z");
+        repository.save(Receipt.create(receiptUuid, paymentId, "b".repeat(64), "sig", "kms-key-1",
+                "my-bucket", "receipts/by-uuid", at, at));
+
+        assertThat(repository.findByReceiptUuid(receiptUuid)).get()
+                .extracting(Receipt::getS3Key).isEqualTo("receipts/by-uuid");
+        assertThat(repository.findByReceiptUuid(UUID.randomUUID())).isEmpty();
+    }
+
     private static Connection adminConnection() throws SQLException {
         return DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }

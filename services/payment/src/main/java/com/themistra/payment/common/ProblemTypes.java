@@ -27,6 +27,7 @@ public final class ProblemTypes {
      * reusable {@code NOT_FOUND} constant rather than a one-off per-resource name. */
     public static final URI NOT_FOUND = URI.create(BASE + "not-found");
     public static final URI INVALID_EXPORT_REQUEST = URI.create(BASE + "invalid-export-request");
+    public static final URI INVALID_RECEIPT_REQUEST = URI.create(BASE + "invalid-receipt-request");
 
     private ProblemTypes() {
     }

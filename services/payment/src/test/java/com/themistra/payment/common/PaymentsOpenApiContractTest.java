@@ -10,6 +10,8 @@ import com.themistra.payment.invoice.InvoiceController;
 import com.themistra.payment.invoice.InvoiceState;
 import com.themistra.payment.invoice.dto.CreateInvoiceRequest;
 import com.themistra.payment.invoice.dto.InvoiceResponse;
+import com.themistra.payment.receipt.ReceiptController;
+import com.themistra.payment.receipt.dto.ReceiptResponse;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
@@ -58,7 +60,8 @@ class PaymentsOpenApiContractTest {
 
     private static final List<Class<?>> CONTROLLERS = List.of(
             InvoiceController.class,
-            ExportController.class);
+            ExportController.class,
+            ReceiptController.class);
 
     private static final Instant NOW = Instant.parse("2026-10-19T00:00:00Z");
 
@@ -89,9 +92,10 @@ class PaymentsOpenApiContractTest {
     }
 
     @Test
-    void componentSchemasAreExactlyTheFourExpected() throws Exception {
+    void componentSchemasAreExactlyTheFiveExpected() throws Exception {
         assertThat(fieldNames(contract().get("components").get("schemas")))
-                .isEqualTo(Set.of("CreateInvoiceRequest", "InvoiceResponse", "TransactionExportRow", "Problem"));
+                .isEqualTo(Set.of("CreateInvoiceRequest", "InvoiceResponse", "TransactionExportRow", "ReceiptResponse",
+                        "Problem"));
     }
 
     @Test
@@ -151,7 +155,7 @@ class PaymentsOpenApiContractTest {
                 catalogue.add(field.get(null).toString());
             }
         }
-        assertThat(catalogue).as("ProblemTypes catalogue size").hasSize(11);
+        assertThat(catalogue).as("ProblemTypes catalogue size").hasSize(12);
 
         JsonNode type = contract().get("components").get("schemas").get("Problem").get("properties").get("type");
         assertThat(type.get("format").asText()).isEqualTo("uri");
@@ -174,6 +178,27 @@ class PaymentsOpenApiContractTest {
             assertThat(scopes).as("%s requires bearerAuth", route).isNotNull();
             assertThat(textSet(scopes)).as("%s requires the MERCHANT role", route).isEqualTo(Set.of("MERCHANT"));
         }
+    }
+
+    @Test
+    void receiptUuidPathParameterIsDeclared() throws Exception {
+        JsonNode parameter = parameter(contract(), new Route("GET", "/api/v1/receipts/{receiptUuid}"), "receiptUuid");
+        assertThat(parameter.get("in").asText()).isEqualTo("path");
+        assertThat(parameter.get("required").asBoolean()).isTrue();
+        assertThat(parameter.get("schema").get("type").asText()).isEqualTo("string");
+        assertThat(parameter.get("schema").get("format").asText()).isEqualTo("uuid");
+    }
+
+    /** FU-T29-1: the receipt body is the signed canonical JSON, so the documented property order
+     * must be the record's order, which is the order {@code ReceiptStore.toCanonicalMap} signs. */
+    @Test
+    void receiptResponseSchemaListsTheCanonicalFieldsInSignedOrder() throws Exception {
+        JsonNode properties = contract().get("components").get("schemas").get("ReceiptResponse").get("properties");
+        List<String> documented = new java.util.ArrayList<>();
+        properties.fieldNames().forEachRemaining(documented::add);
+        List<String> recordOrder = Arrays.stream(ReceiptResponse.class.getRecordComponents())
+                .map(RecordComponent::getName).toList();
+        assertThat(documented).isEqualTo(recordOrder);
     }
 
     @Test
@@ -367,7 +392,8 @@ class PaymentsOpenApiContractTest {
     @Test
     void everyAmountDescriptionStatesWholeBaseUnits() throws Exception {
         JsonNode schemas = contract().get("components").get("schemas");
-        for (String component : List.of("CreateInvoiceRequest", "InvoiceResponse", "TransactionExportRow")) {
+        for (String component : List.of("CreateInvoiceRequest", "InvoiceResponse", "TransactionExportRow",
+                "ReceiptResponse")) {
             assertThat(schemas.get(component).get("properties").get("amount").get("description").asText()
                     .replaceAll("\\s+", " "))
                     .as("%s.amount description", component)
@@ -380,13 +406,15 @@ class PaymentsOpenApiContractTest {
     void shouldConformToPaymentsOpenApiContract() throws Exception {
         everyControllerHandlerIsDocumentedInPaymentsYaml();
         paymentsYamlDocumentsNoRouteThatDoesNotHaveARealHandler();
-        componentSchemasAreExactlyTheFourExpected();
+        componentSchemasAreExactlyTheFiveExpected();
         everyComponentSchemaMatchesItsRealRecordShape();
         invoiceStateSchemaEnumMatchesInvoiceStateValues();
         createInvoiceRequestChainEnumMatchesItsValidationPattern();
         problemTypeEnumMatchesProblemTypesCatalogue();
         everyOperationRequiresBearerAuthWithMerchantScope();
         invoiceUuidPathParameterIsDeclared();
+        receiptUuidPathParameterIsDeclared();
+        receiptResponseSchemaListsTheCanonicalFieldsInSignedOrder();
         exportEndpointDocumentsItsQueryParametersAndAcceptHeader();
         exportEndpointDocumentsJsonAndCsvContent();
         everyOperationResponseReferencesTheExpectedSchema();
@@ -437,6 +465,8 @@ class PaymentsOpenApiContractTest {
                 new ExpectedResponse("200", ExpectedSchema.ref("InvoiceResponse")));
         m.put(new Route("GET", "/api/v1/exports/transactions"),
                 new ExpectedResponse("200", ExpectedSchema.arrayOfRef("TransactionExportRow")));
+        m.put(new Route("GET", "/api/v1/receipts/{receiptUuid}"),
+                new ExpectedResponse("200", ExpectedSchema.ref("ReceiptResponse")));
         return m;
     }
 
@@ -456,6 +486,9 @@ class PaymentsOpenApiContractTest {
         instances.put("TransactionExportRow", new TransactionExportRow(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "ETHEREUM", "0xtx", "0xtoken",
                 (short) 6, "1000000", "0xpayto", NOW, NOW, "s3://bucket/key"));
+        instances.put("ReceiptResponse", new ReceiptResponse(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "ETHEREUM", "0xtx",
+                "0xtoken", 6, "1000000", "0xpayto", "0xfrom", NOW, "sig", "kms-key", NOW));
         return instances;
     }
 

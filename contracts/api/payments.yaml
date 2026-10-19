@@ -72,6 +72,31 @@ paths:
               schema:
                 $ref: '#/components/schemas/InvoiceResponse'
 
+  /api/v1/receipts/{receiptUuid}:
+    get:
+      summary: Get one of the caller's own signed receipts
+      description: >
+        Returns the stored, signed receipt exactly as it was written to receipt storage. Returns
+        404, never 403, when the receipt belongs to another merchant, exactly as for a receipt
+        that does not exist.
+      operationId: getReceipt
+      security:
+        - bearerAuth: [MERCHANT]
+      parameters:
+        - name: receiptUuid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The signed receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptResponse'
+
   /api/v1/exports/transactions:
     get:
       summary: Export the caller's attested transactions (tax-ready)
@@ -249,6 +274,55 @@ components:
         receiptUri:
           type: string
 
+    ReceiptResponse:
+      type: object
+      description: >
+        The signed receipt. Fields appear in the same order as the canonical JSON that was
+        signed.
+      required: [receiptUuid, invoiceUuid, paymentUuid, merchantAccountUuid, chain, txHash,
+                 tokenContractAddress, tokenDecimals, amount, payToAddress, fromAddress,
+                 finalizedAt, signature, kmsKeyId, signedAt]
+      properties:
+        receiptUuid:
+          type: string
+          format: uuid
+        invoiceUuid:
+          type: string
+          format: uuid
+        paymentUuid:
+          type: string
+          format: uuid
+        merchantAccountUuid:
+          type: string
+          format: uuid
+        chain:
+          type: string
+        txHash:
+          type: string
+        tokenContractAddress:
+          type: string
+        tokenDecimals:
+          type: integer
+        amount:
+          type: string
+          description: Observed on-chain amount as a whole number of token base units, as a decimal string.
+        payToAddress:
+          type: string
+          description: Observed on-chain recipient address.
+        fromAddress:
+          type: string
+          description: Observed on-chain sender address.
+        finalizedAt:
+          type: string
+          format: date-time
+        signature:
+          type: string
+        kmsKeyId:
+          type: string
+        signedAt:
+          type: string
+          format: date-time
+
     Problem:
       type: object
       description: RFC 9457 problem document returned (as application/problem+json) by every error response.
@@ -269,6 +343,7 @@ components:
             - https://checky.pro/problems/crypto-service-unavailable
             - https://checky.pro/problems/not-found
             - https://checky.pro/problems/invalid-export-request
+            - https://checky.pro/problems/invalid-receipt-request
         title:
           type: string
         status:
