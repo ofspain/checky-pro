@@ -95,7 +95,9 @@ class TemplateRendererIntegrationTest {
                 Map.of("token", "tok"));
 
         assertThat(message.subject()).isNull();
-        assertThat(message.body()).contains("https://checky.pro/app/verify?token=tok");
+        // FU-T20-1 (V16): the in-app copy carries no link, so the token never reaches it.
+        assertThat(message.version()).isEqualTo(2);
+        assertThat(message.body()).doesNotContain("tok", "/app/verify");
     }
 
     /** Kimi Phase 8 Finding #4/AC2: a dedicated, non-seeded name so this test's own inserted second

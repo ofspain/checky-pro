@@ -262,7 +262,7 @@ class DeliveryOrchestratorIntegrationTest {
         DeliveryLog inAppRow = rowFor(accountUuid, "IN_APP");
         assertThat(inAppRow.getRecipient()).isEqualTo(accountUuid.toString());
         assertThat(inAppRow.getTemplateName()).isEqualTo("user.verify");
-        assertThat(inAppRow.getTemplateVersion()).isEqualTo(1);
+        assertThat(inAppRow.getTemplateVersion()).isEqualTo(2); // V16, FU-T20-1
         assertThat(inAppRow.getOutcome()).isEqualTo("SENT");
     }
 

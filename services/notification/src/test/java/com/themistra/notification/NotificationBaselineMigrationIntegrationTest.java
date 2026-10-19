@@ -182,7 +182,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 succeededVersions.add(resultSet.getString("version"));
             }
             assertThat(succeededVersions).containsExactly(
-                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15");
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16");
         }
     }
 
@@ -875,7 +875,8 @@ class NotificationBaselineMigrationIntegrationTest {
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
              ResultSet resultSet = statement.executeQuery(
-                     "SELECT name, channel, subject, body FROM notifications.templates WHERE version = 2")) {
+                     "SELECT name, channel, subject, body FROM notifications.templates WHERE version = 2 "
+                             + "AND name IN ('invoice.created', 'payment.seen', 'payment.finalized', 'receipt.issued')")) {
             List<String> pairs = new ArrayList<>();
             while (resultSet.next()) {
                 String name = resultSet.getString("name");
@@ -909,6 +910,29 @@ class NotificationBaselineMigrationIntegrationTest {
             assertThat(resultSet.getString("body")).contains("{{receiptLink}}", "{{receiptId}}", "{{invoiceId}}")
                     .doesNotContain("{{currency}}", "{{displayName}}");
             assertThat(resultSet.next()).as("only one version-3 row").isFalse();
+        }
+    }
+
+    /** FU-T20-1 (2026-10-19): V16 adds the in-app user.verify version 2, without the link, so the
+     * one-time verification token is never stored in an in-app row. The email keeps its link. */
+    @Test
+    void inAppVerifyHasAVersionTwoWithoutTheVerificationLink() throws SQLException {
+        try (Connection admin = adminConnection();
+             Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT channel, version, subject, body FROM notifications.templates "
+                             + "WHERE name IN ('user.verify', 'email.verify') ORDER BY channel, version")) {
+            List<String> rows = new ArrayList<>();
+            while (resultSet.next()) {
+                String channel = resultSet.getString("channel");
+                int version = resultSet.getInt("version");
+                rows.add(channel + ":" + version);
+                if ("IN_APP".equals(channel) && version == 2) {
+                    assertThat(resultSet.getString("subject")).isNull();
+                    assertThat(resultSet.getString("body")).doesNotContain("{{");
+                }
+            }
+            assertThat(rows).containsExactly("EMAIL:1", "IN_APP:1", "IN_APP:2");
         }
     }
 }

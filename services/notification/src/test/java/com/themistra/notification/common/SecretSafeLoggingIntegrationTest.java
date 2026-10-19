@@ -88,18 +88,16 @@ class SecretSafeLoggingIntegrationTest {
         assertThat(redacted).contains("token=***");
     }
 
-    /** Kimi Phase 11 Gap #7: the {@code IN_APP} channel also renders a link containing the raw
-     * token (`user.verify`'s own seeded body) - a channel-specific `TemplateRenderer` bug would
-     * not be caught by the `EMAIL`-only tests above. */
+    /** Kimi Phase 11 Gap #7: the {@code IN_APP} channel must not leak the token either. Since
+     * FU-T20-1 (V16) the in-app {@code user.verify} body has no link at all, so the raw token is
+     * absent before redaction, not just after it. */
     @Test
     void redactsTheRealTokenFromARealRenderedInAppVerificationBody() {
         TemplateRenderer.RenderedMessage message = renderer.render("user.verify", "IN_APP",
                 Map.of("token", "yet-another-real-secret-token"));
 
-        String redacted = SecretSafeLogging.redact(message.body());
-
-        assertThat(redacted).doesNotContain("yet-another-real-secret-token");
-        assertThat(redacted).contains("token=***");
+        assertThat(message.body()).doesNotContain("yet-another-real-secret-token", "token=");
+        assertThat(SecretSafeLogging.redact(message.body())).doesNotContain("yet-another-real-secret-token");
     }
 
     private static Connection adminConnection() throws SQLException {

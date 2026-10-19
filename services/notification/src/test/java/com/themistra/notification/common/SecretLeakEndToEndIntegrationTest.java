@@ -180,11 +180,10 @@ class SecretLeakEndToEndIntegrationTest {
     }
 
     /** Phase 9 (self-review S3, Kimi Phase 8 F4): the verification token takes the same renderer
-     * path to a different link. Unlike password reset, the in-app {@code user.verify} template
-     * (V3) also carries the link, so the token appears once in each channel's body, always inside
-     * its link. This test pins that current behaviour (package.md §9 item 6 is partial; follow-up
-     * FU-T20-1 drops the link from the in-app copy). It must never reach a title, a delivery-log
-     * row or any log line. */
+     * path to a different link. It appears exactly once, inside the email's link. Since FU-T20-1
+     * (V16, 2026-10-19) the in-app {@code user.verify} copy is version 2 with no link, so, as with
+     * password reset, the token never reaches the stored in-app row. It must never reach a title,
+     * a delivery-log row or any log line either. */
     @Test
     void shouldNotLeakTheVerificationTokenIntoRenderedMessagesOrLogs() throws SQLException {
         UUID accountUuid = UUID.randomUUID();
@@ -205,17 +204,12 @@ class SecretLeakEndToEndIntegrationTest {
         assertThat(occurrences(body, RAW_VERIFY_TOKEN)).as("the token appears only inside its one link").isEqualTo(1);
         assertThat(emails.get(0).subject()).doesNotContain(RAW_VERIFY_TOKEN);
 
-        // Phase 11 Gap 3: the link-bearing in-app copy is V3's user.verify version 1. When FU-T20-1
-        // seeds a version 2 without the link, this line fails first and says why.
+        // FU-T20-1: the in-app copy is V16's user.verify version 2, which carries no link.
         assertThat(queryStrings("SELECT channel || ':' || template_name || ':' || template_version "
                 + "FROM notifications.delivery_log WHERE account_uuid = ?", accountUuid))
-                .containsExactlyInAnyOrder("EMAIL:email.verify:1", "IN_APP:user.verify:1");
-        List<String> inAppBodies = queryStrings(
-                "SELECT body FROM notifications.inapp_notifications WHERE account_uuid = ?", accountUuid);
-        assertThat(inAppBodies).singleElement().satisfies(inAppBody -> {
-            assertThat(inAppBody).contains("https://app.example.test/app/verify?token=" + RAW_VERIFY_TOKEN);
-            assertThat(occurrences(inAppBody, RAW_VERIFY_TOKEN)).isEqualTo(1);
-        });
+                .containsExactlyInAnyOrder("EMAIL:email.verify:1", "IN_APP:user.verify:2");
+        assertThat(inAppTexts(accountUuid)).singleElement().satisfies(inAppText ->
+                assertThat(inAppText).doesNotContain(RAW_VERIFY_TOKEN, "/app/verify"));
         assertThat(queryStrings("SELECT title || ' ' || coalesce(link, '') FROM notifications.inapp_notifications "
                 + "WHERE account_uuid = ?", accountUuid))
                 .allSatisfy(text -> assertThat(text).doesNotContain(RAW_VERIFY_TOKEN));
