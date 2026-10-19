@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Immutable;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -14,6 +15,7 @@ import java.util.UUID;
  * routing facts never change, so there are no setters and the grant has no UPDATE.
  */
 @Entity
+@Immutable
 @Table(name = "invoice_routes", schema = "notifications")
 public class InvoiceRoute {
 

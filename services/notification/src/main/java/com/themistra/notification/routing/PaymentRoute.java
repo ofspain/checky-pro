@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Immutable;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -13,6 +14,7 @@ import java.util.UUID;
  * {@code payments.receipt.issued}) events (notification T07, frozen brief D2). Insert-once.
  */
 @Entity
+@Immutable
 @Table(name = "payment_routes", schema = "notifications")
 public class PaymentRoute {
 

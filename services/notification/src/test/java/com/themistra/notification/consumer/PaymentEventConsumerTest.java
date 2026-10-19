@@ -1,15 +1,20 @@
 package com.themistra.notification.consumer;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.notification.routing.PaymentRouting;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -221,6 +226,48 @@ class PaymentEventConsumerTest {
         consumer.onInvoiceCreated(invoiceCreatedJson().replace("\"merchantAccountUuid\":\"" + MERCHANT + "\",", ""));
 
         verifyNoInteractions(dispatcher, paymentRouting);
+    }
+
+    /** Phase 9 (Kimi F3, self-review S3): an event without its aggregate UUID is logged and dropped
+     * without being recorded. Otherwise every such event would dedupe against one shared
+     * {@code <type>:null} key and later ones would vanish without a log line. */
+    @Test
+    void shouldNotRecordAnEventThatNamesNoAggregate() throws Exception {
+        consumer.onInvoiceCreated(invoiceCreatedJson().replace("\"invoiceUuid\":\"" + INVOICE + "\",", ""));
+        consumer.onPaymentSeen(paymentSeenJson().replace("\"paymentUuid\":\"" + PAYMENT + "\",", ""));
+        consumer.onPaymentFinalized(paymentFinalizedJson().replace("\"paymentUuid\":\"" + PAYMENT + "\",", ""));
+        consumer.onReceiptIssued(receiptIssuedJson(true).replace("\"receiptUuid\":\"" + RECEIPT + "\",", ""));
+
+        verifyNoInteractions(idempotencyGuard, paymentRouting, dispatcher);
+    }
+
+    /** Phase 9 (Kimi F7, F9, L4): the not-dispatched log lines carry only the topic, key and UUIDs.
+     * Each event here is fully populated and takes a logging branch; none of the payload's
+     * addresses, receipt URI, KMS key, amount or reference may appear in what is logged. */
+    @Test
+    void shouldNeverLogAddressesReceiptUriOrAmounts() throws Exception {
+        Logger logger = (Logger) LoggerFactory.getLogger(PaymentEventConsumer.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            when(paymentRouting.findMerchantForInvoice(INVOICE)).thenReturn(Optional.empty());
+            when(paymentRouting.findInvoiceForPayment(PAYMENT)).thenReturn(Optional.empty());
+
+            consumer.onInvoiceCreated(invoiceCreatedJson().replace("\"merchantAccountUuid\":\"" + MERCHANT + "\",", ""));
+            consumer.onPaymentSeen(paymentSeenJson());
+            consumer.onPaymentFinalized(paymentFinalizedJson());
+            consumer.onReceiptIssued(receiptIssuedJson(false));
+            consumer.onReceiptIssued(receiptIssuedJson(true).replace("\"receiptUuid\":\"" + RECEIPT + "\",", ""));
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        List<String> lines = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+        assertThat(lines).hasSize(5);
+        assertThat(lines).allSatisfy(line -> assertThat(line).doesNotContain(
+                "0xpayto", "0xfrom", "0xtoken", "0xtx", "s3://", "receipts-bucket", "kms-1",
+                "1500000", "order-1", "{"));
     }
 
     /** L1: each listener is transactional and bound to its real topic. */

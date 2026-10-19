@@ -226,6 +226,39 @@ class PaymentEventConsumerIntegrationTest {
         }
     }
 
+    /** Phase 9 (Kimi F5, self-review S1): the disclosed FU-T07-4 limit, made observable. A
+     * payment.seen consumed before its invoice.created finds no merchant route, so it is recorded
+     * as processed (a redelivery won't retry it) and never dispatched, even after the invoice
+     * arrives. If late-route retry is added later, this test must change on purpose. */
+    @Test
+    void paymentSeenBeforeItsInvoiceIsRecordedButNeverDispatched() throws SQLException {
+        UUID merchant = UUID.randomUUID();
+        UUID invoice = UUID.randomUUID();
+        UUID payment = UUID.randomUUID();
+
+        kafkaTemplate.send("payments.payment.seen", invoice.toString(), "{\"paymentUuid\":\"" + payment
+                + "\",\"invoiceUuid\":\"" + invoice + "\",\"chain\":\"ethereum\",\"txHash\":\"0x"
+                + "cd".repeat(32) + "\",\"tokenContractAddress\":\"0x" + "11".repeat(20)
+                + "\",\"confirmations\":1,\"occurredAt\":\"2026-10-19T11:00:00Z\"}");
+        await().atMost(Duration.ofSeconds(60)).untilAsserted(() ->
+                assertThat(scalar("SELECT event_key FROM notifications.processed_events WHERE event_key = "
+                        + "'payment.seen:" + payment + "'")).isNotNull());
+
+        kafkaTemplate.send("payments.invoice.created", invoice.toString(), "{\"invoiceUuid\":\"" + invoice
+                + "\",\"merchantAccountUuid\":\"" + merchant + "\",\"chain\":\"ethereum\","
+                + "\"tokenContractAddress\":\"0x" + "11".repeat(20) + "\",\"tokenDecimals\":6,"
+                + "\"amount\":\"2000000\",\"payToAddress\":\"0x" + "22".repeat(20)
+                + "\",\"reference\":null,\"expiresAt\":\"2026-11-01T00:00:00Z\"}");
+        awaitDispatches(merchant, 1);
+        await().during(Duration.ofSeconds(5)).atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(callsFor(merchant)).extracting(DispatchCall::notificationKind)
+                        .containsExactly("invoice.created"));
+
+        // The route payment.seen carried was still recorded, so a later payment.finalized resolves.
+        assertThat(scalar("SELECT invoice_uuid::text FROM notifications.payment_routes "
+                + "WHERE payment_uuid = '" + payment + "'")).isEqualTo(invoice.toString());
+    }
+
     private static void awaitDispatches(UUID merchant, int expected) {
         await().atMost(Duration.ofSeconds(60)).untilAsserted(() ->
                 assertThat(callsFor(merchant)).hasSize(expected));

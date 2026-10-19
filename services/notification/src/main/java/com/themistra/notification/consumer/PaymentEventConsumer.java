@@ -66,11 +66,15 @@ public class PaymentEventConsumer {
     public void onInvoiceCreated(String rawJson) throws JsonProcessingException {
         InvoiceCreatedEvent event = objectMapper.readValue(rawJson, InvoiceCreatedEvent.class);
         String eventKey = INVOICE_CREATED + ":" + event.invoiceUuid();
+        if (event.invoiceUuid() == null) {
+            logNotDispatched("payments.invoice.created", eventKey, "it names no invoice; not recorded");
+            return;
+        }
         if (!idempotencyGuard.recordIfNew(eventKey, INVOICE_CREATED)) {
             return;
         }
-        if (event.invoiceUuid() == null || event.merchantAccountUuid() == null) {
-            logNotDispatched("payments.invoice.created", eventKey, "it names no invoice or merchant");
+        if (event.merchantAccountUuid() == null) {
+            logNotDispatched("payments.invoice.created", eventKey, "it names no merchant");
             return;
         }
         paymentRouting.recordInvoice(event.invoiceUuid(), event.merchantAccountUuid(), event.tokenDecimals());
@@ -86,11 +90,15 @@ public class PaymentEventConsumer {
     public void onPaymentSeen(String rawJson) throws JsonProcessingException {
         PaymentSeenEvent event = objectMapper.readValue(rawJson, PaymentSeenEvent.class);
         String eventKey = PAYMENT_SEEN + ":" + event.paymentUuid();
+        if (event.paymentUuid() == null) {
+            logNotDispatched("payments.payment.seen", eventKey, "it names no payment; not recorded");
+            return;
+        }
         if (!idempotencyGuard.recordIfNew(eventKey, PAYMENT_SEEN)) {
             return;
         }
-        if (event.paymentUuid() == null || event.invoiceUuid() == null) {
-            logNotDispatched("payments.payment.seen", eventKey, "it names no payment or invoice");
+        if (event.invoiceUuid() == null) {
+            logNotDispatched("payments.payment.seen", eventKey, "it names no invoice");
             return;
         }
         paymentRouting.recordPayment(event.paymentUuid(), event.invoiceUuid());
@@ -110,6 +118,10 @@ public class PaymentEventConsumer {
     public void onPaymentFinalized(String rawJson) throws JsonProcessingException {
         PaymentFinalizedEvent event = objectMapper.readValue(rawJson, PaymentFinalizedEvent.class);
         String eventKey = PAYMENT_FINALIZED + ":" + event.paymentUuid();
+        if (event.paymentUuid() == null) {
+            logNotDispatched("payments.payment.finalized", eventKey, "it names no payment; not recorded");
+            return;
+        }
         if (!idempotencyGuard.recordIfNew(eventKey, PAYMENT_FINALIZED)) {
             return;
         }
@@ -131,11 +143,15 @@ public class PaymentEventConsumer {
     public void onReceiptIssued(String rawJson) throws JsonProcessingException {
         ReceiptIssuedEvent event = objectMapper.readValue(rawJson, ReceiptIssuedEvent.class);
         String eventKey = RECEIPT_ISSUED + ":" + event.receiptUuid();
+        if (event.receiptUuid() == null) {
+            logNotDispatched("payments.receipt.issued", eventKey, "it names no receipt; not recorded");
+            return;
+        }
         if (!idempotencyGuard.recordIfNew(eventKey, RECEIPT_ISSUED)) {
             return;
         }
-        if (event.receiptUuid() == null || event.invoiceUuid() == null) {
-            logNotDispatched("payments.receipt.issued", eventKey, "it names no receipt or invoice");
+        if (event.invoiceUuid() == null) {
+            logNotDispatched("payments.receipt.issued", eventKey, "it names no invoice");
             return;
         }
         // This event carries every link, so it also repairs routes an earlier event never left.

@@ -28,7 +28,7 @@ INSERT INTO notifications.templates (name, channel, version, subject, body) VALU
         NULL,
         'Payment of {{amount}} for invoice {{invoiceId}} finalized.'),
     ('receipt.issued', 'EMAIL', 2,
-        'Your receipt is ready',
+        'Receipt issued',
         'The signed receipt {{receiptId}} for invoice {{invoiceId}} has been issued.'),
     ('receipt.issued', 'IN_APP', 2,
         NULL,
