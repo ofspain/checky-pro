@@ -24,6 +24,7 @@ import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -380,7 +381,23 @@ class ArchitectureTest {
         assertThatThrownBy(() -> shouldEnforcePublicEndpointAllowlist.check(violatingClasses))
                 .as("a class other than ResourceServerConfig calling permitAll() must fail this rule")
                 .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("RoguePermitAllUser")
-                .hasMessageContaining("permitAll");
+                .hasMessageContaining("RoguePermitAllUser.openUp");
+    }
+
+    /** Phase 9 (Kimi Phase 8 F5, accepted). The real-code canary above passes only because the
+     * rule excludes {@link ResourceServerConfig}. This test proves that exclusion is
+     * load-bearing: the analyzed production classes really do contain
+     * {@code ResourceServerConfig}'s {@code permitAll()} call, which sits inside a lambda.
+     * Without it, an import that silently missed that call would make the canary pass
+     * vacuously. Phase 6's manual mutation check (remove the exclusion, so the rule fails at
+     * {@code ResourceServerConfig.java:57}) is encoded here as a permanent test. */
+    @Test
+    void shouldEnforcePublicEndpointAllowlistExclusionIsLoadBearing() {
+        JavaClass resourceServerConfig = analyzedClasses().get(ResourceServerConfig.class);
+
+        assertThat(resourceServerConfig.getMethodCallsFromSelf())
+                .as("ResourceServerConfig must contain the one real AuthorizedUrl.permitAll() call")
+                .anyMatch(call -> call.getName().equals("permitAll")
+                        && call.getTargetOwner().isEquivalentTo(AuthorizeHttpRequestsConfigurer.AuthorizedUrl.class));
     }
 }
