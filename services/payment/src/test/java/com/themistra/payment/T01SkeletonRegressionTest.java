@@ -9,6 +9,10 @@ import software.amazon.awssdk.services.s3.S3Client;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -267,24 +271,33 @@ class T01SkeletonRegressionTest {
      * the bug that broke the auth, crypto and notification Dockerfiles (follow-up FU-T27-1). */
     @Test
     void paymentDockerfileHonoursBuildContextAndSecurityRules() throws IOException {
-        java.util.List<String> lines = stripDockerfileComments(Files.readString(DOCKERFILE));
+        List<String> lines = stripDockerfileComments(Files.readString(DOCKERFILE));
 
-        java.util.List<String> fromLines = lines.stream().filter(line -> line.startsWith("FROM ")).toList();
+        List<String> fromLines = lines.stream().filter(line -> line.startsWith("FROM ")).toList();
         assertThat(fromLines).as("multi-stage build").hasSizeGreaterThanOrEqualTo(2);
         String finalFrom = fromLines.get(fromLines.size() - 1);
         assertThat(finalFrom).as("the runtime stage is distroless JRE 21, non-root (agents.md Deployment)")
                 .isEqualTo("FROM gcr.io/distroless/java21-debian12:nonroot");
-        assertThat(lines.subList(lines.indexOf(finalFrom), lines.size()))
-                .as("the runtime stage runs as nonroot").contains("USER nonroot");
+        List<String> runtimeStage = lines.subList(lines.lastIndexOf(finalFrom), lines.size());
+        assertThat(runtimeStage).as("the runtime stage runs as nonroot").contains("USER nonroot");
+        assertThat(runtimeStage.stream().filter(line -> line.startsWith("COPY --from=")).toList())
+                .as("the runtime stage takes only the repackaged jar from the build stage")
+                .containsExactly("COPY --from=build /workspace/services/payment/target/payment-service.jar app.jar");
+        assertThat(runtimeStage).as("exec-form ENTRYPOINT: distroless has no shell to run a shell-form one")
+                .contains("ENTRYPOINT [\"java\", \"-XX:MaxRAMPercentage=75.0\", \"-jar\", \"app.jar\"]");
 
+        assertThat(lines).as("ADD is never used (it can fetch URLs and unpack archives)")
+                .noneMatch(line -> line.startsWith("ADD "));
         assertThat(lines).as("only explicit paths are copied, never the whole context")
-                .noneMatch(line -> line.matches("COPY\\s+\\.\\s.*") || line.startsWith("ADD "));
-        assertThat(lines).as("L13: no ENV instruction, so no value can be baked into a layer")
-                .noneMatch(line -> line.startsWith("ENV "));
+                .noneMatch(T01SkeletonRegressionTest::copiesWholeContext);
+        assertThat(lines).as("L13: no ENV or ARG instruction, so no value can be baked into a layer "
+                        + "or the image history")
+                .noneMatch(line -> line.startsWith("ENV ") || line.startsWith("ARG "));
 
+        assertThat(lines).as("the root pom is in the build context").contains("COPY pom.xml ./");
         Matcher modules = Pattern.compile("<module>([^<]+)</module>")
                 .matcher(stripXmlComments(Files.readString(ROOT_POM)));
-        java.util.List<String> declaredModules = new java.util.ArrayList<>();
+        List<String> declaredModules = new ArrayList<>();
         while (modules.find()) {
             declaredModules.add(modules.group(1).trim());
         }
@@ -298,12 +311,32 @@ class T01SkeletonRegressionTest {
         assertThat(lines).as("server.port default (application.properties)").contains("EXPOSE 8083");
     }
 
-    /** Drops Dockerfile comment lines and blank lines, and trims the rest. The header comment
-     * explains the rules this test checks, and may name the very instructions it bans. */
-    private static java.util.List<String> stripDockerfileComments(String dockerfile) {
+    /** Drops Dockerfile comment lines and blank lines, trims the rest, and upper-cases each
+     * instruction keyword. Docker reads keywords case-insensitively, so {@code env X=1} must not
+     * slip past a check for {@code ENV}. The header comment explains the rules this test checks,
+     * and may name the very instructions it bans, which is why comments are dropped. */
+    private static List<String> stripDockerfileComments(String dockerfile) {
         return dockerfile.lines().map(String::trim)
                 .filter(line -> !line.isEmpty() && !line.startsWith("#"))
+                .map(line -> {
+                    String[] keywordAndRest = line.split("\\s+", 2);
+                    return keywordAndRest[0].toUpperCase(Locale.ROOT)
+                            + (keywordAndRest.length > 1 ? " " + keywordAndRest[1] : "");
+                })
                 .toList();
+    }
+
+    /** True for a COPY whose source is the whole build context ({@code .} or {@code ./}), with
+     * any {@code --flag} options such as {@code --chown} skipped. The last argument is the
+     * destination, not a source. */
+    private static boolean copiesWholeContext(String line) {
+        if (!line.startsWith("COPY ")) {
+            return false;
+        }
+        List<String> args = Arrays.stream(line.substring(5).trim().split("\\s+"))
+                .filter(arg -> !arg.startsWith("--")).toList();
+        return args.subList(0, Math.max(0, args.size() - 1)).stream()
+                .anyMatch(source -> source.equals(".") || source.equals("./"));
     }
 
     /** Strips XML comments before a negative-proof substring/pattern check. Both this pom and the
