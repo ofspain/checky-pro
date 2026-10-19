@@ -252,9 +252,10 @@ class ArchitectureTest {
                     + "ResourceServerConfig");
 
     /** T28 (threat #5). The entities whose tables are append-only (L7, L9). A repository is
-     * "guarded" when its direct parameterised super-interface has one of these as its first type
-     * argument - identified by domain type, not by name, so a second repository added later for
-     * the same entity is guarded too. Today that is exactly {@code LedgerEntryRepository} and
+     * "guarded" when a parameterised super-interface anywhere in its interface hierarchy has one of
+     * these as its first type argument (Phase 9, Kimi Phase 8 F6: not just a direct one) -
+     * identified by domain type, not by name, so a second repository added later for the same
+     * entity is guarded too. Today that is exactly {@code LedgerEntryRepository} and
      * {@code ReceiptRepository}. */
     private static final Set<String> GUARDED_ENTITY_TYPES = Set.of(
             "com.themistra.payment.receipt.ledger.LedgerEntry",
@@ -267,14 +268,33 @@ class ArchitectureTest {
     private static final String TRANSACTION_EXPORT_REPOSITORY =
             "com.themistra.payment.export.TransactionExportRepository";
 
+    private static final Set<String> ENTITY_MANAGER_BANNED_METHODS =
+            Set.of("remove", "merge", "createQuery", "createNamedQuery", "createStoredProcedureQuery");
+
     private static boolean isGuardedRepository(JavaClass javaClass) {
         return javaClass.isInterface()
                 && javaClass.isAssignableTo(SPRING_DATA_PACKAGE + ".repository.Repository")
-                && javaClass.getInterfaces().stream().anyMatch(type ->
-                        type instanceof JavaParameterizedType parameterized
-                                && !parameterized.getActualTypeArguments().isEmpty()
-                                && GUARDED_ENTITY_TYPES.contains(
-                                        parameterized.getActualTypeArguments().get(0).toErasure().getName()));
+                && hasGuardedEntityTypeArgument(javaClass);
+    }
+
+    /** Walks the interface hierarchy. A parameterised super-interface whose first type argument
+     * is a guarded entity ends the search; a plain one is searched further up. */
+    private static boolean hasGuardedEntityTypeArgument(JavaClass javaClass) {
+        return javaClass.getInterfaces().stream().anyMatch(type -> {
+            if (type instanceof JavaParameterizedType parameterized
+                    && !parameterized.getActualTypeArguments().isEmpty()
+                    && GUARDED_ENTITY_TYPES.contains(
+                            parameterized.getActualTypeArguments().get(0).toErasure().getName())) {
+                return true;
+            }
+            return hasGuardedEntityTypeArgument(type.toErasure());
+        });
+    }
+
+    /** Spring Data derives a delete query from a method name starting {@code deleteBy} or
+     * {@code removeBy}, and neither needs {@code @Modifying} (Phase 7 S1, Kimi Phase 8 F1). */
+    private static boolean isDeleteName(String methodName) {
+        return methodName.startsWith("delete") || methodName.startsWith("remove");
     }
 
     /**
@@ -282,15 +302,17 @@ class ArchitectureTest {
      * a repository, and no guarded repository declares a {@code @Modifying} query.
      *
      * <p><b>Covered.</b> (a) Any access - a call, including one inside a lambda, or a method
-     * reference - to a method whose name starts with {@code delete}, when its owner is a guarded
-     * repository. A call records the static receiver type, so inherited
+     * reference - to a method whose name starts with {@code delete} or {@code remove}, when its
+     * owner is a guarded repository. A call records the static receiver type, so inherited
      * {@code CrudRepository.delete*} methods called on {@code LedgerEntryRepository} are caught.
-     * (b) Any method a guarded repository declares with {@code @Modifying}.</p>
+     * (b) Any method a guarded repository declares with {@code @Modifying}, or with a
+     * {@code delete}/{@code remove} name prefix (a Spring Data derived delete).</p>
      *
      * <p><b>Method references are banned for every repository (Phase 5/6, forced).</b> javac
      * records the <i>declaring</i> type for a method reference, so
      * {@code ledgerEntryRepository::delete} reaches the bytecode as {@code CrudRepository.delete}
-     * and no longer says which repository it was. So any {@code delete*} method reference to a
+     * and no longer says which repository it was. So any {@code delete*}/{@code remove*} method
+     * reference to a
      * Spring Data type is a violation. Nothing in {@code src/main} deletes through any repository
      * today.</p>
      *
@@ -304,12 +326,12 @@ class ArchitectureTest {
     private static final ArchRule shouldForbidLedgerAndReceiptRepositoryDeletesAndModifyingQueries = classes()
             .that().resideInAPackage(ANALYZED_PACKAGE + "..")
             .should(new ArchCondition<JavaClass>(
-                    "not delete through a ledger/receipt repository, and not declare @Modifying on one") {
+                    "not delete through a ledger/receipt repository, and not declare @Modifying or a derived delete on one") {
                 @Override
                 public void check(JavaClass javaClass, ConditionEvents events) {
                     javaClass.getAccessesFromSelf().forEach(access -> {
                         JavaClass owner = access.getTargetOwner();
-                        boolean isDelete = access.getName().startsWith("delete");
+                        boolean isDelete = isDeleteName(access.getName());
                         boolean onGuardedRepository = isGuardedRepository(owner);
                         boolean methodReferenceToSpringData = access instanceof JavaMethodReference
                                 && owner.getPackageName().startsWith(SPRING_DATA_PACKAGE);
@@ -318,33 +340,22 @@ class ArchitectureTest {
                         }
                     });
                     if (isGuardedRepository(javaClass)) {
-                        javaClass.getMethods().stream()
-                                .filter(method -> method.isAnnotatedWith(SPRING_DATA_PACKAGE + ".jpa.repository.Modifying"))
-                                .forEach(method -> events.add(SimpleConditionEvent.violated(method,
-                                        "guarded repository method " + method.getFullName() + " is @Modifying")));
+                        javaClass.getMethods().forEach(method -> {
+                            if (method.isAnnotatedWith(SPRING_DATA_PACKAGE + ".jpa.repository.Modifying")) {
+                                events.add(SimpleConditionEvent.violated(method,
+                                        "guarded repository method " + method.getFullName() + " is @Modifying"));
+                            }
+                            if (isDeleteName(method.getName())) {
+                                events.add(SimpleConditionEvent.violated(method,
+                                        "guarded repository method " + method.getFullName() + " is a derived delete"));
+                            }
+                        });
                     }
                 }
             })
             .because("L7/L9 and threat #5: ledger entries and receipts are append-only - no code "
                     + "path may delete them or run a bulk UPDATE/DELETE on them");
 
-    /**
-     * T28 (frozen brief D2; threat #5, L9/R23). Only {@code ReceiptStore} and
-     * {@code ReceiptStoreConfig} use the S3 SDK at all, and the only client operation anything
-     * calls is {@code putObject}. {@code S3Client.builder()} is allowed only from
-     * {@code ReceiptStoreConfig}, which builds the one client bean.
-     *
-     * <p>Covers the whole {@code software.amazon.awssdk.services.s3} package, so
-     * {@code S3AsyncClient} and {@code S3Presigner} are confined too (Phase 3 F2). Operations are
-     * matched by any access, so calls, calls inside lambdas and method references are all caught
-     * (F5).</p>
-     *
-     * <p><b>Not this rule's claim (F6).</b> That every put carries COMPLIANCE mode and a
-     * retain-until date is proven by {@code ReceiptStoreTest.shouldStoreReceiptInS3ObjectLockWorm}
-     * and the T26 end-to-end test. That a same-key put is never issued rests on a fresh
-     * {@code receiptUuid} per receipt: on a versioned bucket S3 would accept it as a new version
-     * (follow-up FU-T28-1).</p>
-     */
     /** D2 part (a): only {@code ReceiptStore} and {@code ReceiptStoreConfig} may depend on the S3
      * SDK package at all. */
     private static final ArchCondition<JavaClass> useTheS3SdkOnlyFromTheReceiptStore =
@@ -363,27 +374,56 @@ class ArchitectureTest {
                 }
             };
 
-    /** D2 part (b): the only S3 client operation anything may access is {@code putObject}, plus
-     * {@code builder()} from {@code ReceiptStoreConfig}. Applies to every class, the two allowed
-     * ones included. */
+    /** D2 part (b). Applies to every class, the two allowed ones included. The only accesses to
+     * the S3 SDK outside its request/response model package ({@code s3.model}) are:
+     * {@code putObject} on {@code S3Client}/{@code S3AsyncClient}; and, from
+     * {@code ReceiptStoreConfig} only, {@code S3Client.builder()} plus the {@code S3ClientBuilder}
+     * chain. So inside {@code ReceiptStore} too, nothing may use the presigner, the utilities or
+     * any other S3 class (Phase 9, Kimi Phase 8 F5). */
     private static final ArchCondition<JavaClass> callOnlyPutObjectOnS3Clients =
-            new ArchCondition<>("access no S3 client operation other than putObject") {
+            new ArchCondition<>("access no S3 SDK operation other than putObject") {
                 @Override
                 public void check(JavaClass javaClass, ConditionEvents events) {
+                    boolean isConfig = javaClass.getName().equals(RECEIPT_STORE_CONFIG);
                     javaClass.getAccessesFromSelf().forEach(access -> {
                         JavaClass owner = access.getTargetOwner();
+                        String ownerPackage = owner.getPackageName();
+                        boolean inS3Sdk = ownerPackage.startsWith("software.amazon.awssdk.services.s3")
+                                && !ownerPackage.startsWith("software.amazon.awssdk.services.s3.model");
+                        if (!inS3Sdk) {
+                            return;
+                        }
                         boolean onS3Client = owner.isAssignableTo("software.amazon.awssdk.services.s3.S3Client")
                                 || owner.isAssignableTo("software.amazon.awssdk.services.s3.S3AsyncClient");
-                        boolean allowed = access.getName().equals("putObject")
-                                || (access.getName().equals("builder")
-                                        && javaClass.getName().equals(RECEIPT_STORE_CONFIG));
-                        if (onS3Client && !allowed) {
+                        boolean allowed = (onS3Client && access.getName().equals("putObject"))
+                                || (isConfig && onS3Client && access.getName().equals("builder"))
+                                || (isConfig && owner.isAssignableTo("software.amazon.awssdk.services.s3.S3ClientBuilder"));
+                        if (!allowed) {
                             events.add(SimpleConditionEvent.violated(access, access.getDescription()));
                         }
                     });
                 }
             };
 
+    /**
+     * T28 (frozen brief D2; threat #5, L9/R23). Only {@code ReceiptStore} and
+     * {@code ReceiptStoreConfig} use the S3 SDK at all, and the only client operation anything
+     * calls is {@code putObject}. {@code S3Client.builder()} and the {@code S3ClientBuilder} chain
+     * are allowed only from {@code ReceiptStoreConfig}, which builds the one client bean. The
+     * {@code putObject} match is exact, so {@code putObjectRetention}, {@code putObjectLegalHold},
+     * {@code putObjectAcl} and {@code putObjectTagging} are all banned.
+     *
+     * <p>Covers the whole {@code software.amazon.awssdk.services.s3} package, so
+     * {@code S3AsyncClient} and {@code S3Presigner} are confined too (Phase 3 F2). Operations are
+     * matched by any access, so calls, calls inside lambdas and method references are all caught
+     * (F5).</p>
+     *
+     * <p><b>Not this rule's claim (F6).</b> That every put carries COMPLIANCE mode and a
+     * retain-until date is proven by {@code ReceiptStoreTest.shouldStoreReceiptInS3ObjectLockWorm}
+     * and the T26 end-to-end test. That a same-key put is never issued rests on a fresh
+     * {@code receiptUuid} per receipt: on a versioned bucket S3 would accept it as a new version.
+     * Making S3 refuse it (a conditional {@code If-None-Match} put) is a logged follow-up.</p>
+     */
     private static final ArchRule shouldConfineS3SdkToReceiptStorePutObjectOnly = classes()
             .that().resideInAPackage(ANALYZED_PACKAGE + "..")
             .should(useTheS3SdkOnlyFromTheReceiptStore)
@@ -393,10 +433,14 @@ class ArchitectureTest {
 
     /**
      * T28 (frozen brief D5; Phase 3 F1). Database writes go through repositories only. No class
-     * touches {@code JdbcTemplate}/{@code NamedParameterJdbcTemplate} or runs a JDBC
-     * {@code Statement.execute*}. No class calls {@code EntityManager.remove}, {@code merge} or
-     * {@code createQuery}. Only {@code TransactionExportRepository} calls
-     * {@code createNativeQuery}, for the T22 export read. Owners are matched with
+     * touches {@code JdbcTemplate}/{@code NamedParameterJdbcTemplate}, {@code JdbcClient}, or
+     * Hibernate's {@code Session}/{@code StatelessSession}, and none runs a JDBC
+     * {@code Statement.execute*} or {@code Query.executeUpdate}. No class calls
+     * {@code EntityManager.remove}, {@code merge}, {@code createQuery}, {@code createNamedQuery} or
+     * {@code createStoredProcedureQuery}. Only {@code TransactionExportRepository} calls
+     * {@code createNativeQuery}, for the T22 export read. (Phase 9 added {@code JdbcClient},
+     * the Hibernate sessions, the named/stored-procedure queries and {@code executeUpdate} -
+     * Phase 7 S2/S3, Kimi Phase 8 F2-F4.) Owners are matched with
      * {@code isAssignableTo}, so method references (which record the declaring type) are caught
      * as well as calls.
      *
@@ -418,13 +462,18 @@ class ArchitectureTest {
                         boolean jdbcTemplate = owner.isAssignableTo("org.springframework.jdbc.core.JdbcOperations")
                                 || owner.isAssignableTo(
                                         "org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations");
+                        boolean jdbcClient = owner.isAssignableTo("org.springframework.jdbc.core.simple.JdbcClient");
                         boolean jdbcExecute = owner.isAssignableTo("java.sql.Statement") && method.startsWith("execute");
+                        boolean hibernateSession = owner.isAssignableTo("org.hibernate.SharedSessionContract");
+                        boolean queryExecuteUpdate = owner.isAssignableTo("jakarta.persistence.Query")
+                                && method.equals("executeUpdate");
                         boolean entityManager = owner.isAssignableTo("jakarta.persistence.EntityManager");
                         boolean entityManagerWrite = entityManager
-                                && (Set.of("remove", "merge", "createQuery").contains(method)
+                                && (ENTITY_MANAGER_BANNED_METHODS.contains(method)
                                         || (method.equals("createNativeQuery")
                                                 && !javaClass.getName().equals(TRANSACTION_EXPORT_REPOSITORY)));
-                        if (jdbcTemplate || jdbcExecute || entityManagerWrite) {
+                        if (jdbcTemplate || jdbcClient || jdbcExecute || hibernateSession || queryExecuteUpdate
+                                || entityManagerWrite) {
                             events.add(SimpleConditionEvent.violated(access, access.getDescription()));
                         }
                     });
@@ -607,6 +656,8 @@ class ArchitectureTest {
         JavaClasses violatingClasses = new ClassFileImporter().importClasses(
                 Class.forName("com.themistra.payment.receipt.ledger.RogueLedgerEntryRepositoryUser"),
                 Class.forName("com.themistra.payment.receipt.ledger.RogueModifyingLedgerEntryRepository"),
+                Class.forName("com.themistra.payment.receipt.ledger.RogueIndirectLedgerEntryRepository"),
+                Class.forName("com.themistra.payment.receipt.ledger.RogueLedgerEntryRepositoryBase"),
                 Class.forName("com.themistra.payment.receipt.ledger.LedgerEntryRepository"));
 
         assertThatThrownBy(() -> shouldForbidLedgerAndReceiptRepositoryDeletesAndModifyingQueries.check(violatingClasses))
@@ -617,7 +668,10 @@ class ArchitectureTest {
                 .hasMessageContaining("RogueLedgerEntryRepositoryUser.deleteByMethodReference(")
                 // javac records the declaring type for a method reference (CrudRepository).
                 .hasMessageContaining("references method <org.springframework.data.repository.CrudRepository.delete(")
-                .hasMessageContaining("rewriteEveryPrevHash");
+                .hasMessageContaining("rewriteEveryPrevHash")
+                // Phase 9: a derived removeBy... delete, on a repository typed through a base interface.
+                .hasMessageContaining("RogueLedgerEntryRepositoryUser.removeThroughADerivedQuery(")
+                .hasMessageContaining("RogueIndirectLedgerEntryRepository.removeByReceiptId(java.lang.Long) is a derived delete");
     }
 
     @Test
@@ -648,7 +702,10 @@ class ArchitectureTest {
                 .hasMessageContaining("references method <software.amazon.awssdk.services.s3.S3Client.deleteObject(")
                 .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3AsyncClient.deleteObject(")
                 .hasMessageContaining("RogueS3ObjectMutator.buildOwnClient(")
-                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3Client.builder()");
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3Client.builder()")
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3ClientBuilder.build()")
+                // Phase 9 (F5): a non-client S3 class is caught by part (b) too.
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.presigner.S3Presigner.close()");
     }
 
     @Test
@@ -668,7 +725,14 @@ class ArchitectureTest {
                 .hasMessageContaining("RogueRawSqlUser.removeByMethodReference(")
                 .hasMessageContaining("references method <jakarta.persistence.EntityManager.remove(")
                 .hasMessageContaining("RogueRawSqlUser.nativeQueryOutsideTheExport(")
-                .hasMessageContaining("RogueRawSqlUser.jpqlUpdate(");
+                .hasMessageContaining("RogueRawSqlUser.jpqlUpdate(")
+                // Phase 9 (S2/S3, F2-F4).
+                .hasMessageContaining("RogueRawSqlUser.jdbcClientUpdate(")
+                .hasMessageContaining("RogueRawSqlUser.hibernateMutationQuery(")
+                .hasMessageContaining("RogueRawSqlUser.statelessSessionDelete(")
+                .hasMessageContaining("calls method <jakarta.persistence.EntityManager.createNamedQuery(")
+                .hasMessageContaining("calls method <jakarta.persistence.EntityManager.createStoredProcedureQuery(")
+                .hasMessageContaining("RogueRawSqlUser.executeAPassedInQuery(");
     }
 
     /** T28. The real-code canary passes only because {@code TransactionExportRepository} may call
