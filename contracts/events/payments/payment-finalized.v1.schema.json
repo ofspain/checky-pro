@@ -12,7 +12,7 @@
     "fromAddress": { "type": ["string", "null"], "description": "Sender address; null when chain.tx.finalized did not carry one." },
     "toAddress": { "type": ["string", "null"], "description": "Recipient address; null when chain.tx.finalized did not carry one." },
     "tokenContractAddress": { "type": "string" },
-    "amount": { "type": "string", "description": "Observed amount in token base units as a decimal string (never a JSON number)." },
+    "amount": { "type": "string", "description": "Observed amount as a whole number of token base units, as a decimal string (never a JSON number)." },
     "confirmations": { "type": "integer", "minimum": 0 },
     "addressPoisoningFlag": { "type": "boolean" },
     "occurredAt": { "type": "string", "format": "date-time" }

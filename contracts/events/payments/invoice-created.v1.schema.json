@@ -11,7 +11,7 @@
     "chain": { "type": "string" },
     "tokenContractAddress": { "type": "string" },
     "tokenDecimals": { "type": "integer", "minimum": 0, "maximum": 255 },
-    "amount": { "type": "string", "description": "Expected amount in token base units as a decimal string (never a JSON number)." },
+    "amount": { "type": "string", "description": "Expected amount as a whole number of token base units, as a decimal string (never a JSON number)." },
     "payToAddress": { "type": "string" },
     "reference": { "type": ["string", "null"], "maxLength": 140, "description": "Merchant's optional free-text reference; null when the merchant supplied none." },
     "expiresAt": { "type": "string", "format": "date-time" }

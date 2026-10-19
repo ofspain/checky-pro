@@ -10,6 +10,9 @@ import com.themistra.payment.invoice.InvoiceController;
 import com.themistra.payment.invoice.InvoiceState;
 import com.themistra.payment.invoice.dto.CreateInvoiceRequest;
 import com.themistra.payment.invoice.dto.InvoiceResponse;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Size;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -247,14 +250,29 @@ class PaymentsOpenApiContractTest {
     }
 
     /** Phase 4 Finding 1: the contract says {@code amount} is a string while the DTO is
-     * {@code BigDecimal}; this proves a contract-conforming client's string is accepted. */
+     * {@code BigDecimal}; this proves a contract-conforming client's string is accepted. The value
+     * is a whole number of base units, the only kind the service accepts (Phase 9, Kimi #2). */
     @Test
     void createInvoiceRequestAcceptsADecimalStringAmount() throws Exception {
         CreateInvoiceRequest request = objectMapper.readValue("""
                 {"chain":"ETHEREUM","tokenContractAddress":"0xtoken","tokenDecimals":6,
-                 "amount":"10.5","payToAddress":"0xpayto","reference":null}
+                 "amount":"1000000","payToAddress":"0xpayto","reference":null}
                 """, CreateInvoiceRequest.class);
-        assertThat(request.amount()).isEqualByComparingTo(new BigDecimal("10.5"));
+        assertThat(request.amount()).isEqualByComparingTo(new BigDecimal("1000000"));
+    }
+
+    /** Phase 9 (Kimi #6, partial): the documented limits must equal the DTO's own Bean
+     * Validation annotations, so changing one without the other fails here. */
+    @Test
+    void createInvoiceRequestLimitsMatchItsValidationAnnotations() throws Exception {
+        JsonNode properties = contract().get("components").get("schemas").get("CreateInvoiceRequest")
+                .get("properties");
+        assertThat(properties.get("tokenDecimals").get("minimum").asLong()).as("tokenDecimals minimum")
+                .isEqualTo(fieldAnnotation(CreateInvoiceRequest.class, "tokenDecimals", Min.class).value());
+        assertThat(properties.get("tokenDecimals").get("maximum").asLong()).as("tokenDecimals maximum")
+                .isEqualTo(fieldAnnotation(CreateInvoiceRequest.class, "tokenDecimals", Max.class).value());
+        assertThat(properties.get("reference").get("maxLength").asInt()).as("reference maxLength")
+                .isEqualTo(fieldAnnotation(CreateInvoiceRequest.class, "reference", Size.class).max());
     }
 
     /** The named test: {@code shouldConformToPaymentsOpenApiContract} (R31). */
@@ -274,6 +292,7 @@ class PaymentsOpenApiContractTest {
         everyOperationResponseReferencesTheExpectedSchema();
         everyOperationRequestBodyReferencesTheExpectedSchema();
         createInvoiceRequestAcceptsADecimalStringAmount();
+        createInvoiceRequestLimitsMatchItsValidationAnnotations();
     }
 
     /** Guards against silently forgetting to update {@link #expectedResponseSchemas()} when a
@@ -403,8 +422,22 @@ class PaymentsOpenApiContractTest {
         return yamlMapper.readTree(Files.readString(CONTRACT_PATH));
     }
 
+    /** Asserts the path and method exist first, so a renamed or removed route fails with a
+     * message naming it rather than a NullPointerException (Phase 9, self F5 / Kimi #5). */
     private static JsonNode operation(JsonNode contract, Route route) {
-        return contract.get("paths").get(route.path()).get(route.method().toLowerCase(Locale.ROOT));
+        JsonNode path = contract.get("paths").get(route.path());
+        assertThat(path).as("payments.yaml documents path %s", route.path()).isNotNull();
+        JsonNode operation = path.get(route.method().toLowerCase(Locale.ROOT));
+        assertThat(operation).as("payments.yaml documents %s", route).isNotNull();
+        return operation;
+    }
+
+    /** Bean Validation annotations on a record component propagate to its private field. */
+    private static <A extends java.lang.annotation.Annotation> A fieldAnnotation(
+            Class<?> type, String name, Class<A> annotation) throws NoSuchFieldException {
+        A found = type.getDeclaredField(name).getAnnotation(annotation);
+        assertThat(found).as("%s.%s carries @%s", type.getSimpleName(), name, annotation.getSimpleName()).isNotNull();
+        return found;
     }
 
     private static JsonNode parameter(JsonNode contract, Route route, String name) {

@@ -108,7 +108,10 @@ paths:
         - name: Accept
           in: header
           required: false
-          description: Used only when format is absent; text/csv selects CSV, anything else JSON.
+          description: >
+            Used only when format is absent; text/csv selects CSV, anything else JSON.
+            Documentation only: OpenAPI 3.0 (4.7.12.1) tells tooling to ignore a header
+            parameter named Accept, so the rule is also stated in the operation description.
           schema:
             type: string
       responses:
@@ -159,10 +162,10 @@ components:
           maximum: 255
         amount:
           type: string
+          pattern: '^[1-9][0-9]*$'
           description: >
-            Expected amount in token base units as a positive decimal string. A JSON number is
-            also accepted for compatibility, but a string is canonical (numbers can lose
-            precision).
+            Expected amount as a positive whole number of token base units, as a decimal string
+            (never a JSON number). Fractional values are rejected.
         payToAddress:
           type: string
         reference:
@@ -190,7 +193,7 @@ components:
           type: integer
         amount:
           type: string
-          description: Expected amount in token base units as a decimal string.
+          description: Expected amount as a whole number of token base units, as a decimal string.
         payToAddress:
           type: string
         reference:
@@ -233,7 +236,7 @@ components:
           type: integer
         amount:
           type: string
-          description: Observed on-chain amount in token base units as a decimal string.
+          description: Observed on-chain amount as a whole number of token base units, as a decimal string.
         payToAddress:
           type: string
           description: Observed on-chain recipient address.
@@ -275,3 +278,17 @@ components:
         instance:
           type: string
           format: uri
+        violations:
+          type: array
+          description: Present on validation-error responses only, one entry per rejected field.
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+        trace_id:
+          type: string
+          description: Present on internal-error responses only; quote it when contacting support.
