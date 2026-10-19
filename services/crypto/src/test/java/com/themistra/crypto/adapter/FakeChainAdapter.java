@@ -99,6 +99,11 @@ public class FakeChainAdapter implements ChainAdapter {
         return () -> activeSubscriptions.remove(subscription);
     }
 
+    /** Open-issues sweep (2026-10-19): lets tests check whether a watcher is still subscribed. */
+    public int activeSubscriptionCount() {
+        return activeSubscriptions.size();
+    }
+
     @Override
     public FinalityStatus getFinalityStatus(String txHash) {
         FinalityStatus status = scriptedFinalityStatus.get(txHash);

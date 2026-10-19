@@ -365,4 +365,67 @@ class WatcherRegistryTest {
         assertThat(meterRegistry.find("crypto.watcher.lag.seconds")
                 .tag("watchId", watch.watchId().toString()).gauge()).isNull();
     }
+
+    // ---------- Open-issues sweep (2026-10-19): unregister must not stop finality/reorg tracking ----------
+
+    private WatcherRegistry registryWithMeters(WatchRepository watchRepository, ProviderSet providerSet,
+            SimpleMeterRegistry meterRegistry) {
+        return new WatcherRegistry(watchRepository, providerSet, mock(ObservationLog.class),
+                mock(QuorumDecisionService.class), mock(ProviderHealthTracker.class),
+                mock(ChainCursorRepository.class), properties(), meterRegistry, Clock.systemUTC(),
+                new JdbcTemplateLockProvider(cryptoAppDataSource()), new ObjectMapper(),
+                mock(TxLifecyclePublisher.class), List.of(ethereumFinalityPolicy()), mock(ReorgDetector.class));
+    }
+
+    private static boolean hasGauge(SimpleMeterRegistry meterRegistry, Watch watch) {
+        return meterRegistry.find("crypto.watcher.lag.seconds")
+                .tag("watchId", watch.watchId().toString()).gauge() != null;
+    }
+
+    @Test
+    void anUnregisteredWatchWithASeenUnfinalizedTransactionKeepsATrackingOnlyWatcherUntilItSettles() {
+        Watch watch = registeredWatch("ETHEREUM");
+        FakeChainAdapter adapter = new FakeChainAdapter(Chain.ETHEREUM, "provider-a");
+        WatchRepository watchRepository = mock(WatchRepository.class);
+        when(watchRepository.findByStatus(WatchStatus.REGISTERED)).thenReturn(List.of(watch), List.of());
+        when(watchRepository.findUnregisteredWithUnfinalizedSeenTransaction())
+                .thenReturn(List.of(), List.of(watch), List.of());
+        ProviderSet providerSet = mock(ProviderSet.class);
+        when(providerSet.adaptersFor(any())).thenReturn(List.of(new ProviderSet.NamedAdapter("provider-a", adapter)));
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        WatcherRegistry registry = registryWithMeters(watchRepository, providerSet, meterRegistry);
+
+        registry.reconcile(); // registered: matching watcher, subscribed to the address
+        assertThat(adapter.activeSubscriptionCount()).isEqualTo(1);
+
+        registry.reconcile(); // unregistered at SEEN: still running, but no longer subscribed
+        assertThat(hasGauge(meterRegistry, watch)).isTrue();
+        assertThat(adapter.activeSubscriptionCount()).isZero();
+        verify(providerSet, times(1)).adaptersFor(Chain.ETHEREUM); // switched over, not restarted
+
+        registry.reconcile(); // finalized or reorged: no longer listed, so it stops
+        assertThat(hasGauge(meterRegistry, watch)).isFalse();
+    }
+
+    @Test
+    void aReplicaStartsATrackingOnlyWatcherWithNoSubscriptionForAWatchItNeverRan() {
+        // After a restart or a shard handover, the registry has never run this watch.
+        Watch watch = registeredWatch("ETHEREUM");
+        FakeChainAdapter adapter = new FakeChainAdapter(Chain.ETHEREUM, "provider-a");
+        WatchRepository watchRepository = mock(WatchRepository.class);
+        when(watchRepository.findUnregisteredWithUnfinalizedSeenTransaction()).thenReturn(List.of(watch));
+        ProviderSet providerSet = mock(ProviderSet.class);
+        when(providerSet.adaptersFor(any())).thenReturn(List.of(new ProviderSet.NamedAdapter("provider-a", adapter)));
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        WatcherRegistry registry = registryWithMeters(watchRepository, providerSet, meterRegistry);
+
+        registry.reconcile();
+        assertThat(adapter.activeSubscriptionCount()).isZero(); // never subscribed, not cancelled later
+        registry.reconcile();
+
+        assertThat(hasGauge(meterRegistry, watch)).isTrue();
+        assertThat(adapter.activeSubscriptionCount()).isZero();
+        verify(providerSet, times(1)).adaptersFor(Chain.ETHEREUM);
+        registry.shutdown();
+    }
 }

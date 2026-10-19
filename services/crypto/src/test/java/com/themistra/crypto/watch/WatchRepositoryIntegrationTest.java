@@ -27,6 +27,8 @@ import java.sql.Statement;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -239,6 +241,51 @@ class WatchRepositoryIntegrationTest {
     private void cleanUpChainCursorAsAdmin(String watchId) throws SQLException {
         try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
             statement.execute("DELETE FROM chain.chain_cursors WHERE watch_id = '" + watchId + "'");
+        }
+    }
+
+    @Test
+    void findUnregisteredWithUnfinalizedSeenTransactionListsOnlyStoppedWatchesStillAwaitingFinality()
+            throws SQLException {
+        // Open-issues sweep (2026-10-19): the query WatcherRegistry uses to keep finality/reorg
+        // tracking alive after unregister, run against the real schema as crypto_app.
+        UUID registeredSeen = registerWatch();
+        UUID unregisteredSeen = registerWatch();
+        UUID unregisteredFinalized = registerWatch();
+        UUID unregisteredNeverSeen = registerWatch();
+        UUID expiredSeen = registerWatch();
+        markSeen(registeredSeen);
+        markSeen(unregisteredSeen);
+        markSeen(unregisteredFinalized);
+        markSeen(expiredSeen);
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("UPDATE chain.chain_cursors SET last_finalized_block = 150 WHERE watch_id = '"
+                    + unregisteredFinalized + "'");
+            statement.execute("UPDATE chain.watches SET status = 'EXPIRED' WHERE watch_id = '" + expiredSeen + "'");
+        }
+        watchService.unregister(unregisteredSeen);
+        watchService.unregister(unregisteredFinalized);
+        watchService.unregister(unregisteredNeverSeen);
+
+        Set<UUID> ours = Set.of(registeredSeen, unregisteredSeen, unregisteredFinalized, unregisteredNeverSeen,
+                expiredSeen);
+        List<UUID> listed = watchRepository.findUnregisteredWithUnfinalizedSeenTransaction().stream()
+                .map(Watch::watchId)
+                .filter(ours::contains)
+                .toList();
+
+        assertThat(listed).containsExactlyInAnyOrder(unregisteredSeen, expiredSeen);
+    }
+
+    private UUID registerWatch() {
+        return watchService.register(new RegisterWatchRequest(UUID.randomUUID(), "ETHEREUM", VALID_EVM_ADDRESS,
+                VALID_EVM_ADDRESS, "1000000", Instant.now().plus(1, ChronoUnit.DAYS))).watchId();
+    }
+
+    private static void markSeen(UUID watchId) throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("UPDATE chain.chain_cursors SET tx_hash = '0xseen-" + watchId + "' WHERE watch_id = '"
+                    + watchId + "'");
         }
     }
 

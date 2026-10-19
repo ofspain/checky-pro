@@ -2,9 +2,12 @@ package com.themistra.crypto.watch;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.Chain;
+import com.themistra.crypto.adapter.ChainAdapter;
+import com.themistra.crypto.adapter.ObservationSink;
 import com.themistra.crypto.adapter.FakeChainAdapter;
 import com.themistra.crypto.adapter.ProviderSet;
 import com.themistra.crypto.adapter.model.FinalityStatus;
+import com.themistra.crypto.adapter.model.Subscription;
 import com.themistra.crypto.adapter.model.TxResult;
 import com.themistra.crypto.finality.FinalityPolicy;
 import com.themistra.crypto.observation.FactType;
@@ -35,6 +38,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -44,6 +48,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -1012,22 +1017,151 @@ class WatcherTest {
         verify(providerHealthTracker, times(4)).recordHealthy("ETHEREUM", "provider-a");
     }
 
+    // ---------- Open-issues sweep (2026-10-19): tracking survives restart and unregister ----------
+
+    private void scriptFinal() {
+        FinalityStatus isFinal = new FinalityStatus(100L, 200L, 150L);
+        providerA.scriptFinalityStatus(TX_HASH, isFinal);
+        providerB.scriptFinalityStatus(TX_HASH, isFinal);
+        providerC.scriptFinalityStatus(TX_HASH, isFinal);
+        when(finalityPolicy.isFinal(isFinal)).thenReturn(true);
+        when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.FINALITY), anyList()))
+                .thenReturn(agreed(FactType.FINALITY));
+    }
+
+    private void scriptReorgedOut() {
+        TxResult reorgedOut = tx(false, 0L, null, 0);
+        providerA.scriptTx(TX_HASH, reorgedOut);
+        providerB.scriptTx(TX_HASH, reorgedOut);
+        providerC.scriptTx(TX_HASH, reorgedOut);
+    }
+
     @Test
-    void aFreshWatcherInstanceDoesNotResumePollingASeenButNotFinalizedCursor() {
-        // Phase 11 Finding 7 / Phase 9 self-review Finding (accepted, documented-only): pendingFinality
-        // is in-memory only. This is a disclosed, accepted limitation, not a defect this task fixes -
-        // this test locks in the current, intentional behavior so a future change doesn't silently
-        // alter it in either direction without notice.
-        ChainCursor cursorFromBeforeARestart = ChainCursor.placeholder("ETHEREUM", watch.watchId(), NOW);
-        cursorFromBeforeARestart.recordSeenTransaction(TX_HASH, BigDecimal.TEN, "0xfrom", ADDRESS, NOW);
-        when(chainCursorRepository.findByWatchId(watch.watchId()))
-                .thenReturn(Optional.of(cursorFromBeforeARestart));
-        Watcher watcher = newWatcher(60_000); // a brand-new instance, as after a process restart
+    void aRestartedWatcherResumesFinalityPollingForASeenButNotFinalizedCursor() {
+        // Replaces the T17 test that pinned this as a known gap: a brand-new instance (as after a
+        // restart or a shard handover) reloads the seen transaction from its saved cursor.
+        ChainCursor cursorFromBeforeARestart = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        scriptFinal();
+
+        watcher.pollFinality();
+
+        verify(txLifecyclePublisher).finalized(eq(watch), eq(cursorFromBeforeARestart));
+        assertThat(cursorFromBeforeARestart.lastFinalizedBlock()).isEqualTo(150L);
+    }
+
+    @Test
+    void aRestartedWatcherDoesNotReloadAnAlreadyFinalizedCursor() {
+        ChainCursor cursor = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        cursor.advanceFinalizedTo(150L, NOW);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        scriptFinal();
 
         watcher.pollFinality();
 
         verify(observationLog, never())
                 .record(anyString(), anyString(), anyString(), eq(FactType.FINALITY), anyString());
+        verify(txLifecyclePublisher, never()).finalized(any(), any());
+    }
+
+    @Test
+    void reloadingPendingFinalityRetriesOnTheNextTickAfterACursorReadFailure() {
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", watch.watchId(), NOW);
+        cursor.recordSeenTransaction(TX_HASH, BigDecimal.TEN, "0xfrom", ADDRESS, NOW);
+        when(chainCursorRepository.findByWatchId(watch.watchId()))
+                .thenThrow(new RuntimeException("db down"))
+                .thenReturn(Optional.of(cursor));
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        scriptFinal();
+
+        watcher.pollFinality(); // seeding fails; checkForReorg then reads the cursor (no reorg scripted)
+        watcher.pollFinality(); // seeding retried and succeeds
+
+        verify(txLifecyclePublisher).finalized(eq(watch), eq(cursor));
+    }
+
+    @Test
+    void aTrackingOnlyWatcherIgnoresNewObservations() {
+        Watcher watcher = newWatcher(60_000);
+        watcher.start(false);
+
+        deliver(providerA, tx(true, 100L, BigDecimal.TEN, 3));
+        deliver(providerB, tx(true, 100L, BigDecimal.TEN, 3));
+        deliver(providerC, tx(true, 100L, BigDecimal.TEN, 3));
+
+        verifyNoInteractions(observationLog, quorumDecisionService, txLifecyclePublisher);
+        assertThat(watcher.isMatching()).isFalse();
+        assertThat(providerA.activeSubscriptionCount()).isZero();
+    }
+
+    @Test
+    void aTrackingOnlyWatcherStillReportsFinalityForItsMatchedTransaction() {
+        ChainCursor cursor = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start(false);
+        scriptFinal();
+
+        watcher.pollFinality();
+
+        verify(txLifecyclePublisher).finalized(eq(watch), eq(cursor));
+    }
+
+    @Test
+    void aTrackingOnlyWatcherStillReportsAReorgOfItsMatchedTransaction() {
+        ChainCursor cursor = seenCursorFor(TX_HASH, BigDecimal.TEN);
+        Watcher watcher = newWatcher(60_000);
+        watcher.start(false);
+        scriptReorgedOut();
+
+        watcher.pollFinality();
+
+        verify(reorgDetector).reorg(watch.watchId(), watch.invoiceUuid(), watch.chain(), TX_HASH,
+                watch.tokenContractAddress());
+        assertThat(cursor.txHash()).isNull();
+    }
+
+    @Test
+    void anObservationAlreadyInFlightWhenMatchingStopsIsIgnored() {
+        // Subscription.cancel() does not stop a callback already in flight (T16 Phase 3 Finding 10),
+        // so stopMatching must be enforced in the callback itself. This adapter's cancel does nothing.
+        ChainAdapter adapter = mock(ChainAdapter.class);
+        AtomicReference<ObservationSink> sink = new AtomicReference<>();
+        when(adapter.subscribeAddress(eq(ADDRESS), any())).thenAnswer(invocation -> {
+            sink.set(invocation.getArgument(1));
+            return (Subscription) () -> { };
+        });
+        Watcher watcher = newWatcher(60_000, List.of(new ProviderSet.NamedAdapter("provider-a", adapter)));
+        watcher.start();
+
+        watcher.stopMatching();
+        sink.get().onObservation("provider-a", tx(true, 100L, BigDecimal.TEN, 3), "{}");
+
+        verifyNoInteractions(observationLog, quorumDecisionService, providerHealthTracker);
+    }
+
+    @Test
+    void stopMatchingStopsNewObservationsButKeepsPollingTheSeenTransactionToFinality() {
+        ChainCursor cursor = seenCursor();
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult result = tx(true, 100L, BigDecimal.TEN, 3);
+        deliver(providerA, result);
+        deliver(providerB, result);
+        deliver(providerC, result);
+        verify(txLifecyclePublisher).seen(eq(watch), eq(TX_HASH), eq(3));
+
+        watcher.stopMatching(); // what WatcherRegistry does once payment-service unregisters at SEEN
+        clearInvocations(observationLog);
+        deliver(providerA, result);
+        verifyNoInteractions(observationLog);
+
+        scriptFinal();
+        watcher.pollFinality();
+
+        verify(txLifecyclePublisher).finalized(eq(watch), eq(cursor));
     }
 
     @Test
@@ -1353,6 +1487,12 @@ class WatcherTest {
         providerA.scriptTx(TX_HASH, reorgedOut);
         providerB.scriptTx(TX_HASH, reorgedOut);
         // provider-c intentionally left unscripted for TX_HASH - getTx throws, excluded this tick.
+        // The finality half (the seen tx is reloaded from the cursor) gets an answer from all three,
+        // so the LAGGING mark below comes from checkForReorg alone.
+        FinalityStatus notYetFinal = new FinalityStatus(100L, 105L, 90L);
+        providerA.scriptFinalityStatus(TX_HASH, notYetFinal);
+        providerB.scriptFinalityStatus(TX_HASH, notYetFinal);
+        providerC.scriptFinalityStatus(TX_HASH, notYetFinal);
 
         watcher.pollFinality();
 
@@ -1557,6 +1697,7 @@ class WatcherTest {
         ChainCursor cursorReloadedFromDb = ChainCursor.placeholder("ETHEREUM", watch.watchId(), NOW);
         cursorReloadedFromDb.recordSeenTransaction(TX_HASH, BigDecimal.TEN, "0xfrom", ADDRESS, NOW);
         when(chainCursorRepository.findByWatchId(watch.watchId()))
+                .thenReturn(Optional.of(cursorBeforeFailedSave)) // first tick's pending-finality reload
                 .thenReturn(Optional.of(cursorBeforeFailedSave))
                 .thenReturn(Optional.of(cursorBeforeFailedSave))
                 .thenReturn(Optional.of(cursorReloadedFromDb))

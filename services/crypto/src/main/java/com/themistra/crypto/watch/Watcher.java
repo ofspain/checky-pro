@@ -93,6 +93,13 @@ class Watcher {
     private final List<Subscription> subscriptions = new CopyOnWriteArrayList<>();
     private final AtomicReference<Instant> lastObservationAt = new AtomicReference<>();
     private volatile boolean running = false;
+    /** Open-issues sweep (2026-10-19): {@code false} once this watch is no longer registered. The
+     * watcher then ignores new observations but keeps polling finality and reorgs for the transaction
+     * it already matched, so payment-service still gets {@code chain.tx.finalized}/{@code reorged}
+     * after it unregisters at SEEN. */
+    private volatile boolean matching = true;
+    /** Set once {@link #pendingFinality} has been reloaded from the saved cursor. */
+    private volatile boolean pendingFinalitySeeded = false;
     private volatile Gauge lagGauge;
     private volatile ScheduledFuture<?> sweepFuture;
     private volatile ScheduledFuture<?> finalityPollFuture;
@@ -136,7 +143,14 @@ class Watcher {
     }
 
     void start() {
+        start(true);
+    }
+
+    /** {@code matchNewTransactions = false} starts a tracking-only watcher: no address subscriptions
+     * and no correlation sweep, only the finality/reorg poll for an already-matched transaction. */
+    void start(boolean matchNewTransactions) {
         running = true;
+        matching = matchNewTransactions;
         lagGauge = Gauge.builder("crypto.watcher.lag.seconds", lastObservationAt,
                         ref -> ref.get() == null ? 0.0
                                 : clock.instant().getEpochSecond() - ref.get().getEpochSecond())
@@ -147,16 +161,33 @@ class Watcher {
                 // without this tag their gauges would collide.
                 .register(meterRegistry);
 
-        for (ProviderSet.NamedAdapter namedAdapter : adapters) {
-            Subscription subscription = namedAdapter.adapter().subscribeAddress(watch.address(),
-                    this::handleObservation);
-            subscriptions.add(subscription);
+        if (matchNewTransactions) {
+            for (ProviderSet.NamedAdapter namedAdapter : adapters) {
+                Subscription subscription = namedAdapter.adapter().subscribeAddress(watch.address(),
+                        this::handleObservation);
+                subscriptions.add(subscription);
+            }
+            sweepFuture = sweepScheduler.scheduleWithFixedDelay(this::sweepStaleCorrelations,
+                    correlationWindowMs, correlationWindowMs, TimeUnit.MILLISECONDS);
         }
-        sweepFuture = sweepScheduler.scheduleWithFixedDelay(this::sweepStaleCorrelations,
-                correlationWindowMs, correlationWindowMs, TimeUnit.MILLISECONDS);
         // T17: shares this Watcher's own scheduler rather than a second thread pool (frozen brief).
         finalityPollFuture = sweepScheduler.scheduleWithFixedDelay(this::pollFinality,
                 finalityPollIntervalMs, finalityPollIntervalMs, TimeUnit.MILLISECONDS);
+    }
+
+    /** Switches a running watcher to tracking-only: new observations stop, the finality/reorg poll
+     * keeps going. Idempotent. */
+    void stopMatching() {
+        matching = false;
+        subscriptions.forEach(Subscription::cancel);
+        subscriptions.clear();
+        if (sweepFuture != null) {
+            sweepFuture.cancel(false);
+        }
+    }
+
+    boolean isMatching() {
+        return matching;
     }
 
     void stop() {
@@ -175,7 +206,7 @@ class Watcher {
     }
 
     private void handleObservation(String provider, TxResult result, String rawResponseJson) {
-        if (!running) {
+        if (!running || !matching) {
             // T16 Phase 3 Finding 10: Subscription.cancel() does not guarantee suppression of an
             // observation already in flight - this is the actual enforcement point.
             return;
@@ -437,6 +468,7 @@ class Watcher {
      * #handleSeenIfAgreed} once {@code EXISTENCE} agrees {@code true}; removed here once {@code
      * FINALITY} reaches any decided outcome). */
     void pollFinality() {
+        seedPendingFinalityOnce();
         // T18 Phase 9 (self-review Finding 3 / Kimi Finding 3): each half guarded independently - an
         // uncaught RuntimeException from either must never permanently cancel this entire scheduled
         // task (the same class of bug T16 fixed for the adapters' own polling loops), and a failure in
@@ -454,6 +486,26 @@ class Watcher {
                 log.error("pollFinalityFor failed for watchId={} chain={} txHash={} - will retry next "
                         + "tick", watch.watchId(), watch.chain(), txHash, e);
             }
+        }
+    }
+
+    /** Open-issues sweep (2026-10-19): {@link #pendingFinality} lives in memory, so a restarted or
+     * handed-over watcher would never poll finality for a transaction seen before. The first tick
+     * reloads it from the saved cursor: seen ({@code txHash} set) and not yet finalized. Done on the
+     * poll thread, not in {@link #start}, so starting a watcher never touches the database. On a read
+     * failure the flag stays unset and the next tick retries. */
+    private void seedPendingFinalityOnce() {
+        if (pendingFinalitySeeded) {
+            return;
+        }
+        try {
+            chainCursorRepository.findByWatchId(watch.watchId())
+                    .filter(cursor -> cursor.txHash() != null && cursor.lastFinalizedBlock() == null)
+                    .ifPresent(cursor -> pendingFinality.add(cursor.txHash()));
+            pendingFinalitySeeded = true;
+        } catch (RuntimeException e) {
+            log.error("Reloading pending finality failed for watchId={} chain={} - will retry next tick",
+                    watch.watchId(), watch.chain(), e);
         }
     }
 

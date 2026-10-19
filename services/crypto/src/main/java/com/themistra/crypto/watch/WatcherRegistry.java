@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * O5 multi-replica assignment (task 16 - explicit author approval, confirmed at Phase 4, beyond the
@@ -112,21 +113,26 @@ public class WatcherRegistry {
     @Scheduled(fixedDelayString = "${themistra.crypto.watcher.reconciliation-interval-ms}")
     public void reconcile() {
         List<Watch> registeredWatches = watchRepository.findByStatus(WatchStatus.REGISTERED);
+        List<Watch> trackingOnlyWatches = watchRepository.findUnregisteredWithUnfinalizedSeenTransaction();
         for (int shardIndex = 0; shardIndex < properties.shardCount(); shardIndex++) {
-            reconcileShard(shardIndex, registeredWatches);
+            reconcileShard(shardIndex, registeredWatches, trackingOnlyWatches);
         }
     }
 
-    private void reconcileShard(int shardIndex, List<Watch> registeredWatches) {
+    private void reconcileShard(int shardIndex, List<Watch> registeredWatches, List<Watch> trackingOnlyWatches) {
         if (!ownsShard(shardIndex)) {
             return; // another replica holds this shard, or we failed to acquire/renew it this tick
         }
 
-        List<Watch> shardWatches = registeredWatches.stream()
-                .filter(watch -> shardOf(watch.watchId()) == shardIndex)
-                .toList();
+        List<Watch> shardWatches = inShard(registeredWatches, shardIndex);
+        List<Watch> shardTrackingOnly = inShard(trackingOnlyWatches, shardIndex);
         startNewWatchers(shardWatches);
-        stopWatchersNoLongerRegistered(shardIndex, shardWatches);
+        keepTrackingOnly(shardTrackingOnly);
+        stopWatchersNoLongerNeeded(shardIndex, shardWatches, shardTrackingOnly);
+    }
+
+    private List<Watch> inShard(List<Watch> watches, int shardIndex) {
+        return watches.stream().filter(watch -> shardOf(watch.watchId()) == shardIndex).toList();
     }
 
     /** Acquires the shard's lock if not already held, or renews it if it is. Returns {@code false} (and
@@ -150,22 +156,40 @@ public class WatcherRegistry {
 
     private void startNewWatchers(List<Watch> shardWatches) {
         for (Watch watch : shardWatches) {
-            runningWatchers.computeIfAbsent(watch.watchId(), id -> {
-                Watcher watcher = new Watcher(watch, providerSet.adaptersFor(Chain.valueOf(watch.chain())),
-                        observationLog, quorumDecisionService, providerHealthTracker,
-                        chainCursorRepository, properties.correlationWindowMs(), meterRegistry, clock,
-                        objectMapper, txLifecyclePublisher, finalityPolicies,
-                        properties.finalityPollIntervalMs(), reorgDetector);
-                watcher.start();
-                return watcher;
-            });
+            runningWatchers.computeIfAbsent(watch.watchId(), id -> startWatcher(watch, true));
         }
     }
 
-    private void stopWatchersNoLongerRegistered(int shardIndex, List<Watch> shardWatches) {
-        Set<UUID> stillRegistered = shardWatches.stream().map(Watch::watchId).collect(Collectors.toSet());
+    /** Open-issues sweep (2026-10-19): an unregistered or expired watch with a seen, unfinalized
+     * transaction keeps a tracking-only watcher. A running watcher is switched over; after a restart
+     * or shard handover a new tracking-only one is started. */
+    private void keepTrackingOnly(List<Watch> shardTrackingOnly) {
+        for (Watch watch : shardTrackingOnly) {
+            Watcher running = runningWatchers.get(watch.watchId());
+            if (running != null) {
+                running.stopMatching();
+            } else {
+                runningWatchers.computeIfAbsent(watch.watchId(), id -> startWatcher(watch, false));
+            }
+        }
+    }
+
+    private Watcher startWatcher(Watch watch, boolean matchNewTransactions) {
+        Watcher watcher = new Watcher(watch, providerSet.adaptersFor(Chain.valueOf(watch.chain())),
+                observationLog, quorumDecisionService, providerHealthTracker,
+                chainCursorRepository, properties.correlationWindowMs(), meterRegistry, clock,
+                objectMapper, txLifecyclePublisher, finalityPolicies,
+                properties.finalityPollIntervalMs(), reorgDetector);
+        watcher.start(matchNewTransactions);
+        return watcher;
+    }
+
+    private void stopWatchersNoLongerNeeded(int shardIndex, List<Watch> shardWatches,
+            List<Watch> shardTrackingOnly) {
+        Set<UUID> stillNeeded = Stream.concat(shardWatches.stream(), shardTrackingOnly.stream())
+                .map(Watch::watchId).collect(Collectors.toSet());
         for (UUID watchId : List.copyOf(runningWatchers.keySet())) {
-            if (shardOf(watchId) == shardIndex && !stillRegistered.contains(watchId)) {
+            if (shardOf(watchId) == shardIndex && !stillNeeded.contains(watchId)) {
                 stopWatcher(watchId);
             }
         }

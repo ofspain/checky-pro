@@ -21,6 +21,16 @@ interface WatchRepository extends JpaRepository<Watch, Long> {
      * watch's address. */
     List<Watch> findByStatus(WatchStatus status);
 
+    /** Open-issues sweep (2026-10-19): watches no longer registered (unregistered or expired) whose
+     * cursor holds a seen transaction that is not finalized yet. {@code WatcherRegistry} keeps these
+     * running tracking-only, so finality and reorgs are still reported after payment-service
+     * unregisters at SEEN. A reorg clears the cursor's {@code txHash} and finality sets {@code
+     * lastFinalizedBlock}, so either one drops the watch from this list. */
+    @Query("SELECT w FROM Watch w WHERE w.status <> com.themistra.crypto.watch.WatchStatus.REGISTERED "
+            + "AND EXISTS (SELECT c FROM ChainCursor c WHERE c.watchId = w.watchId "
+            + "AND c.txHash IS NOT NULL AND c.lastFinalizedBlock IS NULL)")
+    List<Watch> findUnregisteredWithUnfinalizedSeenTransaction();
+
     /** The sole {@code DELETE}-time mutation (R19, Phase 3 Finding 4) - a single atomic conditional
      * {@code UPDATE}, not a load-then-save. Returns the number of rows updated (0 or 1); callers treat
      * either outcome as success (idempotent no-op vs. real transition) - the 404-vs-204 distinction is
