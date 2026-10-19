@@ -349,6 +349,11 @@ class T01SkeletonRegressionTest {
                 .as("package.md Status must be READY FOR IMPL").isTrue();
         assertThat(Pattern.compile("(?m)^\\| Status \\|[^\\n]*`DRAFT`").matcher(header).find())
                 .as("package.md Status must no longer say DRAFT").isFalse();
+        // Phase 11 (Kimi Gap 6): a duplicate row could otherwise hide a stale value.
+        assertThat(Pattern.compile("(?m)^\\| Version \\|").matcher(header).results().count())
+                .as("the header has exactly one Version row").isEqualTo(1);
+        assertThat(Pattern.compile("(?m)^\\| Status \\|").matcher(header).results().count())
+                .as("the header has exactly one Status row").isEqualTo(1);
     }
 
     /** T29 AC5 (Kimi Phase 3 F4, Phase 8 F1/F2/F4): every test the §9 checklist cites as evidence
@@ -365,11 +370,19 @@ class T01SkeletonRegressionTest {
                 testSourcesByClass.put(name.substring(0, name.length() - ".java".length()), Files.readString(file));
             }
         }
-        String allTestSources = String.join("\n", testSourcesByClass.values());
+        // Phase 11 (Kimi Gap 4): the exemption is exactly the test item 14 names as deferred.
+        List<String> items = verificationChecklistItems();
+        Set<String> deferredInItem14 = new java.util.TreeSet<>();
+        Matcher deferred = Pattern.compile("`(should[A-Za-z0-9_]+)`").matcher(items.get(13));
+        while (deferred.find()) {
+            deferredInItem14.add(deferred.group(1));
+        }
+        assertThat(deferredInItem14).as("item 14 names exactly the exempted deferred tests")
+                .isEqualTo(DEFERRED_UNWRITTEN_TESTS);
 
         List<String> missing = new ArrayList<>();
         int citations = 0;
-        for (String line : verificationChecklistItems()) {
+        for (String line : items) {
             String currentClass = null;
             Matcher matcher = CITATION.matcher(line);
             while (matcher.find()) {
@@ -381,8 +394,10 @@ class T01SkeletonRegressionTest {
                 }
                 if (method == null) {
                     citations++;
-                    if (!testSourcesByClass.containsKey(className)) {
-                        missing.add(className + " (class)");
+                    // Phase 11 (Kimi Gap 3): the file must be a real test class.
+                    String classSource = testSourcesByClass.get(className);
+                    if (classSource == null || !Pattern.compile("@(?:Test|ParameterizedTest)\\b").matcher(classSource).find()) {
+                        missing.add(className + " (test class)");
                     }
                     continue;
                 }
@@ -392,8 +407,11 @@ class T01SkeletonRegressionTest {
                 citations++;
                 String owner = qualifiedMethod != null ? className
                         : matcher.group().startsWith("`.") ? currentClass : null;
-                String source = owner != null ? testSourcesByClass.get(owner) : allTestSources;
-                if (source == null || !source.contains("void " + method + "(")) {
+                // Phase 11 (Kimi Gap 1): the method must be a JUnit test, not a same-named helper.
+                boolean found = owner != null
+                        ? declaresTestMethod(testSourcesByClass.get(owner), method)
+                        : testSourcesByClass.values().stream().anyMatch(source -> declaresTestMethod(source, method));
+                if (!found) {
                     missing.add((owner != null ? owner + "." : "") + method);
                 }
             }
@@ -416,6 +434,26 @@ class T01SkeletonRegressionTest {
         }
         assertThat(items.get(13)).as("§9 item 14 stays deferred")
                 .startsWith("- [ ] **Not applicable this revision:**").contains("deferred");
+        // Phase 11 (Kimi Gap 5): item 1's partial reason, the unbuilt R28 receipt read, stays recorded.
+        assertThat(items.get(0)).as("§9 item 1 keeps its R28 follow-up").contains("FU-T29-1");
+
+        // Phase 11 (Kimi Gap 2): the verified items stay ticked, and every marker is a real checkbox.
+        for (int itemNumber = 2; itemNumber <= 12; itemNumber++) {
+            assertThat(items.get(itemNumber - 1)).as("§9 item %d stays ticked", itemNumber).startsWith("- [x] ");
+        }
+        assertThat(items.stream().filter(item -> item.startsWith("- [x] ")).count())
+                .as("exactly 11 §9 items are ticked").isEqualTo(11);
+        assertThat(items).as("every §9 marker is a GFM checkbox")
+                .allMatch(item -> item.startsWith("- [ ] ") || item.startsWith("- [x] "));
+    }
+
+    /** True when {@code source} declares {@code method} as a JUnit {@code @Test} or
+     * {@code @ParameterizedTest}: the annotation directly precedes it, optionally with further
+     * annotations (such as {@code @CsvSource}) in between. */
+    private static boolean declaresTestMethod(String source, String method) {
+        return source != null && Pattern.compile(
+                "@(?:Test|ParameterizedTest)\\b(?:\\s*@[A-Za-z0-9_.]+(?:\\([^)]*\\))?)*\\s+(?:public\\s+|protected\\s+)?void\\s+"
+                        + Pattern.quote(method) + "\\s*\\(").matcher(source).find();
     }
 
     /** The {@code - [} item lines of {@code package.md} §9, in order. */
