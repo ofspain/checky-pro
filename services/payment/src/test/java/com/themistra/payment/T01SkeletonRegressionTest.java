@@ -38,6 +38,10 @@ class T01SkeletonRegressionTest {
      * allowed, per the Phase 9 decision, so CI can add non-secret OCI labels. */
     private static final Set<String> RUNTIME_STAGE_INSTRUCTIONS =
             Set.of("FROM", "WORKDIR", "COPY", "USER", "EXPOSE", "ENTRYPOINT", "LABEL");
+    private static final Path PAYMENT_PACKAGE_SPEC = Path.of("../../spec/payment-service/package.md");
+    private static final Path TEST_SOURCES = Path.of("src/test/java");
+    /** T29: a test method name cited in a checklist line, optionally qualified by its class. */
+    private static final Pattern CITED_TEST_NAME = Pattern.compile("`(?:[A-Za-z0-9_]+)?\\.?(should[A-Za-z0-9_]+)`");
     private static final Path APPLICATION_SOURCE =
             Path.of("src/main/java/com/themistra/payment/PaymentServiceApplication.java");
 
@@ -328,6 +332,56 @@ class T01SkeletonRegressionTest {
      * instruction keyword. Docker reads keywords case-insensitively, so {@code env X=1} must not
      * slip past a check for {@code ENV}. The header comment explains the rules this test checks,
      * and may name the very instructions it bans, which is why comments are dropped. */
+    /** T29 AC4: the spec bump stays in place. Matched by table row, not line number (Kimi
+     * Phase 3 F2); the Status row by prefix, because a disclosure sentence follows the value. */
+    @Test
+    void paymentSpecIsBumpedToReadyForImplVersionZeroPointTwo() throws IOException {
+        String spec = Files.readString(PAYMENT_PACKAGE_SPEC);
+
+        assertThat(Pattern.compile("(?m)^\\| Version \\| `0\\.2` \\|\\s*$").matcher(spec).find())
+                .as("package.md Version must be 0.2").isTrue();
+        assertThat(Pattern.compile("(?m)^\\| Status \\| `READY FOR IMPL`").matcher(spec).find())
+                .as("package.md Status must be READY FOR IMPL").isTrue();
+        assertThat(Pattern.compile("(?m)^\\| Status \\|[^\\n]*`DRAFT`").matcher(spec).find())
+                .as("package.md Status must no longer say DRAFT").isFalse();
+    }
+
+    /** T29 AC5 (Kimi Phase 3 F4): every test the §9 checklist cites as evidence really exists, so
+     * a rename can't leave the spec pointing at nothing. The "Not applicable this revision" line
+     * is skipped: it names R26's deferred, deliberately unwritten test. */
+    @Test
+    void everyTestNamedInTheVerificationChecklistExists() throws IOException {
+        String spec = Files.readString(PAYMENT_PACKAGE_SPEC);
+        int start = spec.indexOf("## 9. Verification checklist");
+        int end = spec.indexOf("## 10. ", start);
+        assertThat(start).as("package.md must have its §9 checklist").isNotNegative();
+        assertThat(end).as("§9 must be followed by §10").isGreaterThan(start);
+
+        Set<String> cited = new java.util.TreeSet<>();
+        for (String line : spec.substring(start, end).split("\n")) {
+            if (!line.startsWith("- [") || line.contains("Not applicable this revision")) {
+                continue;
+            }
+            Matcher matcher = CITED_TEST_NAME.matcher(line);
+            while (matcher.find()) {
+                cited.add(matcher.group(1));
+            }
+        }
+        assertThat(cited).as("the parse must find the checklist's citations, not pass vacuously")
+                .hasSizeGreaterThanOrEqualTo(15);
+
+        StringBuilder testSources = new StringBuilder();
+        try (var files = Files.walk(TEST_SOURCES)) {
+            for (Path file : files.filter(f -> f.toString().endsWith(".java")).toList()) {
+                testSources.append(Files.readString(file)).append('\n');
+            }
+        }
+        List<String> missing = cited.stream()
+                .filter(name -> !testSources.toString().contains("void " + name + "("))
+                .toList();
+        assertThat(missing).as("§9 cites tests that do not exist").isEmpty();
+    }
+
     private static List<String> stripDockerfileComments(String dockerfile) {
         return dockerfile.lines().map(String::trim)
                 .filter(line -> !line.isEmpty() && !line.startsWith("#"))

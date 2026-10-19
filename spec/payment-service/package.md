@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Spec ID | `PAY-PHASE1` |
-| Version | `0.1` |
+| Version | `0.2` |
 | Author (senior/owner) | `<name>` |
 | Implementer | `TBD` |
-| Status | `DRAFT` — **all of §11's open questions (Q1–Q8) are resolved as of 2026-10-11; nothing in the spec itself blocks starting the build pipeline.** Per `tasks.md` task 29's own convention (mirroring auth/crypto), the bump to `READY FOR IMPL`/`0.2` happens at the end of the 14-phase pipeline once tests pass, not at spec-closure time. |
+| Status | `READY FOR IMPL` — implemented and verified through tasks 1–29 (2026-10-19). Disclosed gaps: R26's on-chain anchor is deferred (Q4, task 21), and R28's receipt read is not built (follow-up FU-T29-1). See §9 items 1, 13 and 14. |
 | Target repo / service | `services/payment` |
 | Skills to load | `spec-authoring`, `code-review` |
 | Standing rules | [`agents.md`](agents.md) in this directory is authoritative for `services/payment` (distilled from `ARCHITECTURE.md`, `docs/service-languages.pdf`, the ADRs, and the sibling `spec/auth-service`). This spec references it and does not restate or override it except where §4a says so explicitly. |
@@ -111,20 +111,20 @@ Every requirement in `requirements.md` maps to at least one named test. Unit tes
 
 ## 9. Verification checklist — implementer self-checks before raising PR
 
-- [ ] All §3 acceptance criteria have a passing named test from §8.
-- [ ] Every §4a LOCKED decision implemented as written (no silent deviation).
-- [ ] Every §4c VERBATIM artifact copied exactly (state enum, DDL, event schemas, Crypto API shapes).
-- [ ] **A receipt is issued only from `FINALIZED`** — a test asserts no code path signs from `SEEN`/`CONFIRMING`.
-- [ ] Money is `BigDecimal`/`NUMERIC` end-to-end; no `double`/`float`/`Double` on any money field (ArchUnit-enforced).
-- [ ] Every consumed `chain.tx.*` handler is idempotent and dedupes on the event key; replaying the same event twice is a no-op.
-- [ ] The hash chain verifies head-to-tail after a full register→finalize→attest flow; tampering with any row is detectable.
-- [ ] Receipts land in the S3 Object Lock bucket in compliance mode; no code path can overwrite an existing receipt object.
-- [ ] The service never imports an AWS KMS signing client and never reads a chain RPC endpoint (ArchUnit-enforced package ban).
-- [ ] Every published event is emitted through the outbox in the same transaction as the state change; `EventTopics` maps every aggregate type.
-- [ ] `mvn -pl services/payment verify` passes (unit + integration + Testcontainers).
-- [ ] `contracts/api/payments.yaml` covers every non-internal endpoint and error response; event payloads validate against `contracts/events/payments/*`.
-- [ ] A watch is unregistered as soon as its invoice's first payment reaches `SEEN` (L14/R7a) — a test proves a second matching transaction produces no further `chain.tx.*` event this service receives.
-- [ ] **Not applicable this revision:** `shouldAnchorLedgerHeadOnChainDaily` (R26) is deferred (Q4, 2026-10-11) — do not block the PR on it, and do not silently skip disclosing that it's deferred.
+- [ ] All §3 acceptance criteria have a passing named test from §8. *(**Partial —** verified at T29: 32 of §8's 35 names exist verbatim and pass. Two exist under a different method name, a cosmetic drift: the cross-module rule runs as `ArchitectureTest.shouldPreventCrossModuleEntityImportsIsCheckedDuringStandardBuild` because of the Surefire `@ArchTest` workaround, and the R10 transition is `PaymentStateMachineTest.shouldTransitionConfirmingToFinalizedOnChainTxFinalized`. R26's test is deferred (item 14). **R28's receipt half is not built:** no receipt read endpoint exists, so only the invoice half is proven (`InvoiceServiceReadTest.shouldScopeInvoiceReadsToOwningMerchant`, renamed in T07). Follow-up FU-T29-1: add the merchant-scoped receipt read with its `404` cross-merchant test.)*
+- [x] Every §4a LOCKED decision implemented as written (no silent deviation). *(per-task Phase 12 specification verification, T01–T28; each deviation was approved at a Phase 4 or Phase 9 human gate and recorded in that task's artifacts, none silent.)*
+- [x] Every §4c VERBATIM artifact copied exactly (state enum, DDL, event schemas, Crypto API shapes). *(integration test — `SchemaBaselineMigrationIntegrationTest`; contract tests — `PaymentsOpenApiContractTest`, `PaymentEventPayloadContractTest`; unit test — `CryptoClientTest` against `contracts/api/crypto-internal.yaml`.)*
+- [x] **A receipt is issued only from `FINALIZED`** — a test asserts no code path signs from `SEEN`/`CONFIRMING`. *(unit test — `ReceiptServiceTest.shouldIssueReceiptOnlyFromFinalizedState`, `.shouldNeverIssueReceiptBeforeFinalized`; integration test — `PaymentEndToEndIntegrationTest.shouldWalkConfirmingBackToSeenOnReorgWithoutIssuingAReceipt`, `.shouldWalkSeenBackToWatchingOnReorgWithoutIssuingAReceipt`.)*
+- [x] Money is `BigDecimal`/`NUMERIC` end-to-end; no `double`/`float`/`Double` on any money field (ArchUnit-enforced). *(ArchUnit — `ArchitectureTest.shouldRejectFloatingPointMoneyTypesAtArchUnit`.)*
+- [x] Every consumed `chain.tx.*` handler is idempotent and dedupes on the event key; replaying the same event twice is a no-op. *(unit test — `ChainEventConsumerTest.shouldDedupeDuplicateChainEventsByEventKey`; integration test — `ChainEventConsumerIdempotencyAndOrderingIntegrationTest`, and the redelivered `chain.tx.finalized` in `PaymentEndToEndIntegrationTest.shouldDriveInvoiceToAttestedReceiptEndToEnd`.)*
+- [x] The hash chain verifies head-to-tail after a full register→finalize→attest flow; tampering with any row is detectable. *(integration test — `PaymentEndToEndIntegrationTest.shouldDriveInvoiceToAttestedReceiptEndToEnd` verifies `Intact`, then rewrites `digest_sha256` as the owner role and sees `ReceiptReconciler` flag it; unit test — `LedgerVerifierTest.shouldDetectBrokenHashChainOnVerification` and siblings; `LedgerIntegrityJob` runs both checks daily. See `SECURITY-THREAT-MODEL.md` row #5.)*
+- [x] Receipts land in the S3 Object Lock bucket in compliance mode; no code path can overwrite an existing receipt object. *(unit test — `ReceiptStoreTest.shouldStoreReceiptInS3ObjectLockWorm`, `.shouldMakeEveryPutConditionalOnNoExistingObject`; ArchUnit — `ArchitectureTest.shouldConfineS3SdkToReceiptStoreCreateAndReadOnlyIsCheckedDuringStandardBuild`; integration test, LocalStack — `ReceiptStoreObjectLockIntegrationTest.shouldRefuseASecondStoreOfTheSameReceiptAndKeepTheOriginalAsTheOnlyVersion`. Bucket configuration and IAM in real AWS are infrastructure-controlled.)*
+- [x] The service never imports an AWS KMS signing client and never reads a chain RPC endpoint (ArchUnit-enforced package ban). *(ArchUnit — `ArchitectureTest.shouldBanKmsAndChainClientImportsIsCheckedDuringStandardBuild`, with its failing-fixture canary.)*
+- [x] Every published event is emitted through the outbox in the same transaction as the state change; `EventTopics` maps every aggregate type. *(unit test — `InvoiceServiceTest.shouldEmitInvoiceCreatedInSameTransactionAsInsert`, `EventTopicsTest.shouldRouteEachPublishedEventToItsPaymentsTopic`; the end-to-end test asserts all four outbox events are relayed and marked published.)*
+- [x] `mvn -pl services/payment verify` passes (unit + integration + Testcontainers). *(532/532 at commit `b8a654e8`, 2026-10-19; re-run at T29 Phase 6: 534/534. The payment Docker image builds (T27). Snapshot counts, not live ones.)*
+- [x] `contracts/api/payments.yaml` covers every non-internal endpoint and error response; event payloads validate against `contracts/events/payments/*`. *(contract tests — `PaymentsOpenApiContractTest.shouldConformToPaymentsOpenApiContract`, `PaymentEventPayloadContractTest`. Disclosed: `design.md` §4c says every payments event is keyed by `invoiceUuid`, but the code keys `payment.*` by `paymentUuid` and `receipt.issued` by `receiptUuid`; the contracts document the real keys. Open follow-up G2.)*
+- [ ] A watch is unregistered as soon as its invoice's first payment reaches `SEEN` (L14/R7a) — a test proves a second matching transaction produces no further `chain.tx.*` event this service receives. *(**Partial —** the payment half is proven: unit test — `ChainEventConsumerTest.shouldUnregisterWatchOnFirstSeenAndIgnoreSecondMatch`; and the end-to-end test asserts the authenticated `DELETE /internal/v1/watches/{id}`. Whether crypto-service then sends no further event is cross-service and unproven here, because the end-to-end test uses a WireMock stand-in. Known crypto-service defect: `unregisterWatch` stops all tracking of an already-matched transaction, so its `confirmed`/`finalized`/`reorged` events may never arrive. Tracked against crypto-service.)*
+- [ ] **Not applicable this revision:** `shouldAnchorLedgerHeadOnChainDaily` (R26) is deferred (Q4, 2026-10-11) — do not block the PR on it, and do not silently skip disclosing that it's deferred. *(Still deferred at T29. Interim tamper detection since `b8a654e8`: `ReceiptReconciler` and `LedgerIntegrityJob` compare the database against the locked S3 originals daily. See `SECURITY-THREAT-MODEL.md` row #5.)*
 
 ## 10. Migration, rollout & rollback
 
