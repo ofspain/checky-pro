@@ -194,6 +194,19 @@ class ArchitectureTest {
             .because("L3: this service never touches a blockchain or KMS - the receipt signature "
                     + "is obtained only via CryptoClient's own POST /attest call");
 
+    /** T23 (Phase 9, Kimi Phase 8 Finding 5, accepted) - every RFC 9457 {@code type} URI must be
+     * a named {@link com.themistra.payment.common.ProblemTypes} constant, never an inline
+     * {@code URI.create(...)} literal at a call site; that is the entire point of "a stable type
+     * catalogue" (R29, agents.md). {@code doNotBelongToAnyOf(ProblemTypes.class)} is the
+     * exclusion - {@code ProblemTypes} itself is the one class allowed to call
+     * {@code URI.create}, since it IS the catalogue. */
+    private static final ArchRule shouldNotInlineProblemTypeUris = noClasses()
+            .that().resideInAPackage(ANALYZED_PACKAGE + "..")
+            .and().doNotBelongToAnyOf(com.themistra.payment.common.ProblemTypes.class)
+            .should().callMethod(java.net.URI.class, "create", String.class)
+            .because("T23/R29: every problem-type URI must be a named ProblemTypes constant, "
+                    + "never an inline literal - the whole point of a stable type catalogue");
+
     private static JavaClasses analyzedClasses() {
         return new ClassFileImporter()
                 .withImportOption(new ImportOption.DoNotIncludeTests())
@@ -213,6 +226,11 @@ class ArchitectureTest {
     @Test
     void shouldBanKmsAndChainClientImportsIsCheckedDuringStandardBuild() {
         shouldBanKmsAndChainClientImports.check(analyzedClasses());
+    }
+
+    @Test
+    void shouldNotInlineProblemTypeUrisIsCheckedDuringStandardBuild() {
+        shouldNotInlineProblemTypeUris.check(analyzedClasses());
     }
 
     /** The canary above only proves the rule passes on already-clean code - it says nothing
@@ -290,5 +308,20 @@ class ArchitectureTest {
                 .hasMessageContaining("acceptDoubleAmount")
                 .hasMessageContaining("constructor")
                 .hasMessageContaining("<init>(float)");
+    }
+
+    /** The canary above only proves the rule passes on already-clean code - it says nothing
+     * about whether it can ever actually fail. {@link RogueInlineProblemTypeUser} is a real
+     * class, deliberately calling {@code URI.create(...)} directly, so this test exercises the
+     * actual violation path. */
+    @Test
+    void shouldNotInlineProblemTypeUrisActuallyFailsAgainstAGenuineViolation() {
+        JavaClasses violatingClasses = new ClassFileImporter()
+                .importClasses(com.themistra.payment.archtestfixtures.RogueInlineProblemTypeUser.class);
+
+        assertThatThrownBy(() -> shouldNotInlineProblemTypeUris.check(violatingClasses))
+                .as("a class other than ProblemTypes calling URI.create(...) must fail this rule")
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueInlineProblemTypeUser");
     }
 }
