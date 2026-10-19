@@ -2,7 +2,9 @@ package com.themistra.payment;
 
 import com.themistra.payment.archtestfixtures.RogueFloatingPointMoneyUser;
 import com.themistra.payment.archtestfixtures.RogueKmsAndChainClientUser;
+import com.themistra.payment.archtestfixtures.RoguePermitAllUser;
 import com.themistra.payment.archtestfixtures.RogueUnmappedEntity;
+import com.themistra.payment.common.ResourceServerConfig;
 import com.themistra.payment.invoice.Invoice;
 import com.themistra.payment.payment.RogueInvoiceEntityReferencer;
 import com.tngtech.archunit.core.domain.JavaClass;
@@ -15,6 +17,7 @@ import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 import jakarta.persistence.Entity;
 import org.junit.jupiter.api.Test;
+import org.springframework.security.config.annotation.web.configurers.AuthorizeHttpRequestsConfigurer;
 
 import java.util.List;
 import java.util.Set;
@@ -213,6 +216,36 @@ class ArchitectureTest {
                     + "never an inline literal (via URI.create or the URI(String) constructor) - "
                     + "the whole point of a stable type catalogue");
 
+    /** T25 (L10). This mirrors the identical rule in {@code services/auth} and
+     * {@code services/notification}. Only {@link ResourceServerConfig} may call
+     * {@code permitAll()}. A stray call anywhere else would quietly add a public endpoint that
+     * nobody documented.
+     *
+     * <p><b>Scope (Phase 4, F6/F1).</b> This rule is the stray-caller guard and nothing more.
+     * {@code PublicEndpointsTest} guards the rest:
+     * <ul>
+     *   <li>the allowlist's contents ({@code PublicEndpoints.PATTERNS});</li>
+     *   <li>the single scoped {@code permitAll()} inside {@code ResourceServerConfig}
+     *       ({@code resourceServerConfigContainsNoPermitAllOutsidePublicEndpoints});</li>
+     *   <li>runtime 401 behaviour.</li>
+     * </ul>
+     *
+     * <p><b>Limits (F2).</b> It covers {@code permitAll()} only. {@code AuthorizedUrl.anonymous()}
+     * and {@code WebSecurityCustomizer} {@code web.ignoring()} are not covered. This service uses
+     * neither.
+     *
+     * <p><b>API coupling (F4).</b> The rule names Spring Security's
+     * {@code AuthorizeHttpRequestsConfigurer.AuthorizedUrl} directly. If an upgrade renames it,
+     * this rule and {@link RoguePermitAllUser} stop compiling, a loud failure that is easy to fix.
+     * They can't silently stop enforcing. */
+    private static final ArchRule shouldEnforcePublicEndpointAllowlist = noClasses()
+            .that().resideInAPackage(ANALYZED_PACKAGE + "..")
+            .and().doNotBelongToAnyOf(ResourceServerConfig.class)
+            .should().callMethod(AuthorizeHttpRequestsConfigurer.AuthorizedUrl.class, "permitAll")
+            .because("L10: every non-internal endpoint requires a valid JWT - the only "
+                    + "unauthenticated paths are PublicEndpoints.PATTERNS, declared solely in "
+                    + "ResourceServerConfig");
+
     private static JavaClasses analyzedClasses() {
         return new ClassFileImporter()
                 .withImportOption(new ImportOption.DoNotIncludeTests())
@@ -237,6 +270,11 @@ class ArchitectureTest {
     @Test
     void shouldNotInlineProblemTypeUrisIsCheckedDuringStandardBuild() {
         shouldNotInlineProblemTypeUris.check(analyzedClasses());
+    }
+
+    @Test
+    void shouldEnforcePublicEndpointAllowlistIsCheckedDuringStandardBuild() {
+        shouldEnforcePublicEndpointAllowlist.check(analyzedClasses());
     }
 
     /** The canary above only proves the rule passes on already-clean code - it says nothing
@@ -329,5 +367,20 @@ class ArchitectureTest {
                 .as("a class other than ProblemTypes calling URI.create(...) must fail this rule")
                 .isInstanceOf(AssertionError.class)
                 .hasMessageContaining("RogueInlineProblemTypeUser");
+    }
+
+    /** The canary above only shows that the rule passes on clean code. It says nothing about
+     * whether the rule can fail. {@link RoguePermitAllUser} is a real class outside
+     * {@code ResourceServerConfig} that calls {@code AuthorizedUrl.permitAll()} on purpose, so
+     * this test exercises the real violation path. */
+    @Test
+    void shouldEnforcePublicEndpointAllowlistActuallyFailsAgainstAGenuineViolation() {
+        JavaClasses violatingClasses = new ClassFileImporter().importClasses(RoguePermitAllUser.class);
+
+        assertThatThrownBy(() -> shouldEnforcePublicEndpointAllowlist.check(violatingClasses))
+                .as("a class other than ResourceServerConfig calling permitAll() must fail this rule")
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RoguePermitAllUser")
+                .hasMessageContaining("permitAll");
     }
 }
