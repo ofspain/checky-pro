@@ -49,6 +49,22 @@ Every mutation fails on its intended assertion. See the tables in `06` and `09`.
 - The **`agents.md` Deployment rule** (multi-stage, distroless JRE 21, non-root, read-only rootfs)
   is covered by the guard test plus AC3 and AC4.
 
+## Open follow-ups (Phase 11 Gap 7)
+
+These are outside T27's scope and are owned by the human. Both are recorded in the frozen
+brief.
+
+- **FU-T27-1.** The `services/{auth,crypto,notification}/Dockerfile` files fail `docker build`.
+  They don't copy all four module poms, so Maven's reactor validation fails. The fix is to copy
+  every module pom, and ideally to give each sibling module the same root-pom-derived guard
+  test. Until then, none of the three has a committed guard.
+- **FU-T27-2.** `jwk-set-uri` is hard-coded to localhost in payment, crypto and notification.
+  The relaxed-binding override works, as AC4 shows. The fix is an `${AUTH_JWKS_URI:…}`
+  placeholder.
+- **Manual gate (Phase 11 Gap 1, rejected for automation).** AC2–AC4 (`docker build`, the image
+  inspect, and the read-only smoke start) stay manual run evidence. Automating them belongs to
+  the infra/CI workstream.
+
 ## Open Questions
 
 None.

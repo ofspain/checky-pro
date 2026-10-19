@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -33,6 +34,10 @@ class T01SkeletonRegressionTest {
     private static final Path ROOT_POM = Path.of("../../pom.xml");
     private static final Path AUTH_POM = Path.of("../auth/pom.xml");
     private static final Path DOCKERFILE = Path.of("Dockerfile");
+    /** T27 Phase 11 (Gap 4). The instructions the distroless runtime stage may use. LABEL stays
+     * allowed, per the Phase 9 decision, so CI can add non-secret OCI labels. */
+    private static final Set<String> RUNTIME_STAGE_INSTRUCTIONS =
+            Set.of("FROM", "WORKDIR", "COPY", "USER", "EXPOSE", "ENTRYPOINT", "LABEL");
     private static final Path APPLICATION_SOURCE =
             Path.of("src/main/java/com/themistra/payment/PaymentServiceApplication.java");
 
@@ -279,7 +284,12 @@ class T01SkeletonRegressionTest {
         assertThat(finalFrom).as("the runtime stage is distroless JRE 21, non-root (agents.md Deployment)")
                 .isEqualTo("FROM gcr.io/distroless/java21-debian12:nonroot");
         List<String> runtimeStage = lines.subList(lines.lastIndexOf(finalFrom), lines.size());
-        assertThat(runtimeStage).as("the runtime stage runs as nonroot").contains("USER nonroot");
+        assertThat(runtimeStage.stream().filter(line -> line.startsWith("USER ")).toList())
+                .as("the runtime stage runs as nonroot, and nothing switches the user back")
+                .containsExactly("USER nonroot");
+        assertThat(runtimeStage).as("distroless runtime stage: only file-placement and metadata "
+                        + "instructions, nothing that needs a shell or reshapes the deployment")
+                .allMatch(line -> RUNTIME_STAGE_INSTRUCTIONS.contains(line.split(" ", 2)[0]));
         assertThat(runtimeStage.stream().filter(line -> line.startsWith("COPY --from=")).toList())
                 .as("the runtime stage takes only the repackaged jar from the build stage")
                 .containsExactly("COPY --from=build /workspace/services/payment/target/payment-service.jar app.jar");
@@ -308,7 +318,10 @@ class T01SkeletonRegressionTest {
                     .contains("COPY " + module + "/pom.xml " + module + "/");
         }
 
-        assertThat(lines).as("server.port default (application.properties)").contains("EXPOSE 8083");
+        assertThat(lines.stream().filter(line -> line.startsWith("EXPOSE ")).toList())
+                .as("server.port default (application.properties), exposed once")
+                .containsExactly("EXPOSE 8083");
+        assertThat(runtimeStage).as("the port is exposed by the image that runs").contains("EXPOSE 8083");
     }
 
     /** Drops Dockerfile comment lines and blank lines, trims the rest, and upper-cases each
