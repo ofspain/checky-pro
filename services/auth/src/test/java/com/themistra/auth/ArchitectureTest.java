@@ -302,12 +302,9 @@ class ArchitectureTest {
      * under Surefire) re-imports the same classes {@code @AnalyzeClasses} would and directly
      * invokes {@link #shouldEnforcePublicEndpointAllowlist}'s own {@code check(...)}, so this
      * task's specific named rule is enforced by {@code mvn test} regardless of the separate,
-     * out-of-scope Surefire/ArchUnit engine-integration gap. Deliberately scoped to only this one
-     * rule (Kimi Phase 11 Gap 2) — every other pre-existing {@code @ArchTest} rule in this file
-     * (a count deliberately not restated here — Kimi Phase 8 Finding 5 caught it going stale the
-     * first time this file grew) remains un-gated by {@code mvn test} until that separate, broader
-     * issue is fixed; generalizing this workaround to cover all of them was judged out of scope
-     * for this task.
+     * out-of-scope Surefire/ArchUnit engine-integration gap. Scoped to this one rule at T32 (Kimi
+     * Phase 11 Gap 2). Since the open-issues sweep (2026-10-19), every {@code @ArchTest} rule in this
+     * file has its own canary below.
      */
     @Test
     void shouldEnforcePublicEndpointAllowlistIsCheckedDuringStandardBuild() {
@@ -343,6 +340,49 @@ class ArchitectureTest {
     @Test
     void controllersDependOnlyOnTheirOwnModuleServicesIsCheckedDuringStandardBuild() {
         controllersDependOnlyOnTheirOwnModuleServices.check(analyzedClasses());
+    }
+
+    // Open-issues sweep (2026-10-19): the eight rules below had no canary, so ArchUnit's engine was
+    // their only runner and they never ran in the build. One canary per rule, so a failure names it.
+
+    @Test
+    void authz_never_depends_on_the_account_moduleIsCheckedDuringStandardBuild() {
+        authz_never_depends_on_the_account_module.check(analyzedClasses());
+    }
+
+    @Test
+    void audit_never_depends_on_the_account_moduleIsCheckedDuringStandardBuild() {
+        audit_never_depends_on_the_account_module.check(analyzedClasses());
+    }
+
+    @Test
+    void events_module_stays_domain_agnosticIsCheckedDuringStandardBuild() {
+        events_module_stays_domain_agnostic.check(analyzedClasses());
+    }
+
+    @Test
+    void repositories_are_never_publicIsCheckedDuringStandardBuild() {
+        repositories_are_never_public.check(analyzedClasses());
+    }
+
+    @Test
+    void only_token_module_references_public_endpointsIsCheckedDuringStandardBuild() {
+        only_token_module_references_public_endpoints.check(analyzedClasses());
+    }
+
+    @Test
+    void only_MfaSeedEncryption_may_use_the_aws_sdkIsCheckedDuringStandardBuild() {
+        only_MfaSeedEncryption_may_use_the_aws_sdk.check(analyzedClasses());
+    }
+
+    @Test
+    void cleanup_job_never_depends_on_repositories_directlyIsCheckedDuringStandardBuild() {
+        cleanup_job_never_depends_on_repositories_directly.check(analyzedClasses());
+    }
+
+    @Test
+    void admin_controller_handlers_require_preauthorizeIsCheckedDuringStandardBuild() {
+        admin_controller_handlers_require_preauthorize.check(analyzedClasses());
     }
 
     /**
