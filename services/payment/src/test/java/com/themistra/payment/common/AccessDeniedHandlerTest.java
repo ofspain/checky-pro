@@ -29,7 +29,7 @@ class AccessDeniedHandlerTest {
         assertThat(response.getContentType()).isEqualTo("application/problem+json");
         String body = response.getContentAsString();
         assertThat(body).as("Phase 8 finding 2: the 401 test already asserts type - this one should too")
-                .contains("\"type\":\"about:blank\"");
+                .contains("\"type\":\"" + ProblemTypes.FORBIDDEN + "\"");
         assertThat(body).contains("\"title\":\"Forbidden\"");
         assertThat(body).contains("\"status\":403");
         assertThat(body).contains("\"detail\":\"The token does not carry the required access.\"");

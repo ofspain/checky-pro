@@ -50,7 +50,7 @@ class ResourceServerConfigTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, "Bearer"))
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
-                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.UNAUTHORIZED.toString()))
                 .andExpect(jsonPath("$.title").value("Unauthorized"))
                 .andExpect(jsonPath("$.status").value(401))
                 .andExpect(jsonPath("$.detail").value("A valid access token is required."));

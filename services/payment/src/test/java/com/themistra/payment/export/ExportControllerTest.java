@@ -2,6 +2,7 @@ package com.themistra.payment.export;
 
 import com.themistra.payment.common.ApiExceptionHandler;
 import com.themistra.payment.common.JwtRoleAuthoritiesConverter;
+import com.themistra.payment.common.ProblemTypes;
 import com.themistra.payment.common.ResourceServerConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -203,6 +204,7 @@ class ExportControllerTest {
         mockMvc.perform(get(PATH + query() + "&format=xml").with(merchantJwt()))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.INVALID_EXPORT_REQUEST.toString()))
                 .andExpect(jsonPath("$.title").value("Invalid export request"));
     }
 
@@ -211,6 +213,7 @@ class ExportControllerTest {
         mockMvc.perform(get(PATH + "?to=" + TO).with(merchantJwt()))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.MISSING_REQUIRED_PARAMETER.toString()))
                 .andExpect(jsonPath("$.title").value("Missing request parameter"))
                 .andExpect(jsonPath("$.detail").value("'from' is required"));
     }
@@ -219,6 +222,7 @@ class ExportControllerTest {
     void shouldReturn400ForMissingToParam() throws Exception {
         mockMvc.perform(get(PATH + "?from=" + FROM).with(merchantJwt()))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value(ProblemTypes.MISSING_REQUIRED_PARAMETER.toString()))
                 .andExpect(jsonPath("$.title").value("Missing request parameter"))
                 .andExpect(jsonPath("$.detail").value("'to' is required"));
     }
@@ -227,6 +231,7 @@ class ExportControllerTest {
     void shouldReturn400ForFromAfterTo() throws Exception {
         mockMvc.perform(get(PATH + "?from=" + TO + "&to=" + FROM).with(merchantJwt()))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value(ProblemTypes.INVALID_EXPORT_REQUEST.toString()))
                 .andExpect(jsonPath("$.title").value("Invalid export request"))
                 .andExpect(jsonPath("$.detail").value("'from' must not be after 'to'"));
     }
@@ -235,6 +240,7 @@ class ExportControllerTest {
     void shouldReturn400ForMalformedFromValue() throws Exception {
         mockMvc.perform(get(PATH + "?from=not-an-instant&to=" + TO).with(merchantJwt()))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value(ProblemTypes.MALFORMED_REQUEST_PARAMETER.toString()))
                 .andExpect(jsonPath("$.title").value("Malformed request parameter"));
     }
 
@@ -244,6 +250,7 @@ class ExportControllerTest {
     void shouldReturn400ForMalformedToValue() throws Exception {
         mockMvc.perform(get(PATH + "?from=" + FROM + "&to=not-an-instant").with(merchantJwt()))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value(ProblemTypes.MALFORMED_REQUEST_PARAMETER.toString()))
                 .andExpect(jsonPath("$.title").value("Malformed request parameter"));
     }
 
@@ -256,6 +263,7 @@ class ExportControllerTest {
 
         mockMvc.perform(get(PATH + query()).with(missingSubJwt))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value(ProblemTypes.INVALID_EXPORT_REQUEST.toString()))
                 .andExpect(jsonPath("$.title").value("Invalid export request"))
                 .andExpect(jsonPath("$.detail").value("sub claim is missing"));
     }
@@ -272,6 +280,7 @@ class ExportControllerTest {
 
         mockMvc.perform(get(PATH + query()).with(malformedSubJwt))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value(ProblemTypes.INVALID_EXPORT_REQUEST.toString()))
                 .andExpect(jsonPath("$.title").value("Invalid export request"))
                 .andExpect(jsonPath("$.detail").value("sub claim is not a valid UUID: not-a-uuid"));
     }
@@ -280,6 +289,7 @@ class ExportControllerTest {
     void shouldRejectNonMerchantCallerWithForbidden() throws Exception {
         mockMvc.perform(get(PATH + query()).with(nonMerchantJwt()))
                 .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.type").value(ProblemTypes.FORBIDDEN.toString()))
                 .andExpect(jsonPath("$.title").value("Forbidden"));
     }
 

@@ -4,6 +4,7 @@ import com.themistra.payment.common.ApiExceptionHandler;
 import com.themistra.payment.common.CryptoClient;
 import com.themistra.payment.common.CryptoServiceUnavailableException;
 import com.themistra.payment.common.JwtRoleAuthoritiesConverter;
+import com.themistra.payment.common.ProblemTypes;
 import com.themistra.payment.common.ResourceServerConfig;
 import com.themistra.payment.common.crypto.RegisterWatchResponse;
 import org.junit.jupiter.api.Test;
@@ -154,7 +155,7 @@ class InvoiceControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_REQUEST_JSON))
                 .andExpect(status().isForbidden())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
-                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.FORBIDDEN.toString()))
                 .andExpect(jsonPath("$.title").value("Forbidden"))
                 .andExpect(jsonPath("$.status").value(403));
     }
@@ -212,7 +213,7 @@ class InvoiceControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_REQUEST_JSON))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
-                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.CRYPTO_SERVICE_UNAVAILABLE.toString()))
                 .andExpect(jsonPath("$.title").value("Crypto Service unavailable"))
                 .andExpect(jsonPath("$.detail").value(
                         "The invoice could not be created because an upstream dependency is unavailable."));
@@ -243,7 +244,7 @@ class InvoiceControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(fractionalAmountRequest))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
-                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.INVALID_INVOICE_REQUEST.toString()))
                 .andExpect(jsonPath("$.title").value("Invalid invoice request"))
                 .andExpect(jsonPath("$.detail").value(
                         "amount must be a whole number of base units (no fractional component)"));
@@ -263,8 +264,38 @@ class InvoiceControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(blankChainRequest))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
-                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.VALIDATION_ERROR.toString()))
                 .andExpect(jsonPath("$.title").value("Validation failed"));
+    }
+
+    /** Named test (T23, R29): the full RFC 9457 shape - a real, stable catalogue {@code type}
+     * (never {@code "about:blank"}), {@code title}/{@code status} present, and no field
+     * anywhere in the body leaks a stack trace or a raw exception class name. Reuses the same
+     * bean-validation scenario the test above already exercises, since this is the simplest real
+     * 4xx path in this controller, not a new failure mode. */
+    @Test
+    void shouldReturnProblemJsonWithNoInternalDetailOn4xx() throws Exception {
+        String blankChainRequest = """
+                {"chain":"","tokenContractAddress":"0xabc","tokenDecimals":18,
+                 "amount":1000,"payToAddress":"0xdef","reference":"order-1"}
+                """;
+
+        String body = mockMvc.perform(post("/api/v1/invoices").with(merchantJwt())
+                        .contentType(MediaType.APPLICATION_JSON).content(blankChainRequest))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.VALIDATION_ERROR.toString()))
+                .andExpect(jsonPath("$.title").value("Validation failed"))
+                .andExpect(jsonPath("$.status").value(400))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(body).as("type must be a real catalogue URI, never the generic placeholder")
+                .doesNotContain("about:blank");
+        assertThat(body).as("no stack trace or exception class name may appear in a 4xx body")
+                .doesNotContainIgnoringCase("exception")
+                .doesNotContainIgnoringCase("stacktrace")
+                .doesNotContainIgnoringCase("MethodArgumentNotValidException")
+                .doesNotContain(".java:");
     }
 
     private static Invoice invoice(UUID merchantAccountUuid) {
@@ -371,13 +402,13 @@ class InvoiceControllerTest {
         mockMvc.perform(get("/api/v1/invoices").with(nonMerchantJwt()))
                 .andExpect(status().isForbidden())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
-                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.FORBIDDEN.toString()))
                 .andExpect(jsonPath("$.title").value("Forbidden"))
                 .andExpect(jsonPath("$.status").value(403));
         mockMvc.perform(get("/api/v1/invoices/" + INVOICE_UUID).with(nonMerchantJwt()))
                 .andExpect(status().isForbidden())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
-                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.type").value(ProblemTypes.FORBIDDEN.toString()))
                 .andExpect(jsonPath("$.title").value("Forbidden"))
                 .andExpect(jsonPath("$.status").value(403));
     }
