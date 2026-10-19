@@ -17,4 +17,11 @@ public class RoguePermitAllUser {
     void openUp(AuthorizeHttpRequestsConfigurer<HttpSecurity>.AuthorizationManagerRequestMatcherRegistry auth) {
         auth.requestMatchers("/rogue/**").permitAll();
     }
+
+    /** Phase 11 Gap 3. This is the realistic shape of a rogue security config: a second
+     * {@code SecurityFilterChain} would call {@code permitAll()} inside a lambda, as
+     * {@code ResourceServerConfig} itself does. */
+    void openUpInsideALambda(HttpSecurity http) throws Exception {
+        http.authorizeHttpRequests(auth -> auth.requestMatchers("/rogue-lambda/**").permitAll());
+    }
 }

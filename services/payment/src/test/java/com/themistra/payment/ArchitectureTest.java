@@ -381,7 +381,9 @@ class ArchitectureTest {
         assertThatThrownBy(() -> shouldEnforcePublicEndpointAllowlist.check(violatingClasses))
                 .as("a class other than ResourceServerConfig calling permitAll() must fail this rule")
                 .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("RoguePermitAllUser.openUp");
+                .hasMessageContaining("RoguePermitAllUser.openUp(")
+                // Phase 11 Gap 3: a permitAll() inside a lambda must be caught too.
+                .hasMessageContaining("RoguePermitAllUser.openUpInsideALambda(");
     }
 
     /** Phase 9 (Kimi Phase 8 F5, accepted). The real-code canary above passes only because the
@@ -395,9 +397,12 @@ class ArchitectureTest {
     void shouldEnforcePublicEndpointAllowlistExclusionIsLoadBearing() {
         JavaClass resourceServerConfig = analyzedClasses().get(ResourceServerConfig.class);
 
+        // Phase 11 Gap 2: exactly one call, not merely at least one - the bytecode-level
+        // counterpart to PublicEndpointsTest's source-line count.
         assertThat(resourceServerConfig.getMethodCallsFromSelf())
-                .as("ResourceServerConfig must contain the one real AuthorizedUrl.permitAll() call")
-                .anyMatch(call -> call.getName().equals("permitAll")
-                        && call.getTargetOwner().isEquivalentTo(AuthorizeHttpRequestsConfigurer.AuthorizedUrl.class));
+                .as("ResourceServerConfig must contain exactly one real AuthorizedUrl.permitAll() call")
+                .filteredOn(call -> call.getName().equals("permitAll")
+                        && call.getTargetOwner().isEquivalentTo(AuthorizeHttpRequestsConfigurer.AuthorizedUrl.class))
+                .hasSize(1);
     }
 }
