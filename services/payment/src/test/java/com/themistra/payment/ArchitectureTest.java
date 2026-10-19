@@ -3,12 +3,16 @@ package com.themistra.payment;
 import com.themistra.payment.archtestfixtures.RogueFloatingPointMoneyUser;
 import com.themistra.payment.archtestfixtures.RogueKmsAndChainClientUser;
 import com.themistra.payment.archtestfixtures.RoguePermitAllUser;
+import com.themistra.payment.archtestfixtures.RogueRawSqlUser;
+import com.themistra.payment.archtestfixtures.RogueS3ObjectMutator;
 import com.themistra.payment.archtestfixtures.RogueUnmappedEntity;
 import com.themistra.payment.common.ResourceServerConfig;
 import com.themistra.payment.invoice.Invoice;
 import com.themistra.payment.payment.RogueInvoiceEntityReferencer;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
+import com.tngtech.archunit.core.domain.JavaMethodReference;
+import com.tngtech.archunit.core.domain.JavaParameterizedType;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.lang.ArchCondition;
@@ -247,6 +251,188 @@ class ArchitectureTest {
                     + "unauthenticated paths are PublicEndpoints.PATTERNS, declared solely in "
                     + "ResourceServerConfig");
 
+    /** T28 (threat #5). The entities whose tables are append-only (L7, L9). A repository is
+     * "guarded" when its direct parameterised super-interface has one of these as its first type
+     * argument - identified by domain type, not by name, so a second repository added later for
+     * the same entity is guarded too. Today that is exactly {@code LedgerEntryRepository} and
+     * {@code ReceiptRepository}. */
+    private static final Set<String> GUARDED_ENTITY_TYPES = Set.of(
+            "com.themistra.payment.receipt.ledger.LedgerEntry",
+            "com.themistra.payment.receipt.Receipt");
+
+    private static final String SPRING_DATA_PACKAGE = "org.springframework.data";
+    private static final String RECEIPT_STORE = "com.themistra.payment.receipt.ReceiptStore";
+    private static final String RECEIPT_STORE_CONFIG = "com.themistra.payment.receipt.ReceiptStoreConfig";
+    /** Package-private, so named here rather than by class literal. */
+    private static final String TRANSACTION_EXPORT_REPOSITORY =
+            "com.themistra.payment.export.TransactionExportRepository";
+
+    private static boolean isGuardedRepository(JavaClass javaClass) {
+        return javaClass.isInterface()
+                && javaClass.isAssignableTo(SPRING_DATA_PACKAGE + ".repository.Repository")
+                && javaClass.getInterfaces().stream().anyMatch(type ->
+                        type instanceof JavaParameterizedType parameterized
+                                && !parameterized.getActualTypeArguments().isEmpty()
+                                && GUARDED_ENTITY_TYPES.contains(
+                                        parameterized.getActualTypeArguments().get(0).toErasure().getName()));
+    }
+
+    /**
+     * T28 (frozen brief D1; threat #5, L7/L9). No code deletes ledger entries or receipts through
+     * a repository, and no guarded repository declares a {@code @Modifying} query.
+     *
+     * <p><b>Covered.</b> (a) Any access - a call, including one inside a lambda, or a method
+     * reference - to a method whose name starts with {@code delete}, when its owner is a guarded
+     * repository. A call records the static receiver type, so inherited
+     * {@code CrudRepository.delete*} methods called on {@code LedgerEntryRepository} are caught.
+     * (b) Any method a guarded repository declares with {@code @Modifying}.</p>
+     *
+     * <p><b>Method references are banned for every repository (Phase 5/6, forced).</b> javac
+     * records the <i>declaring</i> type for a method reference, so
+     * {@code ledgerEntryRepository::delete} reaches the bytecode as {@code CrudRepository.delete}
+     * and no longer says which repository it was. So any {@code delete*} method reference to a
+     * Spring Data type is a violation. Nothing in {@code src/main} deletes through any repository
+     * today.</p>
+     *
+     * <p><b>Not covered here.</b> An {@code UPDATE} through {@code save}: impossible, because
+     * {@code Receipt} and {@code LedgerEntry} have no mutators and {@code LedgerEntry} is
+     * {@code @Immutable} (brief D3). Raw SQL and {@code EntityManager}: see
+     * {@link #shouldConfineRawSqlAndEntityManagerWritesToTheExportRead}. Underneath all of these,
+     * {@code payment_app} holds only INSERT and SELECT on both tables, which
+     * {@code SchemaBaselineMigrationIntegrationTest} proves.</p>
+     */
+    private static final ArchRule shouldForbidLedgerAndReceiptRepositoryDeletesAndModifyingQueries = classes()
+            .that().resideInAPackage(ANALYZED_PACKAGE + "..")
+            .should(new ArchCondition<JavaClass>(
+                    "not delete through a ledger/receipt repository, and not declare @Modifying on one") {
+                @Override
+                public void check(JavaClass javaClass, ConditionEvents events) {
+                    javaClass.getAccessesFromSelf().forEach(access -> {
+                        JavaClass owner = access.getTargetOwner();
+                        boolean isDelete = access.getName().startsWith("delete");
+                        boolean onGuardedRepository = isGuardedRepository(owner);
+                        boolean methodReferenceToSpringData = access instanceof JavaMethodReference
+                                && owner.getPackageName().startsWith(SPRING_DATA_PACKAGE);
+                        if (isDelete && (onGuardedRepository || methodReferenceToSpringData)) {
+                            events.add(SimpleConditionEvent.violated(access, access.getDescription()));
+                        }
+                    });
+                    if (isGuardedRepository(javaClass)) {
+                        javaClass.getMethods().stream()
+                                .filter(method -> method.isAnnotatedWith(SPRING_DATA_PACKAGE + ".jpa.repository.Modifying"))
+                                .forEach(method -> events.add(SimpleConditionEvent.violated(method,
+                                        "guarded repository method " + method.getFullName() + " is @Modifying")));
+                    }
+                }
+            })
+            .because("L7/L9 and threat #5: ledger entries and receipts are append-only - no code "
+                    + "path may delete them or run a bulk UPDATE/DELETE on them");
+
+    /**
+     * T28 (frozen brief D2; threat #5, L9/R23). Only {@code ReceiptStore} and
+     * {@code ReceiptStoreConfig} use the S3 SDK at all, and the only client operation anything
+     * calls is {@code putObject}. {@code S3Client.builder()} is allowed only from
+     * {@code ReceiptStoreConfig}, which builds the one client bean.
+     *
+     * <p>Covers the whole {@code software.amazon.awssdk.services.s3} package, so
+     * {@code S3AsyncClient} and {@code S3Presigner} are confined too (Phase 3 F2). Operations are
+     * matched by any access, so calls, calls inside lambdas and method references are all caught
+     * (F5).</p>
+     *
+     * <p><b>Not this rule's claim (F6).</b> That every put carries COMPLIANCE mode and a
+     * retain-until date is proven by {@code ReceiptStoreTest.shouldStoreReceiptInS3ObjectLockWorm}
+     * and the T26 end-to-end test. That a same-key put is never issued rests on a fresh
+     * {@code receiptUuid} per receipt: on a versioned bucket S3 would accept it as a new version
+     * (follow-up FU-T28-1).</p>
+     */
+    /** D2 part (a): only {@code ReceiptStore} and {@code ReceiptStoreConfig} may depend on the S3
+     * SDK package at all. */
+    private static final ArchCondition<JavaClass> useTheS3SdkOnlyFromTheReceiptStore =
+            new ArchCondition<>("depend on the S3 SDK only from ReceiptStore/ReceiptStoreConfig") {
+                @Override
+                public void check(JavaClass javaClass, ConditionEvents events) {
+                    String name = javaClass.getName();
+                    if (name.equals(RECEIPT_STORE) || name.equals(RECEIPT_STORE_CONFIG)) {
+                        return;
+                    }
+                    javaClass.getDirectDependenciesFromSelf().stream()
+                            .filter(dependency -> dependency.getTargetClass().getPackageName()
+                                    .startsWith("software.amazon.awssdk.services.s3"))
+                            .forEach(dependency -> events.add(
+                                    SimpleConditionEvent.violated(dependency, dependency.getDescription())));
+                }
+            };
+
+    /** D2 part (b): the only S3 client operation anything may access is {@code putObject}, plus
+     * {@code builder()} from {@code ReceiptStoreConfig}. Applies to every class, the two allowed
+     * ones included. */
+    private static final ArchCondition<JavaClass> callOnlyPutObjectOnS3Clients =
+            new ArchCondition<>("access no S3 client operation other than putObject") {
+                @Override
+                public void check(JavaClass javaClass, ConditionEvents events) {
+                    javaClass.getAccessesFromSelf().forEach(access -> {
+                        JavaClass owner = access.getTargetOwner();
+                        boolean onS3Client = owner.isAssignableTo("software.amazon.awssdk.services.s3.S3Client")
+                                || owner.isAssignableTo("software.amazon.awssdk.services.s3.S3AsyncClient");
+                        boolean allowed = access.getName().equals("putObject")
+                                || (access.getName().equals("builder")
+                                        && javaClass.getName().equals(RECEIPT_STORE_CONFIG));
+                        if (onS3Client && !allowed) {
+                            events.add(SimpleConditionEvent.violated(access, access.getDescription()));
+                        }
+                    });
+                }
+            };
+
+    private static final ArchRule shouldConfineS3SdkToReceiptStorePutObjectOnly = classes()
+            .that().resideInAPackage(ANALYZED_PACKAGE + "..")
+            .should(useTheS3SdkOnlyFromTheReceiptStore)
+            .andShould(callOnlyPutObjectOnS3Clients)
+            .because("L9/R23 and threat #5: receipt objects are written once and never deleted, "
+                    + "copied over or re-configured by application code");
+
+    /**
+     * T28 (frozen brief D5; Phase 3 F1). Database writes go through repositories only. No class
+     * touches {@code JdbcTemplate}/{@code NamedParameterJdbcTemplate} or runs a JDBC
+     * {@code Statement.execute*}. No class calls {@code EntityManager.remove}, {@code merge} or
+     * {@code createQuery}. Only {@code TransactionExportRepository} calls
+     * {@code createNativeQuery}, for the T22 export read. Owners are matched with
+     * {@code isAssignableTo}, so method references (which record the declaring type) are caught
+     * as well as calls.
+     *
+     * <p><b>Limit.</b> The rule confines <i>where</i> native SQL can be issued, not <i>what</i>
+     * the export's SQL text says. That text is constrained by {@code payment_app}'s grants, which
+     * {@code SchemaBaselineMigrationIntegrationTest} proves. ShedLock's
+     * {@code JdbcTemplateLockProvider} runs its JDBC inside library code, which is not
+     * analysed.</p>
+     */
+    private static final ArchRule shouldConfineRawSqlAndEntityManagerWritesToTheExportRead = classes()
+            .that().resideInAPackage(ANALYZED_PACKAGE + "..")
+            .should(new ArchCondition<JavaClass>(
+                    "not issue raw SQL or EntityManager writes outside the export read") {
+                @Override
+                public void check(JavaClass javaClass, ConditionEvents events) {
+                    javaClass.getAccessesFromSelf().forEach(access -> {
+                        JavaClass owner = access.getTargetOwner();
+                        String method = access.getName();
+                        boolean jdbcTemplate = owner.isAssignableTo("org.springframework.jdbc.core.JdbcOperations")
+                                || owner.isAssignableTo(
+                                        "org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations");
+                        boolean jdbcExecute = owner.isAssignableTo("java.sql.Statement") && method.startsWith("execute");
+                        boolean entityManager = owner.isAssignableTo("jakarta.persistence.EntityManager");
+                        boolean entityManagerWrite = entityManager
+                                && (Set.of("remove", "merge", "createQuery").contains(method)
+                                        || (method.equals("createNativeQuery")
+                                                && !javaClass.getName().equals(TRANSACTION_EXPORT_REPOSITORY)));
+                        if (jdbcTemplate || jdbcExecute || entityManagerWrite) {
+                            events.add(SimpleConditionEvent.violated(access, access.getDescription()));
+                        }
+                    });
+                }
+            })
+            .because("L7/L9 and threat #5: no code path may reach ledger_entries or receipts "
+                    + "around the repository layer");
+
     private static JavaClasses analyzedClasses() {
         return new ClassFileImporter()
                 .withImportOption(new ImportOption.DoNotIncludeTests())
@@ -403,6 +589,99 @@ class ArchitectureTest {
                 .as("ResourceServerConfig must contain exactly one real AuthorizedUrl.permitAll() call")
                 .filteredOn(call -> call.getName().equals("permitAll")
                         && call.getTargetOwner().isEquivalentTo(AuthorizeHttpRequestsConfigurer.AuthorizedUrl.class))
+                .hasSize(1);
+    }
+
+    @Test
+    void shouldForbidLedgerAndReceiptRepositoryDeletesAndModifyingQueriesIsCheckedDuringStandardBuild() {
+        shouldForbidLedgerAndReceiptRepositoryDeletesAndModifyingQueries.check(analyzedClasses());
+    }
+
+    /** T28. The fixtures sit in the test tree's {@code receipt.ledger} package, because
+     * {@code LedgerEntryRepository} is package-private. They delete by a direct call, inside a
+     * lambda and by method reference, and a second {@code LedgerEntry} repository declares a
+     * {@code @Modifying} query. Each must be reported. */
+    @Test
+    void shouldForbidLedgerAndReceiptRepositoryDeletesAndModifyingQueriesActuallyFailsAgainstAGenuineViolation()
+            throws ClassNotFoundException {
+        JavaClasses violatingClasses = new ClassFileImporter().importClasses(
+                Class.forName("com.themistra.payment.receipt.ledger.RogueLedgerEntryRepositoryUser"),
+                Class.forName("com.themistra.payment.receipt.ledger.RogueModifyingLedgerEntryRepository"),
+                Class.forName("com.themistra.payment.receipt.ledger.LedgerEntryRepository"));
+
+        assertThatThrownBy(() -> shouldForbidLedgerAndReceiptRepositoryDeletesAndModifyingQueries.check(violatingClasses))
+                .as("repository deletes in all three forms, and a @Modifying ledger query, must fail this rule")
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueLedgerEntryRepositoryUser.deleteDirectly(")
+                .hasMessageContaining("RogueLedgerEntryRepositoryUser.deleteInsideALambda(")
+                .hasMessageContaining("RogueLedgerEntryRepositoryUser.deleteByMethodReference(")
+                // javac records the declaring type for a method reference (CrudRepository).
+                .hasMessageContaining("references method <org.springframework.data.repository.CrudRepository.delete(")
+                .hasMessageContaining("rewriteEveryPrevHash");
+    }
+
+    @Test
+    void shouldConfineS3SdkToReceiptStorePutObjectOnlyIsCheckedDuringStandardBuild() {
+        shouldConfineS3SdkToReceiptStorePutObjectOnly.check(analyzedClasses());
+    }
+
+    @Test
+    void shouldConfineS3SdkToReceiptStorePutObjectOnlyActuallyFailsAgainstAGenuineViolation() {
+        JavaClasses violatingClasses = new ClassFileImporter().importClasses(RogueS3ObjectMutator.class);
+
+        assertThatThrownBy(() -> shouldConfineS3SdkToReceiptStorePutObjectOnly.check(violatingClasses))
+                .as("S3 use outside ReceiptStore must fail this rule")
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueS3ObjectMutator.presign(")
+                .hasMessageContaining("has parameter of type <software.amazon.awssdk.services.s3.presigner.S3Presigner>");
+
+        // Part (b) on its own, so the operation check is proven independently of part (a) - every
+        // fixture method also depends on the SDK, which part (a) would report anyway.
+        assertThatThrownBy(() -> classes().should(callOnlyPutObjectOnS3Clients).check(violatingClasses))
+                .as("every non-putObject S3 operation, in every access form, must fail part (b) alone")
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueS3ObjectMutator.deleteDirectly(")
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3Client.deleteObject(")
+                .hasMessageContaining("RogueS3ObjectMutator.copyInsideALambda(")
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3Client.copyObject(")
+                .hasMessageContaining("RogueS3ObjectMutator.deleteByMethodReference(")
+                .hasMessageContaining("references method <software.amazon.awssdk.services.s3.S3Client.deleteObject(")
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3AsyncClient.deleteObject(")
+                .hasMessageContaining("RogueS3ObjectMutator.buildOwnClient(")
+                .hasMessageContaining("calls method <software.amazon.awssdk.services.s3.S3Client.builder()");
+    }
+
+    @Test
+    void shouldConfineRawSqlAndEntityManagerWritesToTheExportReadIsCheckedDuringStandardBuild() {
+        shouldConfineRawSqlAndEntityManagerWritesToTheExportRead.check(analyzedClasses());
+    }
+
+    @Test
+    void shouldConfineRawSqlAndEntityManagerWritesToTheExportReadActuallyFailsAgainstAGenuineViolation() {
+        JavaClasses violatingClasses = new ClassFileImporter().importClasses(RogueRawSqlUser.class);
+
+        assertThatThrownBy(() -> shouldConfineRawSqlAndEntityManagerWritesToTheExportRead.check(violatingClasses))
+                .as("JdbcTemplate, JDBC Statement, and EntityManager writes must each fail this rule")
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueRawSqlUser.jdbcTemplateUpdate(")
+                .hasMessageContaining("RogueRawSqlUser.statementInsideALambda(")
+                .hasMessageContaining("RogueRawSqlUser.removeByMethodReference(")
+                .hasMessageContaining("references method <jakarta.persistence.EntityManager.remove(")
+                .hasMessageContaining("RogueRawSqlUser.nativeQueryOutsideTheExport(")
+                .hasMessageContaining("RogueRawSqlUser.jpqlUpdate(");
+    }
+
+    /** T28. The real-code canary passes only because {@code TransactionExportRepository} may call
+     * {@code createNativeQuery}. This proves the exemption covers exactly one real access, so an
+     * import that silently missed it can't make the canary pass vacuously. */
+    @Test
+    void shouldConfineRawSqlAndEntityManagerWritesToTheExportReadExclusionIsLoadBearing() {
+        JavaClass exportRepository = analyzedClasses().get(TRANSACTION_EXPORT_REPOSITORY);
+
+        assertThat(exportRepository.getAccessesFromSelf())
+                .as("TransactionExportRepository must contain exactly one EntityManager.createNativeQuery access")
+                .filteredOn(access -> access.getName().equals("createNativeQuery")
+                        && access.getTargetOwner().isAssignableTo("jakarta.persistence.EntityManager"))
                 .hasSize(1);
     }
 }
