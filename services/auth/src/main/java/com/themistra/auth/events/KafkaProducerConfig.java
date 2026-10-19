@@ -2,7 +2,7 @@ package com.themistra.auth.events;
 
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.kafka.KafkaConnectionDetails;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
@@ -21,11 +21,16 @@ import java.util.Map;
 @Configuration
 public class KafkaProducerConfig {
 
+    /** Open-issues sweep (2026-10-19): the broker address comes from Spring Boot's {@link
+     * KafkaConnectionDetails}, not the raw {@code spring.kafka.bootstrap-servers} property. In
+     * production both give the same value. In tests, {@code @ServiceConnection} supplies the
+     * container's address only through the connection details, so reading the raw property made the
+     * outbox publish to the local dev broker (localhost:9094) while the tests listened on their own
+     * container, and three Kafka integration tests timed out. */
     @Bean
-    public ProducerFactory<String, String> outboxProducerFactory(
-            @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers) {
+    public ProducerFactory<String, String> outboxProducerFactory(KafkaConnectionDetails connectionDetails) {
         Map<String, Object> props = new HashMap<>();
-        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, connectionDetails.getProducer().getBootstrapServers());
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         props.put(ProducerConfig.ACKS_CONFIG, "all");

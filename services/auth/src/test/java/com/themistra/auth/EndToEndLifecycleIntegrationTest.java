@@ -39,7 +39,13 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -74,9 +80,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * T36 — the one scenario no other test file exercises end-to-end: register → verify email →
- * login (password) → admin assigns MERCHANT → next login requires MFA enrollment (blocked) →
- * enroll TOTP → login with TOTP → create API key → exchange key for JWT → call session list →
- * revoke session, against real Postgres + Kafka (Testcontainers) and a real HTTP server
+ * login (password) → admin assigning MERCHANT is refused before MFA (D-031) → enroll TOTP → admin
+ * assigns MERCHANT → password-only login is blocked → login with TOTP → create API key → exchange
+ * key for JWT → call session list (seeded, see step 10) → revoke session (reordered for D-031 in the open-issues sweep,
+ * 2026-10-19), against real Postgres + Kafka (Testcontainers) and a real HTTP server
  * ({@code webEnvironment = RANDOM_PORT}).
  *
  * <p>Every step with an HTTP surface goes through real HTTP (frozen brief). Two steps
@@ -147,6 +154,9 @@ class EndToEndLifecycleIntegrationTest {
     @Autowired
     private OAuth2AuthorizationService authorizationService;
 
+    @Autowired
+    private RegisteredClientRepository registeredClientRepository;
+
     @PersistenceContext
     private EntityManager entityManager;
 
@@ -161,11 +171,26 @@ class EndToEndLifecycleIntegrationTest {
         return baseUrl;
     }
 
+    /** Open-issues sweep (2026-10-19): {@code restTemplate} is the shared bean of a cached Spring
+     * context, so the no-redirect factory set below must be put back after each test. It used to
+     * leak into later test classes, where the JDK HttpURLConnection drops the body of a 401 to a
+     * POST, failing ApiKeyExchangeIntegrationTest's and ApiKeyLifecycleIntegrationTest's
+     * problem-body assertions whenever they ran after this class. */
+    private ClientHttpRequestFactory originalRequestFactory;
+
+    @AfterEach
+    void restoreSharedRequestFactory() {
+        if (originalRequestFactory != null) {
+            restTemplate.getRestTemplate().setRequestFactory(originalRequestFactory);
+        }
+    }
+
     @BeforeEach
     void setUp() {
         // Phase 11-equivalent guard (established by SasLoginIntegrationTest): TestRestTemplate
         // follows redirects by default, which would silently turn every FOUND assertion below into
         // whatever the Location target returns instead.
+        originalRequestFactory = restTemplate.getRestTemplate().getRequestFactory();
         restTemplate.getRestTemplate().setRequestFactory(new SimpleClientHttpRequestFactory() {
             @Override
             protected void prepareConnection(HttpURLConnection connection, String httpMethod) throws IOException {
@@ -226,31 +251,41 @@ class EndToEndLifecycleIntegrationTest {
                 merchantEmail, PASSWORD, null, generatePkce(), UUID.randomUUID().toString());
         assertThat(passwordOnlyLogin.authorizationCode()).isPresent();
 
-        // 4. Admin bootstrap (plumbing, not a tested step) + "admin assigns MERCHANT" (real HTTP).
+        // Open-issues sweep (2026-10-19): D-031 (RoleService.requireConfirmedMfaIfGated) refuses to
+        // grant MERCHANT before a confirmed TOTP enrollment. This test predates D-031 and never got
+        // this far (it timed out on the Kafka wait above), so its old order - grant, blocked login,
+        // then enroll - is no longer possible. Steps 4-7 now cover both gates in D-031's order.
+
+        // 4. Admin bootstrap (plumbing, not a tested step) + "admin assigns MERCHANT" before
+        // enrollment (real HTTP): refused by D-031, and nothing is granted.
         String adminBearer = bootstrapAdminBearerToken();
         ensureRoleExists("MERCHANT");
+        ResponseEntity<String> earlyAssignResponse = assignRoleViaHttp(adminBearer, merchantUuid, "MERCHANT");
+        assertThat(earlyAssignResponse.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(roleService.resolveEffectiveRoles(merchantUuid)).doesNotContain("MERCHANT");
+
+        // 5. Enroll TOTP - the one step with no HTTP surface in this codebase (Phase 4 gate).
+        byte[] totpSecret = enrollTotp(merchantUuid);
+
+        // 6. Admin assigns MERCHANT (real HTTP), now allowed.
         ResponseEntity<String> assignRoleResponse = assignRoleViaHttp(adminBearer, merchantUuid, "MERCHANT");
         assertThat(assignRoleResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         // Phase 11, Kimi Gap 4: assert the grant actually persisted, not just that the HTTP call
         // returned 204 - otherwise a silently-no-op assignment would make the next step's "blocked"
-        // assertion pass for the wrong reason (no MERCHANT role at all, rather than a genuine
-        // enrollment gate).
+        // assertion pass for the wrong reason (no MERCHANT role at all, rather than a genuine MFA gate).
         assertThat(roleService.resolveEffectiveRoles(merchantUuid)).contains("MERCHANT");
 
-        // 5. Next login requires MFA enrollment - AC2: the freshly MERCHANT-assigned account gets
-        // no authorization code at the /oauth2/authorize layer, pre-enrollment.
-        FullFlowResult preEnrollment = attemptFullAuthorizeFlow(
+        // 6b. A password-only login is now refused - AC2: a MERCHANT gets no authorization code at
+        // the /oauth2/authorize layer without a TOTP code.
+        FullFlowResult passwordOnlyAsMerchant = attemptFullAuthorizeFlow(
                 merchantEmail, PASSWORD, null, generatePkce(), UUID.randomUUID().toString());
-        assertThat(preEnrollment.authorizationCode()).isEmpty();
+        assertThat(passwordOnlyAsMerchant.authorizationCode()).isEmpty();
         // Phase 9, Kimi Finding 8: assert the redirect status itself, not just that some Location
         // header happens to contain the error substring.
-        assertThat(preEnrollment.loginResponse().getStatusCode()).isEqualTo(HttpStatus.FOUND);
-        assertThat(preEnrollment.loginResponse().getHeaders().getLocation())
+        assertThat(passwordOnlyAsMerchant.loginResponse().getStatusCode()).isEqualTo(HttpStatus.FOUND);
+        assertThat(passwordOnlyAsMerchant.loginResponse().getHeaders().getLocation())
                 .isNotNull()
                 .satisfies(location -> assertThat(location.toString()).contains("/login?error"));
-
-        // 6. Enroll TOTP - the one step with no HTTP surface in this codebase (Phase 4 gate).
-        byte[] totpSecret = enrollTotp(merchantUuid);
 
         // 7. Login with TOTP (AC3) - full authorize flow now succeeds; the issued token's amr
         // includes "otp", proving the MFA gate was genuinely exercised, not just bypassed.
@@ -294,8 +329,18 @@ class EndToEndLifecycleIntegrationTest {
         // client_id, acr, timestamps) add no equivalent real-data value and stay in that unit test.
         assertThat(exchangedClaims.getStringListClaim("roles")).contains("MERCHANT");
 
-        // 10. Call session list (AC6) - authenticated with the exchanged JWT; the family created by
-        // step 7's interactive login is expected to be the caller's only active session.
+        // 10. Call session list (AC6) - authenticated with the exchanged JWT.
+        // Open-issues sweep (2026-10-19): the interactive login creates no session. SAS issues no
+        // refresh token to the public checky-spa client (frontend design.md O1/D-012, resolved
+        // 2026-10-10: silent re-auth instead), and a session is a refresh-token family. This test
+        // assumed otherwise but never got this far before. The list is empty after the login, then
+        // a refresh-token authorization is saved through the real OAuth2AuthorizationService, whose
+        // ReuseDetectingAuthorizationService decorator starts the family - as
+        // SessionIntegrationTest seeds one.
+        assertThat(readJson(get(exchangedToken, "/accounts/me/sessions")))
+                .as("D-012: the SPA's interactive login issues no refresh token, so no session")
+                .isEmpty();
+        saveRefreshTokenAuthorization(merchantUuid);
         ResponseEntity<String> listResponse = get(exchangedToken, "/accounts/me/sessions");
         assertThat(listResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode sessions = readJson(listResponse);
@@ -478,6 +523,17 @@ class EndToEndLifecycleIntegrationTest {
         ensureRoleExists("ADMIN");
         roleService.assignRole(registered.accountUuid(), "ADMIN", null);
         return apiKeyTokenIssuer.issue(registered.accountUuid(), List.of()).accessToken();
+    }
+
+    /** Mirrors {@code SessionIntegrationTest.seedRealAuthorization}: one minimal refresh-token
+     * authorization for the SPA client, saved through the real (decorated) service. */
+    private void saveRefreshTokenAuthorization(UUID accountUuid) {
+        RegisteredClient client = registeredClientRepository.findByClientId(authClientsProperties.spa().clientId());
+        authorizationService.save(OAuth2Authorization.withRegisteredClient(client)
+                .principalName(accountUuid.toString())
+                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                .refreshToken(new OAuth2RefreshToken("refresh-" + UUID.randomUUID(), Instant.now()))
+                .build());
     }
 
     /** Roles are shared, class-scoped DB state - created once, reused (matches every sibling

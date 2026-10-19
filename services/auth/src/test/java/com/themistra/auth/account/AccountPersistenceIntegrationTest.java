@@ -3,6 +3,7 @@ package com.themistra.auth.account;
 import com.themistra.auth.TestcontainersConfiguration;
 import com.themistra.auth.account.dto.AccountResponse;
 import com.themistra.auth.account.dto.RegisterAccountRequest;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -20,6 +21,7 @@ import org.testcontainers.kafka.KafkaContainer;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -109,17 +111,24 @@ class AccountPersistenceIntegrationTest {
 
         accountService.activateEmail(registered.accountUuid(), UUID.randomUUID());
 
+        // Open-issues sweep (2026-10-19): register() publishes its own lifecycle event with the same
+        // key first. The old loop asserted ACTIVE on every record for the key, so that earlier event
+        // failed the poll, and the ACTIVE record consumed in the same batch was never seen again.
+        // Records are now collected across polls, and the test looks for the ACTIVE one. The payload is
+        // read as JSON: it is stored as JSONB, which re-formats it ("status": "ACTIVE", with a space),
+        // so the old exact-text match never succeeded.
+        List<String> valuesForAccount = new ArrayList<>();
         Awaitility.await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
             ConsumerRecords<String, String> records = testConsumer.poll(Duration.ofMillis(500));
-            boolean found = false;
             for (ConsumerRecord<String, String> record : records) {
                 if (record.key().equals(registered.accountUuid().toString())) {
-                    assertThat(record.value()).contains("\"status\":\"ACTIVE\"");
-                    found = true;
+                    valuesForAccount.add(record.value());
                 }
             }
-            assertThat(found).as("lifecycle event for %s observed on the real topic", registered.accountUuid())
-                    .isTrue();
+            assertThat(valuesForAccount)
+                    .as("lifecycle event for %s observed on the real topic", registered.accountUuid())
+                    .anySatisfy(value -> assertThat(new ObjectMapper().readTree(value).get("status").asText())
+                            .isEqualTo("ACTIVE"));
         });
     }
 }

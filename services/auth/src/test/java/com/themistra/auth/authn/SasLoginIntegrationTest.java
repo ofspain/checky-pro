@@ -34,6 +34,8 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.junit.jupiter.api.AfterEach;
+import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -140,6 +142,20 @@ class SasLoginIntegrationTest {
 
     private String baseUrl;
 
+    /** Open-issues sweep (2026-10-19): {@code restTemplate} is the shared bean of a cached Spring
+     * context, so the no-redirect factory set below must be put back after each test. It used to
+     * leak into later test classes, where the JDK HttpURLConnection drops the body of a 401 to a
+     * POST, failing ApiKeyExchangeIntegrationTest's and ApiKeyLifecycleIntegrationTest's
+     * problem-body assertions whenever they ran after this class. */
+    private ClientHttpRequestFactory originalRequestFactory;
+
+    @AfterEach
+    void restoreSharedRequestFactory() {
+        if (originalRequestFactory != null) {
+            restTemplate.getRestTemplate().setRequestFactory(originalRequestFactory);
+        }
+    }
+
     @BeforeEach
     void setUp() {
         baseUrl = "http://localhost:" + port;
@@ -148,6 +164,7 @@ class SasLoginIntegrationTest {
         // which would silently turn every 302 this test expects to observe into whatever the
         // Location target returns instead - making every HttpStatus.FOUND assertion below
         // meaningless without this override.
+        originalRequestFactory = restTemplate.getRestTemplate().getRequestFactory();
         restTemplate.getRestTemplate().setRequestFactory(new SimpleClientHttpRequestFactory() {
             @Override
             protected void prepareConnection(HttpURLConnection connection, String httpMethod) throws IOException {
