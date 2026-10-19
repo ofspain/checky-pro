@@ -52,11 +52,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * not (a caller could depend on {@code KmsSigner} without ever depending on the KMS SDK directly).</p>
  *
  * <p><b>Plain {@code @Test} canaries only (open-issues sweep, 2026-10-19).</b> This class used to
- * hold {@code @ArchTest} fields beside the canaries. Under this repo's Surefire 3.5.3, any class with
- * an {@code @ArchTest} field reports 0 tests, including its plain {@code @Test} methods, so the
- * canaries never ran either and these rules were not enforced. The annotations and {@code
- * @AnalyzeClasses} were removed; the rules are plain {@code ArchRule} fields checked by the
- * canaries.</p>
+ * hold {@code @ArchTest} fields beside the canaries. ArchUnit's own JUnit engine never ran those
+ * fields under this repo's Surefire setup (it reports a separate "Tests run: 0" line for the class),
+ * but the plain {@code @Test} canaries did run and gate the build. The inert annotations and
+ * {@code @AnalyzeClasses} were removed so the class no longer looks like it relies on them.</p>
  */
 class KmsSignerArchitectureTest {
 
