@@ -275,6 +275,54 @@ class PaymentsOpenApiContractTest {
                 .isEqualTo(fieldAnnotation(CreateInvoiceRequest.class, "reference", Size.class).max());
     }
 
+    /** Phase 9 (self F1 / Kimi #1): the request amount pattern admits exactly positive whole
+     * base units in canonical form, the only amounts {@code InvoiceService} accepts (R4). */
+    @Test
+    void createInvoiceRequestAmountPatternAdmitsOnlyPositiveWholeBaseUnits() throws Exception {
+        JsonNode amount = contract().get("components").get("schemas").get("CreateInvoiceRequest")
+                .get("properties").get("amount");
+        String pattern = amount.get("pattern").asText();
+        assertThat(pattern).isEqualTo("^[1-9][0-9]*$");
+
+        java.util.regex.Pattern regex = java.util.regex.Pattern.compile(pattern);
+        for (String valid : List.of("1", "1000000", "115792089237316195423570985008687907853269984665640564039457584007913129639935")) {
+            assertThat(regex.matcher(valid).matches()).as("'%s' is a valid amount", valid).isTrue();
+        }
+        for (String invalid : List.of("0", "-1", "10.5", "1e6", "01", "", " 1")) {
+            assertThat(regex.matcher(invalid).matches()).as("'%s' is not a valid amount", invalid).isFalse();
+        }
+    }
+
+    /** Phase 9 (self F4 / Kimi #3): {@code Problem.violations} items mirror the handler's own
+     * {@code Violation} record, and {@code trace_id} is documented; neither is required. */
+    @Test
+    void problemExtensionMembersMatchWhatTheHandlersEmit() throws Exception {
+        JsonNode problem = contract().get("components").get("schemas").get("Problem");
+        JsonNode items = problem.get("properties").get("violations").get("items");
+
+        Set<String> violationComponents = Arrays.stream(ApiExceptionHandler.Violation.class.getRecordComponents())
+                .map(RecordComponent::getName)
+                .collect(Collectors.toSet());
+        assertThat(problem.get("properties").get("violations").get("type").asText()).isEqualTo("array");
+        assertThat(fieldNames(items.get("properties"))).isEqualTo(violationComponents);
+        assertThat(textSet(items.get("required"))).isEqualTo(violationComponents);
+        assertThat(problem.get("properties").get("trace_id").get("type").asText()).isEqualTo("string");
+        assertThat(textSet(problem.get("required"))).isEqualTo(Set.of("type", "title", "status"));
+    }
+
+    /** The CSV variant's documented column list is {@link TransactionExportRow}'s own component
+     * order, which is the order {@code ExportController.toCsv} writes (design.md O5). */
+    @Test
+    void csvDescriptionListsTheExportColumnsInRecordOrder() throws Exception {
+        String description = operation(contract(), new Route("GET", "/api/v1/exports/transactions"))
+                .get("responses").get("200").get("content").get("text/csv").get("schema")
+                .get("description").asText().replaceAll("\\s+", " ");
+        String columns = Arrays.stream(TransactionExportRow.class.getRecordComponents())
+                .map(RecordComponent::getName)
+                .collect(Collectors.joining(", "));
+        assertThat(description).contains(columns);
+    }
+
     /** The named test: {@code shouldConformToPaymentsOpenApiContract} (R31). */
     @Test
     void shouldConformToPaymentsOpenApiContract() throws Exception {
@@ -293,6 +341,9 @@ class PaymentsOpenApiContractTest {
         everyOperationRequestBodyReferencesTheExpectedSchema();
         createInvoiceRequestAcceptsADecimalStringAmount();
         createInvoiceRequestLimitsMatchItsValidationAnnotations();
+        createInvoiceRequestAmountPatternAdmitsOnlyPositiveWholeBaseUnits();
+        problemExtensionMembersMatchWhatTheHandlersEmit();
+        csvDescriptionListsTheExportColumnsInRecordOrder();
     }
 
     /** Guards against silently forgetting to update {@link #expectedResponseSchemas()} when a
