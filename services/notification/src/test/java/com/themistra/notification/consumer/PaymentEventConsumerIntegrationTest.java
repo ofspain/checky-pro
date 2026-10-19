@@ -199,12 +199,15 @@ class PaymentEventConsumerIntegrationTest {
         assertThat(calls).allSatisfy(call -> {
             assertThat(call.eventData()).containsEntry("invoiceUuid", invoice.toString())
                     .containsEntry("invoiceId", invoice.toString())
-                    .doesNotContainKeys("receiptUri", "receiptUuid", "fromAddress", "toAddress");
+                    .doesNotContainKeys("receiptUri", "fromAddress", "toAddress");
             assertThat(call.eventData().values()).noneMatch(value -> value != null && value.startsWith("s3://"));
         });
         assertThat(calls.get(0).eventData()).containsEntry("amount", "1.5");
         assertThat(calls.get(2).eventData()).containsEntry("amount", "1.5").containsEntry("txHash", txHash);
-        assertThat(calls.get(3).eventData()).containsEntry("receiptId", receipt.toString());
+        assertThat(calls.get(3).eventData()).containsEntry("receiptId", receipt.toString())
+                .containsEntry("receiptUuid", receipt.toString());
+        assertThat(calls.subList(0, 3)).allSatisfy(call ->
+                assertThat(call.eventData()).doesNotContainKey("receiptUuid"));
 
         assertThat(scalar("SELECT merchant_account_uuid::text || ':' || token_decimals "
                 + "FROM notifications.invoice_routes WHERE invoice_uuid = '" + invoice + "'"))
@@ -216,9 +219,17 @@ class PaymentEventConsumerIntegrationTest {
             for (String channel : List.of("EMAIL", "IN_APP")) {
                 TemplateRenderer.RenderedMessage rendered =
                         templateRenderer.render(call.notificationKind(), channel, call.eventData());
-                assertThat(rendered.version()).as("%s %s version", call.notificationKind(), channel).isEqualTo(2);
+                boolean receiptEmail = "receipt.issued".equals(call.notificationKind()) && "EMAIL".equals(channel);
+                // FU-T07-2: only the receipt email moved to version 3, to carry the link.
+                assertThat(rendered.version()).as("%s %s version", call.notificationKind(), channel)
+                        .isEqualTo(receiptEmail ? 3 : 2);
                 assertThat(rendered.body()).as("%s %s body", call.notificationKind(), channel)
-                        .doesNotContain("{{", "s3://", "/receipts/");
+                        .doesNotContain("{{", "s3://");
+                if (receiptEmail) {
+                    assertThat(rendered.body()).endsWith("https://app.example.test/app/receipts/" + receipt);
+                } else {
+                    assertThat(rendered.body()).doesNotContain("/receipts/");
+                }
                 if (rendered.subject() != null) {
                     assertThat(rendered.subject()).doesNotContain("{{");
                 }

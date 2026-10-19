@@ -182,7 +182,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 succeededVersions.add(resultSet.getString("version"));
             }
             assertThat(succeededVersions).containsExactly(
-                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14");
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15");
         }
     }
 
@@ -891,6 +891,24 @@ class NotificationBaselineMigrationIntegrationTest {
                         .doesNotContain("{{currency}}", "{{displayName}}", "{{receiptLink}}");
             }
             assertThat(pairs).containsExactlyInAnyOrderElementsOf(expected);
+        }
+    }
+
+    /** FU-T07-2 (2026-10-19): V15 adds one version-3 row, the receipt email with its link. The
+     * in-app receipt message stays at version 2, without a link. */
+    @Test
+    void receiptEmailHasAVersionThreeWithTheReceiptLink() throws SQLException {
+        try (Connection admin = adminConnection();
+             Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT name, channel, subject, body FROM notifications.templates WHERE version >= 3")) {
+            assertThat(resultSet.next()).as("one version-3 row").isTrue();
+            assertThat(resultSet.getString("name")).isEqualTo("receipt.issued");
+            assertThat(resultSet.getString("channel")).isEqualTo("EMAIL");
+            assertThat(resultSet.getString("subject")).isNotNull();
+            assertThat(resultSet.getString("body")).contains("{{receiptLink}}", "{{receiptId}}", "{{invoiceId}}")
+                    .doesNotContain("{{currency}}", "{{displayName}}");
+            assertThat(resultSet.next()).as("only one version-3 row").isFalse();
         }
     }
 }

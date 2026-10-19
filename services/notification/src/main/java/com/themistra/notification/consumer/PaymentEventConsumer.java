@@ -168,9 +168,11 @@ public class PaymentEventConsumer {
             logNotDispatched("payments.receipt.issued", eventKey, "no merchant route for invoice " + event.invoiceUuid());
             return;
         }
-        // No receiptUuid key: that would make TemplateRenderer compute a /receipts/ link nothing
-        // serves yet (T07 frozen brief D3). receiptId is a plain display value.
+        // receiptUuid makes TemplateRenderer compute the /app/receipts/<uuid> link (FU-T07-2,
+        // closed 2026-10-19 once payment served the receipt read). receiptId is the display value.
+        // The internal s3:// receiptUri is never passed on.
         Map<String, String> eventData = invoiceData(eventKey, event.invoiceUuid(), event.chain());
+        eventData.put("receiptUuid", event.receiptUuid().toString());
         eventData.put("receiptId", event.receiptUuid().toString());
         notificationDispatcher.dispatch(merchant.get(), RECEIPT_ISSUED, eventData);
     }

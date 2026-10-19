@@ -150,10 +150,9 @@ class PaymentEventConsumerTest {
     }
 
     /**
-     * {@code package.md} §8 name, kept literally. Under T07 frozen brief D3 the receipt read
-     * endpoint doesn't exist yet (payment FU-T29-1), so no link is rendered: this asserts the
-     * receipt ID is supplied and nothing that would produce a link (or the internal
-     * {@code s3://} {@code receiptUri}) is.
+     * {@code package.md} §8 name. Since FU-T07-2 (2026-10-19) the consumer supplies
+     * {@code receiptUuid}, from which {@code TemplateRenderer} computes the link; it never supplies
+     * the link itself, nor the internal {@code s3://} {@code receiptUri}.
      */
     @Test
     void shouldNotifyWithReceiptLinkOnReceiptIssued() throws Exception {
@@ -163,8 +162,9 @@ class PaymentEventConsumerTest {
         assertThat(data).containsEntry("receiptId", RECEIPT.toString())
                 .containsEntry("invoiceId", INVOICE.toString())
                 .containsEntry("sourceEventKey", "receipt.issued:" + RECEIPT)
-                .doesNotContainKey("receiptUuid")
-                .doesNotContainKey("receiptLink");
+                .containsEntry("receiptUuid", RECEIPT.toString())
+                .doesNotContainKey("receiptLink")
+                .doesNotContainKey("receiptUri");
         assertThat(data.values()).noneMatch(value -> value.startsWith("s3://"));
         verify(paymentRouting).recordPayment(PAYMENT, INVOICE);
         verify(paymentRouting).recordInvoice(INVOICE, MERCHANT, null);

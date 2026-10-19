@@ -44,8 +44,9 @@ import static org.awaitility.Awaitility.await;
  * real orchestrator, the preference resolver and both channels. The merchant has a contact and an
  * explicit {@code PAYMENT:EMAIL} opt-out.
  *
- * <p>T17's other payment parts, "both parties" and "with a receipt link", can't be built: there is
- * no payer identity and no receipt read endpoint (T07 D1/D3, FU-T07-1/2).
+ * <p>T17's "both parties" part can't be built: there is no payer identity (T07 D1, FU-T07-1). Its
+ * "with a receipt link" part has been built since 2026-10-19 (FU-T07-2) and is tested in
+ * {@code PaymentEventConsumerIntegrationTest}.
  */
 @Testcontainers
 @SpringBootTest(properties = {
