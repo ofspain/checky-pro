@@ -4,8 +4,6 @@ import archtestfixtures.RogueAttestReferencer;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
-import com.tngtech.archunit.junit.AnalyzeClasses;
-import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.ConditionEvents;
@@ -53,16 +51,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * attest may reference KmsSigner" half of the task statement, which the SDK-dependency ban alone does
  * not (a caller could depend on {@code KmsSigner} without ever depending on the KMS SDK directly).</p>
  *
- * <p><b>{@code @ArchTest} fields are documentation only (Finding #1).</b> Confirmed, via {@code
- * services/auth/src/test/java/com/themistra/auth/ArchitectureTest.java}'s own already-documented
- * negative-proof finding, that this repository's Surefire configuration does not execute ArchUnit's
- * JUnit 5 {@code @ArchTest} engine - a deliberately-introduced violation would not fail {@code mvn
- * test}. The plain {@code @Test} canary below is what actually gates the build.</p>
+ * <p><b>Plain {@code @Test} canaries only (open-issues sweep, 2026-10-19).</b> This class used to
+ * hold {@code @ArchTest} fields beside the canaries. Under this repo's Surefire 3.5.3, any class with
+ * an {@code @ArchTest} field reports 0 tests, including its plain {@code @Test} methods, so the
+ * canaries never ran either and these rules were not enforced. The annotations and {@code
+ * @AnalyzeClasses} were removed; the rules are plain {@code ArchRule} fields checked by the
+ * canaries.</p>
  */
-@AnalyzeClasses(packages = KmsSignerArchitectureTest.ANALYZED_PACKAGE)
 class KmsSignerArchitectureTest {
 
-    /** Single source of truth for the package scanned by both {@code @AnalyzeClasses} and the canary's
+    /** Single source of truth for the package scanned by the canary's
      * own {@link ClassFileImporter} below - Phase 9 (Kimi Phase 8 Finding #3), mirroring auth's own
      * {@code ArchitectureTest.ANALYZED_PACKAGE} lesson (Kimi Phase 11 Gap 1 there) so the two can never
      * silently drift apart. */
@@ -83,7 +81,6 @@ class KmsSignerArchitectureTest {
     private static final Set<String> ALLOWED_CROSS_MODULE_KMS_SIGNER_REFERENCES =
             Set.of("com.themistra.crypto.watch.EndToEndIntegrationTest");
 
-    @ArchTest
     static final ArchRule noClassOutsideAttestMayReferenceKmsSigner = noClasses()
             .that().resideOutsideOfPackage("com.themistra.crypto.attest..")
             .should(dependOnKmsSignerUnlessAllowlisted())
@@ -120,7 +117,6 @@ class KmsSignerArchitectureTest {
         };
     }
 
-    @ArchTest
     static final ArchRule onlyKmsSignerMayUseTheKmsSigningSdk = noClasses()
             .that().haveSimpleNameNotStartingWith("KmsSigner")
             .or().resideOutsideOfPackage("com.themistra.crypto.attest..")

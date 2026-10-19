@@ -10,8 +10,6 @@ import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
-import com.tngtech.archunit.junit.AnalyzeClasses;
-import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.ConditionEvents;
@@ -45,13 +43,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * access-based check ({@code getAccessesToSelf()}) would miss entirely. {@link RogueWatchEntityReferencer}'s
  * own single, never-read field is exactly this shape, deliberately.</p>
  *
- * <p><b>{@code @ArchTest} fields are documentation only.</b> Confirmed for this repository at T20
- * (verified via a real negative-proof run - a deliberate violation did not fail {@code mvn test}
- * through the {@code @ArchTest} field alone). The plain {@code @Test} canary below is what actually
- * gates the build.</p>
+ * <p><b>Plain {@code @Test} canaries only (open-issues sweep, 2026-10-19).</b> This class used to
+ * hold {@code @ArchTest} fields beside the canaries. Under this repo's Surefire 3.5.3, any class with
+ * an {@code @ArchTest} field reports 0 tests, including its plain {@code @Test} methods, so the
+ * canaries never ran either and these rules were not enforced. The annotations and {@code
+ * @AnalyzeClasses} were removed; the rules are plain {@code ArchRule} fields checked by the
+ * canaries.</p>
  */
-@AnalyzeClasses(packages = CrossModuleEntityArchitectureTest.ANALYZED_PACKAGE,
-        importOptions = ImportOption.DoNotIncludeTests.class)
 class CrossModuleEntityArchitectureTest {
 
     static final String ANALYZED_PACKAGE = "com.themistra.crypto";
@@ -95,7 +93,6 @@ class CrossModuleEntityArchitectureTest {
         return null;
     }
 
-    @ArchTest
     static final ArchRule shouldPreventCrossModuleEntityImports = classes()
             .that().areAnnotatedWith(Entity.class)
             .should(onlyBeAccessedFromTheSameFeatureModule())
