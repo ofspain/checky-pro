@@ -2,6 +2,7 @@ package com.themistra.crypto.quorum;
 
 import java.util.List;
 import java.util.Objects;
+import org.springframework.stereotype.Component;
 
 /**
  * The 2-of-3 arbitration rule itself (L1, L2, R1-R3) - genuinely pure logic (design.md §6's own
@@ -33,7 +34,11 @@ import java.util.Objects;
  * "Out: {@code ProviderHealth}/{@code chain.provider.degraded} (task 10)." Task 10 must define its own
  * resolution for evaluating with fewer than 3 answers (e.g. a separate code path, or waiting for the
  * third provider); it is not this evaluator's job to guess that shape now.</p>
+ *
+ * <p>Open-issues sweep (2026-10-19): a stateless bean. It was never registered, so {@code
+ * QuorumDecisionService} could not be created and the service could not start.</p>
  */
+@Component
 public class QuorumEvaluator {
 
     public <T extends Comparable<T>> Result evaluate(List<T> answers) {

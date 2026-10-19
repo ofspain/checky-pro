@@ -1,5 +1,11 @@
 package com.themistra.crypto.watch;
 
+import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.BeforeAll;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.Chain;
 import com.themistra.crypto.adapter.FakeChainAdapter;
@@ -119,11 +125,31 @@ class EndToEndIntegrationTest {
     private static final KafkaContainer KAFKA =
             new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.6.0"));
 
+    private static final String CRYPTO_APP_PASSWORD = "it-crypto-app-password";
+
+    /** Open-issues sweep (2026-10-19): the application never runs Flyway itself
+     * ({@code spring.flyway.enabled=false}), so this test must migrate the schema, as every other
+     * integration test here does. Without it, Hibernate's {@code ddl-auto=validate} failed context
+     * startup on the first missing table ({@code chain.attestations}), and all four tests errored. The
+     * app then connects as {@code crypto_app}, so the real grants apply end to end. */
+    @BeforeAll
+    static void migrateAndProvisionLocalPassword() throws SQLException {
+        Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas("chain")
+                .load()
+                .migrate();
+        try (Connection admin = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(),
+                POSTGRES.getPassword()); Statement statement = admin.createStatement()) {
+            statement.execute("ALTER ROLE crypto_app PASSWORD '" + CRYPTO_APP_PASSWORD + "'");
+        }
+    }
+
     @DynamicPropertySource
     static void registerContainerProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", POSTGRES::getUsername);
-        registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.datasource.username", () -> "crypto_app");
+        registry.add("spring.datasource.password", () -> CRYPTO_APP_PASSWORD);
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
     }
 

@@ -5,6 +5,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -33,6 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * (Phase 10 notes) since it needs a reachable JWKS endpoint.
  */
 @WebMvcTest(controllers = InternalTestController.class)
+@ActiveProfiles(InternalTestController.PROFILE)
 @Import(ResourceServerConfig.class)
 class ResourceServerConfigIntegrationTest {
 

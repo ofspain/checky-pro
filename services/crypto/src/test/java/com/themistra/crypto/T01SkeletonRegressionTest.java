@@ -178,7 +178,13 @@ class T01SkeletonRegressionTest {
         String spec = Files.readString(CRYPTO_PACKAGE_SPEC);
 
         assertThat(spec).as("Version must be bumped to 0.2").contains("| Version | `0.2` |");
-        assertThat(spec).as("Status must be READY FOR IMPL").contains("| Status | `READY FOR IMPL` |");
+        // Open-issues sweep (2026-10-19): task 30 (2026-10-10) appended a scoped note to the Status
+        // cell ("`READY FOR IMPL` for tasks 1-29 ..."), which broke the old exact-cell match. Exactly
+        // one Status row, and its value must still start with READY FOR IMPL.
+        assertThat(spec.lines().filter(line -> line.startsWith("| Status |")).toList())
+                .as("Status must be READY FOR IMPL")
+                .singleElement(org.assertj.core.api.InstanceOfAssertFactories.STRING)
+                .startsWith("| Status | `READY FOR IMPL`");
     }
 
     /** T29 Phase 9 (Kimi Phase 8 Finding #6), strengthened at Phase 11 (Kimi Finding #2): a silent

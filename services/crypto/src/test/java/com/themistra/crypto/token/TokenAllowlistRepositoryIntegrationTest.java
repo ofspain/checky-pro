@@ -12,7 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
-import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.InvalidDataAccessResourceUsageException;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -145,14 +145,18 @@ class TokenAllowlistRepositoryIntegrationTest {
 
     @Test
     void deleteFailsAtTheDatabaseLevel() {
-        // V5 grants INSERT, SELECT only - no DELETE.
-        TokenAllowlist saved = repository.save(TokenAllowlist.create("ETHEREUM", "0xdelete-test", "TEST", 6,
+        // V5 grants INSERT, SELECT only - no DELETE. Open-issues sweep (2026-10-19): a per-test chain,
+        // like the tests below. On the real ETHEREUM chain, this version-999 row made 999 Ethereum's
+        // current version, so findCurrentVersionEntryScopesToPerChainMaxVersionIndependently failed
+        // whenever it ran after this test.
+        TokenAllowlist saved = repository.save(TokenAllowlist.create(isolatedChain(), "0xdelete-test", "TEST", 6,
                 999, "sig", Instant.now()));
 
         assertThatThrownBy(() -> {
             repository.delete(saved);
             repository.flush();
-        }).isInstanceOf(DataIntegrityViolationException.class);
+        }).isInstanceOf(InvalidDataAccessResourceUsageException.class) // SQLState 42501, as in V9/attestations
+                .hasMessageContaining("permission denied");
     }
 
     @Test
@@ -160,7 +164,7 @@ class TokenAllowlistRepositoryIntegrationTest {
         // Phase 11 Gap 2: TokenAllowlist has no mutator at all, so no JPA-entity code path can even
         // attempt an UPDATE - raw JDBC is the only way to exercise this, mirroring
         // ChainBaselineMigrationIntegrationTest's own established pattern for exactly this situation.
-        repository.save(TokenAllowlist.create("ETHEREUM", "0xupdate-test", "TEST", 6, 998, "sig", Instant.now()));
+        repository.save(TokenAllowlist.create(isolatedChain(), "0xupdate-test", "TEST", 6, 998, "sig", Instant.now()));
 
         try (Connection app = DriverManager.getConnection(POSTGRES.getJdbcUrl(), "crypto_app", CRYPTO_APP_PASSWORD);
              Statement statement = app.createStatement()) {
@@ -169,6 +173,10 @@ class TokenAllowlistRepositoryIntegrationTest {
                     .isInstanceOf(SQLException.class)
                     .hasMessageContaining("permission denied");
         }
+    }
+
+    private static String isolatedChain() {
+        return "TC-" + UUID.randomUUID().toString().substring(0, 8);
     }
 
     @Test

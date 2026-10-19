@@ -10,7 +10,7 @@ import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.InvalidDataAccessResourceUsageException;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -92,6 +92,14 @@ class ObservationRepositoryIntegrationTest {
     @Autowired
     private ObservationSnapshotStore mockSnapshotStore;
 
+    private static com.fasterxml.jackson.databind.JsonNode readTree(String json) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private static String uniqueTxHash() {
         return "it-tx-" + UUID.randomUUID();
     }
@@ -110,7 +118,9 @@ class ObservationRepositoryIntegrationTest {
         assertThat(reloaded.txHash()).isEqualTo(txHash);
         assertThat(reloaded.provider()).isEqualTo("alchemy");
         assertThat(reloaded.factType()).isEqualTo(FactType.CONFIRMATIONS);
-        assertThat(reloaded.rawResponse()).isEqualTo(rawJson);
+        // raw_response is JSONB (design.md §4 DDL), which normalizes whitespace and key order, so the
+        // database copy is compared as JSON. The byte-for-byte copy is the S3 snapshot (L3).
+        assertThat(readTree(reloaded.rawResponse())).isEqualTo(readTree(rawJson));
         assertThat(reloaded.s3SnapshotKey()).isEqualTo("chain-observations/it-key.json");
         assertThat(reloaded.observedAt()).isEqualTo(java.time.Instant.parse("2026-09-03T12:00:00Z"));
     }
@@ -143,7 +153,8 @@ class ObservationRepositoryIntegrationTest {
         assertThatThrownBy(() -> {
             repository.delete(saved);
             repository.flush();
-        }).isInstanceOf(DataIntegrityViolationException.class);
+        }).isInstanceOf(InvalidDataAccessResourceUsageException.class) // SQLState 42501, as in V9/attestations
+                .hasMessageContaining("permission denied");
     }
 
     @Test

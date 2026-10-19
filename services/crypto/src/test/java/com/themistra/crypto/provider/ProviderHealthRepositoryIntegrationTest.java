@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.InvalidDataAccessResourceUsageException;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -136,7 +137,8 @@ class ProviderHealthRepositoryIntegrationTest {
         assertThatThrownBy(() -> {
             repository.delete(saved);
             repository.flush();
-        }).isInstanceOf(DataIntegrityViolationException.class);
+        }).isInstanceOf(InvalidDataAccessResourceUsageException.class) // SQLState 42501, as in V9/attestations
+                .hasMessageContaining("permission denied");
     }
 
     @Configuration
