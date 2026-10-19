@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/payments/payment-seen.v1.schema.json",
+  "title": "payments.payment.seen (schema_version 1)",
+  "description": "Published via the outbox when an incoming transaction is first matched to an invoice (R8). Carries no amount: chain.tx.seen itself has no observed amount. Partition key = paymentUuid.",
+  "type": "object",
+  "required": ["paymentUuid", "invoiceUuid", "chain", "txHash", "tokenContractAddress", "confirmations", "occurredAt"],
+  "properties": {
+    "paymentUuid": { "type": "string", "format": "uuid" },
+    "invoiceUuid": { "type": "string", "format": "uuid" },
+    "chain": { "type": "string" },
+    "txHash": { "type": "string" },
+    "tokenContractAddress": { "type": "string" },
+    "confirmations": { "type": "integer", "minimum": 0 },
+    "occurredAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

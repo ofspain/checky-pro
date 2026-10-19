@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/payments/payment-finalized.v1.schema.json",
+  "title": "payments.payment.finalized (schema_version 1)",
+  "description": "Published via the outbox when a matched payment reaches chain finality (R10). Correlates by paymentUuid (or chain + txHash); deliberately carries no invoiceUuid. Partition key = paymentUuid.",
+  "type": "object",
+  "required": ["paymentUuid", "chain", "txHash", "tokenContractAddress", "amount", "confirmations", "addressPoisoningFlag", "occurredAt"],
+  "properties": {
+    "paymentUuid": { "type": "string", "format": "uuid" },
+    "chain": { "type": "string" },
+    "txHash": { "type": "string" },
+    "fromAddress": { "type": ["string", "null"], "description": "Sender address; null when chain.tx.finalized did not carry one." },
+    "toAddress": { "type": ["string", "null"], "description": "Recipient address; null when chain.tx.finalized did not carry one." },
+    "tokenContractAddress": { "type": "string" },
+    "amount": { "type": "string", "description": "Observed amount in token base units as a decimal string (never a JSON number)." },
+    "confirmations": { "type": "integer", "minimum": 0 },
+    "addressPoisoningFlag": { "type": "boolean" },
+    "occurredAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

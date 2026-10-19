@@ -87,10 +87,14 @@
 
     <!-- T08: ShedLock, this service's first multi-replica mutual-exclusion need
          (InvoiceExpirySweepJob). Version matches notification-service's own identical, already-
-         vetted pinned version. jackson-dataformat-yaml still deliberately NOT added - lands at
-         task 24 (contracts/api/payments.yaml parsing for the OpenAPI contract test). -->
+         vetted pinned version. -->
     <dependency><groupId>net.javacrumbs.shedlock</groupId><artifactId>shedlock-spring</artifactId><version>7.9.0</version></dependency>
     <dependency><groupId>net.javacrumbs.shedlock</groupId><artifactId>shedlock-provider-jdbc-template</artifactId><version>7.9.0</version></dependency>
+
+    <!-- T24: parses contracts/api/payments.yaml for PaymentsOpenApiContractTest; version
+         managed by Spring Boot's own dependency BOM, matching services/auth's, services/crypto's
+         and services/notification's identical addition. -->
+    <dependency><groupId>com.fasterxml.jackson.dataformat</groupId><artifactId>jackson-dataformat-yaml</artifactId><scope>test</scope></dependency>
   </dependencies>
 
   <build>

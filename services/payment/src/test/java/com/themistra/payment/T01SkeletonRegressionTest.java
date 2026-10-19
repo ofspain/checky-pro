@@ -122,8 +122,8 @@ class T01SkeletonRegressionTest {
                 .doesNotContain("oauth2-authorization-server");
         assertThat(pom).as("T08: ShedLock now expected (InvoiceExpirySweepJob)")
                 .contains("net.javacrumbs.shedlock");
-        assertThat(pom).as("jackson-dataformat-yaml lands at task 24, not this task")
-                .doesNotContain("jackson-dataformat-yaml");
+        assertThat(pom).as("T24: jackson-dataformat-yaml now expected (PaymentsOpenApiContractTest)")
+                .contains("jackson-dataformat-yaml");
         assertThat(pom).as("bucket4j is auth-only rate limiting, never used here")
                 .doesNotContain("com.bucket4j");
     }

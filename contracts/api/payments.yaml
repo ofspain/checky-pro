@@ -1,0 +1,277 @@
+openapi: 3.0.3
+info:
+  title: payment-service API
+  description: >
+    All merchant-facing HTTP endpoints exposed by payment-service. Every endpoint requires a
+    bearer JWT carrying the MERCHANT role and only ever returns the caller's own data (the
+    merchant identity comes from the token's sub claim, never from the request). Monetary
+    amounts are decimal strings in token base units, never JSON numbers. Per-route error
+    responses are intentionally not documented here (R47 precedent, matching auth.yaml and
+    notifications.yaml); every error body is an RFC 9457 problem document whose type is one of
+    the URIs catalogued by the Problem schema below.
+  version: "1.0"
+servers:
+  - url: /
+
+paths:
+  /api/v1/invoices:
+    post:
+      summary: Create an invoice
+      operationId: createInvoice
+      security:
+        - bearerAuth: [MERCHANT]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInvoiceRequest'
+      responses:
+        '201':
+          description: The created invoice, in state OPEN.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+    get:
+      summary: List the caller's own invoices, newest first
+      operationId: listInvoices
+      security:
+        - bearerAuth: [MERCHANT]
+      responses:
+        '200':
+          description: Every invoice owned by the caller.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InvoiceResponse'
+
+  /api/v1/invoices/{invoiceUuid}:
+    get:
+      summary: Get one of the caller's own invoices
+      description: >
+        Returns 404, never 403, when the invoice belongs to another merchant, exactly as for an
+        invoice that does not exist.
+      operationId: getInvoice
+      security:
+        - bearerAuth: [MERCHANT]
+      parameters:
+        - name: invoiceUuid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The invoice.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+
+  /api/v1/exports/transactions:
+    get:
+      summary: Export the caller's attested transactions (tax-ready)
+      description: >
+        Returns every attested payment owned by the caller with finalizedAt in [from, to].
+        Format selection: if the format query parameter is present it decides (csv or json,
+        case-insensitive; any other value is a 400). If it is absent, an Accept header that
+        lists text/csv (with non-zero q) selects CSV; anything else, including no Accept header
+        or */*, selects JSON.
+      operationId: exportTransactions
+      security:
+        - bearerAuth: [MERCHANT]
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          description: Must not be before from.
+          schema:
+            type: string
+            format: date-time
+        - name: format
+          in: query
+          required: false
+          description: Explicit output format, case-insensitive. Takes precedence over Accept.
+          schema:
+            type: string
+            enum: [csv, json]
+        - name: Accept
+          in: header
+          required: false
+          description: Used only when format is absent; text/csv selects CSV, anything else JSON.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The export rows, as JSON or CSV.
+          headers:
+            Content-Disposition:
+              description: >
+                Present on the text/csv variant only:
+                attachment; filename="transactions-<fromEpochSeconds>-<toEpochSeconds>.csv".
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TransactionExportRow'
+            text/csv:
+              schema:
+                type: string
+                description: >
+                  RFC 4180 CSV with a header row, columns in this order: invoiceUuid,
+                  paymentUuid, receiptUuid, chain, txHash, tokenContractAddress, tokenDecimals,
+                  amount, payToAddress, finalizedAt, attestedAt, receiptUri. Values match the
+                  TransactionExportRow schema.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CreateInvoiceRequest:
+      type: object
+      required: [chain, tokenContractAddress, tokenDecimals, amount, payToAddress]
+      properties:
+        chain:
+          type: string
+          enum: [ETHEREUM, TRON]
+        tokenContractAddress:
+          type: string
+        tokenDecimals:
+          type: integer
+          minimum: 0
+          maximum: 255
+        amount:
+          type: string
+          description: >
+            Expected amount in token base units as a positive decimal string. A JSON number is
+            also accepted for compatibility, but a string is canonical (numbers can lose
+            precision).
+        payToAddress:
+          type: string
+        reference:
+          type: string
+          nullable: true
+          maxLength: 140
+          description: Optional merchant reference, echoed back on the invoice.
+
+    InvoiceResponse:
+      type: object
+      required: [invoiceUuid, merchantAccountUuid, chain, tokenContractAddress, tokenDecimals,
+                 amount, payToAddress, state, expiresAt, createdAt, updatedAt]
+      properties:
+        invoiceUuid:
+          type: string
+          format: uuid
+        merchantAccountUuid:
+          type: string
+          format: uuid
+        chain:
+          type: string
+        tokenContractAddress:
+          type: string
+        tokenDecimals:
+          type: integer
+        amount:
+          type: string
+          description: Expected amount in token base units as a decimal string.
+        payToAddress:
+          type: string
+        reference:
+          type: string
+          nullable: true
+        state:
+          type: string
+          enum: [OPEN, PAID, UNDERPAID, OVERPAID, EXPIRED, HELD]
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    TransactionExportRow:
+      type: object
+      required: [invoiceUuid, paymentUuid, receiptUuid, chain, txHash, tokenContractAddress,
+                 tokenDecimals, amount, payToAddress, finalizedAt, attestedAt, receiptUri]
+      properties:
+        invoiceUuid:
+          type: string
+          format: uuid
+        paymentUuid:
+          type: string
+          format: uuid
+        receiptUuid:
+          type: string
+          format: uuid
+        chain:
+          type: string
+        txHash:
+          type: string
+        tokenContractAddress:
+          type: string
+        tokenDecimals:
+          type: integer
+        amount:
+          type: string
+          description: Observed on-chain amount in token base units as a decimal string.
+        payToAddress:
+          type: string
+          description: Observed on-chain recipient address.
+        finalizedAt:
+          type: string
+          format: date-time
+        attestedAt:
+          type: string
+          format: date-time
+        receiptUri:
+          type: string
+
+    Problem:
+      type: object
+      description: RFC 9457 problem document returned (as application/problem+json) by every error response.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+          enum:
+            - https://checky.pro/problems/validation-error
+            - https://checky.pro/problems/malformed-request
+            - https://checky.pro/problems/malformed-request-parameter
+            - https://checky.pro/problems/missing-required-parameter
+            - https://checky.pro/problems/forbidden
+            - https://checky.pro/problems/unauthorized
+            - https://checky.pro/problems/internal-error
+            - https://checky.pro/problems/invalid-invoice-request
+            - https://checky.pro/problems/crypto-service-unavailable
+            - https://checky.pro/problems/not-found
+            - https://checky.pro/problems/invalid-export-request
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri

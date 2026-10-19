@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/payments/invoice-created.v1.schema.json",
+  "title": "payments.invoice.created (schema_version 1)",
+  "description": "Published via the outbox when a merchant creates an invoice (R2). Partition key = invoiceUuid.",
+  "type": "object",
+  "required": ["invoiceUuid", "merchantAccountUuid", "chain", "tokenContractAddress", "tokenDecimals", "amount", "payToAddress", "expiresAt"],
+  "properties": {
+    "invoiceUuid": { "type": "string", "format": "uuid" },
+    "merchantAccountUuid": { "type": "string", "format": "uuid" },
+    "chain": { "type": "string" },
+    "tokenContractAddress": { "type": "string" },
+    "tokenDecimals": { "type": "integer", "minimum": 0, "maximum": 255 },
+    "amount": { "type": "string", "description": "Expected amount in token base units as a decimal string (never a JSON number)." },
+    "payToAddress": { "type": "string" },
+    "reference": { "type": ["string", "null"], "maxLength": 140, "description": "Merchant's optional free-text reference; null when the merchant supplied none." },
+    "expiresAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

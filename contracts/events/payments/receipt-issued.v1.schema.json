@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://checky.pro/contracts/events/payments/receipt-issued.v1.schema.json",
+  "title": "payments.receipt.issued (schema_version 1)",
+  "description": "Published via the outbox when a payment reaches ATTESTED. Partition key = receiptUuid.",
+  "type": "object",
+  "required": ["invoiceUuid", "paymentUuid", "receiptUuid", "chain", "txHash", "occurredAt"],
+  "properties": {
+    "invoiceUuid": { "type": "string", "format": "uuid" },
+    "paymentUuid": { "type": "string", "format": "uuid" },
+    "receiptUuid": { "type": "string", "format": "uuid" },
+    "merchantAccountUuid": { "type": "string", "format": "uuid" },
+    "chain": { "type": "string" },
+    "txHash": { "type": "string" },
+    "amount": { "type": "string", "description": "Token base units as a decimal string (never a JSON number)." },
+    "tokenContractAddress": { "type": "string" },
+    "kmsKeyId": { "type": "string" },
+    "receiptUri": { "type": "string" },
+    "occurredAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}
