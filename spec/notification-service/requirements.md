@@ -7,8 +7,11 @@ Each requirement is independently testable and maps to a named test in [`package
 - R1. WHEN an `auth.email.requested` event with purpose `verify_email` is consumed, THEN the system SHALL send the recipient an email-verification message containing the verification link.
 - R2. WHEN an `auth.email.requested` event with purpose `password_reset` is consumed, THEN the system SHALL send the recipient a password-reset message containing the reset link.
 - R3. WHEN a `payments.invoice.created` event is consumed, THEN the system SHALL notify the invoice's recipients (per the §4c matrix / Q7) that an invoice was created.
+  - *Note (2026-10-19, T07/T20): **partial.** Implemented for the invoice's merchant only (`PaymentEventConsumer.onInvoiceCreated`). No payer identity exists on the platform, so payer notification is follow-up FU-T07-1. See `package.md` §11 Q7.*
 - R4. WHEN a `payments.payment.seen` event is consumed, THEN the system SHALL notify the configured recipients that a payment has been seen on-chain.
+  - *Note (2026-10-19, T07/T20): the configured recipient is the invoice's merchant, resolved through the event-fed routing projection (`PaymentRouting`, `design.md` L2 note). The payer isn't notified (FU-T07-1).*
 - R5. WHEN a `payments.receipt.issued` event is consumed, THEN the system SHALL notify both parties and include the receipt link.
+  - *Note (2026-10-19, T07/T20): **partial.** The merchant is notified with the receipt ID. The payer isn't notified (FU-T07-1), and no receipt link is rendered until a receipt read endpoint exists (FU-T07-2, payment FU-T29-1). See `package.md` §11 Q4/Q7.*
 - R6. WHEN an `auth.user.lifecycle` event with type `user.registered` is consumed, THEN the system SHALL send the user a welcome/onboarding message.
 
 ## Idempotency

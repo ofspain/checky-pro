@@ -7,9 +7,16 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.sesv2.SesV2Client;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -387,5 +394,137 @@ class T01SkeletonRegressionTest {
             throw new AssertionError("no match for \"" + label + "\" using pattern: " + pattern);
         }
         return matcher.group(1);
+    }
+
+    // --- T20: the spec status bump and its verification checklist --------------------------
+
+    private static final Path NOTIFICATION_PACKAGE_SPEC = Path.of("../../spec/notification-service/package.md");
+    private static final Path NOTIFICATION_DESIGN_SPEC = Path.of("../../spec/notification-service/design.md");
+    private static final Path TEST_SOURCES = Path.of("src/test/java");
+    /** A backticked {@code Class.method} citation in a §9 line, the class being a test class. */
+    private static final Pattern CHECKLIST_CITATION =
+            Pattern.compile("`([A-Z][A-Za-z0-9_]*Test)\\.([a-z][A-Za-z0-9_]*)`");
+    /** SHA-256 of design.md §4c's four fenced VERBATIM blocks joined by a newline, taken at T20
+     * before any annotation was added (frozen brief D2, Phase 5). */
+    private static final String SECTION_4C_VERBATIM_SHA256 =
+            "9a9ba0fff93ffd2c7528fd75c623099f90d3186960b87358878c3b31f9a70d07";
+
+    /** T20 AC1: the bump stays in place. Matched by table row inside the header table only
+     * (before {@code ## 0.}), never by line number (Kimi Phase 3 F2). The Status row is matched by
+     * prefix, because its disclosure follows the value. */
+    @Test
+    void notificationSpecIsBumpedToReadyForImplVersionZeroPointTwo() throws IOException {
+        String spec = Files.readString(NOTIFICATION_PACKAGE_SPEC);
+        int headerEnd = spec.indexOf("\n## 0. ");
+        assertThat(headerEnd).as("package.md must have its header table before section 0").isPositive();
+        String header = spec.substring(0, headerEnd);
+
+        assertThat(Pattern.compile("(?m)^\\| Version \\| `0\\.2` \\|\\s*$").matcher(header).find())
+                .as("package.md Version must be 0.2").isTrue();
+        assertThat(Pattern.compile("(?m)^\\| Status \\| `READY FOR IMPL` — ").matcher(header).find())
+                .as("package.md Status must be READY FOR IMPL, followed by its disclosure").isTrue();
+        assertThat(Pattern.compile("(?m)^\\| Status \\|[^\\n]*`DRAFT`").matcher(header).find())
+                .as("package.md Status must no longer say DRAFT").isFalse();
+        assertThat(Pattern.compile("(?m)^\\| Version \\|").matcher(header).results().count())
+                .as("the header has exactly one Version row").isEqualTo(1);
+        assertThat(Pattern.compile("(?m)^\\| Status \\|").matcher(header).results().count())
+                .as("the header has exactly one Status row").isEqualTo(1);
+        // The disclosure names the gaps that make items 1-3 partial (D1, Kimi Phase 3 F3).
+        assertThat(header).contains("FU-T07-1", "FU-T07-2", "FU-T29-1", "FU-T07-4");
+    }
+
+    /** T20 AC3/AC6: every test §9 cites as evidence exists as a JUnit test in that class's own
+     * file, so a rename can't leave the spec pointing at nothing. The one exception: an ArchUnit
+     * rule field is accepted where the class runs it from a plain-test canary (the Surefire
+     * {@code @ArchTest} workaround). */
+    @Test
+    void everyTestNamedInTheVerificationChecklistExists() throws IOException {
+        Map<String, String> testSourcesByClass = new HashMap<>();
+        try (Stream<Path> files = Files.walk(TEST_SOURCES)) {
+            for (Path file : files.filter(f -> f.toString().endsWith(".java")).toList()) {
+                String name = file.getFileName().toString();
+                testSourcesByClass.put(name.substring(0, name.length() - ".java".length()), Files.readString(file));
+            }
+        }
+        List<String> missing = new ArrayList<>();
+        int citations = 0;
+        for (String item : verificationChecklistItems()) {
+            Matcher matcher = CHECKLIST_CITATION.matcher(item);
+            while (matcher.find()) {
+                citations++;
+                String source = testSourcesByClass.get(matcher.group(1));
+                if (!declaresTestMethod(source, matcher.group(2))) {
+                    missing.add(matcher.group(1) + "." + matcher.group(2));
+                }
+            }
+        }
+        assertThat(citations).as("the parse must find the checklist's citations, not pass vacuously")
+                .isGreaterThanOrEqualTo(25);
+        assertThat(missing).as("§9 cites tests that do not exist").isEmpty();
+    }
+
+    /** T20 AC3 (Kimi Phase 3 F4): items 1-3 stay visibly partial, each keeping the reason that
+     * makes it partial; items 4-11 stay ticked. Nothing can be ticked silently. */
+    @Test
+    void verificationChecklistKeepsItsPartialItemsUnticked() throws IOException {
+        List<String> items = verificationChecklistItems();
+        assertThat(items).as("§9 has 11 items").hasSize(11);
+
+        for (int itemNumber = 1; itemNumber <= 3; itemNumber++) {
+            assertThat(items.get(itemNumber - 1)).as("§9 item %d stays visibly partial", itemNumber)
+                    .startsWith("- [ ] **Partial —** ");
+        }
+        assertThat(items.get(0)).as("item 1 says what the two drifted named tests prove")
+                .contains("merchant-only", "**no link**", "FU-T07-1", "FU-T07-2");
+        assertThat(items.get(1)).as("item 2 names the L2 interpretation").contains("L2", "interpreted");
+        assertThat(items.get(2)).as("item 3 names the recipients deviation").contains("merchant only");
+        for (int itemNumber = 4; itemNumber <= 11; itemNumber++) {
+            assertThat(items.get(itemNumber - 1)).as("§9 item %d stays ticked", itemNumber).startsWith("- [x] ");
+        }
+        assertThat(items.stream().filter(item -> item.startsWith("- [x] ")).count())
+                .as("exactly 8 §9 items are ticked").isEqualTo(8);
+        assertThat(items).as("every §9 marker is a GFM checkbox")
+                .allMatch(item -> item.startsWith("- [ ] ") || item.startsWith("- [x] "));
+    }
+
+    /** T20 AC4 (frozen brief D2, Kimi Phase 3 F8): the dated recipient note sits beside §4c, but
+     * §4c's fenced VERBATIM artifacts stay byte-identical to what was authored. */
+    @Test
+    void verbatimSection4cIsUnchanged() throws IOException, NoSuchAlgorithmException {
+        String design = Files.readString(NOTIFICATION_DESIGN_SPEC);
+        int start = design.indexOf("## 4c.");
+        int end = design.indexOf("\n## ", start + 1);
+        assertThat(start).as("design.md must have §4c").isNotNegative();
+        assertThat(end).as("§4c must be followed by another section").isGreaterThan(start);
+        List<String> fences = Pattern.compile("```[^\\n]*\\n.*?\\n```", Pattern.DOTALL)
+                .matcher(design.substring(start, end)).results().map(java.util.regex.MatchResult::group).toList();
+        assertThat(fences).as("§4c has its four verbatim blocks").hasSize(4);
+
+        byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest(String.join("\n", fences).getBytes(StandardCharsets.UTF_8));
+        assertThat(HexFormat.of().formatHex(digest)).isEqualTo(SECTION_4C_VERBATIM_SHA256);
+    }
+
+    /** True when {@code source} declares {@code member} as a JUnit test method, or as an ArchUnit
+     * rule field that the same class runs through {@code member.check(}. */
+    private static boolean declaresTestMethod(String source, String member) {
+        if (source == null) {
+            return false;
+        }
+        boolean testMethod = Pattern.compile("@(?:Test|ParameterizedTest)\\b(?:\\s*@[A-Za-z0-9_.]+(?:\\([^)]*\\))?)*"
+                + "\\s+(?:public\\s+|protected\\s+)?void\\s+" + Pattern.quote(member) + "\\s*\\(").matcher(source).find();
+        boolean checkedRule = Pattern.compile("ArchRule\\s+" + Pattern.quote(member) + "\\s*=").matcher(source).find()
+                && source.contains(member + ".check(");
+        return testMethod || checkedRule;
+    }
+
+    /** The {@code - [} item lines of {@code package.md} §9, in order. */
+    private static List<String> verificationChecklistItems() throws IOException {
+        String spec = Files.readString(NOTIFICATION_PACKAGE_SPEC);
+        int start = spec.indexOf("## 9. Verification checklist");
+        int end = spec.indexOf("## 10. ", start);
+        assertThat(start).as("package.md must have its §9 checklist").isNotNegative();
+        assertThat(end).as("§9 must be followed by §10").isGreaterThan(start);
+        return spec.substring(start, end).lines().filter(line -> line.startsWith("- [")).toList();
     }
 }
