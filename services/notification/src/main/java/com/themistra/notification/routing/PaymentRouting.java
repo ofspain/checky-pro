@@ -31,12 +31,15 @@ public class PaymentRouting {
         this.paymentRoutes = paymentRoutes;
     }
 
-    /** @param tokenDecimals may be null when the source event doesn't carry it. */
+    /** Records which merchant owns an invoice. The first merchant recorded wins. Decimals are
+     * filled in later if the first event lacked them, and never overwritten once known.
+     *
+     * @param tokenDecimals may be null when the source event doesn't carry it. */
     @Transactional
     public void recordInvoice(UUID invoiceUuid, UUID merchantAccountUuid, Short tokenDecimals) {
         Objects.requireNonNull(invoiceUuid, "invoiceUuid must not be null");
         Objects.requireNonNull(merchantAccountUuid, "merchantAccountUuid must not be null");
-        invoiceRoutes.insertIfAbsent(invoiceUuid, merchantAccountUuid, tokenDecimals);
+        invoiceRoutes.insertOrFillDecimals(invoiceUuid, merchantAccountUuid, tokenDecimals);
     }
 
     @Transactional

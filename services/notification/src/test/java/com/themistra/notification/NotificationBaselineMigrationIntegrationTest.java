@@ -182,7 +182,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 succeededVersions.add(resultSet.getString("version"));
             }
             assertThat(succeededVersions).containsExactly(
-                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16");
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17");
         }
     }
 
@@ -818,8 +818,9 @@ class NotificationBaselineMigrationIntegrationTest {
     }
 
     /** T07 (frozen brief D2): the routing projection is insert-once. notification_app may INSERT
-     * and SELECT both tables, and the insert-if-absent write needs nothing more, but UPDATE and
-     * DELETE are denied. */
+     * and SELECT both tables, but UPDATE and DELETE are denied. The one exception (S2, V17) is
+     * UPDATE of {@code invoice_routes.token_decimals}, so a late event can fill missing decimals;
+     * every other column stays non-updatable. */
     @Test
     void notificationAppCanInsertAndSelectButNotUpdateOrDeleteOnThePaymentRoutingTables() throws SQLException {
         String invoice = java.util.UUID.randomUUID().toString();
@@ -840,12 +841,24 @@ class NotificationBaselineMigrationIntegrationTest {
                 insert.setString(2, invoice);
                 assertThat(insert.executeUpdate()).isEqualTo(1);
             }
+            try (PreparedStatement fill = app.prepareStatement(
+                    "UPDATE notifications.invoice_routes SET token_decimals = 6 WHERE invoice_uuid = ?::uuid")) {
+                fill.setString(1, invoice);
+                assertThat(fill.executeUpdate()).as("V17: token_decimals alone is updatable").isEqualTo(1);
+            }
             for (String table : List.of("invoice_routes", "payment_routes")) {
                 try (Statement select = app.createStatement();
                      ResultSet resultSet = select.executeQuery("SELECT count(*) FROM notifications." + table)) {
                     resultSet.next();
                     assertThat(resultSet.getInt(1)).as("SELECT on %s", table).isPositive();
                 }
+                String keyColumn = table.equals("invoice_routes") ? "merchant_account_uuid" : "invoice_uuid";
+                assertThatThrownBy(() -> {
+                    try (Statement update = app.createStatement()) {
+                        update.execute("UPDATE notifications." + table + " SET " + keyColumn + " = " + keyColumn);
+                    }
+                }).as("UPDATE of %s.%s must be denied", table, keyColumn)
+                        .isInstanceOf(SQLException.class).hasMessageContaining("permission denied");
                 assertThatThrownBy(() -> {
                     try (Statement update = app.createStatement()) {
                         update.execute("UPDATE notifications." + table + " SET created_at = now()");

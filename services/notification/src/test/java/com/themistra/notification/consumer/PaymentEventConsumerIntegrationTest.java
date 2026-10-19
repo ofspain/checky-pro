@@ -145,6 +145,26 @@ class PaymentEventConsumerIntegrationTest {
         assertThat(paymentRouting.findInvoiceForPayment(payment)).contains(invoice);
     }
 
+    /** S2 (open-issues sweep): a route first learned without decimals (receipt.issued carries
+     * none) takes them from a later invoice.created. Known decimals are never overwritten, and the
+     * merchant never changes. Runs as notification_app, so it also proves V17's column grant. */
+    @Test
+    void missingDecimalsAreFilledLaterButNeverOverwritten() {
+        UUID invoice = UUID.randomUUID();
+        UUID merchant = UUID.randomUUID();
+
+        paymentRouting.recordInvoice(invoice, merchant, null);
+        assertThat(paymentRouting.findTokenDecimals(invoice)).isEmpty();
+
+        paymentRouting.recordInvoice(invoice, UUID.randomUUID(), (short) 6);
+        assertThat(paymentRouting.findTokenDecimals(invoice)).contains(6);
+        assertThat(paymentRouting.findMerchantForInvoice(invoice)).contains(merchant);
+
+        paymentRouting.recordInvoice(invoice, merchant, (short) 18);
+        paymentRouting.recordInvoice(invoice, merchant, null);
+        assertThat(paymentRouting.findTokenDecimals(invoice)).contains(6);
+    }
+
     @Test
     void paymentLifecycleIsConsumedRoutedAndDispatchedToTheMerchantExactlyOnce() throws SQLException {
         UUID merchant = UUID.randomUUID();
