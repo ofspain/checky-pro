@@ -3,6 +3,7 @@ package com.themistra.notification.routing;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,10 +26,44 @@ public class PaymentRouting {
 
     private final InvoiceRouteRepository invoiceRoutes;
     private final PaymentRouteRepository paymentRoutes;
+    private final ParkedPaymentEventRepository parkedEvents;
 
-    public PaymentRouting(InvoiceRouteRepository invoiceRoutes, PaymentRouteRepository paymentRoutes) {
+    public PaymentRouting(InvoiceRouteRepository invoiceRoutes, PaymentRouteRepository paymentRoutes,
+                          ParkedPaymentEventRepository parkedEvents) {
         this.invoiceRoutes = invoiceRoutes;
         this.paymentRoutes = paymentRoutes;
+        this.parkedEvents = parkedEvents;
+    }
+
+    /** FU-T07-4: keeps an event whose merchant can't be found yet, for {@link #findParkedFor} to
+     * hand back once its route arrives. At least one of the two UUIDs must be known. */
+    @Transactional
+    public void park(String eventKey, String kind, String payload, UUID invoiceUuid, UUID paymentUuid) {
+        Objects.requireNonNull(eventKey, "eventKey must not be null");
+        Objects.requireNonNull(kind, "kind must not be null");
+        Objects.requireNonNull(payload, "payload must not be null");
+        if (invoiceUuid == null && paymentUuid == null) {
+            throw new IllegalArgumentException("a parked event must name its invoice or its payment");
+        }
+        parkedEvents.park(eventKey, kind, payload, invoiceUuid == null ? null : invoiceUuid.toString(),
+                paymentUuid == null ? null : paymentUuid.toString());
+    }
+
+    /** The parked events that may now be routable through this invoice, in lifecycle order
+     * (seen, finalized, receipt), then oldest first. */
+    @Transactional(readOnly = true)
+    public List<ParkedEvent> findParkedFor(UUID invoiceUuid) {
+        Objects.requireNonNull(invoiceUuid, "invoiceUuid must not be null");
+        return parkedEvents.findForInvoice(invoiceUuid).stream()
+                .map(parked -> new ParkedEvent(parked.getEventKey(), parked.getKind(), parked.getPayload()))
+                .toList();
+    }
+
+    /** Removes a parked event once it has been dispatched, in the dispatch's own transaction. */
+    @Transactional
+    public void releaseParked(String eventKey) {
+        Objects.requireNonNull(eventKey, "eventKey must not be null");
+        parkedEvents.release(eventKey);
     }
 
     /** Records which merchant owns an invoice. The first merchant recorded wins. Decimals are

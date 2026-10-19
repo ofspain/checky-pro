@@ -257,12 +257,12 @@ class PaymentEventConsumerIntegrationTest {
         }
     }
 
-    /** Phase 9 (Kimi F5, self-review S1): the disclosed FU-T07-4 limit, made observable. A
-     * payment.seen consumed before its invoice.created finds no merchant route, so it is recorded
-     * as processed (a redelivery won't retry it) and never dispatched, even after the invoice
-     * arrives. If late-route retry is added later, this test must change on purpose. */
+    /** FU-T07-4 (closed 2026-10-19; this test pinned the old drop until then). A payment.seen
+     * consumed before its invoice.created finds no merchant route. It is recorded as processed
+     * and parked, then dispatched by invoice.created, right after the invoice's own notification.
+     * The parked row is removed in that same transaction. */
     @Test
-    void paymentSeenBeforeItsInvoiceIsRecordedButNeverDispatched() throws SQLException {
+    void paymentSeenBeforeItsInvoiceIsParkedThenDispatchedWhenTheInvoiceArrives() throws SQLException {
         UUID merchant = UUID.randomUUID();
         UUID invoice = UUID.randomUUID();
         UUID payment = UUID.randomUUID();
@@ -280,14 +280,69 @@ class PaymentEventConsumerIntegrationTest {
                 + "\"tokenContractAddress\":\"0x" + "11".repeat(20) + "\",\"tokenDecimals\":6,"
                 + "\"amount\":\"2000000\",\"payToAddress\":\"0x" + "22".repeat(20)
                 + "\",\"reference\":null,\"expiresAt\":\"2026-11-01T00:00:00Z\"}");
-        awaitDispatches(merchant, 1);
+        awaitDispatches(merchant, 2);
         await().during(Duration.ofSeconds(5)).atMost(Duration.ofSeconds(10)).untilAsserted(() ->
                 assertThat(callsFor(merchant)).extracting(DispatchCall::notificationKind)
-                        .containsExactly("invoice.created"));
+                        .containsExactly("invoice.created", "payment.seen"));
+        assertThat(callsFor(merchant).get(1).eventData())
+                .containsEntry("sourceEventKey", "payment.seen:" + payment)
+                .containsEntry("txHash", "0x" + "cd".repeat(32));
+        assertThat(parkedCount(invoice, payment)).as("the replayed event is no longer parked").isZero();
 
         // The route payment.seen carried was still recorded, so a later payment.finalized resolves.
         assertThat(scalar("SELECT invoice_uuid::text FROM notifications.payment_routes "
                 + "WHERE payment_uuid = '" + payment + "'")).isEqualTo(invoice.toString());
+    }
+
+    /** FU-T07-4: payment.finalized names only its payment, so arriving first it is parked with no
+     * invoice. payment.seen then records the payment route, but the invoice is still unknown, so
+     * it parks too. invoice.created replays both in lifecycle order (seen before finalized, though
+     * finalized arrived first), the finalized one found through the payment route. An unrelated
+     * parked event stays parked. */
+    @Test
+    void eventsArrivingBeforeEveryRouteAreReplayedInLifecycleOrder() throws SQLException {
+        UUID merchant = UUID.randomUUID();
+        UUID invoice = UUID.randomUUID();
+        UUID payment = UUID.randomUUID();
+        UUID strayPayment = UUID.randomUUID();
+        String txHash = "0x" + "ef".repeat(32);
+
+        kafkaTemplate.send("payments.payment.finalized", strayPayment.toString(), finalizedJson(strayPayment, txHash));
+        kafkaTemplate.send("payments.payment.finalized", payment.toString(), finalizedJson(payment, txHash));
+        await().atMost(Duration.ofSeconds(60)).untilAsserted(() ->
+                assertThat(parkedCount(invoice, payment) + parkedCount(UUID.randomUUID(), strayPayment)).isEqualTo(2));
+        kafkaTemplate.send("payments.payment.seen", invoice.toString(), "{\"paymentUuid\":\"" + payment
+                + "\",\"invoiceUuid\":\"" + invoice + "\",\"chain\":\"ethereum\",\"txHash\":\"" + txHash
+                + "\",\"tokenContractAddress\":\"0x" + "11".repeat(20)
+                + "\",\"confirmations\":1,\"occurredAt\":\"2026-10-19T11:00:00Z\"}");
+        await().atMost(Duration.ofSeconds(60)).untilAsserted(() ->
+                assertThat(parkedCount(invoice, payment)).isEqualTo(2));
+        assertThat(callsFor(merchant)).isEmpty();
+
+        kafkaTemplate.send("payments.invoice.created", invoice.toString(), "{\"invoiceUuid\":\"" + invoice
+                + "\",\"merchantAccountUuid\":\"" + merchant + "\",\"chain\":\"ethereum\","
+                + "\"tokenContractAddress\":\"0x" + "11".repeat(20) + "\",\"tokenDecimals\":6,"
+                + "\"amount\":\"2000000\",\"payToAddress\":\"0x" + "22".repeat(20)
+                + "\",\"reference\":null,\"expiresAt\":\"2026-11-01T00:00:00Z\"}");
+        awaitDispatches(merchant, 3);
+
+        assertThat(callsFor(merchant)).extracting(DispatchCall::notificationKind)
+                .containsExactly("invoice.created", "payment.seen", "payment.finalized");
+        assertThat(callsFor(merchant).get(2).eventData()).containsEntry("amount", "2");
+        assertThat(parkedCount(invoice, payment)).isZero();
+        assertThat(parkedCount(UUID.randomUUID(), strayPayment)).as("an unrelated event stays parked").isEqualTo(1);
+    }
+
+    private static String finalizedJson(UUID payment, String txHash) {
+        return "{\"paymentUuid\":\"" + payment + "\",\"chain\":\"ethereum\",\"txHash\":\"" + txHash
+                + "\",\"fromAddress\":\"0x" + "33".repeat(20) + "\",\"toAddress\":\"0x" + "22".repeat(20)
+                + "\",\"tokenContractAddress\":\"0x" + "11".repeat(20) + "\",\"amount\":\"2000000\","
+                + "\"confirmations\":12,\"addressPoisoningFlag\":false,\"occurredAt\":\"2026-10-19T10:59:00Z\"}";
+    }
+
+    private static int parkedCount(UUID invoice, UUID payment) throws SQLException {
+        return Integer.parseInt(scalar("SELECT count(*)::text FROM notifications.parked_payment_events "
+                + "WHERE invoice_uuid = '" + invoice + "' OR payment_uuid = '" + payment + "'"));
     }
 
     private static void awaitDispatches(UUID merchant, int expected) {

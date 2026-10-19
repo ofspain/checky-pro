@@ -4,10 +4,12 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.themistra.notification.routing.ParkedEvent;
 import com.themistra.notification.routing.PaymentRouting;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -43,6 +46,7 @@ class PaymentEventConsumerTest {
     private static final UUID MERCHANT = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final UUID PAYMENT = UUID.fromString("33333333-3333-3333-3333-333333333333");
     private static final UUID RECEIPT = UUID.fromString("44444444-4444-4444-4444-444444444444");
+    private static final String PARKED = "; parked until its route arrives";
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final IdempotencyGuard idempotencyGuard = mock(IdempotencyGuard.class);
@@ -192,6 +196,77 @@ class PaymentEventConsumerTest {
         verifyNoInteractions(dispatcher);
         // The route the event itself carries is still recorded, so later events can use it.
         verify(paymentRouting, org.mockito.Mockito.times(2)).recordPayment(PAYMENT, INVOICE);
+        // FU-T07-4: each one is parked with its raw JSON, for a later route to replay.
+        verify(paymentRouting).park("payment.seen:" + PAYMENT, "payment.seen", paymentSeenJson(), INVOICE, PAYMENT);
+        verify(paymentRouting).park("payment.finalized:" + PAYMENT, "payment.finalized", paymentFinalizedJson(),
+                null, PAYMENT);
+        verify(paymentRouting).park("receipt.issued:" + RECEIPT, "receipt.issued", receiptIssuedJson(false),
+                INVOICE, PAYMENT);
+    }
+
+    /** FU-T07-4: invoice.created dispatches itself, then replays what was waiting for it, oldest
+     * first, removing each parked event it dispatches. */
+    @Test
+    void invoiceCreatedReplaysParkedEventsInOrderAndReleasesThem() throws Exception {
+        when(paymentRouting.findParkedFor(INVOICE)).thenReturn(List.of(
+                new ParkedEvent("payment.seen:" + PAYMENT, "payment.seen", paymentSeenJson()),
+                new ParkedEvent("payment.finalized:" + PAYMENT, "payment.finalized", paymentFinalizedJson())));
+        when(paymentRouting.findMerchantForInvoice(INVOICE)).thenReturn(Optional.of(MERCHANT));
+        when(paymentRouting.findInvoiceForPayment(PAYMENT)).thenReturn(Optional.of(INVOICE));
+        when(paymentRouting.findTokenDecimals(INVOICE)).thenReturn(Optional.of(6));
+
+        consumer.onInvoiceCreated(invoiceCreatedJson());
+
+        InOrder order = inOrder(dispatcher, paymentRouting);
+        order.verify(dispatcher).dispatch(eq(MERCHANT), eq("invoice.created"), anyMap());
+        order.verify(dispatcher).dispatch(eq(MERCHANT), eq("payment.seen"),
+                argThat(data -> ("payment.seen:" + PAYMENT).equals(data.get("sourceEventKey"))));
+        order.verify(paymentRouting).releaseParked("payment.seen:" + PAYMENT);
+        order.verify(dispatcher).dispatch(eq(MERCHANT), eq("payment.finalized"),
+                argThat(data -> "1.5".equals(data.get("amount"))));
+        order.verify(paymentRouting).releaseParked("payment.finalized:" + PAYMENT);
+    }
+
+    /** A parked event that still can't be routed stays parked: no dispatch, no release. */
+    @Test
+    void aParkedEventThatStillHasNoRouteStaysParked() throws Exception {
+        when(paymentRouting.findParkedFor(INVOICE)).thenReturn(List.of(
+                new ParkedEvent("payment.finalized:" + PAYMENT, "payment.finalized", paymentFinalizedJson())));
+        when(paymentRouting.findInvoiceForPayment(PAYMENT)).thenReturn(Optional.empty());
+
+        consumer.onInvoiceCreated(invoiceCreatedJson());
+
+        verify(dispatcher, never()).dispatch(any(), eq("payment.finalized"), anyMap());
+        verify(paymentRouting, never()).releaseParked(anyString());
+    }
+
+    /** receipt.issued replays earlier parked events before dispatching itself, so the merchant
+     * sees seen, finalized, then receipt. */
+    @Test
+    void receiptIssuedReplaysParkedEventsBeforeItsOwnDispatch() throws Exception {
+        when(paymentRouting.findParkedFor(INVOICE)).thenReturn(List.of(
+                new ParkedEvent("payment.seen:" + PAYMENT, "payment.seen", paymentSeenJson())));
+        when(paymentRouting.findMerchantForInvoice(INVOICE)).thenReturn(Optional.of(MERCHANT));
+
+        consumer.onReceiptIssued(receiptIssuedJson(true));
+
+        InOrder order = inOrder(dispatcher);
+        order.verify(dispatcher).dispatch(eq(MERCHANT), eq("payment.seen"), anyMap());
+        order.verify(dispatcher).dispatch(eq(MERCHANT), eq("receipt.issued"), anyMap());
+        verify(paymentRouting).releaseParked("payment.seen:" + PAYMENT);
+    }
+
+    /** A dispatched payment.seen also replays, since its payment route can unblock a
+     * payment.finalized that arrived first. A parked one doesn't replay: nothing new resolves. */
+    @Test
+    void paymentSeenReplaysOnlyWhenItDispatches() throws Exception {
+        when(paymentRouting.findMerchantForInvoice(INVOICE)).thenReturn(Optional.empty());
+        consumer.onPaymentSeen(paymentSeenJson());
+        verify(paymentRouting, never()).findParkedFor(any());
+
+        when(paymentRouting.findMerchantForInvoice(INVOICE)).thenReturn(Optional.of(MERCHANT));
+        consumer.onPaymentSeen(paymentSeenJson().replace(PAYMENT.toString(), RECEIPT.toString()));
+        verify(paymentRouting).findParkedFor(INVOICE);
     }
 
     @Test
@@ -274,11 +349,11 @@ class PaymentEventConsumerTest {
                 "Payment event on payments.invoice.created with key invoice.created:" + INVOICE
                         + " not dispatched: it names no merchant",
                 "Payment event on payments.payment.seen with key payment.seen:" + PAYMENT
-                        + " not dispatched: no merchant route for invoice " + INVOICE,
+                        + " not dispatched: no merchant route for invoice " + INVOICE + PARKED,
                 "Payment event on payments.payment.finalized with key payment.finalized:" + PAYMENT
-                        + " not dispatched: no route for payment " + PAYMENT,
+                        + " not dispatched: no route for payment " + PAYMENT + PARKED,
                 "Payment event on payments.receipt.issued with key receipt.issued:" + RECEIPT
-                        + " not dispatched: no merchant route for invoice " + INVOICE,
+                        + " not dispatched: no merchant route for invoice " + INVOICE + PARKED,
                 "Payment event on payments.receipt.issued with key receipt.issued:null"
                         + " not dispatched: it names no receipt; not recorded");
         assertThat(lines).allSatisfy(line -> assertThat(line).doesNotContain(
@@ -322,6 +397,8 @@ class PaymentEventConsumerTest {
 
         verify(paymentRouting).findMerchantForInvoice(INVOICE);
         verifyNoInteractions(dispatcher);
+        verify(paymentRouting).park("payment.finalized:" + PAYMENT, "payment.finalized", paymentFinalizedJson(),
+                INVOICE, PAYMENT);
     }
 
     /** Phase 10: malformed JSON propagates, the same disposition as AuthEventConsumer (the

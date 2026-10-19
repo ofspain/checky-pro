@@ -229,7 +229,8 @@ class T01SkeletonRegressionTest {
      * {@code delivery/DeliveryRetry.java}, {@code delivery/DeliveryRetryRepository.java},
      * {@code delivery/RetryScheduler.java}) and removes none. T07 adds 11 more: the payment
      * consumer and {@code AmountFormatter}, four payment DTOs, and the five-file {@code routing}
-     * projection (frozen brief D2). This list is updated to name all 61
+     * projection (frozen brief D2). The open-issues sweep (2026-10-19, FU-T07-4) adds the three
+     * parked-event files in {@code routing}. This list is updated to name all 64
      * explicitly rather than loosened to "at least N files" - an unnamed-count assertion would
      * silently tolerate a stray file no task ever authorized. */
     @Test
@@ -298,6 +299,9 @@ class T01SkeletonRegressionTest {
                     "preference/PreferenceResolver.java",
                     "routing/InvoiceRoute.java",
                     "routing/InvoiceRouteRepository.java",
+                    "routing/ParkedEvent.java",
+                    "routing/ParkedPaymentEvent.java",
+                    "routing/ParkedPaymentEventRepository.java",
                     "routing/PaymentRoute.java",
                     "routing/PaymentRouteRepository.java",
                     "routing/PaymentRouting.java",

@@ -111,11 +111,12 @@ class NotificationBaselineMigrationIntegrationTest {
     }
 
     @Test
-    void allTenSchemaTablesExistAndNoOthers() throws SQLException {
-        // T07's V12 added the two payment-routing projection tables (frozen brief D2).
+    void allElevenSchemaTablesExistAndNoOthers() throws SQLException {
+        // T07's V12 added the two payment-routing projection tables (frozen brief D2); V18 the
+        // parked payment events (FU-T07-4).
         List<String> expected = List.of("contact_projection", "channel_preferences", "templates",
                 "processed_events", "delivery_log", "inapp_notifications", "delivery_retry", "shedlock",
-                "invoice_routes", "payment_routes");
+                "invoice_routes", "payment_routes", "parked_payment_events");
 
         try (Connection admin = adminConnection();
              Statement statement = admin.createStatement();
@@ -182,7 +183,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 succeededVersions.add(resultSet.getString("version"));
             }
             assertThat(succeededVersions).containsExactly(
-                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17");
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18");
         }
     }
 
@@ -905,6 +906,37 @@ class NotificationBaselineMigrationIntegrationTest {
                         .doesNotContain("{{currency}}", "{{displayName}}", "{{receiptLink}}");
             }
             assertThat(pairs).containsExactlyInAnyOrderElementsOf(expected);
+        }
+    }
+
+    /** FU-T07-4 (V18): notification_app parks, reads and removes parked events, but can never
+     * change one. */
+    @Test
+    void notificationAppCanInsertSelectAndDeleteButNotUpdateParkedPaymentEvents() throws SQLException {
+        String key = "payment.seen:" + java.util.UUID.randomUUID();
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
+            try (PreparedStatement insert = app.prepareStatement(
+                    "INSERT INTO notifications.parked_payment_events (event_key, kind, payload, invoice_uuid) "
+                            + "VALUES (?, 'payment.seen', '{}', ?::uuid)")) {
+                insert.setString(1, key);
+                insert.setString(2, java.util.UUID.randomUUID().toString());
+                assertThat(insert.executeUpdate()).isEqualTo(1);
+            }
+            try (Statement select = app.createStatement();
+                 ResultSet resultSet = select.executeQuery(
+                         "SELECT parked_at FROM notifications.parked_payment_events WHERE event_key = '" + key + "'")) {
+                assertThat(resultSet.next()).isTrue();
+                assertThat(resultSet.getTimestamp(1)).as("parked_at defaults").isNotNull();
+            }
+            assertThatThrownBy(() -> {
+                try (Statement update = app.createStatement()) {
+                    update.execute("UPDATE notifications.parked_payment_events SET payload = '{}'");
+                }
+            }).isInstanceOf(SQLException.class).hasMessageContaining("permission denied");
+            try (Statement delete = app.createStatement()) {
+                assertThat(delete.executeUpdate(
+                        "DELETE FROM notifications.parked_payment_events WHERE event_key = '" + key + "'")).isEqualTo(1);
+            }
         }
     }
 
