@@ -84,6 +84,7 @@ import java.util.concurrent.TimeoutException;
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.delete;
 import static com.github.tomakehurst.wiremock.client.WireMock.deleteRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
@@ -170,6 +171,7 @@ class PaymentEndToEndIntegrationTest {
     private static final String WATCHES_PATH = "/internal/v1/watches";
     private static final String ATTEST_PATH = "/internal/v1/attest";
     private static final String TOKEN_PATH = "/oauth2/token";
+    private static final String CRYPTO_BEARER = "Bearer e2e-crypto-token";
     private static final Duration ASYNC_TIMEOUT = Duration.ofSeconds(60);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final List<String> TOPICS = List.of(
@@ -327,7 +329,7 @@ class PaymentEndToEndIntegrationTest {
         consumerProperties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         outboundConsumer = new KafkaConsumer<>(consumerProperties);
         outboundConsumer.subscribe(List.of(
-                "payments.payment.seen", "payments.payment.finalized", "payments.receipt.issued"));
+                "payments.invoice.created", "payments.payment.seen", "payments.payment.finalized", "payments.receipt.issued"));
         outboundRecords.clear();
     }
 
@@ -356,9 +358,22 @@ class PaymentEndToEndIntegrationTest {
 
         // 1. R1, R2, R6: invoice creation and the watch-ack.
         UUID invoiceUuid = createInvoice();
-        WIREMOCK.verify(1, postRequestedFor(urlEqualTo(WATCHES_PATH)));
+        // Phase 9 (Kimi F2, F8): the outbound watch request honours the Crypto Service
+        // contract (design.md section 4c), and it carries the service-to-service token.
+        List<LoggedRequest> watchCalls = WIREMOCK.findAll(postRequestedFor(urlEqualTo(WATCHES_PATH)));
+        assertThat(watchCalls).hasSize(1);
+        assertThat(watchCalls.get(0).getHeader("Authorization")).isEqualTo(CRYPTO_BEARER);
+        JsonNode watchBody = OBJECT_MAPPER.readTree(watchCalls.get(0).getBodyAsString());
+        assertThat(watchBody.get("invoiceUuid").asText()).isEqualTo(invoiceUuid.toString());
+        assertThat(watchBody.get("chain").asText()).isEqualTo(CHAIN);
+        assertThat(watchBody.get("address").asText()).isEqualTo(PAY_TO_ADDRESS);
+        assertThat(watchBody.get("tokenContractAddress").asText()).isEqualTo(TOKEN_CONTRACT_ADDRESS);
+        assertThat(watchBody.get("expectedAmount").isTextual()).as("L6: expectedAmount is a decimal string").isTrue();
+        assertThat(watchBody.get("expectedAmount").asText()).isEqualTo("1000");
         assertThat(invoiceWatchId(invoiceUuid)).as("the acked watchId is persisted on the invoice").isEqualTo(firstWatchId);
         assertThat(outboxCount("invoice.created", invoiceUuid.toString())).isEqualTo(1);
+        // Phase 9 (Kimi F3): the fourth outbox event also reaches the broker.
+        awaitOutboundRecord("payments.invoice.created", invoiceUuid.toString());
 
         // 2. R7, R7a, R8: seen.
         sendAndWait("chain.tx.seen", firstWatchId.toString(), seenJson(txHash, invoiceUuid));
@@ -380,6 +395,7 @@ class PaymentEndToEndIntegrationTest {
         // R19: exactly one /attest call, carrying this payment's chain and txHash.
         List<LoggedRequest> attestCalls = WIREMOCK.findAll(postRequestedFor(urlEqualTo(ATTEST_PATH)));
         assertThat(attestCalls).hasSize(1);
+        assertThat(attestCalls.get(0).getHeader("Authorization")).isEqualTo(CRYPTO_BEARER);
         JsonNode attestBody = OBJECT_MAPPER.readTree(attestCalls.get(0).getBodyAsString());
         assertThat(attestBody.get("chain").asText()).isEqualTo(CHAIN);
         assertThat(attestBody.get("txHash").asText()).isEqualTo(txHash);
@@ -399,6 +415,12 @@ class PaymentEndToEndIntegrationTest {
         assertThat(pdfHead.contentType()).isEqualTo("application/pdf");
         byte[] pdfBytes = s3.getObjectAsBytes(b -> b.bucket(BUCKET).key(pdfKey)).asByteArray();
         assertThat(new String(pdfBytes, 0, 4, StandardCharsets.US_ASCII)).isEqualTo("%PDF");
+        // Phase 9 (Kimi F6): the payment-uuid metadata that assertNoReceiptIssued relies on is
+        // really written, so the reorg tests' S3 check can't silently go blind.
+        for (HeadObjectResponse head : List.of(jsonHead, pdfHead)) {
+            assertThat(head.metadata()).containsEntry("payment-uuid", paymentUuid.toString())
+                    .containsEntry("receipt-uuid", receipt.receiptUuid().toString());
+        }
         assertWormCompliance(jsonKey, jsonHead.versionId());
         assertWormCompliance(pdfKey, pdfHead.versionId());
 
@@ -425,13 +447,24 @@ class PaymentEndToEndIntegrationTest {
         assertThat(ledgerVerifier.verify()).isInstanceOf(LedgerVerificationResult.Intact.class);
 
         // R10, R25, R30 (Phase 3 F3): payment.finalized and receipt.issued arrive on Kafka.
-        awaitOutboundRecord("payments.payment.finalized", paymentUuid.toString());
+        // Phase 9 (Kimi F5): payload fields as well as keys.
+        JsonNode finalizedBody = OBJECT_MAPPER.readTree(
+                awaitOutboundRecord("payments.payment.finalized", paymentUuid.toString()).value());
+        assertThat(finalizedBody.get("chain").asText()).isEqualTo(CHAIN);
+        assertThat(finalizedBody.get("txHash").asText()).isEqualTo(txHash);
+        assertThat(finalizedBody.get("amount").isTextual()).as("L6: amount is a decimal string").isTrue();
         ConsumerRecord<String, String> receiptIssued =
                 awaitOutboundRecord("payments.receipt.issued", receipt.receiptUuid().toString());
         JsonNode receiptIssuedBody = OBJECT_MAPPER.readTree(receiptIssued.value());
         assertThat(receiptIssuedBody.get("receiptUuid").asText()).isEqualTo(receipt.receiptUuid().toString());
         assertThat(receiptIssuedBody.get("paymentUuid").asText()).isEqualTo(paymentUuid.toString());
         assertThat(receiptIssuedBody.get("invoiceUuid").asText()).isEqualTo(invoiceUuid.toString());
+        assertThat(receiptIssuedBody.get("receiptUri").asText())
+                .as("receiptUri points at the real stored JSON object")
+                .isEqualTo("s3://" + BUCKET + "/" + jsonKey);
+        assertThat(receiptIssuedBody.get("kmsKeyId").asText()).isEqualTo("e2e-kms-key");
+        assertThat(receiptIssuedBody.get("amount").isTextual()).as("L6: amount is a decimal string").isTrue();
+        assertThat(receiptIssuedBody.get("amount").asText()).isEqualTo("1000");
     }
 
     /** AC2 (R11, R18; L11). A reorg of a {@code CONFIRMING} payment walks it back to
@@ -471,12 +504,16 @@ class PaymentEndToEndIntegrationTest {
         assertThat(paymentState(txHash)).isEqualTo("WATCHING");
         assertThat(verificationRecordExists(txHash, "SEEN", "WATCHING"))
                 .as("R12: the reversal is recorded").isTrue();
+        // Phase 9 (Kimi F1): only the original watch was unregistered, on first SEEN (R7a); the
+        // replacement watch stays live.
+        WIREMOCK.verify(1, deleteRequestedFor(urlEqualTo(WATCHES_PATH + "/" + firstWatchId)));
         await().atMost(ASYNC_TIMEOUT).untilAsserted(() -> {
-            WIREMOCK.verify(2, postRequestedFor(urlEqualTo(WATCHES_PATH)));
+            WIREMOCK.verify(2, postRequestedFor(urlEqualTo(WATCHES_PATH)).withHeader("Authorization", equalTo(CRYPTO_BEARER)));
             assertThat(invoiceWatchId(invoiceUuid))
                     .as("the replacement watch is persisted on the still-OPEN invoice")
                     .isEqualTo(replacementWatchId);
         });
+        WIREMOCK.verify(0, deleteRequestedFor(urlEqualTo(WATCHES_PATH + "/" + replacementWatchId)));
         assertNoReceiptIssued(txHash);
     }
 
@@ -523,12 +560,21 @@ class PaymentEndToEndIntegrationTest {
         await().atMost(ASYNC_TIMEOUT).untilAsserted(() -> assertThat(processedEventExists(idempotencyKey)).isTrue());
     }
 
+    /** Phase 9 (Kimi F7, = self-review F2): at least one record, not exactly one. The outbox
+     * relay is at-least-once (L8): a send that times out after the broker accepted it is
+     * legitimately resent. Any such duplicate must be identical, though. "Exactly one receipt"
+     * (R17) stays pinned elsewhere: the single receipts row, the single /attest call and the
+     * single ledger entry. */
     private ConsumerRecord<String, String> awaitOutboundRecord(String topic, String key) {
         await().atMost(ASYNC_TIMEOUT).pollInSameThread().untilAsserted(() -> {
             outboundConsumer.poll(Duration.ofMillis(200)).forEach(outboundRecords::add);
-            assertThat(outboundRecords(topic, key)).as("records on %s keyed %s", topic, key).hasSize(1);
+            assertThat(outboundRecords(topic, key)).as("records on %s keyed %s", topic, key).isNotEmpty();
         });
-        return outboundRecords(topic, key).get(0);
+        List<ConsumerRecord<String, String>> records = outboundRecords(topic, key);
+        assertThat(records.stream().map(ConsumerRecord::value).distinct())
+                .as("any at-least-once redelivery on %s keyed %s must be an identical payload", topic, key)
+                .hasSize(1);
+        return records.get(0);
     }
 
     private List<ConsumerRecord<String, String>> outboundRecords(String topic, String key) {
@@ -538,11 +584,13 @@ class PaymentEndToEndIntegrationTest {
     }
 
     private void assertWormCompliance(String key, String versionId) {
-        ObjectLockRetention retention = s3.getObjectRetention(b -> b.bucket(BUCKET).key(key)).retention();
+        assertThat(versionId).as("an Object Lock bucket is versioned").isNotBlank();
+        // Phase 9 (Kimi F4): the retention read and the delete attempt target the same version.
+        ObjectLockRetention retention = s3.getObjectRetention(b -> b.bucket(BUCKET).key(key).versionId(versionId))
+                .retention();
         assertThat(retention.mode()).as("%s must be locked in COMPLIANCE mode", key)
                 .isEqualTo(ObjectLockRetentionMode.COMPLIANCE);
         assertThat(retention.retainUntilDate()).isAfter(Instant.now());
-        assertThat(versionId).as("an Object Lock bucket is versioned").isNotBlank();
         assertThatThrownBy(() -> s3.deleteObject(DeleteObjectRequest.builder()
                         .bucket(BUCKET).key(key).versionId(versionId).build()))
                 .as("a COMPLIANCE-locked version of %s must not be deletable", key)
