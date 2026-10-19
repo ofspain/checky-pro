@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -40,8 +41,12 @@ class T01SkeletonRegressionTest {
             Set.of("FROM", "WORKDIR", "COPY", "USER", "EXPOSE", "ENTRYPOINT", "LABEL");
     private static final Path PAYMENT_PACKAGE_SPEC = Path.of("../../spec/payment-service/package.md");
     private static final Path TEST_SOURCES = Path.of("src/test/java");
-    /** T29: a test method name cited in a checklist line, optionally qualified by its class. */
-    private static final Pattern CITED_TEST_NAME = Pattern.compile("`(?:[A-Za-z0-9_]+)?\\.?(should[A-Za-z0-9_]+)`");
+    /** T29: a backticked citation in a §9 line: {@code Class.method}, {@code .method} (same class
+     * as the previous citation), a bare {@code method}, or a bare {@code …Test} class. */
+    private static final Pattern CITATION = Pattern.compile(
+            "`(?:([A-Z][A-Za-z0-9_]*Test)(?:\\.(should[A-Za-z0-9_]+))?|\\.?(should[A-Za-z0-9_]+))`");
+    /** R26 (Q4): named in §8/§9 but deliberately not written this revision. */
+    private static final Set<String> DEFERRED_UNWRITTEN_TESTS = Set.of("shouldAnchorLedgerHeadOnChainDaily");
     private static final Path APPLICATION_SOURCE =
             Path.of("src/main/java/com/themistra/payment/PaymentServiceApplication.java");
 
@@ -328,60 +333,105 @@ class T01SkeletonRegressionTest {
         assertThat(runtimeStage).as("the port is exposed by the image that runs").contains("EXPOSE 8083");
     }
 
-    /** Drops Dockerfile comment lines and blank lines, trims the rest, and upper-cases each
-     * instruction keyword. Docker reads keywords case-insensitively, so {@code env X=1} must not
-     * slip past a check for {@code ENV}. The header comment explains the rules this test checks,
-     * and may name the very instructions it bans, which is why comments are dropped. */
     /** T29 AC4: the spec bump stays in place. Matched by table row, not line number (Kimi
-     * Phase 3 F2); the Status row by prefix, because a disclosure sentence follows the value. */
+     * Phase 3 F2), and only inside the header table, before {@code ## 0.} (Kimi Phase 8 F6); the
+     * Status row by prefix, because a disclosure sentence follows the value. */
     @Test
     void paymentSpecIsBumpedToReadyForImplVersionZeroPointTwo() throws IOException {
         String spec = Files.readString(PAYMENT_PACKAGE_SPEC);
+        int headerEnd = spec.indexOf("\n## 0. ");
+        assertThat(headerEnd).as("package.md must have its header table before section 0").isPositive();
+        String header = spec.substring(0, headerEnd);
 
-        assertThat(Pattern.compile("(?m)^\\| Version \\| `0\\.2` \\|\\s*$").matcher(spec).find())
+        assertThat(Pattern.compile("(?m)^\\| Version \\| `0\\.2` \\|\\s*$").matcher(header).find())
                 .as("package.md Version must be 0.2").isTrue();
-        assertThat(Pattern.compile("(?m)^\\| Status \\| `READY FOR IMPL`").matcher(spec).find())
+        assertThat(Pattern.compile("(?m)^\\| Status \\| `READY FOR IMPL`").matcher(header).find())
                 .as("package.md Status must be READY FOR IMPL").isTrue();
-        assertThat(Pattern.compile("(?m)^\\| Status \\|[^\\n]*`DRAFT`").matcher(spec).find())
+        assertThat(Pattern.compile("(?m)^\\| Status \\|[^\\n]*`DRAFT`").matcher(header).find())
                 .as("package.md Status must no longer say DRAFT").isFalse();
     }
 
-    /** T29 AC5 (Kimi Phase 3 F4): every test the §9 checklist cites as evidence really exists, so
-     * a rename can't leave the spec pointing at nothing. The "Not applicable this revision" line
-     * is skipped: it names R26's deferred, deliberately unwritten test. */
+    /** T29 AC5 (Kimi Phase 3 F4, Phase 8 F1/F2/F4): every test the §9 checklist cites as evidence
+     * really exists, so a rename can't leave the spec pointing at nothing. A {@code Class.method}
+     * citation must be declared in that class's own file; a bare {@code .method} continues the
+     * previous class on the line; a bare {@code …Test} class must have its file. Only R26's
+     * deferred, deliberately unwritten test name is exempt, not any whole line. */
     @Test
     void everyTestNamedInTheVerificationChecklistExists() throws IOException {
+        Map<String, String> testSourcesByClass = new java.util.HashMap<>();
+        try (var files = Files.walk(TEST_SOURCES)) {
+            for (Path file : files.filter(f -> f.toString().endsWith(".java")).toList()) {
+                String name = file.getFileName().toString();
+                testSourcesByClass.put(name.substring(0, name.length() - ".java".length()), Files.readString(file));
+            }
+        }
+        String allTestSources = String.join("\n", testSourcesByClass.values());
+
+        List<String> missing = new ArrayList<>();
+        int citations = 0;
+        for (String line : verificationChecklistItems()) {
+            String currentClass = null;
+            Matcher matcher = CITATION.matcher(line);
+            while (matcher.find()) {
+                String className = matcher.group(1);
+                String qualifiedMethod = matcher.group(2);
+                String method = qualifiedMethod != null ? qualifiedMethod : matcher.group(3);
+                if (className != null) {
+                    currentClass = className;
+                }
+                if (method == null) {
+                    citations++;
+                    if (!testSourcesByClass.containsKey(className)) {
+                        missing.add(className + " (class)");
+                    }
+                    continue;
+                }
+                if (DEFERRED_UNWRITTEN_TESTS.contains(method)) {
+                    continue;
+                }
+                citations++;
+                String owner = qualifiedMethod != null ? className
+                        : matcher.group().startsWith("`.") ? currentClass : null;
+                String source = owner != null ? testSourcesByClass.get(owner) : allTestSources;
+                if (source == null || !source.contains("void " + method + "(")) {
+                    missing.add((owner != null ? owner + "." : "") + method);
+                }
+            }
+        }
+        assertThat(citations).as("the parse must find the checklist's citations, not pass vacuously")
+                .isGreaterThanOrEqualTo(25);
+        assertThat(missing).as("§9 cites tests that do not exist").isEmpty();
+    }
+
+    /** T29 Phase 9 (Kimi Phase 8 F7): the honestly-partial items stay partial and R26 stays
+     * deferred; none of them can be silently ticked. */
+    @Test
+    void verificationChecklistKeepsItsPartialAndDeferredItemsUnticked() throws IOException {
+        List<String> items = verificationChecklistItems();
+        assertThat(items).as("§9 has 14 items").hasSize(14);
+
+        for (int itemNumber : new int[] {1, 13}) {
+            assertThat(items.get(itemNumber - 1)).as("§9 item %d stays visibly partial", itemNumber)
+                    .startsWith("- [ ] ").contains("**Partial —**");
+        }
+        assertThat(items.get(13)).as("§9 item 14 stays deferred")
+                .startsWith("- [ ] **Not applicable this revision:**").contains("deferred");
+    }
+
+    /** The {@code - [} item lines of {@code package.md} §9, in order. */
+    private static List<String> verificationChecklistItems() throws IOException {
         String spec = Files.readString(PAYMENT_PACKAGE_SPEC);
         int start = spec.indexOf("## 9. Verification checklist");
         int end = spec.indexOf("## 10. ", start);
         assertThat(start).as("package.md must have its §9 checklist").isNotNegative();
         assertThat(end).as("§9 must be followed by §10").isGreaterThan(start);
-
-        Set<String> cited = new java.util.TreeSet<>();
-        for (String line : spec.substring(start, end).split("\n")) {
-            if (!line.startsWith("- [") || line.contains("Not applicable this revision")) {
-                continue;
-            }
-            Matcher matcher = CITED_TEST_NAME.matcher(line);
-            while (matcher.find()) {
-                cited.add(matcher.group(1));
-            }
-        }
-        assertThat(cited).as("the parse must find the checklist's citations, not pass vacuously")
-                .hasSizeGreaterThanOrEqualTo(15);
-
-        StringBuilder testSources = new StringBuilder();
-        try (var files = Files.walk(TEST_SOURCES)) {
-            for (Path file : files.filter(f -> f.toString().endsWith(".java")).toList()) {
-                testSources.append(Files.readString(file)).append('\n');
-            }
-        }
-        List<String> missing = cited.stream()
-                .filter(name -> !testSources.toString().contains("void " + name + "("))
-                .toList();
-        assertThat(missing).as("§9 cites tests that do not exist").isEmpty();
+        return spec.substring(start, end).lines().filter(line -> line.startsWith("- [")).toList();
     }
 
+    /** Drops Dockerfile comment lines and blank lines, trims the rest, and upper-cases each
+     * instruction keyword. Docker reads keywords case-insensitively, so {@code env X=1} must not
+     * slip past a check for {@code ENV}. The header comment explains the rules this test checks,
+     * and may name the very instructions it bans, which is why comments are dropped. */
     private static List<String> stripDockerfileComments(String dockerfile) {
         return dockerfile.lines().map(String::trim)
                 .filter(line -> !line.isEmpty() && !line.startsWith("#"))
