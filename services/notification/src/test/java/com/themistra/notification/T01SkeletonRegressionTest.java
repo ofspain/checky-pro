@@ -502,6 +502,37 @@ class T01SkeletonRegressionTest {
         assertThat(HexFormat.of().formatHex(digest)).isEqualTo(SECTION_4C_VERBATIM_SHA256);
     }
 
+    /** T20 Phase 10 (AC2/AC4): §9 items 2 and 3 count as "no silent deviation" only because the
+     * deviations are written down beside the text they deviate from. This keeps those dated notes
+     * in place: the L2 interpretation sits directly under L2, the recipients note sits in §4c
+     * after its mapping block, and R3/R5 keep their partial notes. */
+    @Test
+    void specKeepsItsDatedDeviationNotesBesideTheTextTheyQualify() throws IOException {
+        String design = Files.readString(NOTIFICATION_DESIGN_SPEC);
+        List<String> designLines = design.lines().toList();
+        int l2 = designLines.indexOf(designLines.stream().filter(line -> line.startsWith("- L2. ")).findFirst()
+                .orElseThrow());
+        assertThat(designLines.get(l2 + 1)).as("the L2 interpretation sits directly under L2")
+                .startsWith("  - *Interpretation (2026-10-19").contains("invoice_routes");
+
+        int section4c = design.indexOf("## 4c.");
+        int section4cEnd = design.indexOf("\n## ", section4c + 1);
+        String section = design.substring(section4c, section4cEnd);
+        int mappingEnd = section.indexOf("`chain.*` events are NOT consumed");
+        int note = section.indexOf("> **Recipients as shipped (2026-10-19");
+        assertThat(mappingEnd).as("§4c keeps its chain.* line").isPositive();
+        assertThat(note).as("the recipients note follows the mapping inside §4c").isGreaterThan(mappingEnd);
+        assertThat(section.substring(note)).contains("**merchant only**", "**no receipt link**", "**not mapped**");
+
+        String requirements = Files.readString(Path.of("../../spec/notification-service/requirements.md"));
+        for (String requirement : List.of("R3", "R5")) {
+            int start = requirements.indexOf("- " + requirement + ". ");
+            int next = requirements.indexOf("\n- R", start + 1);
+            assertThat(requirements.substring(start, next)).as("%s keeps its partial note", requirement)
+                    .contains("*Note (2026-10-19, T07/T20): **partial.**");
+        }
+    }
+
     /** {@code @Disabled}, simple or fully qualified. */
     private static final String DISABLED = "@(?:[A-Za-z0-9_]+\\.)*Disabled\\b";
 
