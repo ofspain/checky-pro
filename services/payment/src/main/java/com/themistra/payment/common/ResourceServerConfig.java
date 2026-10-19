@@ -16,6 +16,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -81,7 +82,7 @@ public class ResourceServerConfig {
     public AuthenticationEntryPoint problemJsonAuthenticationEntryPoint(ObjectMapper objectMapper) {
         return (request, response, authException) -> {
             response.setHeader("WWW-Authenticate", "Bearer");
-            writeProblemJson(response, objectMapper, HttpStatus.UNAUTHORIZED,
+            writeProblemJson(response, objectMapper, HttpStatus.UNAUTHORIZED, ProblemTypes.UNAUTHORIZED,
                     "Unauthorized", "A valid access token is required.");
         };
     }
@@ -90,17 +91,19 @@ public class ResourceServerConfig {
     @Bean
     public AccessDeniedHandler problemJsonAccessDeniedHandler(ObjectMapper objectMapper) {
         return (request, response, accessDeniedException) -> writeProblemJson(
-                response, objectMapper, HttpStatus.FORBIDDEN,
+                response, objectMapper, HttpStatus.FORBIDDEN, ProblemTypes.FORBIDDEN,
                 "Forbidden", "The token does not carry the required access.");
     }
 
+    /** {@code type} is a {@link URI}, not a {@code String} (T23/R29) - forces every caller
+     * through a real {@link ProblemTypes} constant rather than an arbitrary inline literal. */
     private static void writeProblemJson(
-            HttpServletResponse response, ObjectMapper objectMapper, HttpStatus status,
+            HttpServletResponse response, ObjectMapper objectMapper, HttpStatus status, URI type,
             String title, String detail) throws IOException {
         response.setStatus(status.value());
         response.setContentType("application/problem+json");
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("type", "about:blank");
+        body.put("type", type.toString());
         body.put("title", title);
         body.put("status", status.value());
         body.put("detail", detail);
