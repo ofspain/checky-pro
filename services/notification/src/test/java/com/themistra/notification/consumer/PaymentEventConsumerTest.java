@@ -266,6 +266,21 @@ class PaymentEventConsumerTest {
 
         List<String> lines = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
         assertThat(lines).hasSize(5);
+        // Phase 11 Gap 3: each drop is visible at INFO, names its topic and key, and says why.
+        assertThat(appender.list).allSatisfy(event ->
+                assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.INFO));
+        assertThat(lines).allSatisfy(line -> assertThat(line).contains("not dispatched"));
+        assertThat(lines).containsExactly(
+                "Payment event on payments.invoice.created with key invoice.created:" + INVOICE
+                        + " not dispatched: it names no merchant",
+                "Payment event on payments.payment.seen with key payment.seen:" + PAYMENT
+                        + " not dispatched: no merchant route for invoice " + INVOICE,
+                "Payment event on payments.payment.finalized with key payment.finalized:" + PAYMENT
+                        + " not dispatched: no route for payment " + PAYMENT,
+                "Payment event on payments.receipt.issued with key receipt.issued:" + RECEIPT
+                        + " not dispatched: no merchant route for invoice " + INVOICE,
+                "Payment event on payments.receipt.issued with key receipt.issued:null"
+                        + " not dispatched: it names no receipt; not recorded");
         assertThat(lines).allSatisfy(line -> assertThat(line).doesNotContain(
                 "0xpayto", "0xfrom", "0xtoken", "0xtx", "s3://", "receipts-bucket", "kms-1",
                 "1500000", "order-1", "{"));
@@ -326,6 +341,25 @@ class PaymentEventConsumerTest {
         verifyNoInteractions(idempotencyGuard, paymentRouting, dispatcher);
     }
 
+    /** Phase 11 Gaps 4 and 5: missing decimals or a missing or unparseable amount never throws
+     * (a throw would mean endless redelivery). The route is still recorded and the merchant is
+     * still notified, with the amount left out or passed through raw. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void shouldStillRouteAndDispatchWhenDecimalsOrAmountAreMissingOrUnparseable() throws Exception {
+        consumer.onInvoiceCreated(invoiceCreatedJson()
+                .replace("\"tokenDecimals\":6", "\"tokenDecimals\":null")
+                .replace("\"amount\":\"1500000\"", "\"amount\":null"));
+        consumer.onInvoiceCreated(invoiceCreatedJson().replace("\"amount\":\"1500000\"", "\"amount\":\"not-a-number\""));
+
+        verify(paymentRouting).recordInvoice(INVOICE, MERCHANT, null);
+        verify(paymentRouting).recordInvoice(INVOICE, MERCHANT, (short) 6);
+        ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
+        verify(dispatcher, org.mockito.Mockito.times(2)).dispatch(eq(MERCHANT), eq("invoice.created"), data.capture());
+        assertThat(data.getAllValues().get(0)).doesNotContainKey("amount").containsEntry("invoiceId", INVOICE.toString());
+        assertThat(data.getAllValues().get(1)).containsEntry("amount", "not-a-number");
+    }
+
     /** L1: each listener is transactional and bound to its real topic. */
     @Test
     void everyListenerIsTransactionalOnItsPaymentsTopic() {
@@ -338,6 +372,9 @@ class PaymentEventConsumerTest {
             Method method = Arrays.stream(PaymentEventConsumer.class.getMethods())
                     .filter(m -> m.getName().equals(entry.getKey())).findFirst().orElseThrow();
             assertThat(method.getAnnotation(KafkaListener.class).topics()).containsExactly(entry.getValue());
+            // Phase 11 Gap 1: the shared, configured group, so replicas split partitions.
+            assertThat(method.getAnnotation(KafkaListener.class).groupId()).as(entry.getKey())
+                    .isEqualTo("${spring.kafka.consumer.group-id}");
             assertThat(method.getAnnotation(Transactional.class)).as(entry.getKey()).isNotNull();
         }
     }
