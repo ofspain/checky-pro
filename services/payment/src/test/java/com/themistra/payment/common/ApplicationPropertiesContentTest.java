@@ -32,6 +32,15 @@ class ApplicationPropertiesContentTest {
         assertThat(properties).contains("spring.security.oauth2.resourceserver.jwt.issuer-uri=");
     }
 
+    /** FU-T27-2 (open-issues sweep, 2026-10-19): the JWKS location must be overridable per
+     * environment. Hard-coded to localhost, a deployed container looked for auth-service's keys
+     * on its own loopback, so every token would fail validation. */
+    @Test
+    void jwkSetUriIsOverridableByEnvironment() throws IOException {
+        assertThat(Files.readString(APPLICATION_PROPERTIES)).contains(
+                "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=${AUTH_JWK_SET_URI:http://localhost:8080/oauth2/jwks}");
+    }
+
     /** AC2: PaymentServiceApplication carries @ConfigurationPropertiesScan - also covered by
      * T01SkeletonRegressionTest's own updated assertion; kept here too since it is this task's
      * own acceptance criterion, not just a T01 regression guard. */

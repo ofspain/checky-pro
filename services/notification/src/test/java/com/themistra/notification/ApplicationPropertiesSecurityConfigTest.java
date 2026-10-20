@@ -38,6 +38,15 @@ class ApplicationPropertiesSecurityConfigTest {
                 .isNotBlank();
     }
 
+    /** FU-T27-2 (open-issues sweep, 2026-10-19): the JWKS location must be overridable per
+     * environment. Hard-coded to localhost, a deployed container looked for auth-service's keys
+     * on its own loopback, so every token would fail validation. */
+    @Test
+    void jwkSetUriIsOverridableByEnvironment() throws IOException {
+        assertThat(loadApplicationProperties().getProperty("spring.security.oauth2.resourceserver.jwt.jwk-set-uri"))
+                .isEqualTo("${AUTH_JWK_SET_URI:http://localhost:8080/oauth2/jwks}");
+    }
+
     @Test
     void exposesExactlyHealthInfoAndPrometheusOverActuator() throws IOException {
         Properties properties = loadApplicationProperties();
