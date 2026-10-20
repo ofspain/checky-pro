@@ -4,6 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -60,16 +61,30 @@ public class PaymentRouting {
                 .toList();
     }
 
-    /** Removes every event parked before {@code cutoff} and returns their keys, oldest first. An
-     * event whose route arrives later than this is never notified; the caller logs each key. */
+    /** Removes every event parked before {@code cutoff} and returns exactly those removed, oldest
+     * first. An event whose route arrives later than this is never notified; the caller records each
+     * one (Kimi sweep review, Finding 7). Joins the caller's transaction, so the delete and the
+     * caller's record commit together. */
     @Transactional
-    public List<String> expireParkedBefore(Instant cutoff) {
+    public List<ExpiredParkedEvent> expireParkedBefore(Instant cutoff) {
         Objects.requireNonNull(cutoff, "cutoff must not be null");
-        List<String> keys = parkedEvents.findKeysParkedBefore(cutoff);
-        if (!keys.isEmpty()) {
-            parkedEvents.expire(keys, cutoff);
+        return parkedEvents.expireParkedBefore(cutoff).stream()
+                .map(row -> new ExpiredParkedEvent((String) row[0], (String) row[1], toInstant(row[2])))
+                .sorted(Comparator.comparing(ExpiredParkedEvent::parkedAt).thenComparing(ExpiredParkedEvent::eventKey))
+                .toList();
+    }
+
+    private static Instant toInstant(Object value) {
+        if (value instanceof Instant instant) {
+            return instant;
         }
-        return keys;
+        if (value instanceof java.time.OffsetDateTime offsetDateTime) {
+            return offsetDateTime.toInstant();
+        }
+        if (value instanceof java.sql.Timestamp timestamp) {
+            return timestamp.toInstant();
+        }
+        throw new IllegalStateException("unexpected parked_at type " + (value == null ? "null" : value.getClass()));
     }
 
     /** Removes a parked event once it has been dispatched, in the dispatch's own transaction. */

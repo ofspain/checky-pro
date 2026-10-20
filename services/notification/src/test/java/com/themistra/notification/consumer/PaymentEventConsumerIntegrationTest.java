@@ -1,5 +1,8 @@
 package com.themistra.notification.consumer;
 
+import com.themistra.notification.delivery.UndeliveredEventLog;
+import com.themistra.notification.routing.ExpiredParkedEvent;
+import com.themistra.notification.routing.ParkedEventExpiryJob;
 import com.themistra.notification.routing.PaymentRouting;
 import com.themistra.notification.template.TemplateRenderer;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -15,6 +18,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -39,6 +43,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 /**
@@ -126,6 +131,12 @@ class PaymentEventConsumerIntegrationTest {
 
     @Autowired
     private PaymentRouting paymentRouting;
+
+    @Autowired
+    private ParkedEventExpiryJob parkedEventExpiryJob;
+
+    @Autowired
+    private UndeliveredEventLog undeliveredEventLog;
 
     /** Routing facts never change, so the first write wins and a repeat write is a quiet no-op,
      * never a key violation that would roll back the listener's transaction. receipt.issued
@@ -342,17 +353,84 @@ class PaymentEventConsumerIntegrationTest {
         UUID newPayment = UUID.randomUUID();
         paymentRouting.park("payment.finalized:" + oldPayment, "payment.finalized", "{}", null, oldPayment);
         paymentRouting.park("payment.finalized:" + newPayment, "payment.finalized", "{}", null, newPayment);
-        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
-            statement.execute("UPDATE notifications.parked_payment_events SET parked_at = now() - interval '8 days' "
-                    + "WHERE event_key = 'payment.finalized:" + oldPayment + "'");
-        }
+        backdateParked("payment.finalized:" + oldPayment, "8 days");
 
-        List<String> expired = paymentRouting.expireParkedBefore(Instant.now().minus(Duration.ofDays(7)));
+        List<ExpiredParkedEvent> expired = paymentRouting.expireParkedBefore(Instant.now().minus(Duration.ofDays(7)));
 
-        assertThat(expired).contains("payment.finalized:" + oldPayment)
+        assertThat(expired).extracting(ExpiredParkedEvent::eventKey).contains("payment.finalized:" + oldPayment)
                 .doesNotContain("payment.finalized:" + newPayment);
+        assertThat(expired).filteredOn(event -> event.eventKey().equals("payment.finalized:" + oldPayment))
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.kind()).isEqualTo("payment.finalized");
+                    assertThat(event.parkedAt()).isBefore(Instant.now().minus(Duration.ofDays(7)));
+                });
         assertThat(parkedCount(UUID.randomUUID(), oldPayment)).isZero();
         assertThat(parkedCount(UUID.randomUUID(), newPayment)).isEqualTo(1);
+    }
+
+    /** Kimi sweep review, Finding 7 (2026-10-20): the real job, against real Postgres, leaves one
+     * durable EXPIRED row per removed event (V19) and none for an event still within its age. The
+     * row names no channel, recipient, account or template, and never carries the payload. */
+    @Test
+    void theExpiryJobLeavesADurableExpiredRecordInTheDeliveryLog() throws SQLException {
+        UUID oldPayment = UUID.randomUUID();
+        UUID newPayment = UUID.randomUUID();
+        String oldKey = "payment.seen:" + oldPayment;
+        String newKey = "payment.seen:" + newPayment;
+        String payload = "{\"secretMarker\":\"" + UUID.randomUUID() + "\"}";
+        paymentRouting.park(oldKey, "payment.seen", payload, null, oldPayment);
+        paymentRouting.park(newKey, "payment.seen", payload, null, newPayment);
+        backdateParked(oldKey, "8 days");
+        // The scheduler already ran the job once at startup, and its ShedLock row is held for at
+        // least 10s, during which ShedLock silently skips any call, this one included. The row is
+        // expired, not deleted: ShedLock remembers it exists and only ever UPDATEs it afterwards.
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("UPDATE notifications.shedlock SET lock_until = now() - interval '1 second' "
+                    + "WHERE name = 'parked-event-expiry'");
+        }
+
+        parkedEventExpiryJob.expire();
+
+        assertThat(parkedCount(UUID.randomUUID(), oldPayment)).isZero();
+        assertThat(parkedCount(UUID.randomUUID(), newPayment)).isEqualTo(1);
+        assertThat(scalar("SELECT count(*)::text FROM notifications.delivery_log WHERE source_event_key = '"
+                + newKey + "'")).isEqualTo("0");
+        try (Connection admin = adminConnection();
+             Statement statement = admin.createStatement();
+             ResultSet row = statement.executeQuery("SELECT outcome, channel, recipient, account_uuid, "
+                     + "template_name, template_version, attempt, error_detail FROM notifications.delivery_log "
+                     + "WHERE source_event_key = '" + oldKey + "'")) {
+            assertThat(row.next()).as("one delivery_log row for the expired event").isTrue();
+            assertThat(row.getString("outcome")).isEqualTo("EXPIRED");
+            assertThat(row.getString("channel")).isNull();
+            assertThat(row.getString("recipient")).isNull();
+            assertThat(row.getString("account_uuid")).isNull();
+            assertThat(row.getString("template_name")).isNull();
+            assertThat(row.getObject("template_version")).isNull();
+            assertThat(row.getInt("attempt")).isEqualTo(1);
+            assertThat(row.getString("error_detail"))
+                    .startsWith("payment.seen parked at ")
+                    .contains("expired after 168h", "never notified")
+                    .doesNotContain("secretMarker");
+            assertThat(row.next()).as("exactly one row").isFalse();
+        }
+    }
+
+    /** The record is only ever written inside the deleting transaction (MANDATORY), so it can never
+     * exist without the delete, or the delete without it. */
+    @Test
+    void anExpiredRecordCannotBeWrittenOutsideATransaction() {
+        assertThatThrownBy(() -> undeliveredEventLog.recordExpired("payment.seen:" + UUID.randomUUID(),
+                "payment.seen", Instant.now(), 168))
+                .isInstanceOf(IllegalTransactionStateException.class);
+    }
+
+    private static void backdateParked(String eventKey, String age) throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("UPDATE notifications.parked_payment_events SET parked_at = now() - interval '"
+                    + age + "' WHERE event_key = '" + eventKey + "'");
+        }
     }
 
     private static String finalizedJson(UUID payment, String txHash) {

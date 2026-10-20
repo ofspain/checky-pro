@@ -6,7 +6,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
-import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -37,17 +36,13 @@ interface ParkedPaymentEventRepository extends JpaRepository<ParkedPaymentEvent,
     @Query(value = "DELETE FROM notifications.parked_payment_events WHERE event_key = :eventKey", nativeQuery = true)
     int release(@Param("eventKey") String eventKey);
 
-    /** Keys of events parked before {@code cutoff}, oldest first (expiry). */
-    @Query(value = "SELECT event_key FROM notifications.parked_payment_events WHERE parked_at < :cutoff "
-            + "ORDER BY parked_at, event_key",
+    /** Removes every event parked before {@code cutoff} and returns exactly the rows it removed,
+     * as {@code [event_key, kind, parked_at]}. One statement, so a row re-parked under the same key
+     * meanwhile is neither removed early nor reported as removed (Kimi sweep review, Finding 7).
+     * Not {@code @Modifying}: a {@code DELETE ... RETURNING} is read back as a result list. Must run
+     * in a transaction. */
+    @Query(value = "DELETE FROM notifications.parked_payment_events WHERE parked_at < :cutoff "
+            + "RETURNING event_key, kind, parked_at",
             nativeQuery = true)
-    List<String> findKeysParkedBefore(@Param("cutoff") Instant cutoff);
-
-    /** Removes the given expired events. The {@code parked_at} condition is repeated so a row
-     * re-parked under the same key after the select is never removed early. */
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query(value = "DELETE FROM notifications.parked_payment_events "
-            + "WHERE event_key IN (:eventKeys) AND parked_at < :cutoff",
-            nativeQuery = true)
-    int expire(@Param("eventKeys") Collection<String> eventKeys, @Param("cutoff") Instant cutoff);
+    List<Object[]> expireParkedBefore(@Param("cutoff") Instant cutoff);
 }

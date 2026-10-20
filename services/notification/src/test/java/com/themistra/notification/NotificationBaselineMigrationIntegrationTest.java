@@ -183,7 +183,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 succeededVersions.add(resultSet.getString("version"));
             }
             assertThat(succeededVersions).containsExactly(
-                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18");
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19");
         }
     }
 
@@ -938,6 +938,49 @@ class NotificationBaselineMigrationIntegrationTest {
                         "DELETE FROM notifications.parked_payment_events WHERE event_key = '" + key + "'")).isEqualTo(1);
             }
         }
+    }
+
+    /** Kimi sweep review, Finding 7 (V19, 2026-10-20): notification_app can append an EXPIRED row
+     * with no channel. The new check keeps the two kinds of row apart: every real attempt must still
+     * name its channel, and an EXPIRED row may not. The table stays append-only. */
+    @Test
+    void deliveryLogAcceptsAnExpiredRowWithoutAChannelAndNothingElseWithout() throws SQLException {
+        String key = "payment.seen:" + java.util.UUID.randomUUID();
+        try (Connection app = connectAsNotificationApp(NOTIFICATION_APP_PASSWORD)) {
+            try (PreparedStatement insert = app.prepareStatement(
+                    "INSERT INTO notifications.delivery_log (channel, source_event_key, outcome) VALUES (NULL, ?, 'EXPIRED')")) {
+                insert.setString(1, key);
+                assertThat(insert.executeUpdate()).isEqualTo(1);
+            }
+            for (String outcome : List.of("SENT", "FAILED", "SUPPRESSED", "DEAD_LETTERED")) {
+                assertThatThrownBy(() -> {
+                    try (Statement insert = app.createStatement()) {
+                        insert.execute("INSERT INTO notifications.delivery_log (channel, source_event_key, outcome) "
+                                + "VALUES (NULL, '" + key + "', '" + outcome + "')");
+                    }
+                }).as("%s without a channel", outcome).isInstanceOf(SQLException.class)
+                        .hasMessageContaining("chk_delivery_channel_matches_outcome");
+            }
+            assertThatThrownBy(() -> {
+                try (Statement insert = app.createStatement()) {
+                    insert.execute("INSERT INTO notifications.delivery_log (channel, source_event_key, outcome) "
+                            + "VALUES ('EMAIL', '" + key + "', 'EXPIRED')");
+                }
+            }).as("EXPIRED with a channel").isInstanceOf(SQLException.class)
+                    .hasMessageContaining("chk_delivery_channel_matches_outcome");
+            assertThatThrownBy(() -> {
+                try (Statement insert = app.createStatement()) {
+                    insert.execute("INSERT INTO notifications.delivery_log (channel, source_event_key, outcome) "
+                            + "VALUES ('EMAIL', '" + key + "', 'LOST')");
+                }
+            }).as("an unknown outcome").isInstanceOf(SQLException.class).hasMessageContaining("chk_delivery_outcome");
+            assertThatThrownBy(() -> {
+                try (Statement update = app.createStatement()) {
+                    update.execute("UPDATE notifications.delivery_log SET outcome = 'SENT' WHERE source_event_key = '" + key + "'");
+                }
+            }).isInstanceOf(SQLException.class).hasMessageContaining("permission denied");
+        }
+        cleanUpAsAdmin("delivery_log", key);
     }
 
     /** FU-T07-2 (2026-10-19): V15 adds one version-3 row, the receipt email with its link. The

@@ -35,7 +35,8 @@ public class DeliveryLog {
     @Column(name = "recipient")
     private String recipient;
 
-    @Column(name = "channel", nullable = false)
+    /** Null only on an {@code EXPIRED} row, which reached no channel (V19). */
+    @Column(name = "channel")
     private String channel;
 
     @Column(name = "source_event_key", nullable = false)
