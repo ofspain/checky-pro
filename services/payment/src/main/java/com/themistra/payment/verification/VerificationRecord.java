@@ -10,6 +10,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -45,6 +46,13 @@ import java.util.Map;
  * <p><b>{@code detail} (JSONB) uses Hibernate 6's native {@code @JdbcTypeCode(SqlTypes.JSON)}</b>
  * — no additional dependency; the first JSONB-mapped column in this codebase.</p>
  *
+ * <p><b>{@code @Immutable} (Hibernate JSON audit, open-issues sweep, 2026-10-19).</b> The table is
+ * append-only ({@code payment_app} has INSERT and SELECT only). Without it, a {@code detail} value
+ * such as a {@code Short} or {@code Long} comes back from Hibernate's JSON snapshot as an
+ * {@code Integer}, the dirty check sees a change, and the follow-up UPDATE fails with "permission
+ * denied" - the same bug {@code LedgerEntry} hit. Reproduced by
+ * {@code VerificationRecordRepositoryIntegrationTest} before this annotation was added.</p>
+ *
  * <p><b>{@code occurredAt} (Phase 3 finding 7's own identical precedent, {@code Invoice}/{@code
  * OutboxEvent}).</b> {@link VerificationRecordService#record}/{@link
  * VerificationRecordService#recordIgnored} always set it explicitly from an injected
@@ -53,6 +61,7 @@ import java.util.Map;
  * injected {@code Clock}.</p>
  */
 @Entity
+@Immutable
 @Table(name = "verification_records")
 public class VerificationRecord {
 

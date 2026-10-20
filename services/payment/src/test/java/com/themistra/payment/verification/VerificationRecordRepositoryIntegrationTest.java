@@ -101,6 +101,27 @@ class VerificationRecordRepositoryIntegrationTest {
         assertThat(retrieved.getDetail()).containsExactlyInAnyOrderEntriesOf(detail);
     }
 
+    /** Hibernate JSON audit (open-issues sweep, 2026-10-19). A {@code detail} value whose boxed
+     * type doesn't survive a generic JSON round-trip as itself ({@code Short}, {@code Long}) made
+     * Hibernate's dirty check see a change right after the INSERT and issue an UPDATE, which
+     * {@code payment_app} may not run on this append-only table. {@code LedgerEntry} hit this for
+     * real; {@code @Immutable} on {@code VerificationRecord} closes it here before any caller
+     * puts such a value in. Runs as {@code payment_app}, so the missing UPDATE grant is real. */
+    @Test
+    void shouldSaveADetailHoldingShortAndLongValuesWithoutASpuriousUpdate() throws SQLException {
+        long paymentId = seedPaymentAsAdmin();
+        Map<String, Object> detail = new HashMap<>();
+        detail.put("tokenDecimals", (short) 6);
+        detail.put("blockNumber", 21_000_000L);
+
+        VerificationRecord saved = repository.save(VerificationRecord.create(
+                paymentId, PaymentState.SEEN, PaymentState.CONFIRMING, "ETHEREUM:0xdef:chain.tx.confirmed", 3,
+                detail, Instant.now()));
+
+        assertThat(repository.findById(saved.getId()).orElseThrow().getDetail())
+                .containsEntry("tokenDecimals", 6).containsEntry("blockNumber", 21_000_000);
+    }
+
     /** AC3's own real-DB counterpart: a {@code recordIgnored}-shaped row (null {@code detail},
      * null {@code fromState}) must round-trip too - the JSONB mapping must not choke on a null
      * value. */
