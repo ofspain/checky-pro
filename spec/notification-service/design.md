@@ -175,6 +175,8 @@ CREATE TABLE shedlock (
 );
 ```
 
+> *Note (2026-10-20, open-issues sweep): V1 uses `CITEXT` but never installs the extension. Its `SET search_path TO notifications` means the extension must live in the `notifications` schema, and Postgres allows one copy of an extension per database. In a database shared with auth-service, auth's V1 has already put `citext` in the `auth` schema, so this migration failed with `type "citext" does not exist`. V1 is unchanged. A Flyway callback, `db/migration/beforeMigrate.sql`, now runs before every migrate: it installs `citext` into `notifications`, and stops with a clear message if `citext` already lives in another schema. **notification-service therefore runs in its own database**, which the deployment provides (one database per service; no service reads another's schema). `citext` is a trusted extension, so the migrating role needs CREATE on its database, not superuser. The local shared `checky` database keeps working, because `citext` was moved into `notifications` by hand during T02. Tests: `NotificationBaselineMigrationIntegrationTest.theCallbackInstallsCitextIntoTheNotificationsSchema` and `.aDatabaseWhereCitextLivesInAnotherSchemaIsRefusedBeforeAnyMigration`. No integration test installs `citext` by hand any more.*
+
 ## 5. Data model & schema changes
 
 Greenfield: `V1__notifications_baseline.sql` (§4c) is the whole baseline, in the `notifications` schema. Aggregates:

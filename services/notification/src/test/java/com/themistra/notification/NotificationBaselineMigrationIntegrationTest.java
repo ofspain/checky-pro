@@ -64,41 +64,13 @@ class NotificationBaselineMigrationIntegrationTest {
 
     private static final String NOTIFICATION_APP_PASSWORD = "it-notification-app-password";
 
-    /** Kimi Phase 3 Finding #1, corrected during implementation: this Testcontainers instance is a
-     * fresh Postgres 16 container, isolated from the shared local-dev Postgres - {@code citext}
-     * isn't enabled here by default regardless of whether auth's own migrations have run anywhere
-     * else. The originally-planned fix (install {@code citext} into {@code public} before migrating)
-     * was insufficient and proven wrong by actually running this test: V1's own VERBATIM
-     * {@code SET search_path TO notifications;} line replaces the search path entirely rather than
-     * appending to it, so a {@code public}-schema extension type becomes invisible the moment that
-     * line executes - unlike auth's own {@code V1__auth_baseline_schema.sql}, which has no
-     * {@code SET search_path} at all and so never hits this. Since V1 is immutable VERBATIM, the fix
-     * has to live entirely in this setup step: pre-create the {@code notifications} schema (a
-     * harmless no-op once V1's own idempotent {@code CREATE SCHEMA IF NOT EXISTS} runs) and install
-     * {@code citext} directly into it, so it is already visible the moment search_path narrows to
-     * that one schema. This is a real defect notification's own real local {@code flyway:migrate}
-     * attempt would hit too, not just this test - flagged in Phase 6's own implementation notes. */
+    /** Since 2026-10-20 (open-issues sweep) the {@code beforeMigrate.sql} Flyway callback installs
+     * {@code citext} into {@code notifications} before V1 runs; V1's {@code SET search_path TO
+     * notifications} makes any other schema's copy invisible. Before that, this setup and every
+     * other integration test installed it by hand, which hid that a real deployment would not.
+     * This setup now relies on the callback alone. */
     @BeforeAll
     static void migrateAndProvisionLocalPassword() throws SQLException {
-        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
-            statement.execute("CREATE SCHEMA IF NOT EXISTS notifications");
-            statement.execute("CREATE EXTENSION IF NOT EXISTS citext SCHEMA notifications");
-
-            // Kimi Phase 11 Gap #5: confirms the pre-step actually landed citext where V1's own
-            // narrowed search_path needs it, rather than trusting the CREATE EXTENSION call silently.
-            try (ResultSet resultSet = statement.executeQuery(
-                    "SELECT n.nspname FROM pg_extension e "
-                            + "JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'citext'")) {
-                assertThat(resultSet.next())
-                        .as("citext extension must be installed for this pre-step to have done anything")
-                        .isTrue();
-                assertThat(resultSet.getString("nspname"))
-                        .as("citext must live in notifications - V1's SET search_path TO notifications "
-                                + "makes any other schema's install invisible to CREATE TABLE")
-                        .isEqualTo("notifications");
-            }
-        }
-
         Flyway.configure()
                 .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                 .schemas("notifications")
@@ -807,6 +779,56 @@ class NotificationBaselineMigrationIntegrationTest {
                      "DELETE FROM notifications." + table + " WHERE source_event_key = ?")) {
             statement.setString(1, sourceEventKey);
             statement.execute();
+        }
+    }
+
+    /** Open-issues sweep, 2026-10-20: the callback, not the test, installs citext where V1 needs it. */
+    @Test
+    void theCallbackInstallsCitextIntoTheNotificationsSchema() throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement();
+             ResultSet resultSet = statement.executeQuery("SELECT n.nspname FROM pg_extension e "
+                     + "JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'citext'")) {
+            assertThat(resultSet.next()).as("citext is installed").isTrue();
+            assertThat(resultSet.getString("nspname")).isEqualTo("notifications");
+        }
+    }
+
+    /** Open-issues sweep, 2026-10-20: in a database shared with auth-service, auth's V1 has already
+     * put citext in the {@code auth} schema, and Postgres allows one copy per database. The
+     * callback stops with a clear reason before V1 runs, so nothing is migrated. */
+    @Test
+    void aDatabaseWhereCitextLivesInAnotherSchemaIsRefusedBeforeAnyMigration() throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("CREATE DATABASE shared_with_auth");
+        }
+        String sharedUrl = POSTGRES.getJdbcUrl().replace("/" + POSTGRES.getDatabaseName(), "/shared_with_auth");
+        try (Connection shared = DriverManager.getConnection(sharedUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
+             Statement statement = shared.createStatement()) {
+            statement.execute("CREATE SCHEMA auth");
+            statement.execute("CREATE EXTENSION citext SCHEMA auth");
+        }
+
+        assertThatThrownBy(() -> Flyway.configure()
+                .dataSource(sharedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas("notifications")
+                .load()
+                .migrate())
+                .hasStackTraceContaining("citext is installed in schema auth")
+                .hasStackTraceContaining("Run notification-service in its own database");
+
+        try (Connection shared = DriverManager.getConnection(sharedUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
+             Statement statement = shared.createStatement();
+             ResultSet resultSet = statement.executeQuery("SELECT to_regclass('notifications.contact_projection') IS NULL")) {
+            assertThat(resultSet.next()).isTrue();
+            assertThat(resultSet.getBoolean(1)).as("V1 never ran").isTrue();
+        }
+        // Flyway creates its own history table before the callback runs; no version may be in it.
+        try (Connection shared = DriverManager.getConnection(sharedUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
+             Statement statement = shared.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT count(*) FROM notifications.flyway_schema_history WHERE version IS NOT NULL")) {
+            assertThat(resultSet.next()).isTrue();
+            assertThat(resultSet.getInt(1)).as("no versioned migration was applied").isZero();
         }
     }
 

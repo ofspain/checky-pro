@@ -70,6 +70,17 @@ Both V1 files are immutable, so a fix means one of:
 
 That is an author decision, so it is not fixed here.
 
+**Author decision (2026-10-20): run each service in its own database, and add a notification-side callback (part 1, built).**
+- **The callback:** `services/notification/src/main/resources/db/migration/beforeMigrate.sql` installs `citext` into `notifications` before V1. If `citext` already lives in another schema, it stops with a message saying notification needs its own database. V1 is unchanged.
+- **Tests:** the 14 integration tests that installed `citext` by hand no longer do, so every one of them now depends on the callback. `NotificationBaselineMigrationIntegrationTest` adds two tests: the callback installs `citext` into `notifications`; and a database where `citext` lives in `auth` is refused before any versioned migration runs.
+- **Plugin check:** `mvn flyway:migrate` against a fresh database migrated to V19, with `citext` in `notifications`. This is the path deployments use.
+- **Deliberate breaks (3, all caught):**
+  - the install removed
+  - the schema check disabled
+  - `citext` installed into `public`
+- **Spec:** a dated note in `spec/notification-service/design.md` after the V1 block. The §4c block is unchanged.
+- **Part 2,** a database per service in the deployment, is infrastructure work.
+
 ## Suite state after resolution
 
 `mvn -o -pl services/<service> verify`, every one BUILD SUCCESS. Counts are test cases in the Surefire reports. They run a little above the earlier "Tests run" totals, because those undercount nested test classes.

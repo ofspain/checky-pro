@@ -79,10 +79,6 @@ class PaymentEmailOptOutIntegrationTest {
     @BeforeAll
     static void migrateProvisionPasswordAndCreateTopics()
             throws SQLException, InterruptedException, ExecutionException, TimeoutException {
-        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
-            statement.execute("CREATE SCHEMA IF NOT EXISTS notifications");
-            statement.execute("CREATE EXTENSION IF NOT EXISTS citext SCHEMA notifications");
-        }
         Flyway.configure()
                 .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                 .schemas("notifications")
