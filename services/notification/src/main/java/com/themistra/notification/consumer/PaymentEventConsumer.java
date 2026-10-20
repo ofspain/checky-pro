@@ -33,8 +33,8 @@ import java.util.UUID;
  * merchant can be found (for example, a route event still in another topic's lag), the event is
  * deduplicated and parked, not thrown: a throw would redeliver it forever. The event that later
  * records the missing route replays the parked ones for that invoice, in lifecycle order, and removes
- * each one it dispatches (FU-T07-4, closed 2026-10-19). An event whose route never arrives stays
- * parked.</p>
+ * each one it dispatches (FU-T07-4, closed 2026-10-19). An event whose route never arrives is
+ * removed by {@code ParkedEventExpiryJob} after a configurable age, with a WARN log and a metric.</p>
  *
  * <p>Each listener deduplicates first (L1), then records routing, then dispatches, all in one
  * transaction. Logs carry only the topic, the event key and aggregate UUIDs, never payloads,

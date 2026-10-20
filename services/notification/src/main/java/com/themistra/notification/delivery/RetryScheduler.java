@@ -46,9 +46,9 @@ public class RetryScheduler {
         this.clock = clock;
     }
 
-    // Phase 3 Finding #8: this is, today, the only scheduled task in this service - sizing a
-    // dedicated thread pool now would be speculative configuration for a contention problem that
-    // cannot yet occur. Whichever future task adds a second scheduled job must revisit this.
+    // Phase 3 Finding #8: this was the only scheduled task until the open-issues sweep added
+    // ParkedEventExpiryJob (2026-10-20), which revisited this as asked: spring.task.scheduling.pool.size
+    // is now 2, so neither job can delay the other.
     @Scheduled(fixedDelayString = "${themistra.notification.retry.scheduler-interval-seconds}",
             timeUnit = TimeUnit.SECONDS)
     @SchedulerLock(name = "retry-scheduler", lockAtMostFor = "5m", lockAtLeastFor = "10s")

@@ -29,6 +29,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -331,6 +332,27 @@ class PaymentEventConsumerIntegrationTest {
         assertThat(callsFor(merchant).get(2).eventData()).containsEntry("amount", "2");
         assertThat(parkedCount(invoice, payment)).isZero();
         assertThat(parkedCount(UUID.randomUUID(), strayPayment)).as("an unrelated event stays parked").isEqualTo(1);
+    }
+
+    /** Expiry (open-issues sweep, 2026-10-20), on real Postgres as notification_app: only events
+     * parked before the cutoff are removed and reported; a newer one stays parked and replayable. */
+    @Test
+    void expiryRemovesOnlyEventsParkedBeforeTheCutoff() throws SQLException {
+        UUID oldPayment = UUID.randomUUID();
+        UUID newPayment = UUID.randomUUID();
+        paymentRouting.park("payment.finalized:" + oldPayment, "payment.finalized", "{}", null, oldPayment);
+        paymentRouting.park("payment.finalized:" + newPayment, "payment.finalized", "{}", null, newPayment);
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("UPDATE notifications.parked_payment_events SET parked_at = now() - interval '8 days' "
+                    + "WHERE event_key = 'payment.finalized:" + oldPayment + "'");
+        }
+
+        List<String> expired = paymentRouting.expireParkedBefore(Instant.now().minus(Duration.ofDays(7)));
+
+        assertThat(expired).contains("payment.finalized:" + oldPayment)
+                .doesNotContain("payment.finalized:" + newPayment);
+        assertThat(parkedCount(UUID.randomUUID(), oldPayment)).isZero();
+        assertThat(parkedCount(UUID.randomUUID(), newPayment)).isEqualTo(1);
     }
 
     private static String finalizedJson(UUID payment, String txHash) {

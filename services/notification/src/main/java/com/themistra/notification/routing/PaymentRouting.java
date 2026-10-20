@@ -3,6 +3,7 @@ package com.themistra.notification.routing;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -57,6 +58,18 @@ public class PaymentRouting {
         return parkedEvents.findForInvoice(invoiceUuid).stream()
                 .map(parked -> new ParkedEvent(parked.getEventKey(), parked.getKind(), parked.getPayload()))
                 .toList();
+    }
+
+    /** Removes every event parked before {@code cutoff} and returns their keys, oldest first. An
+     * event whose route arrives later than this is never notified; the caller logs each key. */
+    @Transactional
+    public List<String> expireParkedBefore(Instant cutoff) {
+        Objects.requireNonNull(cutoff, "cutoff must not be null");
+        List<String> keys = parkedEvents.findKeysParkedBefore(cutoff);
+        if (!keys.isEmpty()) {
+            parkedEvents.expire(keys, cutoff);
+        }
+        return keys;
     }
 
     /** Removes a parked event once it has been dispatched, in the dispatch's own transaction. */

@@ -5,6 +5,8 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -34,4 +36,18 @@ interface ParkedPaymentEventRepository extends JpaRepository<ParkedPaymentEvent,
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = "DELETE FROM notifications.parked_payment_events WHERE event_key = :eventKey", nativeQuery = true)
     int release(@Param("eventKey") String eventKey);
+
+    /** Keys of events parked before {@code cutoff}, oldest first (expiry). */
+    @Query(value = "SELECT event_key FROM notifications.parked_payment_events WHERE parked_at < :cutoff "
+            + "ORDER BY parked_at, event_key",
+            nativeQuery = true)
+    List<String> findKeysParkedBefore(@Param("cutoff") Instant cutoff);
+
+    /** Removes the given expired events. The {@code parked_at} condition is repeated so a row
+     * re-parked under the same key after the select is never removed early. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "DELETE FROM notifications.parked_payment_events "
+            + "WHERE event_key IN (:eventKeys) AND parked_at < :cutoff",
+            nativeQuery = true)
+    int expire(@Param("eventKeys") Collection<String> eventKeys, @Param("cutoff") Instant cutoff);
 }

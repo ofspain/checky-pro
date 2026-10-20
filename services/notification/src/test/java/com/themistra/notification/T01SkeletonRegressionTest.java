@@ -230,7 +230,9 @@ class T01SkeletonRegressionTest {
      * {@code delivery/RetryScheduler.java}) and removes none. T07 adds 11 more: the payment
      * consumer and {@code AmountFormatter}, four payment DTOs, and the five-file {@code routing}
      * projection (frozen brief D2). The open-issues sweep (2026-10-19, FU-T07-4) adds the three
-     * parked-event files in {@code routing}. This list is updated to name all 64
+     * parked-event files in {@code routing}, and its expiry (2026-10-20) two more:
+     * {@code routing/ParkedEventExpiryJob.java} and {@code common/config/ParkedEventProperties.java}.
+     * This list is updated to name all 66
      * explicitly rather than loosened to "at least N files" - an unnamed-count assertion would
      * silently tolerate a stray file no task ever authorized. */
     @Test
@@ -263,6 +265,7 @@ class T01SkeletonRegressionTest {
                     "common/config/InappProperties.java",
                     "common/config/LinkProperties.java",
                     "common/config/LinkPropertiesStartupValidation.java",
+                    "common/config/ParkedEventProperties.java",
                     "common/config/RetryProperties.java",
                     "common/config/SesClientConfig.java",
                     "common/config/ShedLockConfig.java",
@@ -300,6 +303,7 @@ class T01SkeletonRegressionTest {
                     "routing/InvoiceRoute.java",
                     "routing/InvoiceRouteRepository.java",
                     "routing/ParkedEvent.java",
+                    "routing/ParkedEventExpiryJob.java",
                     "routing/ParkedPaymentEvent.java",
                     "routing/ParkedPaymentEventRepository.java",
                     "routing/PaymentRoute.java",
