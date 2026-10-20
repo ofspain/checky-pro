@@ -1,5 +1,6 @@
 -- Flyway callback: runs before every migrate, ahead of V1. It is not a versioned migration, so
--- it never enters flyway_schema_history and V1 stays as it is.
+-- it never enters flyway_schema_history, V1 stays as it is, and edits to this file are not
+-- checksum-validated; NotificationBaselineMigrationIntegrationTest pins what it does.
 --
 -- V1 sets search_path TO notifications and then uses CITEXT, so the citext extension must live in
 -- the notifications schema. Postgres allows one copy of an extension per database. In a database
@@ -23,7 +24,8 @@ BEGIN
     FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
     WHERE e.extname = 'citext';
     IF installed_in IS DISTINCT FROM 'notifications' THEN
-        RAISE EXCEPTION 'citext is installed in schema %, where notification-service migrations cannot see it. Run notification-service in its own database.', installed_in;
+        RAISE EXCEPTION 'citext is installed in schema %, where notification-service migrations cannot see it. Run notification-service in its own database.', installed_in
+            USING HINT = 'Flyway has already created an empty notifications schema and history table; they can be dropped.';
     END IF;
 END
 $$;

@@ -1,6 +1,7 @@
 package com.themistra.notification;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.output.MigrateResult;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -798,14 +799,68 @@ class NotificationBaselineMigrationIntegrationTest {
      * callback stops with a clear reason before V1 runs, so nothing is migrated. */
     @Test
     void aDatabaseWhereCitextLivesInAnotherSchemaIsRefusedBeforeAnyMigration() throws SQLException {
+        assertRefusedWhenCitextIsIn("auth", "shared_with_auth");
+    }
+
+    /** Kimi citext review, Finding 8: an administrator's install into {@code public}, common on
+     * managed Postgres, is refused the same way; V1 could not see it there either. */
+    @Test
+    void aDatabaseWhereAnAdministratorPutCitextInPublicIsRefusedTheSameWay() throws SQLException {
+        assertRefusedWhenCitextIsIn("public", "citext_in_public");
+    }
+
+    /** Kimi citext review, Finding 3: the callback runs before every migrate, so a second migrate on a
+     * migrated database must pass it and apply nothing. */
+    @Test
+    void aSecondMigrateOnTheMigratedDatabaseIsClean() {
+        MigrateResult second = Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas("notifications")
+                .load()
+                .migrate();
+
+        assertThat(second.migrationsExecuted).isZero();
+    }
+
+    /** Kimi citext review, Finding 7: citext is a trusted extension (Postgres 13+), so a role that is
+     * not a superuser but owns its database can run every migration, the callback's install
+     * included. Managed Postgres gives no superuser. The role is given CREATEROLE for V2, though in
+     * this container notification_app already exists, so V2's role creation is not exercised here. */
+    @Test
+    void aMigratingRoleThatIsNotASuperuserCanInstallCitextAndMigrate() throws SQLException {
         try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
-            statement.execute("CREATE DATABASE shared_with_auth");
+            statement.execute("CREATE ROLE non_superuser_migrator LOGIN CREATEROLE PASSWORD 'it-migrator-password'");
+            statement.execute("CREATE DATABASE migrated_without_superuser OWNER non_superuser_migrator");
         }
-        String sharedUrl = POSTGRES.getJdbcUrl().replace("/" + POSTGRES.getDatabaseName(), "/shared_with_auth");
+        String url = POSTGRES.getJdbcUrl().replace("/" + POSTGRES.getDatabaseName(), "/migrated_without_superuser");
+
+        MigrateResult result = Flyway.configure()
+                .dataSource(url, "non_superuser_migrator", "it-migrator-password")
+                .schemas("notifications")
+                .load()
+                .migrate();
+
+        assertThat(result.migrationsExecuted).as("every versioned migration ran").isEqualTo(19);
+        try (Connection connection = DriverManager.getConnection(url, "non_superuser_migrator", "it-migrator-password");
+             Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("SELECT r.rolsuper, n.nspname FROM pg_roles r, pg_extension e "
+                     + "JOIN pg_namespace n ON n.oid = e.extnamespace "
+                     + "WHERE r.rolname = current_user AND e.extname = 'citext'")) {
+            assertThat(resultSet.next()).isTrue();
+            assertThat(resultSet.getBoolean("rolsuper")).as("the migrator is not a superuser").isFalse();
+            assertThat(resultSet.getString("nspname")).isEqualTo("notifications");
+        }
+    }
+
+    private static void assertRefusedWhenCitextIsIn(String schema, String database) throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute("CREATE DATABASE " + database);
+        }
+        String sharedUrl = POSTGRES.getJdbcUrl().replace("/" + POSTGRES.getDatabaseName(), "/" + database);
         try (Connection shared = DriverManager.getConnection(sharedUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
              Statement statement = shared.createStatement()) {
-            statement.execute("CREATE SCHEMA auth");
-            statement.execute("CREATE EXTENSION citext SCHEMA auth");
+            statement.execute("CREATE SCHEMA IF NOT EXISTS " + schema);
+            statement.execute("CREATE EXTENSION citext SCHEMA " + schema);
         }
 
         assertThatThrownBy(() -> Flyway.configure()
@@ -813,7 +868,7 @@ class NotificationBaselineMigrationIntegrationTest {
                 .schemas("notifications")
                 .load()
                 .migrate())
-                .hasStackTraceContaining("citext is installed in schema auth")
+                .hasStackTraceContaining("citext is installed in schema " + schema + ",")
                 .hasStackTraceContaining("Run notification-service in its own database");
 
         try (Connection shared = DriverManager.getConnection(sharedUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
