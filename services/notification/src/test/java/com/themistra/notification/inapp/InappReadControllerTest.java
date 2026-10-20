@@ -26,12 +26,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * {@code @WebMvcTest} slice - real {@code ResourceServerConfig} filter chain, a mocked
- * {@link InappNotificationRepository}, and {@code spring-security-test}'s own {@code jwt()} request
+ * {@code @WebMvcTest} slice - real {@code ResourceServerConfig} filter chain, the real
+ * {@link InappNotificationReader} over a mocked {@link InappNotificationRepository}, and {@code spring-security-test}'s own {@code jwt()} request
  * post-processor.
  */
 @WebMvcTest(InappReadController.class)
-@Import(ResourceServerConfig.class)
+@Import({ResourceServerConfig.class, InappNotificationReader.class})
 class InappReadControllerTest {
 
     @Autowired

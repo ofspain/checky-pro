@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -46,6 +47,15 @@ public class ApiExceptionHandler {
     public ProblemDetail handleInvalidSubjectClaim(InvalidSubjectClaimException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
                 "The authenticated token's own subject claim is not a valid account identifier.");
+    }
+
+    /** A {@code @PreAuthorize} denial (FU-2 port, 2026-10-20). It is a {@code RuntimeException},
+     * so without this the fallback below turns it into a 500. No detail about which rule refused. */
+    @ExceptionHandler(AuthorizationDeniedException.class)
+    public ProblemDetail handleAuthorizationDenied(AuthorizationDeniedException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setTitle("Forbidden");
+        return problem;
     }
 
     @ExceptionHandler(RuntimeException.class)

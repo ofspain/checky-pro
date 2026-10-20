@@ -232,7 +232,8 @@ class T01SkeletonRegressionTest {
      * projection (frozen brief D2). The open-issues sweep (2026-10-19, FU-T07-4) adds the three
      * parked-event files in {@code routing}, and its expiry (2026-10-20) two more:
      * {@code routing/ParkedEventExpiryJob.java} and {@code common/config/ParkedEventProperties.java}.
-     * This list is updated to name all 66
+     * FU-1 layering (2026-10-20) adds {@code inapp/InappNotificationReader.java}.
+     * This list is updated to name all 67
      * explicitly rather than loosened to "at least N files" - an unnamed-count assertion would
      * silently tolerate a stray file no task ever authorized. */
     @Test
@@ -290,6 +291,7 @@ class T01SkeletonRegressionTest {
                     "delivery/RetryScheduler.java",
                     "inapp/InappNotification.java",
                     "inapp/InappNotificationAppender.java",
+                    "inapp/InappNotificationReader.java",
                     "inapp/InappNotificationRepository.java",
                     "inapp/InappReadController.java",
                     "inapp/InappStreamController.java",

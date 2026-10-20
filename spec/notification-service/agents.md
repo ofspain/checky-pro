@@ -30,6 +30,14 @@ feature. If a spec must override a rule here, it says so explicitly in its §4a 
 - Package-by-feature under `com.themistra.notification`. Each module owns its entities, repositories,
   services, and API. ArchUnit enforces `api → application → domain` within a module and forbids
   cross-module entity imports. Shared plumbing lives only in `common` — no `core`/`util` dumping ground.
+  - *Note (2026-10-20, open-issues sweep, FU-1/FU-2 ported from payment): no module has
+    `api`/`application`/`domain` packages, so `ControllerRulesArchitectureTest` enforces the rule in
+    the shape the code has: a `@RestController` never depends on a Spring Data repository,
+    `EntityManager` or `JdbcTemplate`, and nothing depends on a controller. The port found one
+    violation: `InappReadController` read the repository directly, and now goes through
+    `InappNotificationReader`. Every handler carries `@PreAuthorize("isAuthenticated()")`; no
+    handler is public. Method security is now on, and a denial maps to a 403 problem, not the
+    `RuntimeException` fallback's 500.*
 
 **Events & messaging**
 - Kafka (AWS MSK). This service is primarily a **consumer**. Consumers are idempotent and dedupe on the

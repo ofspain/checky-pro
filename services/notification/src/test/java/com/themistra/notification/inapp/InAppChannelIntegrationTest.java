@@ -2,6 +2,7 @@ package com.themistra.notification.inapp;
 
 import com.themistra.notification.delivery.DeliveryOrchestrator;
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,7 +11,9 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -114,13 +117,23 @@ class InAppChannelIntegrationTest {
     @Autowired
     private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    /** Builds the caller's token and signs the caller in, as the resource-server filter would. The
+     * controllers are called directly here, and their {@code @PreAuthorize} (FU-2 port, 2026-10-20)
+     * refuses a call with no authentication. */
     private static Jwt jwtFor(UUID accountUuid) {
-        return Jwt.withTokenValue("test-token")
+        Jwt jwt = Jwt.withTokenValue("test-token")
                 .header("alg", "none")
                 .subject(accountUuid.toString())
                 .issuedAt(Instant.parse("2026-01-01T00:00:00Z"))
                 .expiresAt(Instant.parse("2099-01-01T00:00:00Z"))
                 .build();
+        SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt, List.of()));
+        return jwt;
     }
 
     /** R17 named test - real end-to-end: a real dispatched event persists a real row, and the real

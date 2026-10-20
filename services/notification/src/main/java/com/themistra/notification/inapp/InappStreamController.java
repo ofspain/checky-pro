@@ -2,6 +2,7 @@ package com.themistra.notification.inapp;
 
 import com.themistra.notification.common.ApiExceptionHandler;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,6 +34,7 @@ public class InappStreamController {
     }
 
     @GetMapping(value = "/notifications/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @PreAuthorize("isAuthenticated()")
     public SseEmitter stream(@AuthenticationPrincipal Jwt jwt) {
         UUID accountUuid = accountUuidFrom(jwt);
         return streamRegistry.register(accountUuid);

@@ -12,7 +12,8 @@ import java.util.UUID;
  * {@code InAppChannel} (package {@code channel}) call it directly - a genuine L11 violation
  * (Kimi Phase 8 Finding #1, self-review Finding #1), fixed at Phase 9 by introducing
  * {@link InappNotificationAppender} as the sanctioned same-package gateway. Consumed only from
- * within this package now (this repository itself, plus {@code InappReadController}).
+ * within this package now: {@link InappNotificationAppender} and {@link InappNotificationReader}
+ * (which replaced {@code InappReadController}'s direct use, FU-1 layering, 2026-10-20).
  */
 interface InappNotificationRepository extends JpaRepository<InappNotification, Long> {
 

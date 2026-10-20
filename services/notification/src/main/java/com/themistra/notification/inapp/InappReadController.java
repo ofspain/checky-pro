@@ -1,6 +1,7 @@
 package com.themistra.notification.inapp;
 
 import com.themistra.notification.common.ApiExceptionHandler;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,18 +19,17 @@ import java.util.UUID;
 @RestController
 public class InappReadController {
 
-    private final InappNotificationRepository repository;
+    private final InappNotificationReader reader;
 
-    public InappReadController(InappNotificationRepository repository) {
-        this.repository = repository;
+    public InappReadController(InappNotificationReader reader) {
+        this.reader = reader;
     }
 
     @GetMapping("/notifications/unread")
+    @PreAuthorize("isAuthenticated()")
     public List<InappNotification.View> unread(@AuthenticationPrincipal Jwt jwt) {
         UUID accountUuid = accountUuidFrom(jwt);
-        return repository.findByAccountUuidAndReadAtIsNullOrderByCreatedAtDesc(accountUuid).stream()
-                .map(InappNotification::toView)
-                .toList();
+        return reader.unreadFor(accountUuid);
     }
 
     private static UUID accountUuidFrom(Jwt jwt) {
