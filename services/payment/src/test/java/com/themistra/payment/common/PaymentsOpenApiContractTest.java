@@ -521,7 +521,7 @@ class PaymentsOpenApiContractTest {
             expectedFormat = "date-time";
         } else if (javaType == String.class || javaType == BigDecimal.class || javaType == InvoiceState.class) {
             expectedType = "string";
-        } else if (javaType == short.class || javaType == int.class) {
+        } else if (javaType == short.class || javaType == Short.class || javaType == int.class) {
             expectedType = "integer";
         } else if (javaType == boolean.class) {
             expectedType = "boolean";

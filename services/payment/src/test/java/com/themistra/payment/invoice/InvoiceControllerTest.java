@@ -268,6 +268,30 @@ class InvoiceControllerTest {
                 .andExpect(jsonPath("$.title").value("Validation failed"));
     }
 
+    /** Open-issues sweep (2026-10-19): a missing or null tokenDecimals is a 400 that names the
+     * field. It used to bind silently to 0 (a primitive), creating a 0-decimal invoice. */
+    @Test
+    void shouldRejectAMissingOrNullTokenDecimalsInsteadOfDefaultingToZero() throws Exception {
+        for (String body : List.of(
+                """
+                {"chain":"ETHEREUM","tokenContractAddress":"0xabc",
+                 "amount":1000,"payToAddress":"0xdef","reference":"order-1"}
+                """,
+                """
+                {"chain":"ETHEREUM","tokenContractAddress":"0xabc","tokenDecimals":null,
+                 "amount":1000,"payToAddress":"0xdef","reference":"order-1"}
+                """)) {
+            mockMvc.perform(post("/api/v1/invoices").with(merchantJwt())
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.type").value(ProblemTypes.VALIDATION_ERROR.toString()))
+                    .andExpect(jsonPath("$.violations[0].field").value("tokenDecimals"));
+        }
+        org.mockito.Mockito.verifyNoInteractions(cryptoClient);
+        verify(invoiceService, org.mockito.Mockito.never()).create(any(), any(), any(), any(),
+                org.mockito.ArgumentMatchers.anyShort(), any(), any(), any(), any(), any());
+    }
+
     /** Named test (T23, R29): the full RFC 9457 shape - a real, stable catalogue {@code type}
      * (never {@code "about:blank"}), {@code title}/{@code status} present, and no field
      * anywhere in the body leaks a stack trace or a raw exception class name. Reuses the same
