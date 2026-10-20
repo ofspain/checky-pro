@@ -354,6 +354,17 @@ CREATE TABLE shedlock (
 
 The other three published events (`payments.invoice.created`, `payments.payment.seen`, `payments.payment.finalized`) follow the same envelope shape; author them under `contracts/events/payments/` with `invoiceUuid` as the partition key and monetary amounts as **decimal strings, never JSON numbers**.
 
+> *Note (2026-10-19, open-issues sweep, G2): the partition keys are aligned to the code, not the
+> other way round. `OutboxRelay` sends each event's aggregate ID as the Kafka key, so
+> `payments.invoice.created` is keyed by `invoiceUuid`, `payments.payment.seen` and
+> `payments.payment.finalized` by `paymentUuid`, and `payments.receipt.issued` by `receiptUuid`
+> (the `receipt.issued` example above therefore says `invoiceUuid` where the real key is
+> `receiptUuid`). Each schema under `contracts/events/payments/` states its real key. Ordering is
+> guaranteed per payment, not per invoice; `payment.finalized` carries no `invoiceUuid`, so
+> re-keying by invoice would need a lookup on the publish path. Consumers must not rely on
+> cross-topic order. notification-service already parks and replays events that arrive before
+> their route (FU-T07-4).*
+
 ## 5. Data model & schema changes
 
 Greenfield: `V1__payments_baseline.sql` (§4c) is the whole baseline. Aggregates:
