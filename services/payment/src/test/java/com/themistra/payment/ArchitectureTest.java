@@ -1,5 +1,9 @@
 package com.themistra.payment;
 
+import com.themistra.payment.archtestfixtures.RogueClassGuardedController;
+import com.themistra.payment.archtestfixtures.RogueControllerDependent;
+import com.themistra.payment.archtestfixtures.RogueRepositoryController;
+import com.themistra.payment.archtestfixtures.RogueUnguardedController;
 import com.themistra.payment.archtestfixtures.RogueFloatingPointMoneyUser;
 import com.themistra.payment.archtestfixtures.RogueKmsAndChainClientUser;
 import com.themistra.payment.archtestfixtures.RoguePermitAllUser;
@@ -12,6 +16,7 @@ import com.themistra.payment.payment.RogueInvoiceEntityReferencer;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaMethodReference;
+import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.domain.JavaParameterizedType;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
@@ -22,11 +27,17 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
 import jakarta.persistence.Entity;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.config.annotation.web.configurers.AuthorizeHttpRequestsConfigurer;
+import org.springframework.data.repository.Repository;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -494,6 +505,48 @@ class ArchitectureTest {
             .because("L7/L9 and threat #5: no code path may reach ledger_entries or receipts "
                     + "around the repository layer");
 
+    /**
+     * FU-2 (open-issues sweep, 2026-10-19): every request handler in a {@code @RestController}
+     * carries {@code @PreAuthorize}, on the method or on its class. Every handler had one already;
+     * this keeps a new endpoint from shipping with only {@code authenticated()} and no role check
+     * (L10). A handler is any method annotated with {@code @RequestMapping} or one of its
+     * composed forms ({@code @GetMapping} and so on).
+     */
+    private static final ArchRule shouldRequirePreAuthorizeOnEveryControllerHandler = methods()
+            .that().areDeclaredInClassesThat().areAnnotatedWith(RestController.class)
+            .should(new ArchCondition<JavaMethod>("carry @PreAuthorize on the handler or its class") {
+                @Override
+                public void check(JavaMethod method, ConditionEvents events) {
+                    boolean handler = method.isAnnotatedWith(RequestMapping.class)
+                            || method.isMetaAnnotatedWith(RequestMapping.class);
+                    if (handler && !method.isAnnotatedWith(PreAuthorize.class)
+                            && !method.getOwner().isAnnotatedWith(PreAuthorize.class)) {
+                        events.add(SimpleConditionEvent.violated(method,
+                                method.getFullName() + " is a request handler without @PreAuthorize"));
+                    }
+                }
+            })
+            .because("L10: every endpoint states the role it requires");
+
+    /**
+     * FU-1 (open-issues sweep, 2026-10-19). {@code agents.md} asked for {@code api -> application
+     * -> domain} inside each module, but no module has those packages. This is the same direction
+     * in the shape the code really has: a controller (api) goes through a service (application) and
+     * never reaches a repository or the database itself (domain/persistence).
+     */
+    private static final ArchRule shouldKeepControllersAwayFromPersistence = noClasses()
+            .that().areAnnotatedWith(RestController.class)
+            .should().dependOnClassesThat().areAssignableTo(Repository.class)
+            .orShould().dependOnClassesThat().areAssignableTo("jakarta.persistence.EntityManager")
+            .orShould().dependOnClassesThat().areAssignableTo(JdbcTemplate.class)
+            .because("FU-1 layering: api -> application -> domain; a controller calls a service");
+
+    /** FU-1, second half: nothing depends upward on a controller. */
+    private static final ArchRule shouldNotDependOnControllers = noClasses()
+            .that().areNotAnnotatedWith(RestController.class)
+            .should().dependOnClassesThat().areAnnotatedWith(RestController.class)
+            .because("FU-1 layering: dependencies point from api down, never back up");
+
     private static JavaClasses analyzedClasses() {
         return new ClassFileImporter()
                 .withImportOption(new ImportOption.DoNotIncludeTests())
@@ -786,5 +839,63 @@ class ArchitectureTest {
                 .filteredOn(access -> access.getName().equals("createNativeQuery")
                         && access.getTargetOwner().isAssignableTo("jakarta.persistence.EntityManager"))
                 .hasSize(1);
+    }
+
+    @Test
+    void shouldRequirePreAuthorizeOnEveryControllerHandlerIsCheckedDuringStandardBuild() {
+        shouldRequirePreAuthorizeOnEveryControllerHandler.check(analyzedClasses());
+    }
+
+    /** The canary passes on clean code; this proves the rule can fail. The unguarded handler is
+     * reported, while a method-level and a class-level {@code @PreAuthorize} are both accepted. */
+    @Test
+    void shouldRequirePreAuthorizeOnEveryControllerHandlerActuallyFailsAgainstAGenuineViolation() {
+        JavaClasses violating = new ClassFileImporter().importClasses(RogueUnguardedController.class);
+        assertThatThrownBy(() -> shouldRequirePreAuthorizeOnEveryControllerHandler.check(violating))
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueUnguardedController.unguarded()")
+                .hasMessageNotContaining("RogueUnguardedController.guarded()");
+
+        shouldRequirePreAuthorizeOnEveryControllerHandler.check(
+                new ClassFileImporter().importClasses(RogueClassGuardedController.class));
+    }
+
+    /** Guards against a vacuous pass: the real controllers really are analyzed and really have
+     * handlers, so the canary above checked something. */
+    @Test
+    void shouldRequirePreAuthorizeOnEveryControllerHandlerSeesTheRealHandlers() {
+        long handlers = analyzedClasses().stream()
+                .filter(javaClass -> javaClass.isAnnotatedWith(RestController.class))
+                .flatMap(javaClass -> javaClass.getMethods().stream())
+                .filter(method -> method.isMetaAnnotatedWith(RequestMapping.class))
+                .count();
+        assertThat(handlers).as("InvoiceController x3, ExportController, ReceiptController").isEqualTo(5);
+    }
+
+    @Test
+    void shouldKeepControllersAwayFromPersistenceIsCheckedDuringStandardBuild() {
+        shouldKeepControllersAwayFromPersistence.check(analyzedClasses());
+    }
+
+    @Test
+    void shouldKeepControllersAwayFromPersistenceActuallyFailsAgainstAGenuineViolation() {
+        JavaClasses violating = new ClassFileImporter().importClasses(RogueRepositoryController.class);
+        assertThatThrownBy(() -> shouldKeepControllersAwayFromPersistence.check(violating))
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueRepositoryController");
+    }
+
+    @Test
+    void shouldNotDependOnControllersIsCheckedDuringStandardBuild() {
+        shouldNotDependOnControllers.check(analyzedClasses());
+    }
+
+    @Test
+    void shouldNotDependOnControllersActuallyFailsAgainstAGenuineViolation() {
+        JavaClasses violating = new ClassFileImporter()
+                .importClasses(RogueControllerDependent.class, com.themistra.payment.invoice.InvoiceController.class);
+        assertThatThrownBy(() -> shouldNotDependOnControllers.check(violating))
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("RogueControllerDependent");
     }
 }

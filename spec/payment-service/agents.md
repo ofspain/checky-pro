@@ -31,6 +31,11 @@ the feature. If a spec must override a rule here, it says so explicitly in its �
 - Package-by-feature under `com.themistra.payment`. Each module owns its entities, repositories,
   services, and API. ArchUnit enforces `api → application → domain` within a module and forbids
   cross-module entity imports. Shared plumbing lives only in `common` — no `core`/`util` dumping ground.
+  - *Note (2026-10-19, open-issues sweep, FU-1): no module has `api`/`application`/`domain`
+    packages, so the rule is enforced in the shape the code has. `ArchitectureTest` checks that a
+    `@RestController` never depends on a Spring Data repository, `EntityManager` or `JdbcTemplate`
+    (it calls a service), and that nothing depends on a controller. FU-2: it also checks that every
+    controller handler carries `@PreAuthorize`, on the method or the class.*
 
 **Events & messaging**
 - Kafka (AWS MSK). Every state change other services care about is published through the **outbox** in
