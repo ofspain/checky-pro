@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Properties;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -16,6 +17,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Plain JUnit, no Spring context, mirroring T01's own skeleton-test style.
  */
 class ApplicationPropertiesContentTest {
+
+    private static final Pattern LOOPBACK = Pattern.compile("localhost|127\\.0\\.0\\.1|\\[::1]");
+    private static final Pattern ENV_OVERRIDABLE = Pattern.compile("\\$\\{[A-Z][A-Z0-9_]*:[^}]*}");
 
     private static final Path APPLICATION_PROPERTIES = Path.of("src/main/resources/application.properties");
     private static final Path APPLICATION_SOURCE =
@@ -139,5 +143,31 @@ class ApplicationPropertiesContentTest {
         String properties = Files.readString(APPLICATION_PROPERTIES);
         assertThat(properties)
                 .contains("themistra.payment.outbox.relay-interval-ms=${OUTBOX_RELAY_INTERVAL_MS:2000}");
+    }
+
+    /** Kimi sweep test review, Gap 9 (2026-10-20): FU-T27-2 fixed one loopback value, the JWKS
+     * URI. No other value may point at a loopback address unless an environment variable can
+     * replace it: in a container, loopback is the container itself. */
+    @Test
+    void everyLoopbackValueIsOverridableByEnvironment() throws IOException {
+        Properties properties = loadApplicationProperties();
+        List<String> loopbackKeys = properties.stringPropertyNames().stream().sorted()
+                .filter(key -> LOOPBACK.matcher(properties.getProperty(key)).find())
+                .toList();
+        assertThat(loopbackKeys).as("the check sees the JWKS URI, so it is not vacuous")
+                .contains("spring.security.oauth2.resourceserver.jwt.jwk-set-uri");
+        assertThat(loopbackKeys.stream()
+                .filter(key -> !ENV_OVERRIDABLE.matcher(properties.getProperty(key)).matches())
+                .toList())
+                .as("loopback values that no environment variable can replace")
+                .isEmpty();
+    }
+
+    private static Properties loadApplicationProperties() throws IOException {
+        Properties properties = new Properties();
+        try (java.io.Reader reader = Files.newBufferedReader(APPLICATION_PROPERTIES)) {
+            properties.load(reader);
+        }
+        return properties;
     }
 }

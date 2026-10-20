@@ -262,6 +262,13 @@ class PaymentEventConsumerIntegrationTest {
                 } else {
                     assertThat(rendered.body()).doesNotContain("/receipts/");
                 }
+                // Kimi sweep test review, Gap 4 (2026-10-20): the invoice email's link, from a
+                // consumed event rather than hand-built data.
+                if ("invoice.created".equals(call.notificationKind()) && "EMAIL".equals(channel)) {
+                    assertThat(rendered.body()).endsWith("https://app.example.test/app/invoices/" + invoice);
+                } else {
+                    assertThat(rendered.body()).doesNotContain("/invoices/");
+                }
                 if (rendered.subject() != null) {
                     assertThat(rendered.subject()).doesNotContain("{{");
                 }

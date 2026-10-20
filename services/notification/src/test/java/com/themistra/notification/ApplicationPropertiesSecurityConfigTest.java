@@ -4,7 +4,9 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.List;
 import java.util.Properties;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -17,6 +19,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code services/crypto}'s own {@code ApplicationPropertiesSecurityConfigTest}.
  */
 class ApplicationPropertiesSecurityConfigTest {
+
+    private static final Pattern LOOPBACK = Pattern.compile("localhost|127\\.0\\.0\\.1|\\[::1]");
+    private static final Pattern ENV_OVERRIDABLE = Pattern.compile("\\$\\{[A-Z][A-Z0-9_]*:[^}]*}");
 
     private Properties loadApplicationProperties() throws IOException {
         Properties properties = new Properties();
@@ -92,5 +97,23 @@ class ApplicationPropertiesSecurityConfigTest {
                 .as("must not collide with services/auth's own server.port=8080")
                 .isNotBlank()
                 .isNotEqualTo("8080");
+    }
+
+    /** Kimi sweep test review, Gap 9 (2026-10-20): FU-T27-2 fixed one loopback value, the JWKS
+     * URI. No other value may point at a loopback address unless an environment variable can
+     * replace it: in a container, loopback is the container itself. */
+    @Test
+    void everyLoopbackValueIsOverridableByEnvironment() throws IOException {
+        Properties properties = loadApplicationProperties();
+        List<String> loopbackKeys = properties.stringPropertyNames().stream().sorted()
+                .filter(key -> LOOPBACK.matcher(properties.getProperty(key)).find())
+                .toList();
+        assertThat(loopbackKeys).as("the check sees the JWKS URI, so it is not vacuous")
+                .contains("spring.security.oauth2.resourceserver.jwt.jwk-set-uri");
+        assertThat(loopbackKeys.stream()
+                .filter(key -> !ENV_OVERRIDABLE.matcher(properties.getProperty(key)).matches())
+                .toList())
+                .as("loopback values that no environment variable can replace")
+                .isEmpty();
     }
 }
