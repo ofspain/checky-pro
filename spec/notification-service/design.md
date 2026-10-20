@@ -5,6 +5,7 @@
 - L1. **Idempotent by event key.** Every consumer dedupes on the source event's stable key (`ARCHITECTURE.md` §3.5, §4 rule 3). A `processed_events` table with the event key as PK is written in the same transaction as the delivery-log append; duplicate Kafka delivery must never double-send (R7, R8). Kafka is at-least-once — this is not optional.
 - L2. **Consume-only at launch.** This service initiates no domain state and makes no synchronous cross-service call on the delivery path (`ARCHITECTURE.md` §4 rule 4: no long synchronous chains). It reacts to events and renders what they carry. The only permitted projection read is the recipient-contact projection (O1), which is itself fed by consumed auth events, not a live call.
   - *Interpretation (2026-10-19, granted by the human at T07 Phase 4, D2): a second local projection, `invoice_routes` / `payment_routes` (`V12`, `routing/PaymentRouting`), is permitted. Like `contact_projection`, it is fed **only** by consumed events (the `payments.*` topics) and is never a live call. L2's purpose, no synchronous cross-service call on the delivery path, is unchanged.*
+  - *Update (2026-10-19, open-issues sweep): the same event-fed rule covers two additions. `invoice_routes.token_decimals` is filled when a later event carries it (S2, `V17`), and events that arrive before their route are parked in `parked_payment_events` and replayed (FU-T07-4, `V18`). Neither adds a live call.*
 - L3. **Dispute-grade delivery log.** Every attempt on every channel is recorded with recipient, channel, source event key, template version, outcome, and timestamp (`ARCHITECTURE.md` §3.5). The log is append-only — a retry adds a new attempt row; it never overwrites the prior attempt. This is the evidence for "was the merchant notified?" in later dispute resolution.
 - L4. **No secrets or tokens in messages or logs.** Rendered bodies and log lines never contain access/refresh tokens, raw secrets, full API keys, or reset-token values beyond the single intended one-time link (mirrors auth `target-design.md` §13, assertion-tested). R15.
 - L5. **Channels behind one interface.** Email and in-app implement a common `NotificationChannel`; the delivery orchestrator is channel-agnostic. Webhooks (HMAC-signed) and mobile push are "Next" and must slot in without touching the orchestrator (`ARCHITECTURE.md` §3.5). When webhooks arrive, their payloads are HMAC-signed (threat #7, `SECURITY-THREAT-MODEL.md`).
@@ -42,8 +43,8 @@ payments.receipt.issued                -> template: receipt.issued          -> r
 
 > **Recipients as shipped (2026-10-19, T07/T20, Q7).** The block above is kept verbatim. The implementation differs from it as follows:
 > - All four `payments.*` rows notify the **merchant only**; no payer identity exists anywhere on the platform (FU-T07-1).
-> - `payments.receipt.issued` renders the receipt ID but **no receipt link** until a receipt read endpoint exists (FU-T07-2, payment FU-T29-1).
-> - The payment templates in use are the `version=2` rows seeded by `V14`.
+> - `payments.receipt.issued` rendered the receipt ID but **no receipt link** at T20. *Since 2026-10-19 (FU-T07-2 closed, after payment FU-T29-1) the email carries the **receipt link** `/app/receipts/<uuid>`.*
+> - The payment templates in use are the `version=2` rows seeded by `V14`, except the receipt email, which is `version=3` from `V15`. The in-app `user.verify` template is `version=2` from `V16` (no link, FU-T20-1).
 > - `auth.user.lifecycle (user.suspended)` is **not mapped** (the row is optional); `DeliveryOrchestratorTest` pins its exclusion.
 
 ### Default channel preferences (used when a recipient has none — L6/R18)

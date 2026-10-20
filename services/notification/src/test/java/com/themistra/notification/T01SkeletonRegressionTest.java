@@ -433,8 +433,9 @@ class T01SkeletonRegressionTest {
                 .as("the header has exactly one Version row").isEqualTo(1);
         assertThat(Pattern.compile("(?m)^\\| Status \\|").matcher(header).results().count())
                 .as("the header has exactly one Status row").isEqualTo(1);
-        // The disclosure names the gaps that make items 1-3 partial (D1, Kimi Phase 3 F3).
-        assertThat(header).contains("FU-T07-1", "FU-T07-2", "FU-T29-1", "FU-T07-4", "FU-T20-1");
+        // The disclosure names the gaps that make items 1-3 partial (D1, Kimi Phase 3 F3), and,
+        // since the open-issues sweep (2026-10-19), the follow-ups it closed.
+        assertThat(header).contains("FU-T07-1", "FU-T07-2", "FU-T29-1", "FU-T07-4", "FU-T20-1", "Closed on 2026-10-19");
     }
 
     /** T20 AC3/AC6: every test §9 cites as evidence exists as a JUnit test in that class's own
@@ -461,9 +462,10 @@ class T01SkeletonRegressionTest {
         assertThat(missing).as("§9 cites tests that do not exist").isEmpty();
     }
 
-    /** T20 AC3 (Kimi Phase 3 F4): items 1-3 and 6 stay visibly partial, each keeping the reason
-     * that makes it partial; the other seven stay ticked. Nothing can be ticked silently. Item 6
-     * became partial at Phase 9: the in-app verify body carries its link (FU-T20-1). */
+    /** T20 AC3 (Kimi Phase 3 F4): items 1-3 stay visibly partial, each keeping the reason that
+     * makes it partial; the other eight stay ticked. Nothing can be ticked silently. Item 6 was
+     * partial from T20 Phase 9 (the in-app verify body carried its link) until the open-issues
+     * sweep closed FU-T20-1 on 2026-10-19; it is now ticked and must say so. */
     @Test
     void verificationChecklistKeepsItsPartialItemsUnticked() throws IOException {
         List<String> items = verificationChecklistItems();
@@ -474,16 +476,17 @@ class T01SkeletonRegressionTest {
                     .startsWith("- [ ] **Partial —** ");
         }
         assertThat(items.get(0)).as("item 1 says what the two drifted named tests prove")
-                .contains("merchant-only", "**no link**", "FU-T07-1", "FU-T07-2");
+                .contains("merchant-only", "FU-T07-1", "FU-T07-2 closed");
         assertThat(items.get(1)).as("item 2 names the L2 interpretation").contains("L2", "interpreted");
         assertThat(items.get(2)).as("item 3 names the recipients deviation").contains("merchant only");
-        assertThat(items.get(5)).as("§9 item 6 stays visibly partial").startsWith("- [ ] **Partial —** ")
-                .contains("FU-T20-1");
-        for (int itemNumber : new int[] {4, 5, 7, 8, 9, 10, 11}) {
+        // Open-issues sweep (2026-10-19): FU-T20-1 closed, so item 6 is ticked, with its reason.
+        assertThat(items.get(5)).as("§9 item 6 is ticked, naming the closed follow-up").startsWith("- [x] ")
+                .contains("FU-T20-1 closed");
+        for (int itemNumber : new int[] {4, 5, 6, 7, 8, 9, 10, 11}) {
             assertThat(items.get(itemNumber - 1)).as("§9 item %d stays ticked", itemNumber).startsWith("- [x] ");
         }
         assertThat(items.stream().filter(item -> item.startsWith("- [x] ")).count())
-                .as("exactly 7 §9 items are ticked").isEqualTo(7);
+                .as("exactly 8 §9 items are ticked").isEqualTo(8);
         assertThat(items).as("every §9 marker is a GFM checkbox")
                 .allMatch(item -> item.startsWith("- [ ] ") || item.startsWith("- [x] "));
     }
@@ -526,7 +529,8 @@ class T01SkeletonRegressionTest {
         int note = section.indexOf("> **Recipients as shipped (2026-10-19");
         assertThat(mappingEnd).as("§4c keeps its chain.* line").isPositive();
         assertThat(note).as("the recipients note follows the mapping inside §4c").isGreaterThan(mappingEnd);
-        assertThat(section.substring(note)).contains("**merchant only**", "**no receipt link**", "**not mapped**");
+        assertThat(section.substring(note)).contains("**merchant only**", "**receipt link**", "FU-T07-2 closed",
+                "**not mapped**");
 
         String requirements = Files.readString(Path.of("../../spec/notification-service/requirements.md"));
         for (String requirement : List.of("R3", "R5")) {
