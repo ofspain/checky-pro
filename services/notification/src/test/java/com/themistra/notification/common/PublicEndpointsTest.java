@@ -6,6 +6,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -27,6 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * layer not blocking with 401/403, not about handler presence.
  */
 @WebMvcTest(controllers = ResourceServerTestController.class)
+@ActiveProfiles(ResourceServerTestController.PROFILE)
 @Import(ResourceServerConfig.class)
 class PublicEndpointsTest {
 

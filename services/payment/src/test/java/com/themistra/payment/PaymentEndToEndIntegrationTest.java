@@ -559,6 +559,48 @@ class PaymentEndToEndIntegrationTest {
         assertThat(countLedgerEntries()).as("still exactly one ledger entry").isEqualTo(1);
         assertThat(paymentState(txHash)).isEqualTo("ATTESTED");
         assertThat(s3ObjectsForPayment(paymentUuid)).as("still exactly one JSON and PDF pair").isEqualTo(2);
+
+        // Kimi sweep review, Finding 10 (2026-10-20): the merchant receipt read (FU-T29-1) over real
+        // HTTP, Postgres and S3. The owner gets the stored, signed receipt. Another merchant gets the
+        // same detail-free 404 as an unknown receipt (R28/L10), never a 403 that would confirm it
+        // exists.
+        String receiptPath = "/api/v1/receipts/" + receipt.receiptUuid();
+        MvcResult ownRead = mockMvc.perform(MockMvcRequestBuilders.get(receiptPath)
+                        .header("Authorization", "Bearer e2e-merchant-token"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode ownReceipt = OBJECT_MAPPER.readTree(ownRead.getResponse().getContentAsString());
+        assertThat(ownReceipt.get("receiptUuid").asText()).isEqualTo(receipt.receiptUuid().toString());
+        assertThat(ownReceipt.get("merchantAccountUuid").asText()).isEqualTo(merchantAccountUuid.toString());
+        assertThat(ownReceipt.get("txHash").asText()).isEqualTo(txHash);
+        assertThat(ownReceipt.get("signature").asText()).isNotBlank();
+
+        Instant now = Instant.now();
+        when(jwtDecoder.decode("e2e-other-merchant-token")).thenReturn(Jwt.withTokenValue("e2e-other-merchant-token")
+                .header("alg", "none")
+                .subject(UUID.randomUUID().toString())
+                .claim("roles", List.of("MERCHANT"))
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(3600))
+                .build());
+        String otherMerchantBody = mockMvc.perform(MockMvcRequestBuilders.get(receiptPath)
+                        .header("Authorization", "Bearer e2e-other-merchant-token"))
+                .andExpect(status().isNotFound())
+                .andReturn().getResponse().getContentAsString();
+        String unknownBody = mockMvc.perform(MockMvcRequestBuilders.get("/api/v1/receipts/" + UUID.randomUUID())
+                        .header("Authorization", "Bearer e2e-other-merchant-token"))
+                .andExpect(status().isNotFound())
+                .andReturn().getResponse().getContentAsString();
+        // instance echoes the request path, so it is the one field allowed to differ.
+        com.fasterxml.jackson.databind.node.ObjectNode otherMerchantProblem =
+                (com.fasterxml.jackson.databind.node.ObjectNode) OBJECT_MAPPER.readTree(otherMerchantBody);
+        com.fasterxml.jackson.databind.node.ObjectNode unknownProblem =
+                (com.fasterxml.jackson.databind.node.ObjectNode) OBJECT_MAPPER.readTree(unknownBody);
+        otherMerchantProblem.remove("instance");
+        unknownProblem.remove("instance");
+        assertThat(otherMerchantProblem)
+                .as("another merchant's receipt is indistinguishable from an unknown one")
+                .isEqualTo(unknownProblem);
     }
 
     /** AC2 (R11, R18; L11). A reorg of a {@code CONFIRMING} payment walks it back to

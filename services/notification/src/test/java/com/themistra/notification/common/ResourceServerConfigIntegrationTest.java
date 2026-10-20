@@ -10,6 +10,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,6 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * remains a documented limitation, same as crypto's own equivalent test.
  */
 @WebMvcTest(controllers = ResourceServerTestController.class)
+@ActiveProfiles(ResourceServerTestController.PROFILE)
 @Import(ResourceServerConfig.class)
 class ResourceServerConfigIntegrationTest {
 

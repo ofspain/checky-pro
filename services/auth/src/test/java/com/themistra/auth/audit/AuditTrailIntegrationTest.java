@@ -1,6 +1,5 @@
 package com.themistra.auth.audit;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.auth.TestcontainersConfiguration;
 import com.themistra.auth.account.AccountService;
@@ -9,7 +8,6 @@ import com.themistra.auth.account.dto.RegisterAccountRequest;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.awaitility.Awaitility;
@@ -91,23 +89,37 @@ class AuditTrailIntegrationTest {
         assertThat(auditService.list(accountUuid, Pageable.unpaged()).getContent())
                 .anySatisfy(event -> assertThat(event.eventType()).isEqualTo("account.suspended"));
 
+        // Kimi sweep review, Finding 6 (2026-10-20): registerAndActivate also writes an
+        // account.activated audit event with the same key. The old loop asserted the event type of
+        // every record with this key, so when both arrived in one batch it threw, the batch was
+        // consumed and lost, and the wait timed out (a flake that depended on batching). Records are
+        // now kept across polls and the suspended one is picked out by key and event type.
+        List<ConsumerRecord<String, String>> received = new java.util.ArrayList<>();
         Awaitility.await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
-            ConsumerRecords<String, String> records = testConsumer.poll(Duration.ofMillis(500));
-            boolean found = false;
-            for (ConsumerRecord<String, String> record : records) {
-                if (record.key().equals(accountUuid.toString())) {
-                    // Phase 8, Kimi Finding 4: parse rather than string-match, matching newer
-                    // tests' established technique (e.g. EndToEndLifecycleIntegrationTest) - not
-                    // brittle to formatting/field-order changes.
-                    JsonNode payload = objectMapper.readTree(record.value());
-                    assertThat(payload.get("eventType").asText()).isEqualTo("account.suspended");
-                    assertThat(record.value()).doesNotContain("Mozilla/5.0 integration-test-agent");
-                    assertThat(record.value()).doesNotContain("203.0.113.9");
-                    found = true;
-                }
-            }
-            assertThat(found).as("audit mirror for %s observed on the real topic", accountUuid).isTrue();
+            testConsumer.poll(Duration.ofMillis(500)).forEach(received::add);
+            assertThat(received)
+                    .as("audit mirror for %s observed on the real topic", accountUuid)
+                    .anyMatch(record -> isSuspendedEventFor(record, accountUuid));
         });
+
+        for (ConsumerRecord<String, String> record : received) {
+            if (accountUuid.toString().equals(record.key())) {
+                // No mirrored record for this account may carry the caller's IP or user agent.
+                assertThat(record.value()).doesNotContain("Mozilla/5.0 integration-test-agent");
+                assertThat(record.value()).doesNotContain("203.0.113.9");
+            }
+        }
+    }
+
+    private boolean isSuspendedEventFor(ConsumerRecord<String, String> record, UUID accountUuid) {
+        if (!accountUuid.toString().equals(record.key())) {
+            return false;
+        }
+        try {
+            return "account.suspended".equals(objectMapper.readTree(record.value()).get("eventType").asText());
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private UUID registerAndActivate(String email) {

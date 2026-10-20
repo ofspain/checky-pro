@@ -1,11 +1,13 @@
 package com.themistra.crypto;
 
+import archtestfixtures.RogueAlwaysTrueController;
 import archtestfixtures.RogueClassGuardedController;
 import archtestfixtures.RogueControllerDependent;
 import archtestfixtures.RogueOpenController;
 import archtestfixtures.RogueRepositoryController;
 import archtestfixtures.RogueUnguardedController;
 import com.themistra.crypto.common.PublicEndpoints;
+import com.themistra.crypto.common.ResourceServerConfig;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaMethod;
@@ -26,6 +28,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -44,6 +48,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *       {@code PublicEndpoints} so it cannot be used to open a new path quietly.</li>
  *   <li>FU-1: a controller goes through a service, never straight to a repository or the
  *       database, and nothing depends back up on a controller.</li>
+ *   <li>Why FU-1 is written this way (Kimi sweep review, Finding 8, 2026-10-20): {@code agents.md}
+ *       asks for {@code api -> application -> domain}, but no module has those packages. The rules
+ *       therefore key on {@code @RestController} and the persistence types, not on package names.
+ *       If modules are later split into such packages, add a package-based rule next to these;
+ *       do not replace them.</li>
  * </ul>
  *
  * <p>Plain {@code @Test} methods only: {@code @ArchTest} fields do not run under this repo's
@@ -87,9 +96,17 @@ class ControllerRulesArchitectureTest {
         return method.isAnnotatedWith(RequestMapping.class) || method.isMetaAnnotatedWith(RequestMapping.class);
     }
 
-    /** Every {@code permitAll()} handler in {@code classes}, as {@code "METHOD /class-path/method-path"}. */
-    private static Set<String> permitAllHandlers(JavaClasses classes) {
-        Set<String> handlers = new HashSet<>();
+    /** Kimi sweep review, Finding 2 (2026-10-20): the only access expressions a handler here may
+     * use. An expression outside this set, such as an always-true {@code "true"}, fails
+     * {@link #everyHandlerUsesAKnownAccessExpression}, so the public check below can match
+     * {@code permitAll()} exactly instead of trusting a substring. */
+    private static final Set<String> KNOWN_ACCESS_EXPRESSIONS = Set.of(
+            "permitAll()", "hasAuthority('" + ResourceServerConfig.INTERNAL_SCOPE_AUTHORITY + "')");
+
+    /** Every handler in {@code classes} with its effective {@code @PreAuthorize} expression (the
+     * method's, else its class's), keyed {@code "METHOD /class-path/method-path"}. */
+    private static Map<String, String> handlerAccess(JavaClasses classes) {
+        Map<String, String> handlers = new LinkedHashMap<>();
         for (JavaClass javaClass : classes) {
             if (!javaClass.isAnnotatedWith(RestController.class)) {
                 continue;
@@ -99,27 +116,43 @@ class ControllerRulesArchitectureTest {
             String prefix = classMapping == null || classMapping.path().length == 0 ? "" : classMapping.path()[0];
             for (Method method : type.getDeclaredMethods()) {
                 RequestMapping mapping = AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class);
+                if (mapping == null) {
+                    continue;
+                }
                 PreAuthorize access = AnnotatedElementUtils.findMergedAnnotation(method, PreAuthorize.class);
                 if (access == null) {
                     access = AnnotatedElementUtils.findMergedAnnotation(type, PreAuthorize.class);
                 }
-                if (mapping == null || access == null || !access.value().contains("permitAll")) {
-                    continue;
-                }
                 String path = prefix + (mapping.path().length == 0 ? "" : mapping.path()[0]);
                 assertThat(mapping.method()).as("%s maps exactly one HTTP method", method).hasSize(1);
-                handlers.add(mapping.method()[0].name() + " " + path);
+                handlers.put(mapping.method()[0].name() + " " + path, access == null ? null : access.value());
             }
         }
         return handlers;
     }
 
+    /** Every {@code permitAll()} handler in {@code classes}, as {@code "METHOD /path"}. */
+    private static Set<String> permitAllHandlers(JavaClasses classes) {
+        Set<String> handlers = new HashSet<>();
+        handlerAccess(classes).forEach((handler, expression) -> {
+            if ("permitAll()".equals(expression)) {
+                handlers.add(handler);
+            }
+        });
+        return handlers;
+    }
+
     /** Every {@code PublicEndpoints.PATTERNS} entry that a controller serves (the actuator paths
-     * are served by Spring Boot, not a controller), as {@code "GET /path"}. */
-    private static Set<String> allowlistedPublicHandlers() {
+     * are served by Spring Boot, not a controller). The patterns are public for any HTTP method, so
+     * they are compared as paths (Kimi sweep review, Finding 3, 2026-10-20). */
+    private static Set<String> allowlistedPublicPaths() {
         return Arrays.stream(PublicEndpoints.PATTERNS)
                 .filter(pattern -> !pattern.startsWith("/actuator/"))
-                .map(pattern -> "GET " + pattern)
+                .collect(Collectors.toSet());
+    }
+
+    private static Set<String> pathsOf(Set<String> handlers) {
+        return handlers.stream().map(handler -> handler.substring(handler.indexOf(' ') + 1))
                 .collect(Collectors.toSet());
     }
 
@@ -157,14 +190,33 @@ class ControllerRulesArchitectureTest {
      * entry, and every such entry has its handler. A public handler outside that list fails here. */
     @Test
     void permitAllHandlersMatchThePublicEndpointsAllowlistExactly() {
-        assertThat(permitAllHandlers(analyzedClasses)).isEqualTo(allowlistedPublicHandlers());
+        assertThat(pathsOf(permitAllHandlers(analyzedClasses))).isEqualTo(allowlistedPublicPaths());
     }
 
     @Test
     void permitAllHandlersSeesAPublicHandlerOutsideTheAllowlist() {
         Set<String> rogue = permitAllHandlers(new ClassFileImporter().importClasses(RogueOpenController.class));
         assertThat(rogue).containsExactly("GET /rogue/open");
-        assertThat(allowlistedPublicHandlers()).doesNotContain("GET /rogue/open");
+        assertThat(allowlistedPublicPaths()).doesNotContain("/rogue/open");
+    }
+
+    @Test
+    void everyHandlerUsesAKnownAccessExpression() {
+        Map<String, String> handlers = handlerAccess(analyzedClasses);
+        assertThat(handlers).isNotEmpty();
+        handlers.forEach((handler, expression) -> assertThat(expression)
+                .as("%s uses an access expression outside KNOWN_ACCESS_EXPRESSIONS", handler)
+                .isIn(KNOWN_ACCESS_EXPRESSIONS));
+    }
+
+    @Test
+    void everyHandlerUsesAKnownAccessExpressionRejectsAnAlwaysTrueRule() {
+        Map<String, String> rogue = handlerAccess(new ClassFileImporter().importClasses(RogueAlwaysTrueController.class));
+        assertThat(rogue).containsEntry("GET /rogue/always-true", "true");
+        assertThat(KNOWN_ACCESS_EXPRESSIONS).doesNotContain("true");
+        assertThat(permitAllHandlers(new ClassFileImporter().importClasses(RogueAlwaysTrueController.class)))
+                .as("an always-true rule is not counted as permitAll(), which is why the known-expression check exists")
+                .isEmpty();
     }
 
     @Test

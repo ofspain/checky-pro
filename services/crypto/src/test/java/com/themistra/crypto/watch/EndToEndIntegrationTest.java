@@ -10,6 +10,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.Chain;
 import com.themistra.crypto.adapter.FakeChainAdapter;
 import com.themistra.crypto.adapter.ProviderSet;
+import com.themistra.crypto.common.config.WatcherProperties;
+import net.javacrumbs.shedlock.core.LockProvider;
+import net.javacrumbs.shedlock.core.SimpleLock;
 import com.themistra.crypto.adapter.model.FinalityStatus;
 import com.themistra.crypto.adapter.model.TxResult;
 import com.themistra.crypto.attest.Attestation;
@@ -74,6 +77,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -176,6 +180,8 @@ class EndToEndIntegrationTest {
     private ProviderHealthTracker providerHealthTracker;
     @Autowired
     private ChainCursorRepository chainCursorRepository;
+    @Autowired
+    private WatchRepository watchRepository;
     @Autowired
     private TxLifecyclePublisher txLifecyclePublisher;
     @Autowired
@@ -595,6 +601,94 @@ class EndToEndIntegrationTest {
      * has) is a separate, non-{@code @Id} column. {@code entityManager.find(Watch.class, watchId)}
      * would look up by the wrong key entirely and silently return {@code null}. Queried by the real
      * {@code watchId} column via JPQL instead. */
+    /**
+     * Kimi sweep review, Finding 1 (2026-10-20). Payment unregisters its watch as soon as it sees a
+     * payment (SEEN), and still needs {@code chain.tx.finalized} afterwards. Payment's own end-to-end
+     * test uses a crypto stand-in, so this is the end-to-end proof of crypto's half (fix
+     * {@code 1b64b6d7}):
+     * <ul>
+     *   <li>register and unregister go over HTTP, as payment calls them;</li>
+     *   <li>the watcher is driven by a real {@link WatcherRegistry} over the real watch and cursor
+     *       tables. The context's own registry is mocked (class Javadoc), so this one is built here;
+     *       only its chain providers are fakes and its shard lock is always granted;</li>
+     *   <li>events are asserted on the real Kafka topics.</li>
+     * </ul>
+     * After the unregister, a second transaction to the same address must not be seen, so matching
+     * really stopped while finality tracking went on.
+     */
+    @Test
+    void anUnregisteredWatchStillEmitsFinalizedForItsSeenTransactionButMatchesNothingNew() throws Exception {
+        UUID watchId = registerWatch("1000000");
+        String txHash = "0xtxhash-unregistered";
+        String lateTxHash = "0xtxhash-after-unregister";
+
+        FakeChainAdapter providerA = new FakeChainAdapter(Chain.ETHEREUM, "provider-a");
+        FakeChainAdapter providerB = new FakeChainAdapter(Chain.ETHEREUM, "provider-b");
+        FakeChainAdapter providerC = new FakeChainAdapter(Chain.ETHEREUM, "provider-c");
+        ProviderSet providerSet = org.mockito.Mockito.mock(ProviderSet.class);
+        org.mockito.Mockito.when(providerSet.adaptersFor(Chain.ETHEREUM)).thenReturn(List.of(
+                named("provider-a", providerA), named("provider-b", providerB), named("provider-c", providerC)));
+        SimpleLock shardLock = org.mockito.Mockito.mock(SimpleLock.class);
+        org.mockito.Mockito.when(shardLock.extend(any(), any())).thenReturn(Optional.of(shardLock));
+        LockProvider lockProvider = org.mockito.Mockito.mock(LockProvider.class);
+        org.mockito.Mockito.when(lockProvider.lock(any())).thenReturn(Optional.of(shardLock));
+        // The earlier flows leave registered watches on the same address in the shared database, and
+        // quorum decisions are one per transaction, so their watchers would race this one. The real
+        // queries still run; their results are narrowed to this test's watch.
+        WatchRepository onlyThisWatch = org.mockito.Mockito.mock(WatchRepository.class);
+        org.mockito.Mockito.when(onlyThisWatch.findByStatus(any())).thenAnswer(call ->
+                watchRepository.findByStatus(call.getArgument(0)).stream()
+                        .filter(watch -> watch.watchId().equals(watchId)).toList());
+        org.mockito.Mockito.when(onlyThisWatch.findUnregisteredWithUnfinalizedSeenTransaction()).thenAnswer(call ->
+                watchRepository.findUnregisteredWithUnfinalizedSeenTransaction().stream()
+                        .filter(watch -> watch.watchId().equals(watchId)).toList());
+        WatcherRegistry registry = new WatcherRegistry(onlyThisWatch, providerSet, observationLog,
+                quorumDecisionService, providerHealthTracker, chainCursorRepository,
+                new WatcherProperties(1, 3_600_000L, CORRELATION_WINDOW_MS, 1L, 60_000L, 200L),
+                meterRegistry, clock, lockProvider, objectMapper, txLifecyclePublisher, finalityPolicies,
+                reorgDetector);
+        try {
+            registry.reconcile();
+
+            TxResult agreed = tx(txHash, true, 100L, BigDecimal.valueOf(1_000_000L), 3);
+            providerA.simulateReorg(txHash, agreed);
+            providerB.simulateReorg(txHash, agreed);
+            providerC.simulateReorg(txHash, agreed);
+            outboxRelay.relay();
+            assertThat(awaitRecordOnTopic("chain.tx.seen", txHash, Duration.ofSeconds(10))).isNotNull();
+
+            mockMvc.perform(delete("/internal/v1/watches/" + watchId)
+                            .with(jwt().authorities(new SimpleGrantedAuthority(INTERNAL_SCOPE))))
+                    .andExpect(status().isNoContent());
+            registry.reconcile();
+
+            TxResult late = tx(lateTxHash, true, 101L, BigDecimal.valueOf(1_000_000L), 3);
+            providerA.simulateReorg(lateTxHash, late);
+            providerB.simulateReorg(lateTxHash, late);
+            providerC.simulateReorg(lateTxHash, late);
+
+            FinalityStatus finalStatus = new FinalityStatus(100L, 200L, 150L);
+            providerA.scriptFinalityStatus(txHash, finalStatus);
+            providerB.scriptFinalityStatus(txHash, finalStatus);
+            providerC.scriptFinalityStatus(txHash, finalStatus);
+
+            ConsumerRecord<String, String> finalizedRecord = null;
+            Instant deadline = Instant.now().plusSeconds(15);
+            while (finalizedRecord == null && Instant.now().isBefore(deadline)) {
+                outboxRelay.relay();
+                finalizedRecord = awaitRecordOnTopic("chain.tx.finalized", txHash, Duration.ofSeconds(1));
+            }
+            assertThat(finalizedRecord)
+                    .as("the watch was unregistered at SEEN, but its seen transaction must still finalize")
+                    .isNotNull();
+            assertThat(noRecordAppearsOnTopic("chain.tx.seen", lateTxHash, Duration.ofSeconds(2)))
+                    .as("after the unregister, a new transaction to the address must not be matched")
+                    .isTrue();
+        } finally {
+            registry.shutdown();
+        }
+    }
+
     private Watch loadWatch(UUID watchId) {
         return entityManager.createQuery("select w from Watch w where w.watchId = :watchId", Watch.class)
                 .setParameter("watchId", watchId)

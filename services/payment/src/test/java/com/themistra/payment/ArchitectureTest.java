@@ -1,5 +1,6 @@
 package com.themistra.payment;
 
+import com.themistra.payment.archtestfixtures.RogueAlwaysTrueController;
 import com.themistra.payment.archtestfixtures.RogueClassGuardedController;
 import com.themistra.payment.archtestfixtures.RogueControllerDependent;
 import com.themistra.payment.archtestfixtures.RogueRepositoryController;
@@ -26,6 +27,7 @@ import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 import jakarta.persistence.Entity;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.security.config.annotation.web.configurers.AuthorizeHttpRequestsConfigurer;
 import org.springframework.data.repository.Repository;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -33,7 +35,10 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.lang.reflect.Method;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
@@ -897,5 +902,49 @@ class ArchitectureTest {
         assertThatThrownBy(() -> shouldNotDependOnControllers.check(violating))
                 .isInstanceOf(AssertionError.class)
                 .hasMessageContaining("RogueControllerDependent");
+    }
+
+    /** Kimi sweep review, Finding 2 (2026-10-20), ported here from the other services: the only
+     * access expression a payment handler may use. An always-true rule such as {@code "true"} would
+     * still satisfy the presence rule above, so the expression itself is pinned too. */
+    private static final Set<String> KNOWN_ACCESS_EXPRESSIONS = Set.of("hasRole('MERCHANT')");
+
+    /** Every handler's effective {@code @PreAuthorize} expression (the method's, else its
+     * class's), keyed by the handler method. */
+    private static Map<String, String> handlerAccess(JavaClasses classes) {
+        Map<String, String> handlers = new LinkedHashMap<>();
+        for (JavaClass javaClass : classes) {
+            if (!javaClass.isAnnotatedWith(RestController.class)) {
+                continue;
+            }
+            Class<?> type = javaClass.reflect();
+            for (Method method : type.getDeclaredMethods()) {
+                if (AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class) == null) {
+                    continue;
+                }
+                PreAuthorize access = AnnotatedElementUtils.findMergedAnnotation(method, PreAuthorize.class);
+                if (access == null) {
+                    access = AnnotatedElementUtils.findMergedAnnotation(type, PreAuthorize.class);
+                }
+                handlers.put(type.getSimpleName() + "." + method.getName(), access == null ? null : access.value());
+            }
+        }
+        return handlers;
+    }
+
+    @Test
+    void everyHandlerUsesAKnownAccessExpression() {
+        Map<String, String> handlers = handlerAccess(analyzedClasses());
+        assertThat(handlers).hasSize(5);
+        handlers.forEach((handler, expression) -> assertThat(expression)
+                .as("%s uses an access expression outside KNOWN_ACCESS_EXPRESSIONS", handler)
+                .isIn(KNOWN_ACCESS_EXPRESSIONS));
+    }
+
+    @Test
+    void everyHandlerUsesAKnownAccessExpressionRejectsAnAlwaysTrueRule() {
+        Map<String, String> rogue = handlerAccess(new ClassFileImporter().importClasses(RogueAlwaysTrueController.class));
+        assertThat(rogue).containsEntry("RogueAlwaysTrueController.open", "true");
+        assertThat(KNOWN_ACCESS_EXPRESSIONS).doesNotContain("true");
     }
 }
