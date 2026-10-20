@@ -5,6 +5,7 @@ import com.themistra.auth.apikey.dto.CreateApiKeyRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -59,6 +60,7 @@ public class ApiKeyController {
      * account-state rejection propagate uncaught for the respective advice to translate.
      */
     @PostMapping
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ApiKeyService.CreateApiKeyResult> create(
             Authentication authentication, @Valid @RequestBody CreateApiKeyRequest request) {
         UUID accountUuid = UUID.fromString(authentication.getName());
@@ -73,6 +75,7 @@ public class ApiKeyController {
      * caller with no keys is a normal {@code 200}, not an error.
      */
     @GetMapping
+    @PreAuthorize("isAuthenticated()")
     public List<ApiKeyService.ApiKeyMetadata> list(Authentication authentication) {
         UUID accountUuid = UUID.fromString(authentication.getName());
         return apiKeyService.list(accountUuid);
@@ -86,6 +89,7 @@ public class ApiKeyController {
      * ApiKeyService#revoke} is idempotent and never throws for that case.
      */
     @DeleteMapping("/{keyUuid}")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> revoke(Authentication authentication, @PathVariable UUID keyUuid) {
         UUID accountUuid = UUID.fromString(authentication.getName());
         apiKeyService.revoke(accountUuid, keyUuid);
@@ -102,6 +106,7 @@ public class ApiKeyController {
      * an invalid caller-presented key, and must never look like one.
      */
     @PostMapping("/token")
+    @PreAuthorize("permitAll()")
     public ApiKeyTokenResponse exchange(
             @RequestHeader(value = "Authorization", required = false) String authorization) {
         String credential = extractCredential(authorization);

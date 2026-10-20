@@ -7,6 +7,7 @@ import com.themistra.auth.mfa.dto.TotpCodeRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -44,6 +45,7 @@ public class MfaController {
      * {@code GET} endpoint for one to correctly resolve to.
      */
     @PostMapping("/totp")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BeginEnrollResponse> beginEnroll(Authentication authentication) {
         UUID accountUuid = UUID.fromString(authentication.getName());
         MfaService.BeginEnrollResult result = mfaService.beginEnroll(accountUuid);
@@ -56,6 +58,7 @@ public class MfaController {
      * recovery codes — their only appearance in plaintext, ever.
      */
     @PostMapping("/totp/confirm")
+    @PreAuthorize("isAuthenticated()")
     public RecoveryCodesResponse confirm(
             Authentication authentication, @Valid @RequestBody TotpCodeRequest request) {
         UUID accountUuid = UUID.fromString(authentication.getName());
@@ -68,6 +71,7 @@ public class MfaController {
      * {@code 204}, mirroring {@code ApiKeyController.revoke}'s own identical precedent.
      */
     @DeleteMapping("/totp")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> disable(
             Authentication authentication, @Valid @RequestBody PasswordAndTotpRequest request) {
         UUID accountUuid = UUID.fromString(authentication.getName());
@@ -82,6 +86,7 @@ public class MfaController {
      * appearance in plaintext.
      */
     @PostMapping("/recovery-codes")
+    @PreAuthorize("isAuthenticated()")
     public RecoveryCodesResponse regenerateRecoveryCodes(
             Authentication authentication, @Valid @RequestBody PasswordAndTotpRequest request) {
         UUID accountUuid = UUID.fromString(authentication.getName());

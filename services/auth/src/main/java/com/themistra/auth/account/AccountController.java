@@ -13,6 +13,7 @@ import com.themistra.auth.token.dto.SessionResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -51,6 +52,7 @@ public class AccountController {
      * caught here, not surfaced, and never reaches {@link AccountExceptionHandler}.
      */
     @PostMapping
+    @PreAuthorize("permitAll()")
     public ResponseEntity<RegistrationAcknowledgement> register(
             @Valid @RequestBody RegisterAccountRequest request) {
         try {
@@ -67,6 +69,7 @@ public class AccountController {
      * no path parameter for a caller to substitute another account's identifier into.
      */
     @GetMapping("/me")
+    @PreAuthorize("isAuthenticated()")
     public AccountResponse me(Authentication authentication) {
         UUID accountUuid = UUID.fromString(authentication.getName());
         return accountService.getByUuid(accountUuid);
@@ -80,6 +83,7 @@ public class AccountController {
      * unlike {@link #register} — this endpoint's two outcomes are meant to be distinguishable.
      */
     @PostMapping("/verify-email")
+    @PreAuthorize("permitAll()")
     public ResponseEntity<Void> verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
         accountService.activateFromVerificationToken(request.token());
         return ResponseEntity.noContent().build();
@@ -91,6 +95,7 @@ public class AccountController {
      * never throws for a non-match, so there is nothing here to distinguish outcomes on.
      */
     @PostMapping("/resend-verification")
+    @PreAuthorize("permitAll()")
     public RegistrationAcknowledgement resendVerification(
             @Valid @RequestBody ResendVerificationRequest request) {
         accountService.resendVerificationIfPending(request.email());
@@ -104,6 +109,7 @@ public class AccountController {
      * {@link AccountService#requestPasswordReset} never throws for a non-match.
      */
     @PostMapping("/password-reset-request")
+    @PreAuthorize("permitAll()")
     public RegistrationAcknowledgement passwordResetRequest(
             @Valid @RequestBody PasswordResetRequest request) {
         accountService.requestPasswordReset(request.email());
@@ -116,6 +122,7 @@ public class AccountController {
      * {@link AccountExceptionHandler} to translate (R15).
      */
     @PostMapping("/password-reset")
+    @PreAuthorize("permitAll()")
     public ResponseEntity<Void> passwordReset(@Valid @RequestBody PasswordResetConfirmRequest request) {
         accountService.resetPassword(request.token(), request.newPassword());
         return ResponseEntity.noContent().build();
@@ -128,6 +135,7 @@ public class AccountController {
      * propagate uncaught for {@link AccountExceptionHandler} to translate.
      */
     @PostMapping("/me/password")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> changePassword(
             Authentication authentication, @Valid @RequestBody ChangePasswordRequest request) {
         UUID accountUuid = UUID.fromString(authentication.getName());
@@ -140,6 +148,7 @@ public class AccountController {
      * with no active sessions is a normal {@code 200}, not an error.
      */
     @GetMapping("/me/sessions")
+    @PreAuthorize("isAuthenticated()")
     public List<SessionResponse> listSessions(Authentication authentication) {
         UUID accountUuid = UUID.fromString(authentication.getName());
         return sessionService.list(accountUuid);
@@ -152,6 +161,7 @@ public class AccountController {
      * to a uniform 404; an already-revoked-but-owned family still returns {@code 204} (idempotent).
      */
     @DeleteMapping("/me/sessions/{familyId}")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> revokeSession(Authentication authentication, @PathVariable UUID familyId) {
         UUID accountUuid = UUID.fromString(authentication.getName());
         sessionService.revokeOne(accountUuid, familyId);
@@ -164,6 +174,7 @@ public class AccountController {
      * including when the caller has no active sessions.
      */
     @DeleteMapping("/me/sessions")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> revokeAllSessions(Authentication authentication) {
         UUID accountUuid = UUID.fromString(authentication.getName());
         sessionService.revokeAll(accountUuid);

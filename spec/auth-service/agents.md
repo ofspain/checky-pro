@@ -31,6 +31,12 @@ these rules; `target-design.md` is the design of record.
 - Package-by-feature under `com.themistra.auth` (this service is the template for the fleet). Each module
   owns its entities, repositories, services, and API. ArchUnit enforces `api → application → domain`
   within a module and forbids cross-module entity imports. Shared plumbing lives only in `common`.
+  - *Note (2026-10-20, open-issues sweep, FU-1/FU-2 ported from payment): no module has
+    `api`/`application`/`domain` packages, so `ControllerRulesArchitectureTest` enforces the rule in
+    the shape the code has: a `@RestController` never depends on a Spring Data repository,
+    `EntityManager` or `JdbcTemplate`, and nothing depends on a controller. It also checks that
+    every controller handler carries `@PreAuthorize`. Public handlers say `permitAll()`, and that
+    set must equal `PublicEndpoints.METHOD_SCOPED` exactly.*
 
 **Events & messaging**
 - Kafka (AWS MSK). Every state change other services care about is published through the **outbox** in the
