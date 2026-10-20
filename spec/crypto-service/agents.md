@@ -32,6 +32,14 @@ specific to the feature. If a spec must override a rule here, it says so explici
 - Package-by-feature under `com.themistra.crypto`. Each module owns its entities, repositories,
   services, and API. ArchUnit enforces `api → application → domain` within a module and forbids
   cross-module entity imports. Shared plumbing lives only in `common` — no `core`/`util` dumping ground.
+  - *Note (2026-10-20, open-issues sweep, FU-1/FU-2 ported from payment): no module has
+    `api`/`application`/`domain` packages, so `ControllerRulesArchitectureTest` enforces the rule in
+    the shape the code has: a `@RestController` never depends on a Spring Data repository,
+    `EntityManager` or `JdbcTemplate`, and nothing depends on a controller. It also checks that
+    every controller handler carries `@PreAuthorize`. The `/internal/v1` handlers name
+    `ResourceServerConfig.INTERNAL_SCOPE_AUTHORITY`, and the only `permitAll()` handler is the
+    verification-keys path in `PublicEndpoints`. Method security is now on, and a denial maps to a
+    403 problem, not the catch-all 500.*
 
 **Events & messaging**
 - Kafka (AWS MSK). Every emitted fact is published through the **outbox** in the same transaction as the

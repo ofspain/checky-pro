@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -35,9 +36,12 @@ import java.util.Map;
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class ResourceServerConfig {
 
-    private static final String INTERNAL_SCOPE_AUTHORITY = "SCOPE_internal.crypto:write";
+    /** Public so each {@code /internal/v1} handler's own {@code @PreAuthorize} names the same
+     * authority as the URL rule below (open-issues sweep FU-2 port, 2026-10-20). */
+    public static final String INTERNAL_SCOPE_AUTHORITY = "SCOPE_internal.crypto:write";
 
     @Bean
     public SecurityFilterChain securityFilterChain(

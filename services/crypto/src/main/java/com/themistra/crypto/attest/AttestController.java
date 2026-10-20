@@ -1,7 +1,9 @@
 package com.themistra.crypto.attest;
 
+import com.themistra.crypto.common.ResourceServerConfig;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -22,6 +24,7 @@ public class AttestController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAuthority('" + ResourceServerConfig.INTERNAL_SCOPE_AUTHORITY + "')")
     public ResponseEntity<AttestResponse> attest(@Valid @RequestBody AttestRequest request) {
         return ResponseEntity.ok(attestationService.attest(request));
     }

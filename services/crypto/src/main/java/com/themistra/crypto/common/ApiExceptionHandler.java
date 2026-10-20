@@ -9,6 +9,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -75,6 +76,15 @@ public class ApiExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
         problem.setTitle("Malformed request parameter");
         problem.setDetail("'" + e.getName() + "' is not a valid value for this request");
+        return problem;
+    }
+
+    /** A {@code @PreAuthorize} denial (FU-2 port, 2026-10-20). Without this the catch-all below
+     * turns it into a 500. No detail: the response never says which rule refused the call. */
+    @ExceptionHandler(AuthorizationDeniedException.class)
+    ProblemDetail onAuthorizationDenied(AuthorizationDeniedException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setTitle("Forbidden");
         return problem;
     }
 
