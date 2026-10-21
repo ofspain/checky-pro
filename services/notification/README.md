@@ -10,39 +10,32 @@ Consumes: `invoice.created`, `payment.*`, `receipt.issued`, `user.registered`.
 
 ## Local development database
 
-Uses `services/auth`'s Postgres container (`docker compose -f services/auth/compose.local.yaml up
--d postgres`), a new `notifications` schema, and a separate, unprivileged `notification_app`
-runtime role (never the migration owner - table owners bypass grants in Postgres, so this split is
-what makes the service's own least-privilege access real).
+notification-service runs in **its own database** (open-issues sweep, 2026-10-20). Its V1 narrows
+`search_path` to `notifications` and uses `CITEXT`, so `citext` must live in the `notifications`
+schema, and PostgreSQL allows one copy of an extension per database. In a database shared with
+auth-service, auth's V1 has already put `citext` in the `auth` schema. The Flyway callback
+`db/migration/beforeMigrate.sql` installs `citext` into `notifications` before V1, and refuses a
+database where it lives elsewhere, with a message saying so.
 
-`V1__notifications_baseline.sql` is a byte-for-byte VERBATIM transcription of `design.md` §4c and
-narrows `search_path` to `notifications` before creating its tables, one of which uses `CITEXT`.
-That line replaces the search path rather than appending to it, so `citext` must already be visible
-*inside* the `notifications` schema before this migration runs - a plain `public`-schema install
-(the default, and what `services/auth`'s own migration already does) is not enough. PostgreSQL only
-allows one installation of a given extension per database, so which one-time command is correct
-depends on whether `citext` is already installed elsewhere on this Postgres instance:
+Locally, use `services/auth`'s Postgres container
+(`docker compose -f services/auth/compose.local.yaml up -d postgres`) with a separate database on it:
 
 ```
-# Fresh database, citext not installed anywhere yet:
-docker exec -it auth-postgres-1 psql -U checky -d checky \
-  -c "CREATE SCHEMA IF NOT EXISTS notifications; CREATE EXTENSION IF NOT EXISTS citext SCHEMA notifications;"
-
-# citext already installed in public (e.g. by services/auth's own migration having run first -
-# the realistic case on the shared local stack); relocates it, it does not reinstall it:
-docker exec -it auth-postgres-1 psql -U checky -d checky \
-  -c "ALTER EXTENSION citext SET SCHEMA notifications;"
-```
-
-Moving an already-installed `citext` does not break existing columns that use it (type binding is
-by OID, not by schema-qualified name) - verified directly against `services/auth`'s own
-`accounts.email` column after running the `ALTER EXTENSION` above on the shared local stack.
-
-```
-mvn -pl services/notification flyway:migrate
-docker exec -it auth-postgres-1 psql -U checky -d checky \
+docker exec -it auth-postgres-1 psql -U checky -d checky -c "CREATE DATABASE checky_notifications"
+mvn -pl services/notification flyway:migrate \
+  -Dflyway.url=jdbc:postgresql://localhost:5432/checky_notifications
+docker exec -it auth-postgres-1 psql -U checky -d checky_notifications \
   -c "ALTER ROLE notification_app PASSWORD 'notification-app-local-only';"
+DB_URL=jdbc:postgresql://localhost:5432/checky_notifications mvn -pl services/notification spring-boot:run
 ```
+
+The runtime role is `notification_app`, separate from the migration owner and unprivileged: table
+owners bypass grants in Postgres, so this split is what makes least privilege real.
+
+**Existing shared `checky` setups keep working.** If your local `checky` database already holds the
+`notifications` schema, it is because `citext` was moved into `notifications` by hand
+(`ALTER EXTENSION citext SET SCHEMA notifications`). The callback accepts that state, and so does
+auth's matching guard, because auth's V1 has already run there.
 
 The migration itself never commits a password - real environments provision `notification_app`'s
 credential out-of-band (External Secrets Operator), same as every other credential this service

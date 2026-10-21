@@ -183,7 +183,7 @@ class ControllerRulesArchitectureTest {
                 .flatMap(javaClass -> javaClass.getMethods().stream())
                 .filter(ControllerRulesArchitectureTest::isHandler)
                 .count();
-        assertThat(handlers).as("AttestController, WatchController x2, VerificationKeysController").isEqualTo(4);
+        assertThat(handlers).as("AttestController, WatchController x2, VerificationKeysController, TransactionLookupController").isEqualTo(5);
     }
 
     /** FU-2's public half: every handler marked {@code permitAll()} is a non-actuator {@code PublicEndpoints.PATTERNS}

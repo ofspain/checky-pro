@@ -32,6 +32,8 @@ the Phase 1a/1b shell or routing was built or specced with an assumption that pr
 | Phase 4 | Reputation and trust | **DEFERRED — out of MVP scope (2026-10-10).** |
 | Phase 5 | Fraud intelligence and institutional API | **DEFERRED — out of MVP scope (2026-10-10).** |
 
+> *Note (2026-10-21): Q2 is resolved (see §11). Phase 1b is no longer blocked on it; the "Blocked on Q2" status above predates that.*
+
 ## 1. Context & why now
 
 The backend auth service is the identity issuer for the whole product, and its UI does not yet exist. Stakeholders want to see the
@@ -334,6 +336,7 @@ Each item blocks the phase it names. A phase moves to `READY FOR IMPL` only when
   `UNDERPAID`, `OVERPAID`, `EXPIRED`, `HELD` are no longer proposed; they're final. **Still open:** `contracts/api/payments.yaml`
   itself does not exist yet — it's authored as part of payment-service's own build (`spec/payment-service/tasks.md` task 24), not
   before it. This Q2 stays open until that contract lands.
+  **Resolved (2026-10-21): the contract has landed.** `contracts/api/payments.yaml` was authored and contract-tested in payment-service task 24, and the open-issues sweep added the merchant receipt read (`GET /api/v1/receipts/{receiptUuid}`, commit `07f4347e`). It documents `POST`/`GET /api/v1/invoices`, `GET /api/v1/invoices/{invoiceUuid}`, `GET /api/v1/receipts/{receiptUuid}` and `GET /api/v1/exports/transactions`. Whether each field R31–R39, R55 and R56 need is present is checked when Phase 1b is specified against this contract. Closed.
 - Q3. **Notification stream and transport (blocks R35, R59, O7).** ~~`contracts/api/notifications.yaml` does not exist, and the
   transport and authentication are decided in `spec/notification-service` O3 and Q3. Owner action: confirm the SSE choice and the
   stream authentication option (O7).~~ **Resolved (2026-10-08).** The transport is SSE, already built

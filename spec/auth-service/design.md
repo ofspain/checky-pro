@@ -196,6 +196,8 @@ CREATE INDEX idx_refresh_token_archive_hash ON refresh_token_archive(token_hash)
   remoteRef: { key: checky/${ENVIRONMENT}/auth-service, property: mfa_seed_kek_arn }
 ```
 
+> *Note (2026-10-20/21, open-issues sweep): auth-service runs in its own database, and so does every service (`infra/README.md`, "Database layout"). V1 installs `citext` with Flyway's default schema `auth` and uses `CITEXT` there. Postgres allows one copy of an extension per database, so in a database where notification-service had already installed `citext` into its own schema, V1 failed with `type "citext" does not exist`. V1 is unchanged. A Flyway callback, `db/migration/beforeMigrate.sql`, refuses such a database with a clear message, but only before V1 has created `auth.accounts`. After that, the existing columns hold the type wherever the extension lives, so the local shared database keeps starting. The callback stores no function or procedure and holds no business logic, so it is within D-005. Tests: `AuthCitextCallbackIntegrationTest`.*
+
 ## 5. Data model & schema changes
 
 No breaking schema changes are required beyond V5 above. The implementation should treat the following existing aggregates as authoritative:

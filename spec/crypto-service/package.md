@@ -11,6 +11,8 @@
 | Skills to load | `spec-authoring`, `code-review` |
 | Standing rules | [`agents.md`](agents.md) in this directory is authoritative for `services/crypto` (distilled from `ARCHITECTURE.md`, `docs/service-languages.pdf`, `SECURITY-THREAT-MODEL.md`, the ADRs, and the sibling `spec/auth-service`). This spec references it and does not restate or override it except where §4a says so explicitly. |
 
+> *Note (2026-10-21, open-issues sweep): task 30 (R29, L16) is now built and tested; the Status row above predates it. Tasks 1–30 are all built.*
+
 ## 0. TL;DR
 
 The Crypto Service is the **only** component that talks to blockchains and the **only** holder of the path to `kms:Sign` on the attestation key. It fetches every verification fact (tx existence, amount, token, confirmations, finality) from N independent RPC providers, treats a fact as true only on **2-of-3 quorum**, applies **per-chain finality policy**, treats reorgs as first-class events, validates tokens by contract address against a signed allowlist, flags address poisoning, screens counterparties for OFAC, and exposes an internal `POST /attest` that returns a KMS signature for a receipt digest — while logging every provider answer verbatim so any past attestation can be re-derived and defended. It owns the `chain` schema and publishes `chain.tx.{seen,confirmed,finalized,reorged}` and `chain.provider.degraded`.

@@ -87,6 +87,14 @@ GET  /internal/v1/transactions/{chain}/{txHash}   (scope internal.crypto:write; 
 ```
 `expectedAmount` and any monetary value are **decimal strings in token base units, never JSON numbers**.
 
+> *Note (2026-10-21, open-issues sweep): the lookup route above is built (task 30); the "NOT YET BUILT" marker in the block is historical and the block is unchanged. Behaviour the 200/404 lines leave open:*
+> - *A provider error means there are not 3 answers, so the lookup returns 503, never a guess.*
+> - *An absence that 2 of 3 report but one disputes is `HELD`, not 404; 404 stays reserved for unanimous absence (L2).*
+> - *A `HELD` answer carries no facts. Facts are decided as the watcher decides them: only from providers that report the transaction exists, and only with all 3 answers.*
+> - *`UNKNOWN_TOKEN` means the facts agreed but the token is not allowlisted (R14).*
+> - *The lookup is read-only. It writes no `quorum_decisions` row, which would collide with the watch path's one decision per fact. It writes no `observations` row either, because `getTx` returns no verbatim payload. It is never a basis for attestation (L10).*
+> - *`crypto-internal.yaml` documents the route and the `TransactionLookupResponse` schema.*
+
 ### First Flyway migration `V1__chain_baseline.sql`
 
 ```sql

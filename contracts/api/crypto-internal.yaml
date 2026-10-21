@@ -74,6 +74,41 @@ paths:
               schema:
                 $ref: '#/components/schemas/AttestResponse'
 
+  /internal/v1/transactions/{chain}/{txHash}:
+    get:
+      summary: Look up the agreed facts for a transaction hash the caller already has (R29, L16)
+      description: >
+        Asks all 3 providers for the chain and applies the same 2-of-3 rule as the watch path. Read
+        only: writes no quorum decision and is never a basis for attestation. A HELD answer carries
+        no facts. 503 when a provider cannot answer, since the rule needs all 3 answers.
+      operationId: lookupTransaction
+      security:
+        - bearerAuth: [internal.crypto:write]
+      parameters:
+        - name: chain
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [ETHEREUM, TRON]
+        - name: txHash
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9]{1,128}$'
+      responses:
+        '200':
+          description: The agreed facts (outcome AGREED or UNKNOWN_TOKEN), or a HELD outcome with no facts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionLookupResponse'
+        '404':
+          description: All 3 providers agree the hash does not exist (problem+json).
+        '503':
+          description: A provider could not answer (problem+json).
+
   /.well-known/themistra-verification-keys:
     get:
       summary: Publish the attestation key's public component
@@ -159,6 +194,38 @@ components:
         reason:
           type: string
           description: Present only when outcome is BLOCKED.
+
+    TransactionLookupResponse:
+      type: object
+      required: [chain, txHash, existence, outcome]
+      properties:
+        chain:
+          type: string
+          enum: [ETHEREUM, TRON]
+        txHash:
+          type: string
+        existence:
+          type: string
+          enum: [AGREED, HELD]
+        confirmations:
+          type: integer
+          nullable: true
+        tokenContractAddress:
+          type: string
+          nullable: true
+        fromAddress:
+          type: string
+          nullable: true
+        toAddress:
+          type: string
+          nullable: true
+        amount:
+          type: string
+          nullable: true
+          description: Token base units as a decimal string (never a JSON number). Absent when HELD.
+        outcome:
+          type: string
+          enum: [AGREED, HELD, UNKNOWN_TOKEN]
 
     PublicKeyInfo:
       type: object

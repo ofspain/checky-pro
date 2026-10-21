@@ -108,6 +108,8 @@ does not yet exist; they are blocked by the `Q#` shown.
 
 ## Phase 1 — Payment verification & invoicing
 
+> *Note (2026-10-21): every "Blocked on Q2" below predates Q2's resolution. `contracts/api/payments.yaml` has landed (`package.md` §11 Q2), so these requirements are unblocked and are checked field by field against that contract when Phase 1b is specified.*
+
 - R31. WHEN a merchant views invoices, THEN the SPA SHALL show each invoice's state and its amount as a decimal string, and SHALL
   show under- and overpayment discrepancies. The state names are PROPOSED from payment-service design, and their finality is
   payment-service Q1. Blocked on Q2.

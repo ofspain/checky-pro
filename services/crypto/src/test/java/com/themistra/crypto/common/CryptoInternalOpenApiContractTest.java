@@ -49,6 +49,7 @@ class CryptoInternalOpenApiContractTest {
     private static final List<Class<?>> CONTROLLERS = List.of(
             WatchController.class,
             AttestController.class,
+            com.themistra.crypto.lookup.TransactionLookupController.class,
             VerificationKeysController.class);
 
     private final ObjectMapper objectMapper = new ObjectMapper()
@@ -246,6 +247,32 @@ class CryptoInternalOpenApiContractTest {
         }
     }
 
+    /** Crypto task 30: the lookup response carries exactly the fields of design.md §4c's
+     * {@code GET /internal/v1/transactions/{chain}/{txHash}} 200 line, in that order. */
+    @Test
+    void transactionLookupResponseMatchesTheDesignSpecFieldsExactly() throws Exception {
+        String design = Files.readString(Path.of("../../spec/crypto-service/design.md"));
+        int route = design.indexOf("GET  /internal/v1/transactions/{chain}/{txHash}");
+        assertThat(route).as("§4c documents the lookup route").isPositive();
+        int bodyStart = design.indexOf("200: {", route) + "200: {".length();
+        String body = design.substring(bodyStart, design.indexOf("}", bodyStart));
+        List<String> specFields = java.util.Arrays.stream(body.split(","))
+                .map(field -> field.strip().split(":")[0].strip())
+                .toList();
+
+        List<String> recordFields = java.util.Arrays.stream(
+                        com.themistra.crypto.lookup.TransactionLookupResponse.class.getRecordComponents())
+                .map(java.lang.reflect.RecordComponent::getName)
+                .toList();
+        assertThat(recordFields).containsExactlyElementsOf(specFields);
+
+        JsonNode schema = yamlMapper.readTree(Files.readString(CONTRACT_PATH))
+                .get("components").get("schemas").get("TransactionLookupResponse").get("properties");
+        List<String> yamlFields = new java.util.ArrayList<>();
+        schema.fieldNames().forEachRemaining(yamlFields::add);
+        assertThat(yamlFields).containsExactlyElementsOf(specFields);
+    }
+
     /** The named test (`package.md` §8): {@code shouldConformToCryptoInternalOpenApiContract}. */
     @Test
     void shouldConformToCryptoInternalOpenApiContract() throws Exception {
@@ -364,6 +391,7 @@ class CryptoInternalOpenApiContractTest {
         m.put(new Route("DELETE", "/internal/v1/watches/{watchId}"), ExpectedSchema.none());
         m.put(new Route("POST", "/internal/v1/attest"), ExpectedSchema.ref("AttestResponse"));
         m.put(new Route("GET", "/.well-known/themistra-verification-keys"), ExpectedSchema.ref("VerificationKeysResponse"));
+        m.put(new Route("GET", "/internal/v1/transactions/{chain}/{txHash}"), ExpectedSchema.ref("TransactionLookupResponse"));
         return m;
     }
 
@@ -436,6 +464,12 @@ class CryptoInternalOpenApiContractTest {
                 new PublicKeyInfo("arn:aws:kms:us-east-1:111122223333:key/abc",
                         "arn:aws:kms:us-east-1:111122223333:key/abc", "ECDSA_SHA_256",
                         "-----BEGIN PUBLIC KEY-----\nZmFrZQ==\n-----END PUBLIC KEY-----\n"))));
+
+        // Crypto task 30: both shapes of the lookup answer.
+        instances.put("TransactionLookupResponse-agreed", new com.themistra.crypto.lookup.TransactionLookupResponse(
+                "ETHEREUM", "0xtx", "AGREED", 12, "0xtoken", "0xfrom", "0xto", "1000000", "AGREED"));
+        instances.put("TransactionLookupResponse-held", new com.themistra.crypto.lookup.TransactionLookupResponse(
+                "ETHEREUM", "0xtx", "HELD", null, null, null, null, null, "HELD"));
 
         return instances;
     }
