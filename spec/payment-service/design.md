@@ -445,3 +445,11 @@ common/
 ```
 
 Tests mirror the layout under `src/test/java/com/themistra/payment/`. Contract files (new): `contracts/api/payments.yaml`, `contracts/events/payments/{invoice-created,payment-seen,payment-finalized,receipt-issued}.v1.schema.json`.
+
+> **Note (2026-10-21, frontend start — payment read):** new `GET /api/v1/invoices/{invoiceUuid}/payments` (`history/`
+> package, `PaymentHistoryController`/`PaymentHistoryService`), documented in `contracts/api/payments.yaml` as `PaymentResponse`.
+> It lists the merchant's payments for one invoice, oldest first, with state, confirmations, observed amount (a base-unit decimal
+> string), `amountDiscrepancy`, `addressPoisoningFlag`, the state timestamps and `receiptUuid` once a receipt exists. The invoice
+> is looked up for the merchant first, so another merchant's invoice is the same 404 as an unknown one (R28). Read-only, across
+> module seams through views only (L12): `InvoiceService.getViewForMerchant`, `PaymentService.listForInvoice` (`PaymentView`),
+> `ReceiptReadService.receiptUuidsByPaymentId`. It serves frontend R32–R34, R39, R55 and R56. Handler count 5 → 6.

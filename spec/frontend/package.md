@@ -34,6 +34,11 @@ the Phase 1a/1b shell or routing was built or specced with an assumption that pr
 
 > *Note (2026-10-21): Q2 is resolved (see §11). Phase 1b is no longer blocked on it; the "Blocked on Q2" status above predates that.*
 
+> *Note (2026-10-21, frontend start): **execution starts now, for Phase 1a and Phase 1b.** The deferral condition in §12
+> ("until `spec/payment-service` is fixed and its contracts exist") is met: payment-service is built and `payments.yaml` covers
+> invoices, payments, receipts and exports. Phase 1b's unit-by-unit mapping is the `tasks.md` note of 2026-10-21. Out of the MVP:
+> R38 (wallet registration) and Q11's payer invoice view (units 170–172).*
+
 ## 1. Context & why now
 
 The backend auth service is the identity issuer for the whole product, and its UI does not yet exist. Stakeholders want to see the
@@ -432,6 +437,9 @@ half only, still tied to payment-service (Q2); its trust-passport half is moot a
 **Status of this package.** Specification only. No frontend code exists, and no generated execution prompts are committed.
 Execution is deferred until `spec/payment-service` is fixed and its contracts exist. This section tells the agent what it must read
 and what it must not assume.
+
+> *Note (2026-10-21): the deferral above is lifted (§0 note of 2026-10-21). Read the 2026-10-21 notes in `design.md` §4c,
+> `requirements.md` (Phase 1b) and `tasks.md` (Phase 1b) before starting a Phase 1b unit. Q11 stays deferred; Q2 is resolved.*
 
 **Scope reminder for whoever starts implementation (2026-10-10):** this package's own in-scope MVP is Phase 1a + Phase 1b only.
 `tasks.md` units 138–169, marked "Deferred (out of MVP scope, 2026-10-10)", are not started under this package regardless of

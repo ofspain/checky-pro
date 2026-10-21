@@ -110,6 +110,16 @@ does not yet exist; they are blocked by the `Q#` shown.
 
 > *Note (2026-10-21): every "Blocked on Q2" below predates Q2's resolution. `contracts/api/payments.yaml` has landed (`package.md` §11 Q2), so these requirements are unblocked and are checked field by field against that contract when Phase 1b is specified.*
 
+> *Note (2026-10-21, frontend start): Phase 1b is specified against `contracts/api/payments.yaml` as it now stands (`design.md`
+> §4c note of 2026-10-21). R31–R34, R36, R37, R55 and R56 are served by the invoice, payments, receipt and export endpoints. Three
+> requirements change:*
+> - *R38 (wallet registration) is **dropped from the MVP**. No backend exposes merchant wallet monitoring; payments are watched
+>   per invoice. Tasks 117 and 118 are not built.*
+> - *R39 is met by the payment state and `confirmations`. Finality comes from each chain's finalized marker (crypto-service L4),
+>   not from a fixed confirmation count, so there is no "required count" to show. An unknown-token condition cannot occur in the
+>   MVP: the invoice fixes the token, and a transfer of another token is never matched to it.*
+> - *R54's payer invoice view (Q11) stays **deferred**. Only the merchant views ship.*
+
 - R31. WHEN a merchant views invoices, THEN the SPA SHALL show each invoice's state and its amount as a decimal string, and SHALL
   show under- and overpayment discrepancies. The state names are PROPOSED from payment-service design, and their finality is
   payment-service Q1. Blocked on Q2.

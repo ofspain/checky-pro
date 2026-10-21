@@ -11,8 +11,11 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * The merchant's receipt read (R28, FU-T29-1). Ownership is decided from the database: receipt to
@@ -105,5 +108,16 @@ public class ReceiptReadService {
             throw new IllegalStateException("field '" + field + "' is missing or not an integer");
         }
         return value.intValue();
+    }
+
+    /** Payment read (frontend Phase 1b, 2026-10-21): the receipt UUID per payment id, for the
+     * payments that have one. Ownership is checked by the caller through the invoice. */
+    public Map<Long, UUID> receiptUuidsByPaymentId(Collection<Long> paymentIds) {
+        Objects.requireNonNull(paymentIds, "paymentIds must not be null");
+        if (paymentIds.isEmpty()) {
+            return Map.of();
+        }
+        return receiptRepository.findByPaymentIdIn(paymentIds).stream()
+                .collect(Collectors.toMap(Receipt::getPaymentId, Receipt::getReceiptUuid));
     }
 }

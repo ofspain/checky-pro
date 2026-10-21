@@ -2,6 +2,8 @@ package com.themistra.payment.receipt;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -13,4 +15,7 @@ import java.util.UUID;
 interface ReceiptRepository extends JpaRepository<Receipt, Long> {
 
     Optional<Receipt> findByReceiptUuid(UUID receiptUuid);
+
+    /** Payment read (frontend Phase 1b, 2026-10-21): the receipts issued for these payments. */
+    List<Receipt> findByPaymentIdIn(Collection<Long> paymentIds);
 }

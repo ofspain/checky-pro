@@ -10,6 +10,7 @@ import org.springframework.security.oauth2.server.authorization.token.JwtEncodin
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -41,7 +42,7 @@ public class TokenClaimsCustomizer implements OAuth2TokenCustomizer<JwtEncodingC
         AuthorizationGrantType grantType = context.getAuthorizationGrantType();
 
         if (grantType.equals(AuthorizationGrantType.CLIENT_CREDENTIALS)) {
-            context.getClaims().claim("amr", List.of("client_secret"));
+            context.getClaims().claim("amr", mutableList(List.of("client_secret")));
             return;
         }
 
@@ -55,11 +56,22 @@ public class TokenClaimsCustomizer implements OAuth2TokenCustomizer<JwtEncodingC
         // JdbcOAuth2AuthorizationService's Jackson-based persistence (Phase 8/9 finding #1).
         boolean otpUsed = context.getPrincipal().getAuthorities().contains(TotpAuthenticationProvider.OTP_VERIFIED_AUTHORITY);
         context.getClaims()
-                .claim("roles", List.copyOf(resolveRoles(context.getPrincipal().getName())))
-                .claim("amr", otpUsed ? List.of("pwd", "otp") : List.of("pwd"))
+                .claim("roles", mutableList(resolveRoles(context.getPrincipal().getName())))
+                .claim("amr", mutableList(otpUsed ? List.of("pwd", "otp") : List.of("pwd")))
                 .claim("acr", otpUsed ? "urn:themistra:acr:otp" : "urn:themistra:acr:pwd")
                 .claim("email_verified",
                         context.getAuthorizedScopes().contains(OidcScopes.EMAIL));
+    }
+
+    /**
+     * Frontend task 36 (2026-10-21): SAS stores these claims with the authorization row and reads
+     * them back through Spring Security's Jackson allowlist whenever it looks the row up by a token
+     * (end-session, refresh, introspection, revocation). {@code java.util.ArrayList} is on that
+     * allowlist; the JDK's immutable lists from {@code List.of} and {@code List.copyOf} are not,
+     * and made every such lookup fail with 400 invalid_request.
+     */
+    private static List<String> mutableList(java.util.Collection<String> values) {
+        return new ArrayList<>(values);
     }
 
     private Set<String> resolveRoles(String principalName) {

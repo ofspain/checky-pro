@@ -359,6 +359,17 @@ public class PaymentService {
         return Optional.empty();
     }
 
+    /** Payment read (frontend Phase 1b, 2026-10-21): every payment for one invoice, oldest first, as
+     * views (L12: the entity never leaves this module). The caller has already checked the invoice
+     * belongs to the merchant. */
+    @Transactional(readOnly = true)
+    public List<PaymentView> listForInvoice(Long invoiceId) {
+        Objects.requireNonNull(invoiceId, "invoiceId must not be null");
+        return repository.findByInvoiceIdOrderByCreatedAtAscIdAsc(invoiceId).stream()
+                .map(PaymentView::from)
+                .toList();
+    }
+
     /** T17 (L12). The cross-module read {@code receipt.ReceiptService} uses to build a {@code
      * ReceiptPayload} and to re-check eligibility immediately before calling {@code /attest} -
      * {@code onChainTxFinalized}'s own first transaction has already committed by the time this

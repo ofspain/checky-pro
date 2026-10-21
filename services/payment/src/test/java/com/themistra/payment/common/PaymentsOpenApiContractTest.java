@@ -61,7 +61,8 @@ class PaymentsOpenApiContractTest {
     private static final List<Class<?>> CONTROLLERS = List.of(
             InvoiceController.class,
             ExportController.class,
-            ReceiptController.class);
+            ReceiptController.class,
+            com.themistra.payment.history.PaymentHistoryController.class);
 
     private static final Instant NOW = Instant.parse("2026-10-19T00:00:00Z");
 
@@ -92,10 +93,10 @@ class PaymentsOpenApiContractTest {
     }
 
     @Test
-    void componentSchemasAreExactlyTheFiveExpected() throws Exception {
+    void componentSchemasAreExactlyTheExpectedSix() throws Exception {
         assertThat(fieldNames(contract().get("components").get("schemas")))
                 .isEqualTo(Set.of("CreateInvoiceRequest", "InvoiceResponse", "TransactionExportRow", "ReceiptResponse",
-                        "Problem"));
+                        "PaymentResponse", "Problem"));
     }
 
     @Test
@@ -138,6 +139,15 @@ class PaymentsOpenApiContractTest {
     }
 
     /** Mirrors {@code CreateInvoiceRequest.chain}'s own {@code @Pattern("ETHEREUM|TRON")}. */
+    /** Frontend Phase 1b (2026-10-21): the payment state enum is exactly {@code PaymentState}. */
+    @Test
+    void paymentResponseStateEnumMatchesPaymentStateValues() throws Exception {
+        assertThat(textSet(contract().get("components").get("schemas").get("PaymentResponse")
+                .get("properties").get("state").get("enum")))
+                .isEqualTo(Arrays.stream(com.themistra.payment.payment.PaymentState.values())
+                        .map(Enum::name).collect(Collectors.toSet()));
+    }
+
     @Test
     void createInvoiceRequestChainEnumMatchesItsValidationPattern() throws Exception {
         JsonNode chain = contract().get("components").get("schemas").get("CreateInvoiceRequest")
@@ -393,7 +403,7 @@ class PaymentsOpenApiContractTest {
     void everyAmountDescriptionStatesWholeBaseUnits() throws Exception {
         JsonNode schemas = contract().get("components").get("schemas");
         for (String component : List.of("CreateInvoiceRequest", "InvoiceResponse", "TransactionExportRow",
-                "ReceiptResponse")) {
+                "ReceiptResponse", "PaymentResponse")) {
             assertThat(schemas.get(component).get("properties").get("amount").get("description").asText()
                     .replaceAll("\\s+", " "))
                     .as("%s.amount description", component)
@@ -406,7 +416,7 @@ class PaymentsOpenApiContractTest {
     void shouldConformToPaymentsOpenApiContract() throws Exception {
         everyControllerHandlerIsDocumentedInPaymentsYaml();
         paymentsYamlDocumentsNoRouteThatDoesNotHaveARealHandler();
-        componentSchemasAreExactlyTheFiveExpected();
+        componentSchemasAreExactlyTheExpectedSix();
         everyComponentSchemaMatchesItsRealRecordShape();
         invoiceStateSchemaEnumMatchesInvoiceStateValues();
         createInvoiceRequestChainEnumMatchesItsValidationPattern();
@@ -465,6 +475,8 @@ class PaymentsOpenApiContractTest {
                 new ExpectedResponse("200", ExpectedSchema.ref("InvoiceResponse")));
         m.put(new Route("GET", "/api/v1/exports/transactions"),
                 new ExpectedResponse("200", ExpectedSchema.arrayOfRef("TransactionExportRow")));
+        m.put(new Route("GET", "/api/v1/invoices/{invoiceUuid}/payments"),
+                new ExpectedResponse("200", ExpectedSchema.arrayOfRef("PaymentResponse")));
         m.put(new Route("GET", "/api/v1/receipts/{receiptUuid}"),
                 new ExpectedResponse("200", ExpectedSchema.ref("ReceiptResponse")));
         return m;
@@ -486,6 +498,9 @@ class PaymentsOpenApiContractTest {
         instances.put("TransactionExportRow", new TransactionExportRow(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "ETHEREUM", "0xtx", "0xtoken",
                 (short) 6, "1000000", "0xpayto", NOW, NOW, "s3://bucket/key"));
+        instances.put("PaymentResponse", new com.themistra.payment.history.dto.PaymentResponse(
+                UUID.randomUUID(), UUID.randomUUID(), "ETHEREUM", "0xtx", "FINALIZED", 12, "1000000", "0xtoken",
+                (short) 6, "0xfrom", null, false, NOW, NOW, NOW, null, null, UUID.randomUUID()));
         instances.put("ReceiptResponse", new ReceiptResponse(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "ETHEREUM", "0xtx",
                 "0xtoken", 6, "1000000", "0xpayto", "0xfrom", NOW, "sig", "kms-key", NOW));
@@ -496,7 +511,9 @@ class PaymentsOpenApiContractTest {
     private Map<String, Set<String>> expectedNullable() {
         return Map.of(
                 "CreateInvoiceRequest", Set.of("reference"),
-                "InvoiceResponse", Set.of("reference"));
+                "InvoiceResponse", Set.of("reference"),
+                "PaymentResponse", Set.of("amount", "fromAddress", "amountDiscrepancy", "seenAt", "confirmedAt",
+                        "finalizedAt", "reorgedAt", "attestedAt", "receiptUuid"));
     }
 
     private Set<String> expectedRequired(String componentName, Set<String> componentNames) {

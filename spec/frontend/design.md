@@ -148,6 +148,26 @@ Scope tags: `[ALL]` platform-level, enduring across every phase. `[P1]`…`[P5]`
 > `receipt.issued` email link once `GET /payments/receipts/{uuid}` exists (payment FU-T29-1). notification-service builds
 > these links from `themistra.notification.link.base-url` (the SPA origin) plus exactly these paths (`TemplateRenderer`).
 
+> **Note (2026-10-21, frontend start — payments contract and local single origin):**
+> (1) **Payments REST paths**, verbatim from `contracts/api/payments.yaml`, all Bearer `MERCHANT`:
+> `/api/v1/invoices` (POST create, GET list), `/api/v1/invoices/{invoiceUuid}` (GET),
+> `/api/v1/invoices/{invoiceUuid}/payments` (GET, added 2026-10-21: each payment's state, confirmations, txHash, amount as a
+> base-unit decimal string, `amountDiscrepancy`, `addressPoisoningFlag`, timestamps and `receiptUuid` once attested),
+> `/api/v1/receipts/{receiptUuid}` (GET), `/api/v1/exports/transactions` (GET, JSON or CSV). Another merchant's invoice or
+> receipt is a 404, the same as an unknown one.
+> (2) **Edge path map** (L9). Prefix → owner: `/oauth2`, `/login`, `/logout`, `/connect`, `/.well-known`, `/userinfo`, `/error`,
+> `/accounts`, `/admin`, `/api-keys` → auth-service; `/api/v1` → payment-service; `/notifications` → notification-service;
+> `/app` → the SPA. In local development the Vite dev-server `server.proxy` plays the edge with exactly this map, so the
+> browser sees one origin (`http://localhost:5173`). auth-service then runs with `AUTH_ISSUER_URI=http://localhost:5173`, and
+> payment- and notification-service get the same `AUTH_ISSUER_URI` (their `AUTH_JWK_SET_URI` keeps pointing straight at
+> auth-service). auth-service's own defaults register
+> `http://localhost:5173/app/callback` and `http://localhost:5173/app/signed-out` for `checky-spa` (fixed 2026-10-21; they
+> were `/auth/callback` and `/`).
+> (3) **End-session is proven.** `/connect/logout` with the SPA's `id_token_hint` and the allowlisted
+> `post_logout_redirect_uri` ends the SAS session and redirects to `/app/signed-out?state=…`; a non-allowlisted target is a 400.
+> It did not work before 2026-10-21: list-valued token claims were stored in a form SAS could not read back
+> (`SasLoginIntegrationTest.endSession*`).
+
 **Requested scopes**: `openid profile email`.
 
 **Access-token claims** — `contracts/api/token-claims.md`. The SPA depends on no claim outside that table for a given issuance path.

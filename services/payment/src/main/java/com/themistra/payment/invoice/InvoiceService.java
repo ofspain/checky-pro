@@ -92,6 +92,14 @@ public class InvoiceService {
                 .orElseThrow(InvoiceNotFoundException::new);
     }
 
+    /** Payment read (frontend Phase 1b, 2026-10-21): {@link #getForMerchant} for other modules, which
+     * must never receive the {@link Invoice} entity (L12). Same detail-free 404 for "doesn't exist" and
+     * "isn't the caller's" (R28). */
+    @Transactional(readOnly = true)
+    public InvoiceReceiptView getViewForMerchant(UUID merchantAccountUuid, UUID invoiceUuid) {
+        return InvoiceReceiptView.from(getForMerchant(merchantAccountUuid, invoiceUuid));
+    }
+
     /** T11 (Phase 3 Finding 2, and a real ArchUnit violation caught at Phase 6 - see {@link
      * InvoiceWatchView}'s own Javadoc): the `consumer`/`payment` packages' own cross-module lookup
      * API - it must never depend on {@link InvoiceRepository} directly, nor ever receive the real

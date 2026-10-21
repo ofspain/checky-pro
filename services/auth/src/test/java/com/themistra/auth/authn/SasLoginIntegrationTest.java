@@ -466,6 +466,66 @@ class SasLoginIntegrationTest {
         assertThat(claims.getStringClaim("acr")).isEqualTo("urn:themistra:acr:pwd");
     }
 
+    /**
+     * Frontend task 36 (2026-10-21): sign-out through the OIDC end-session endpoint. With the
+     * SPA's ID token and an allowlisted {@code post_logout_redirect_uri}, SAS ends the session and
+     * redirects to the signed-out route; the same browser cookies then have to sign in again.
+     */
+    @Test
+    void endSessionEndsTheSasSessionAndReturnsToTheSignedOutRoute() {
+        registerAndActivate("user-end-session@example.com");
+        PkcePair pkce = generatePkce();
+        String state = UUID.randomUUID().toString();
+        FullFlowResult signedIn = attemptFullAuthorizeFlow("user-end-session@example.com", PASSWORD, null, pkce, state);
+        String idToken = exchangeCodeForTokens(signedIn.authorizationCode().orElseThrow(), pkce.verifier())
+                .get("id_token").asText();
+        String postLogout = authClientsProperties.spa().postLogoutRedirectUris().getFirst();
+        assertThat(postLogout).as("the default is the SPA's signed-out route").endsWith("/app/signed-out");
+        assertThat(authClientsProperties.spa().redirectUris().getFirst())
+                .as("the default is the SPA's callback route").endsWith("/app/callback");
+
+        ResponseEntity<String> logout = getWithCookies(endSessionUrl(idToken, postLogout, "s1"), signedIn.cookies());
+
+        assertThat(logout.getStatusCode()).as("end-session response: %s %s", logout.getHeaders(), logout.getBody())
+                .isEqualTo(HttpStatus.FOUND);
+        assertThat(logout.getHeaders().getLocation()).hasToString(postLogout + "?state=s1");
+        ResponseEntity<String> again = getWithCookies(authorizeUrl(pkce.challenge(), state), signedIn.cookies());
+        assertThat(again.getStatusCode()).isEqualTo(HttpStatus.FOUND);
+        assertThat(again.getHeaders().getLocation().toString())
+                .as("the session is gone, so authorize sends the browser to sign in")
+                .contains("/login")
+                .doesNotContain("code=");
+    }
+
+    /** A post-logout target outside the client's allowlist is refused, and the session survives. */
+    @Test
+    void endSessionRefusesAPostLogoutRedirectOutsideTheAllowlist() {
+        registerAndActivate("user-end-session-bad@example.com");
+        PkcePair pkce = generatePkce();
+        String state = UUID.randomUUID().toString();
+        FullFlowResult signedIn = attemptFullAuthorizeFlow(
+                "user-end-session-bad@example.com", PASSWORD, null, pkce, state);
+        String idToken = exchangeCodeForTokens(signedIn.authorizationCode().orElseThrow(), pkce.verifier())
+                .get("id_token").asText();
+
+        ResponseEntity<String> logout = getWithCookies(
+                endSessionUrl(idToken, "https://evil.example/signed-out", "s2"), signedIn.cookies());
+
+        assertThat(logout.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        ResponseEntity<String> again = getWithCookies(authorizeUrl(pkce.challenge(), state), signedIn.cookies());
+        assertThat(again.getHeaders().getLocation().toString()).as("still signed in").contains("code=");
+    }
+
+    private String endSessionUrl(String idToken, String postLogoutRedirectUri, String state) {
+        return UriComponentsBuilder.fromUriString(baseUrl + "/connect/logout")
+                .queryParam("id_token_hint", idToken)
+                .queryParam("post_logout_redirect_uri", postLogoutRedirectUri)
+                .queryParam("state", state)
+                .build()
+                .encode()
+                .toUriString();
+    }
+
     private String registerAndActivateEmail(String email) {
         registerAndActivate(email);
         return email;
@@ -655,7 +715,7 @@ class SasLoginIntegrationTest {
         ResponseEntity<String> loginResponse = postLoginForm(email, password, mfaCode, csrfToken, cookies);
         URI postLoginLocation = loginResponse.getHeaders().getLocation();
         if (postLoginLocation == null || postLoginLocation.toString().contains("/login?error")) {
-            return new FullFlowResult(loginResponse, Optional.empty(), Optional.empty());
+            return new FullFlowResult(loginResponse, Optional.empty(), Optional.empty(), cookies);
         }
 
         cookies = mergeCookies(cookies, loginResponse.getHeaders().get(HttpHeaders.SET_COOKIE));
@@ -673,11 +733,13 @@ class SasLoginIntegrationTest {
         URI finalLocation = completedAuthorize.getHeaders().getLocation();
         String code = extractQueryParam(finalLocation, "code");
         String returnedState = extractQueryParam(finalLocation, "state");
-        return new FullFlowResult(loginResponse, Optional.ofNullable(code), Optional.ofNullable(returnedState));
+        return new FullFlowResult(loginResponse, Optional.ofNullable(code), Optional.ofNullable(returnedState),
+                mergeCookies(cookies, completedAuthorize.getHeaders().get(HttpHeaders.SET_COOKIE)));
     }
 
     private record FullFlowResult(
-            ResponseEntity<String> loginResponse, Optional<String> authorizationCode, Optional<String> returnedState) {
+            ResponseEntity<String> loginResponse, Optional<String> authorizationCode, Optional<String> returnedState,
+            List<String> cookies) {
     }
 
     private static String extractQueryParam(URI uri, String name) {
@@ -689,6 +751,10 @@ class SasLoginIntegrationTest {
      * {@code access_token} rather than returning null, so a broken exchange fails the calling test
      * with a clear cause instead of a confusing downstream NPE. */
     private String exchangeCodeForToken(String code, String codeVerifier) {
+        return exchangeCodeForTokens(code, codeVerifier).get("access_token").asText();
+    }
+
+    private JsonNode exchangeCodeForTokens(String code, String codeVerifier) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("grant_type", "authorization_code");
         form.add("code", code);
@@ -719,7 +785,7 @@ class SasLoginIntegrationTest {
         if (accessToken == null) {
             throw new IllegalStateException("/oauth2/token response had no access_token: " + response.getBody());
         }
-        return accessToken.asText();
+        return json;
     }
 
     /** Claims only — no JWKS fetch, no signature verification (frozen brief: this test is about

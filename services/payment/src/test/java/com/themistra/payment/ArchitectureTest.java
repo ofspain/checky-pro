@@ -874,7 +874,7 @@ class ArchitectureTest {
                 .flatMap(javaClass -> javaClass.getMethods().stream())
                 .filter(method -> method.isMetaAnnotatedWith(RequestMapping.class))
                 .count();
-        assertThat(handlers).as("InvoiceController x3, ExportController, ReceiptController").isEqualTo(5);
+        assertThat(handlers).as("InvoiceController x3, ExportController, ReceiptController, PaymentHistoryController").isEqualTo(6);
     }
 
     @Test
@@ -935,7 +935,7 @@ class ArchitectureTest {
     @Test
     void everyHandlerUsesAKnownAccessExpression() {
         Map<String, String> handlers = handlerAccess(analyzedClasses());
-        assertThat(handlers).hasSize(5);
+        assertThat(handlers).hasSize(6);
         handlers.forEach((handler, expression) -> assertThat(expression)
                 .as("%s uses an access expression outside KNOWN_ACCESS_EXPRESSIONS", handler)
                 .isIn(KNOWN_ACCESS_EXPRESSIONS));

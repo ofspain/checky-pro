@@ -300,3 +300,13 @@ contracts/api/token-claims.md
 contracts/events/auth/email-requested.v1.schema.json
 contracts/events/auth/security-audit.v1.schema.json
 ```
+
+> **Note (2026-10-21, frontend start — SPA defaults and end-session):** (1) The `checky-spa` defaults in
+> `application.properties` are now `http://localhost:5173/app/callback` (`SPA_REDIRECT_URI`) and
+> `http://localhost:5173/app/signed-out` (`SPA_POST_LOGOUT_REDIRECT_URI`), matching the frontend route set (`spec/frontend/design.md`
+> §4c). They were `/auth/callback` and `/`. (2) `TokenClaimsCustomizer` now writes the `roles` and `amr` claims as `ArrayList`.
+> SAS stores the claims with the authorization row and reads them back through Spring Security's Jackson allowlist whenever it
+> looks the row up by a token. The JDK's immutable lists are not on that allowlist, so every such lookup failed with 400
+> `invalid_request`: OIDC end-session (`/connect/logout`) never worked, and token revocation by an issued token failed the same
+> way. `SasLoginIntegrationTest.endSessionEndsTheSasSessionAndReturnsToTheSignedOutRoute` and
+> `endSessionRefusesAPostLogoutRedirectOutsideTheAllowlist` cover it. The claims themselves are unchanged.

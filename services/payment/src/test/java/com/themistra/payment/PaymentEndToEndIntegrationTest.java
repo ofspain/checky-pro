@@ -310,14 +310,7 @@ class PaymentEndToEndIntegrationTest {
         firstWatchId = UUID.randomUUID();
         replacementWatchId = UUID.randomUUID();
 
-        Instant now = Instant.now();
-        when(jwtDecoder.decode(anyString())).thenReturn(Jwt.withTokenValue("e2e-merchant-token")
-                .header("alg", "none")
-                .subject(merchantAccountUuid.toString())
-                .claim("roles", List.of("MERCHANT"))
-                .issuedAt(now)
-                .expiresAt(now.plusSeconds(3600))
-                .build());
+        stubMerchantJwt();
 
         WIREMOCK.stubFor(post(urlEqualTo(TOKEN_PATH))
                 .willReturn(okJson("{\"access_token\":\"e2e-crypto-token\",\"expires_in\":3600}")));
@@ -537,6 +530,42 @@ class PaymentEndToEndIntegrationTest {
         assertThat(receiptIssuedBody.get("tokenContractAddress").asText()).isEqualTo(TOKEN_CONTRACT_ADDRESS);
         assertThat(receiptIssuedBody.hasNonNull("occurredAt")).isTrue();
 
+        // Frontend Phase 1b (2026-10-21): the merchant reads the payment back, with its receipt.
+        JsonNode payments = OBJECT_MAPPER.readTree(mockMvc.perform(
+                        MockMvcRequestBuilders.get("/api/v1/invoices/" + invoiceUuid + "/payments")
+                                .header("Authorization", "Bearer e2e-merchant-token"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(payments).hasSize(1);
+        JsonNode listed = payments.get(0);
+        assertThat(listed.get("paymentUuid").asText()).isEqualTo(paymentUuid.toString());
+        assertThat(listed.get("invoiceUuid").asText()).isEqualTo(invoiceUuid.toString());
+        assertThat(listed.get("txHash").asText()).isEqualTo(txHash);
+        assertThat(listed.get("state").asText()).isEqualTo("ATTESTED");
+        assertThat(listed.get("amount").asText()).as("L6: a decimal string").isEqualTo("1000");
+        assertThat(listed.get("tokenDecimals").asInt()).isEqualTo(6);
+        assertThat(listed.get("addressPoisoningFlag").asBoolean()).isFalse();
+        assertThat(listed.hasNonNull("finalizedAt")).isTrue();
+        assertThat(listed.hasNonNull("attestedAt")).isTrue();
+        assertThat(listed.get("receiptUuid").asText()).isEqualTo(receipt.receiptUuid().toString());
+        // The receipt it points at is readable by the same merchant.
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/v1/receipts/" + receipt.receiptUuid())
+                        .header("Authorization", "Bearer e2e-merchant-token"))
+                .andExpect(status().isOk());
+        // R28: another merchant gets the same 404 as for an unknown invoice.
+        Instant otherIssued = Instant.now();
+        when(jwtDecoder.decode(anyString())).thenReturn(Jwt.withTokenValue("e2e-other-token")
+                .header("alg", "none")
+                .subject(UUID.randomUUID().toString())
+                .claim("roles", List.of("MERCHANT"))
+                .issuedAt(otherIssued)
+                .expiresAt(otherIssued.plusSeconds(3600))
+                .build());
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/v1/invoices/" + invoiceUuid + "/payments")
+                        .header("Authorization", "Bearer e2e-other-token"))
+                .andExpect(status().isNotFound());
+        stubMerchantJwt();
+
         // Phase 11 (Kimi Gap 5): the relay marks every relayed outbox row published.
         await().atMost(ASYNC_TIMEOUT).untilAsserted(() -> {
             assertThat(outboxPublished("invoice.created", invoiceUuid.toString())).isTrue();
@@ -660,6 +689,17 @@ class PaymentEndToEndIntegrationTest {
     }
 
     // --- Flow helpers --------------------------------------------------------------------
+
+    private void stubMerchantJwt() {
+        Instant now = Instant.now();
+        when(jwtDecoder.decode(anyString())).thenReturn(Jwt.withTokenValue("e2e-merchant-token")
+                .header("alg", "none")
+                .subject(merchantAccountUuid.toString())
+                .claim("roles", List.of("MERCHANT"))
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(3600))
+                .build());
+    }
 
     private UUID createInvoice() throws Exception {
         String body = """

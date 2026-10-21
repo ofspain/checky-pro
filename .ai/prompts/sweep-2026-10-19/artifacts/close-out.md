@@ -22,3 +22,16 @@ The author asked to close everything still open without another Kimi round, and 
 ## Suite state
 
 `mvn -o -pl services/<service> verify`, all BUILD SUCCESS, 0 failures (test cases in the Surefire reports): auth 787, crypto 811, notification 463, payment 579.
+
+## Frontend start (2026-10-21, later the same day)
+
+The author asked to close every backend item that blocks the frontend, so that frontend work starts tomorrow.
+
+| Item | How it closed | Guarding tests | Deliberate breaks |
+|---|---|---|---|
+| Phase 1b had no way to read payment state, confirmations or the receipt link | New `GET /api/v1/invoices/{invoiceUuid}/payments` (payment `history/`), in `payments.yaml` as `PaymentResponse` | `PaymentHistoryServiceTest` (4), `PaymentHistoryControllerTest` (6), repository ordering test, `ReceiptReadServiceTest` (+2), `PaymentEndToEndIntegrationTest` reads the list back, contract test (+1, schema set 6), handler count 6 | 9, all caught |
+| SPA redirect defaults did not match the route set | `/app/callback`, `/app/signed-out` | `SasLoginIntegrationTest.endSession*` | 1, caught |
+| OIDC end-session never worked (found while testing it) | `roles`/`amr` claims written as `ArrayList`; immutable JDK lists failed SAS's Jackson read-back | `SasLoginIntegrationTest.endSession*` (2) | 2, caught |
+| Frontend spec still said execution was deferred | Dated notes: R38 dropped, Q11 deferred, R39 restated, Phase 1b unit → endpoint map, local single origin through the Vite proxy, §12 deferral lifted | — | — |
+
+Suite state: auth 789, crypto 811, notification 463, payment 593, all BUILD SUCCESS, 0 failures.

@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 interface PaymentRepository extends JpaRepository<Payment, Long> {
@@ -16,6 +17,9 @@ interface PaymentRepository extends JpaRepository<Payment, Long> {
      * the correlation key {@code chain.tx.confirmed}/{@code chain.tx.finalized} use to find the
      * row {@code chain.tx.seen} already created. */
     Optional<Payment> findByChainAndTxHash(String chain, String txHash);
+
+    /** Payment read (frontend Phase 1b, 2026-10-21): an invoice's payments, oldest first. */
+    List<Payment> findByInvoiceIdOrderByCreatedAtAscIdAsc(Long invoiceId);
 
     /** T11 (Phase 8, Kimi Finding 1 - a real, confirmed omission from the frozen brief's own
      * Decision 3, not implemented until now): closes the one real residual race this task's own

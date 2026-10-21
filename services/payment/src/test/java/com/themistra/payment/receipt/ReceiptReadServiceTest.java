@@ -157,4 +157,24 @@ class ReceiptReadServiceTest {
         assertThatThrownBy(() -> service.getForMerchant(MERCHANT, RECEIPT_UUID))
                 .isInstanceOf(ReceiptStorageException.class);
     }
+
+    /** Frontend Phase 1b (2026-10-21): receipt UUIDs keyed by payment id, for the payments listing. */
+    @Test
+    void receiptUuidsByPaymentIdMapsEachPaymentThatHasAReceipt() {
+        UUID other = UUID.randomUUID();
+        Receipt first = Receipt.create(RECEIPT_UUID, PAYMENT_ID, "a".repeat(64), "sig", "kms", "bucket", "p",
+                SIGNED_AT, SIGNED_AT);
+        Receipt second = Receipt.create(other, 12L, "b".repeat(64), "sig", "kms", "bucket", "p", SIGNED_AT,
+                SIGNED_AT);
+        when(receiptRepository.findByPaymentIdIn(List.of(PAYMENT_ID, 12L, 13L))).thenReturn(List.of(first, second));
+
+        assertThat(service.receiptUuidsByPaymentId(List.of(PAYMENT_ID, 12L, 13L)))
+                .isEqualTo(Map.of(PAYMENT_ID, RECEIPT_UUID, 12L, other));
+    }
+
+    @Test
+    void receiptUuidsByPaymentIdDoesNotQueryForNoPayments() {
+        assertThat(service.receiptUuidsByPaymentId(List.of())).isEmpty();
+        verify(receiptRepository, never()).findByPaymentIdIn(any());
+    }
 }

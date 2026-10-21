@@ -92,6 +92,48 @@ class PaymentRepositoryIntegrationTest {
         }
     }
 
+    /** Frontend Phase 1b (2026-10-21): an invoice's payments, oldest first, and only that invoice's. */
+    @Test
+    void findByInvoiceIdListsOnlyThatInvoicesPaymentsOldestFirst() throws SQLException {
+        long invoiceId = seedInvoice();
+        long otherInvoiceId = seedInvoice();
+        seedPayment(invoiceId, "0xlater", "2026-10-21T10:00:02Z");
+        seedPayment(invoiceId, "0xfirst", "2026-10-21T10:00:00Z");
+        seedPayment(otherInvoiceId, "0xother", "2026-10-21T09:00:00Z");
+        seedPayment(invoiceId, "0xmiddle", "2026-10-21T10:00:01Z");
+
+        assertThat(repository.findByInvoiceIdOrderByCreatedAtAscIdAsc(invoiceId))
+                .extracting(Payment::getTxHash).containsExactly("0xfirst", "0xmiddle", "0xlater");
+        assertThat(repository.findByInvoiceIdOrderByCreatedAtAscIdAsc(-1L)).isEmpty();
+    }
+
+    private static long seedInvoice() throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement();
+             ResultSet rs = statement.executeQuery("""
+                     INSERT INTO payments.invoices
+                         (invoice_uuid, merchant_account_uuid, chain, token_contract_address, token_decimals,
+                          amount, pay_to_address, expires_at)
+                     VALUES (gen_random_uuid(), gen_random_uuid(), 'ETHEREUM', repeat('1', 40), 6,
+                             1000, repeat('2', 40), now() + interval '1 hour')
+                     RETURNING id
+                     """)) {
+            rs.next();
+            return rs.getLong(1);
+        }
+    }
+
+    private static void seedPayment(long invoiceId, String txHash, String createdAt) throws SQLException {
+        try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
+            statement.execute(("""
+                    INSERT INTO payments.payments
+                        (payment_uuid, invoice_id, chain, tx_hash, to_address, token_contract_address, amount, state,
+                         created_at)
+                    VALUES (gen_random_uuid(), %d, 'ETHEREUM', '%s', repeat('2', 40), repeat('1', 40), 1000, 'SEEN',
+                            '%s')
+                    """).formatted(invoiceId, txHash, createdAt));
+        }
+    }
+
     private static long seedFinalizedPayment() throws SQLException {
         try (Connection admin = adminConnection(); Statement statement = admin.createStatement()) {
             long invoiceId;

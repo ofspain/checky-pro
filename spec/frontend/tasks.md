@@ -137,6 +137,26 @@ deleted and renumbered.
 96. **listRoleTemplates.** Verifies `adminOperation_listRoleTemplates_matchesRoleMatrix`. Cites R27.
 97. **listAuditEvents.** Verifies `adminOperation_listAuditEvents_matchesRoleMatrix`. Cites R27.
 
+> **Note (2026-10-21, frontend start — Phase 1b breakdown):** every "Blocked on Q2" in units 98–133 predates Q2's
+> resolution and no longer applies. Each unit reads one endpoint from `contracts/api/payments.yaml` through the generated
+> client (L6), and amounts stay decimal strings (L7):
+> - 98–104 (invoices): `POST`/`GET /api/v1/invoices`, `GET /api/v1/invoices/{invoiceUuid}`. Under- and overpayment (100, 101)
+>   come from the payment's `amountDiscrepancy` (`UNDERPAID`/`OVERPAID`).
+> - 105–111 (payment state): `GET /api/v1/invoices/{invoiceUuid}/payments`, oldest first. Live update (110) refetches it when a
+>   stream notification arrives whose `link` is that invoice's route (`/app/invoices/:id`), and also refetches every 15 s while any payment is not `ATTESTED` or
+>   `HELD`. A backward move (106, 107) is shown from the latest state plus `reorgedAt`; the API returns no transition history.
+> - 112–116 (receipts): `receiptUuid` on the payment, then `GET /api/v1/receipts/{receiptUuid}`.
+> - 117–118: **not built** (R38 dropped, `requirements.md` note of 2026-10-21).
+> - 119–120: restated. 119 shows the current state and `confirmations` truthfully (there is no unknown-token outcome in the
+>   MVP). 120 shows the count without a "required" number, because finality is the chain's finalized marker.
+> - 121–122: `addressPoisoningFlag` on the payment; the receipt view takes the flag from its payment.
+> - 126–127: unblocked (Q3 and O7 resolved 2026-10-08).
+> - 128–133 (history, exports, amounts): the invoice list and `GET /api/v1/exports/transactions`.
+> - 170–172 (capability links): **deferred** with Q11; not built in the MVP.
+>
+> Unit 38's "Blocked on Q15" also no longer applies. Same-device sign-out ends the SAS session through `/connect/logout`
+> (proven 2026-10-21, `design.md` §4c note). Q15 covers ending sessions on other devices, which is still a tracked follow-up.
+
 ## Phase 1 — Payment verification & invoicing: invoices
 
 98. **Invoice list states.** The list shows each state from OPEN to HELD by name. Verifies `invoiceListShowsStatesAndDecimalStringAmounts`. Cites R31. Blocked on Q2.
