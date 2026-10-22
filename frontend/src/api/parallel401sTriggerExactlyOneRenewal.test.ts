@@ -39,12 +39,14 @@ function installBrowserRequest() {
   );
 }
 
-/** A fake transport: records every request and answers with the status `respond` picks. */
+/** A fake transport: records every request and answers with the status `respond` picks. Like a browser, it rejects
+ * a request whose signal is already aborted. */
 function installTransport(respond: (request: Request) => number | Promise<number>) {
   const sent: Sent[] = [];
   vi.stubGlobal(
     'fetch',
     vi.fn(async (request: Request) => {
+      if (request.signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
       sent.push({
         method: request.method,
         path: new URL(request.url).pathname,
@@ -79,6 +81,21 @@ function fakeSession(initial: string | null) {
   return { tokens, renew, attempts };
 }
 
+/** Starts capturing console output, and returns a check that nothing leaked a token anywhere the SPA could keep it (L3). */
+function watchForTokenLeaks(...tokens: string[]) {
+  const hrefBefore = window.location.href;
+  const consoleSpies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+    vi.spyOn(console, level).mockImplementation(() => undefined),
+  );
+  return () => {
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(window.location.href).toBe(hrefBefore);
+    const logged = JSON.stringify(consoleSpies.map((spy) => spy.mock.calls));
+    for (const token of tokens) expect(logged).not.toContain(token);
+  };
+}
+
 /** Lets scheduled microtasks and promise chains (including the failure hook) run. */
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -104,10 +121,7 @@ describe('parallel401sTriggerExactlyOneRenewal', () => {
     const sent = installTransport(acceptOnly(server));
     const session = fakeSession('old');
     const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed));
-    const consoleSpies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
-      vi.spyOn(console, level).mockImplementation(() => undefined),
-    );
-    const hrefBefore = window.location.href;
+    const assertNoTokenLeaked = watchForTokenLeaks('old', 'new');
 
     const calls = Promise.all([
       api.GET('/accounts/me'),
@@ -130,15 +144,45 @@ describe('parallel401sTriggerExactlyOneRenewal', () => {
     expect(resentPost).toEqual({ method: 'POST', path: '/api-keys', auth: 'Bearer new', body: '{"name":"ci key"}' });
     expect(failures).toEqual([]);
 
-    // L3: no token reaches storage, the URL or the console.
-    expect(window.localStorage.length).toBe(0);
-    expect(window.sessionStorage.length).toBe(0);
-    expect(window.location.href).toBe(hrefBefore);
-    for (const spy of consoleSpies) {
-      const logged = JSON.stringify(spy.mock.calls);
-      expect(logged).not.toContain('old');
-      expect(logged).not.toContain('new');
-    }
+    assertNoTokenLeaked();
+  });
+
+  it('renews once and re-sends once for a single 401 (AC1, N = 1)', async () => {
+    const server = { valid: 'new' };
+    const sent = installTransport(acceptOnly(server));
+    const session = fakeSession('old');
+    const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed));
+
+    const call = api.GET('/accounts/me');
+    await vi.waitFor(() => expect(session.renew).toHaveBeenCalledTimes(1));
+    session.attempts[0]!.resolve('new');
+
+    expect((await call).response.status).toBe(200);
+    expect(sent.map((request) => request.auth)).toEqual(['Bearer old', 'Bearer new']);
+    expect(session.renew).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(failures).toEqual([]);
+  });
+
+  it('sends the re-send straight to the transport: no middleware sees it (frozen finding 6)', async () => {
+    const server = { valid: 'new' };
+    const sent = installTransport(acceptOnly(server));
+    const session = fakeSession('old');
+    const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed));
+    const seenByLaterMiddleware: Array<string | null> = [];
+    api.use({
+      onRequest({ request }) {
+        seenByLaterMiddleware.push(request.headers.get('Authorization'));
+      },
+    });
+
+    const calls = Promise.all([api.GET('/accounts/me'), api.GET('/api-keys')]);
+    await vi.waitFor(() => expect(session.renew).toHaveBeenCalledTimes(1));
+    session.attempts[0]!.resolve('new');
+
+    expect((await calls).map((result) => result.response.status)).toEqual([200, 200]);
+    expect(sent).toHaveLength(4);
+    expect(seenByLaterMiddleware).toEqual(['Bearer old', 'Bearer old']);
   });
 
   it('shares one renewal across every client on the boundary, and only there (AC1, R21 per tab)', async () => {
@@ -199,12 +243,15 @@ describe('parallel401sTriggerExactlyOneRenewal', () => {
     session.attempts[1]!.resolve('newer');
     expect((await wave).map((result) => result.response.status)).toEqual([200, 200, 200]);
     expect(session.renew).toHaveBeenCalledTimes(2);
+    await settle();
+    expect(failures).toEqual([]);
   });
 
   it('on a failed renewal gives every waiter its 401, reports once and re-sends nothing (AC4)', async () => {
     const sent = installTransport(() => 401);
     const session = fakeSession('old');
     const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed));
+    const assertNoTokenLeaked = watchForTokenLeaks('old');
 
     const calls = Promise.all([api.GET('/accounts/me'), api.GET('/api-keys'), api.GET('/accounts/me/sessions')]);
     await vi.waitFor(() => expect(sent).toHaveLength(3));
@@ -217,6 +264,24 @@ describe('parallel401sTriggerExactlyOneRenewal', () => {
     expect(session.renew).toHaveBeenCalledTimes(1);
     expect(failures).toEqual([noSession]);
     expect(sent).toHaveLength(3);
+    assertNoTokenLeaked();
+  });
+
+  it('turns a synchronous throw from renew() into one reported failure (AC4)', async () => {
+    const sent = installTransport(() => 401);
+    const thrown = new Error('renew threw synchronously');
+    const renew = vi.fn((): Promise<string> => {
+      throw thrown;
+    });
+    const api = createAuthApi(createSessionBoundary({ current: () => 'old', renew }, onRenewalFailed));
+
+    const results = await Promise.all([api.GET('/accounts/me'), api.GET('/api-keys')]);
+    await settle();
+
+    expect(results.map((result) => result.response.status)).toEqual([401, 401]);
+    expect(renew).toHaveBeenCalledTimes(1);
+    expect(failures).toEqual([thrown]);
+    expect(sent).toHaveLength(2);
   });
 
   it('does not start a second renewal for a request that waited on the failed one (AC4, phase 9)', async () => {
@@ -248,6 +313,7 @@ describe('parallel401sTriggerExactlyOneRenewal', () => {
     const sent = installTransport(() => 401);
     const session = fakeSession('old');
     const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed, { timeoutMs: 1_000 }));
+    const assertNoTokenLeaked = watchForTokenLeaks('old', 'late');
 
     const calls = Promise.all([api.GET('/accounts/me'), api.GET('/api-keys')]);
     await vi.advanceTimersByTimeAsync(999);
@@ -258,12 +324,14 @@ describe('parallel401sTriggerExactlyOneRenewal', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(failures).toHaveLength(1);
     expect((failures[0] as Error).name).toBe('RenewalTimeoutError');
+    expect((failures[0] as Error).message).not.toContain('old');
 
     session.attempts[0]!.resolve('late');
     await vi.advanceTimersByTimeAsync(0);
     expect(sent).toHaveLength(2);
     expect(session.renew).toHaveBeenCalledTimes(1);
     expect(failures).toHaveLength(1);
+    assertNoTokenLeaked();
   });
 
   it('returns a 401 on the re-send as final, with no second renewal (AC4)', async () => {
@@ -310,6 +378,67 @@ describe('parallel401sTriggerExactlyOneRenewal', () => {
     expect((await calls).map((result) => result.response.status)).toEqual([401, 401]);
     await settle();
     expect(uncaught).toEqual([hookDefect]);
+  });
+
+  it('passes a network failure through unchanged, with no renewal, and stays healthy afterwards', async () => {
+    const server = { valid: 'old' };
+    const offline = new TypeError('Failed to fetch');
+    let failNext = true;
+    const sent = installTransport((request) => {
+      if (failNext) {
+        failNext = false;
+        throw offline;
+      }
+      return acceptOnly(server)(request);
+    });
+    const session = fakeSession('old');
+    const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed));
+
+    await expect(api.GET('/accounts/me')).rejects.toBe(offline);
+    expect(session.renew).not.toHaveBeenCalled();
+    expect((await api.GET('/accounts/me')).response.status).toBe(200);
+    expect(sent).toHaveLength(2);
+  });
+
+  it('lets one caller abort while waiting on the renewal without disturbing the others', async () => {
+    const server = { valid: 'new' };
+    const sent = installTransport(acceptOnly(server));
+    const session = fakeSession('old');
+    const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed));
+    const cancel = new AbortController();
+
+    const abandoned = api.GET('/accounts/me', { signal: cancel.signal });
+    const kept = api.GET('/api-keys');
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    await vi.waitFor(() => expect(session.renew).toHaveBeenCalledTimes(1));
+    cancel.abort();
+    session.attempts[0]!.resolve('new');
+
+    await expect(abandoned).rejects.toMatchObject({ name: 'AbortError' });
+    expect((await kept).response.status).toBe(200);
+    expect(session.renew).toHaveBeenCalledTimes(1);
+    expect(sent.map((request) => `${request.path} ${request.auth}`)).toEqual([
+      '/accounts/me Bearer old',
+      '/api-keys Bearer old',
+      '/api-keys Bearer new',
+    ]);
+  });
+
+  it('returns a 401 it has no request record for unchanged, without renewing', async () => {
+    const session = fakeSession('old');
+    const middleware = createSessionBoundary(session.tokens, onRenewalFailed).middleware(new Set());
+    const unauthorized = new Response('{}', { status: 401 });
+    type ResponseParams = Parameters<NonNullable<typeof middleware.onResponse>>[0];
+
+    const result = await middleware.onResponse!({
+      request: new Request('/accounts/me'),
+      response: unauthorized,
+      schemaPath: '/accounts/me',
+      id: 'never-requested',
+    } as ResponseParams);
+
+    expect(result).toBe(unauthorized);
+    expect(session.renew).not.toHaveBeenCalled();
   });
 
   it.each([200, 403, 429, 500])('never renews or re-sends on a %i (AC5)', async (status) => {
