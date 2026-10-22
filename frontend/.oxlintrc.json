@@ -57,6 +57,41 @@
         "object": "frames",
         "property": "fetch",
         "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "window",
+        "property": "XMLHttpRequest",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "globalThis",
+        "property": "XMLHttpRequest",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "self",
+        "property": "XMLHttpRequest",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "top",
+        "property": "XMLHttpRequest",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "parent",
+        "property": "XMLHttpRequest",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "opener",
+        "property": "XMLHttpRequest",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "frames",
+        "property": "XMLHttpRequest",
+        "message": "Call the backend through @themistra/api-client (L6)."
       }
     ]
   }
