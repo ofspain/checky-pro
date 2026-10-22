@@ -1,19 +1,21 @@
 /// <reference types="node" />
+import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { act } from 'react';
 import type { Root } from 'react-dom/client';
-import { build } from 'vite';
+import { build, type UserConfig } from 'vite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import viteConfig from '../../vite.config';
 import { mountShell } from './mountShell';
 
 // Lets act() flush React 19 renders synchronously in this test environment.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-// jsdom gives import.meta.url a non-file URL, so the frontend directory comes from the working
-// directory, which `pnpm -C frontend test` sets; the first case checks it is the right package.
-const frontendDir = process.cwd();
+// This file is frontend/src/app/<name>. Vitest's own test path is used because jsdom gives
+// import.meta.url a non-file URL, and the working directory depends on how the runner was started.
+const frontendDir = dirname(dirname(dirname(expect.getState().testPath as string)));
 const srcDir = join(frontendDir, 'src');
 
 let mounted: { root: Root; container: HTMLElement } | undefined;
@@ -29,11 +31,13 @@ async function mountIntoFreshContainer(): Promise<HTMLElement> {
   return container;
 }
 
-async function productionSourceFiles(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true, recursive: true });
-  return entries
+async function productionSourceFiles(): Promise<string[]> {
+  const entries = await readdir(srcDir, { withFileTypes: true, recursive: true });
+  const files = entries
     .filter((entry) => entry.isFile() && /\.(ts|tsx)$/.test(entry.name) && !/\.test\.(ts|tsx)$/.test(entry.name))
     .map((entry) => join(entry.parentPath, entry.name));
+  expect(files.length).toBeGreaterThan(0);
+  return files;
 }
 
 afterEach(async () => {
@@ -47,9 +51,10 @@ afterEach(async () => {
 });
 
 describe('shellBuildsAndMounts', () => {
-  it('builds for production with every asset under /app/ (L13, L14)', async () => {
+  it('builds for production with every module script under /app/ and no service worker (L13, L14)', async () => {
     const pkg = JSON.parse(await readFile(join(frontendDir, 'package.json'), 'utf8')) as { name: string };
-    expect(pkg.name).toBe('@themistra/frontend');
+    expect(pkg.name, `resolved frontend directory ${frontendDir}`).toBe('@themistra/frontend');
+
     const outDir = await mkdtemp(join(tmpdir(), 'checky-shell-build-'));
     try {
       await build({
@@ -60,19 +65,39 @@ describe('shellBuildsAndMounts', () => {
       });
 
       const html = await readFile(join(outDir, 'index.html'), 'utf8');
-      expect(html).toMatch(/<script type="module"[^>]*src="\/app\/assets\/[^"]+\.js"/);
-      expect(html).not.toMatch(/src="\/assets\//);
+      const scriptSources = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)].map((match) => match[1]);
+      expect(scriptSources.length).toBeGreaterThan(0);
+      for (const source of scriptSources) {
+        expect(source).toMatch(/^\/app\/assets\/[^/]+\.js$/);
+      }
+
+      // No worker yet (T09-T12 own it): nothing registers one and no worker or manifest is emitted.
+      expect(existsSync(join(outDir, 'sw.js'))).toBe(false);
+      expect(existsSync(join(outDir, 'manifest.webmanifest'))).toBe(false);
+      const assets = await readdir(join(outDir, 'assets'));
+      for (const asset of assets.filter((name) => name.endsWith('.js'))) {
+        expect(await readFile(join(outDir, 'assets', asset), 'utf8'), asset).not.toContain('serviceWorker');
+      }
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it('serves the dev server on 5173 for the edge, with no proxy (L9, L14)', () => {
+    const config = viteConfig as UserConfig;
+    expect(config.base).toBe('/app/');
+    expect(config.server?.host).toBe(true);
+    expect(config.server?.port).toBe(5173);
+    expect(config.server?.strictPort).toBe(true);
+    expect(config.server?.proxy).toBeUndefined();
+  });
 
   it('mounts the empty shell into the container (L13, L11)', async () => {
     const container = await mountIntoFreshContainer();
 
     const shell = container.querySelector('[data-testid="app-shell"]');
     expect(shell).not.toBeNull();
-    expect(shell?.textContent).toBe('');
+    expect(shell?.innerHTML).toBe(''); // no text, not even whitespace
   });
 
   it('makes no network call, writes no storage and registers no service worker (L9, L10, R58)', async () => {
@@ -92,13 +117,24 @@ describe('shellBuildsAndMounts', () => {
     }
   });
 
-  it('reads no environment key anywhere in the app source (L10, R58)', async () => {
-    const files = await productionSourceFiles(srcDir);
-    expect(files.length).toBeGreaterThan(0);
-
-    for (const file of files) {
-      expect(await readFile(file, 'utf8'), file).not.toContain('import.meta' + '.env');
+  it('reads no environment key and names no absolute URL anywhere in the app source (L9, L10, R58)', async () => {
+    for (const file of await productionSourceFiles()) {
+      const source = await readFile(file, 'utf8');
+      expect(source, file).not.toContain('import.meta' + '.env');
+      expect(source, file).not.toMatch(/https?:\/\//);
     }
+  });
+
+  it('keeps the entry to a single mountShell call (shell code lives in src/app/)', async () => {
+    const entry = await readFile(join(srcDir, 'main.tsx'), 'utf8');
+    const imports = [...entry.matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)].map((match) => match[1]);
+    expect(imports).toEqual(['./app/mountShell']);
+
+    const statements = entry
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('import ') && !line.startsWith('//'));
+    expect(statements).toEqual(["mountShell(document.getElementById('root'));"]);
   });
 
   it('throws when the root element is missing instead of rendering nothing', () => {
