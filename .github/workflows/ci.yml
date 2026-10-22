@@ -55,6 +55,10 @@ jobs:
           node-version: "22"
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - name: Generate API client and fail on drift (L6)
+        run: |
+          pnpm -C libs/ts/api-client generate
+          git diff --exit-code -- libs/ts/api-client/src/generated
       - run: pnpm -C frontend test
       - run: pnpm -C frontend build
 

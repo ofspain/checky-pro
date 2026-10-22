@@ -1,3 +1,6 @@
 # Maven wrapper: shell script must keep LF endings on all platforms
 mvnw text eol=lf
 mvnw.cmd text eol=crlf
+
+# Generated API client: byte-for-byte drift check in CI needs LF everywhere
+libs/ts/api-client/src/generated/** text eol=lf
