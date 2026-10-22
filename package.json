@@ -1,14 +1,8 @@
 {
-  "name": "checky-pro",
+  "name": "themistra",
   "private": true,
-  "packageManager": "pnpm@9.12.2",
+  "packageManager": "pnpm@12.14.0",
   "engines": {
-    "node": ">=20"
-  },
-  "scripts": {
-    "dev": "pnpm -C frontend dev",
-    "build": "pnpm -C frontend build",
-    "test": "pnpm -C frontend test",
-    "lint": "pnpm -C frontend lint"
+    "node": ">=22.22.2"
   }
 }
