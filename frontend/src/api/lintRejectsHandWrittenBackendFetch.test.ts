@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -36,6 +36,8 @@ const BANNED: ReadonlyArray<{ form: string; source: string; rule: Rule }> = [
   { form: 'const { fetch } = window', source: 'const { fetch } = window; fetch("/x");', rule: 'no-restricted-properties' },
   { form: 'window.XMLHttpRequest', source: 'new window.XMLHttpRequest();', rule: 'no-restricted-properties' },
   { form: 'self.XMLHttpRequest', source: 'new self.XMLHttpRequest();', rule: 'no-restricted-properties' },
+  { form: "window['XMLHttpRequest']", source: 'new window["XMLHttpRequest"]();', rule: 'no-restricted-properties' },
+  { form: "self['XMLHttpRequest']", source: 'new self["XMLHttpRequest"]();', rule: 'no-restricted-properties' },
   {
     form: "globalThis['XMLHttpRequest']",
     source: 'new globalThis["XMLHttpRequest"]();',
@@ -52,6 +54,8 @@ const ALLOWED: ReadonlyArray<{ form: string; source: string }> = [
     source: 'import { createAuthClient } from "@themistra/api-client";\nvoid createAuthClient().GET("/accounts/me");',
   },
   { form: "vi.spyOn(globalThis, 'fetch')", source: 'import { vi } from "vitest";\nvi.spyOn(globalThis, "fetch");' },
+  // A type position makes no request; oxlint 1.87.0 doesn't report it, and test mocks may need it.
+  { form: 'XMLHttpRequest as a type only', source: 'export const echo = (xhr: XMLHttpRequest) => xhr;' },
 ];
 
 let fixtureDir: string;
@@ -117,7 +121,57 @@ describe('lintRejectsHandWrittenBackendFetch', () => {
     expect(pkg.scripts.lint).toBe('oxlint --no-ignore -c .oxlintrc.json src');
     expect(pkg.scripts.build).toBe('pnpm run lint && tsc --noEmit && vite build');
     expect(pkg.devDependencies.oxlint).toBe('1.87.0');
+
+    // The binary that actually runs is the pinned one, not a stale or global install.
+    const { stdout } = await run(oxlintBin, ['--version']);
+    expect(stdout.trim()).toBe('Version: 1.87.0');
   });
+
+  it('stops build at lint, so tsc and Vite never run on a violation (AC2, end to end)', async () => {
+    // A copy of frontend/ with its real scripts, config and sources. Dependencies are dropped from the copy's
+    // manifest so pnpm doesn't try to install them; node_modules is linked from the real package.
+    const project = join(fixtureDir, 'build-project');
+    await mkdir(project);
+    for (const file of ['.oxlintrc.json', 'index.html', 'tsconfig.json', 'vite.config.ts']) {
+      await copyFile(join(frontendDir, file), join(project, file));
+    }
+    const pkg = await readJson<Record<string, unknown>>(join(frontendDir, 'package.json'));
+    delete pkg.dependencies;
+    delete pkg.devDependencies;
+    await writeFile(join(project, 'package.json'), JSON.stringify(pkg));
+    await symlink(join(frontendDir, 'node_modules'), join(project, 'node_modules'), 'dir');
+    await cp(join(frontendDir, 'src'), join(project, 'src'), { recursive: true });
+
+    const build = async () => {
+      try {
+        const { stdout, stderr } = await run('pnpm', ['run', 'build'], { cwd: project });
+        return { code: 0, output: stdout + stderr };
+      } catch (error) {
+        const failed = error as { code?: unknown; stdout?: string; stderr?: string };
+        if (typeof failed.code !== 'number') throw error;
+        return { code: failed.code, output: `${failed.stdout ?? ''}${failed.stderr ?? ''}` };
+      }
+    };
+    const distExists = () => access(join(project, 'dist')).then(() => true, () => false);
+
+    // Control: the same copy, with today's clean sources, runs all three steps.
+    const clean = await build();
+    expect(clean.code, clean.output).toBe(0);
+    expect(await distExists()).toBe(true);
+    await rm(join(project, 'dist'), { recursive: true, force: true });
+
+    // One violation, which is also a type error, so tsc would report it if it ran.
+    await writeFile(
+      join(project, 'src/handWritten.ts'),
+      'export const call = () => fetch("/accounts/me");\nexport const wrong: number = "not a number";\n',
+    );
+    const violating = await build();
+    expect(violating.code, violating.output).not.toBe(0);
+    expect(violating.output).toContain('eslint(no-restricted-globals)');
+    expect(violating.output).not.toMatch(/error TS\d+/);
+    expect(violating.output).not.toContain('built in');
+    expect(await distExists()).toBe(false);
+  }, 120_000);
 
   it('keeps a violation listed in .eslintignore failing under the lint script', async () => {
     const pkg = await readJson<{ scripts: Record<string, string> }>(join(frontendDir, 'package.json'));
@@ -158,6 +212,15 @@ describe('lintRejectsHandWrittenBackendFetch', () => {
   it('finds no inline directive in frontend/src that could silence the rule', async () => {
     // Built from parts so this file doesn't match its own scan.
     const directive = new RegExp('(?:oxlint|eslint)' + '-disable');
+    // Positive control: the pattern matches the directive forms that silence oxlint.
+    for (const sample of [
+      '// oxlint' + '-disable-next-line no-restricted-globals',
+      '// eslint' + '-disable-next-line',
+      '/* oxlint' + '-disable */',
+      '/* eslint' + '-disable no-restricted-properties */',
+    ]) {
+      expect(directive.test(sample), sample).toBe(true);
+    }
     const srcDir = join(frontendDir, 'src');
     const files = (await readdir(srcDir, { recursive: true })).filter((path) => /\.(?:ts|tsx)$/.test(path));
     expect(files.length).toBeGreaterThan(0);
