@@ -95,10 +95,19 @@ export function shareRenewalAcrossTabs(
   function onMessage(event: MessageEvent) {
     const outcome = parseOutcome(event.data);
     if (!outcome) return;
-    if (outcome.type === 'renewal:succeeded') local.adopt(outcome.token);
     outcomeCount += 1;
     lastOutcome = outcome;
     for (const wake of [...waiters]) wake();
+    if (outcome.type === 'renewal:succeeded') {
+      try {
+        local.adopt(outcome.token);
+      } catch (error) {
+        // The outcome still counts and its waiters have it; a defect in adopt surfaces uncaught, not swallowed.
+        queueMicrotask(() => {
+          throw error;
+        });
+      }
+    }
   }
   tabChannel.addEventListener('message', onMessage);
 
@@ -131,19 +140,21 @@ export function shareRenewalAcrossTabs(
     }
   }
 
-  function outcomeSince(mark: number): Promise<Outcome | null> {
+  /** The outcome that arrived after `mark`, or arrives within the grace period; null if none, or once `signal` aborts. */
+  function outcomeSince(mark: number, signal: AbortSignal): Promise<Outcome | null> {
     if (outcomeCount > mark) return Promise.resolve(lastOutcome);
     return new Promise((resolve) => {
-      const wake = () => {
+      const finish = (outcome: Outcome | null) => {
         clearTimeout(timer);
         waiters.delete(wake);
-        resolve(lastOutcome);
+        signal.removeEventListener('abort', stop);
+        resolve(outcome);
       };
-      const timer = setTimeout(() => {
-        waiters.delete(wake);
-        resolve(null);
-      }, graceMs);
+      const wake = () => finish(lastOutcome);
+      const stop = () => finish(null);
+      const timer = setTimeout(stop, graceMs);
       waiters.add(wake);
+      signal.addEventListener('abort', stop, { once: true });
     });
   }
 
@@ -162,9 +173,12 @@ export function shareRenewalAcrossTabs(
       );
       if (led) return led.token;
       return await tabLocks.request(RENEWAL_LOCK, { signal: deadline.signal }, async () => {
-        const outcome = await outcomeSince(mark);
+        const outcome = await outcomeSince(mark, deadline.signal);
+        if (outcome) return use(outcome);
+        // Out of time: give up without renewing or telling the siblings anything.
+        if (deadline.signal.aborted) throw deadline.signal.reason;
         // Checked as late as possible: a message landing after this point can't stop the renewal below.
-        return outcome ? use(outcome) : lead(deadline.signal);
+        return lead(deadline.signal);
       });
     } catch (reason) {
       if (deadline.signal.aborted && !(reason instanceof SiblingRenewalFailedError)) throw deadline.signal.reason;
