@@ -360,3 +360,25 @@ common/
 ```
 
 Tests mirror the layout under `src/test/java/com/themistra/crypto/`, using scripted fake `ChainAdapter`s. Contract files (new): `contracts/api/crypto-internal.yaml`, `contracts/events/chain/{tx-seen,tx-confirmed,tx-finalized,tx-reorged,provider-degraded}.v1.schema.json`. Any TS sidecar lives under `services/crypto/sidecars/<chain>/` (none at launch, L14).
+
+> **Note (2026-10-22, found by the local Docker stack, `infra/local/`):**
+> (1) **Missed payments.** `ChainAdapter.subscribeAddress` starts at the head block current when it is called, but a watcher
+> only subscribes on the next `WatcherRegistry` reconciliation tick, and again after every restart or shard handover. A transfer
+> mined in between was never scanned, so its payment was silently missed (a crypto-service restart lost every payment made
+> while it was down). Both adapters now also implement `adapter/HistoricalSubscriber.subscribeAddressSince(address, since,
+> sink)`: the first successful poll tick finds the first block mined at or after `since` (`adapter/StartBlocks`, a binary
+> search on block timestamps, ~log2(head) reads once per subscription) and scans forward from there. `Watcher` passes the
+> watch's `createdAt`. Re-observing an already-decided transaction is harmless (duplicate quorum decisions are rejected and emit
+> nothing). `ChainAdapter` itself (§4c) is unchanged; an adapter without `HistoricalSubscriber` keeps the old behaviour.
+> `EthereumAdapter` now caps one `eth_getLogs` range at 1000 blocks (TRON already capped at 50) and computes confirmations
+> against the head, not the capped range end.
+> (2) **Poll guard.** `EthereumAdapter.pollOnce` had no catch-all, so one RPC exception made `scheduleWithFixedDelay` cancel
+> that subscription forever. It now logs and retries next tick, like `TronAdapter`; the cursor does not advance on a failed tick.
+> (3) **Lost cursor update.** Each provider's subscription calls `Watcher.handleObservation` on its own thread, and every
+> `ChainCursor` change is load → modify → save of the whole row. A slower provider's stale save landed just after the third
+> answer recorded the seen snapshot, wiping `txHash`, so the transaction was never followed to finality once payment-service
+> unregistered the watch (payment stuck at `SEEN`). Observation handling and `pollFinality` now run under one per-watcher
+> `ReentrantLock` (virtual threads, so not `synchronized`).
+> (4) **Local-dev screening.** `themistra.crypto.screening.mode=local-dev` (default `fail-closed`) swaps in
+> `screening/LocalDevScreeningClient`: CLEARED for every address except `...local-dev.blocked-addresses` (comma-separated),
+> which are BLOCKED. It refuses to start outside the `local` profile. Never acceptable outside local development.

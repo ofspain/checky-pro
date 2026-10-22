@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""End-to-end check of the running local stack, through the edge, the way the SPA uses it.
+
+Registers a fresh account, verifies it from Mailpit, signs in with PKCE, enrolls TOTP, is granted
+MERCHANT, signs in again with a code, creates an invoice, pays it on anvil, finalizes, and reads the
+payment and its signed receipt back. Ends with OIDC sign-out. Standard library only.
+
+    infra/local/bin/smoke
+"""
+import base64, hashlib, hmac, http.cookiejar, json, os, re, secrets, struct, subprocess, sys, time
+import urllib.error, urllib.parse, urllib.request
+
+EDGE = "http://localhost:5173"
+MAILPIT = "http://localhost:8025"
+CLIENT_ID = "checky-spa"
+REDIRECT = EDGE + "/app/callback"
+SIGNED_OUT = EDGE + "/app/signed-out"
+TOKEN = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+BIN = os.path.dirname(os.path.abspath(__file__))
+
+
+def step(text):
+    print(f"• {text}", flush=True)
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+class Browser:
+    """A cookie jar and no automatic redirects, so each hop of the OIDC flow is visible."""
+
+    def __init__(self):
+        self.jar = http.cookiejar.CookieJar()
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar), NoRedirect)
+
+    def request(self, method, url, body=None, headers=None, form=False):
+        data = None
+        headers = dict(headers or {})
+        if body is not None:
+            if form:
+                data = urllib.parse.urlencode(body).encode()
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+            else:
+                data = json.dumps(body).encode()
+                headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url if url.startswith("http") else EDGE + url, data, headers, method=method)
+        try:
+            with self.opener.open(req, timeout=30) as resp:
+                return resp.status, dict(resp.headers), resp.read().decode()
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), e.read().decode()
+
+
+def expect(status, wanted, what, body=""):
+    if status not in (wanted if isinstance(wanted, tuple) else (wanted,)):
+        sys.exit(f"FAILED: {what}: HTTP {status} {body[:300]}")
+
+
+def totp(secret_b32, at=None):
+    key = base64.b32decode(secret_b32 + "=" * (-len(secret_b32) % 8), casefold=True)
+    counter = int((at or time.time()) // 30)
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    return "%06d" % ((struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000)
+
+
+def mail_link(to, path):
+    """The newest email to `to` whose body contains a link to `path`."""
+    for _ in range(40):
+        with urllib.request.urlopen(f"{MAILPIT}/api/v1/search?query=" + urllib.parse.quote(f"to:{to}")) as r:
+            messages = json.load(r)["messages"]
+        for m in messages:
+            with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{m['ID']}") as r:
+                text = json.load(r)["Text"]
+            found = re.search(re.escape(EDGE + path) + r"\S*", text)
+            if found:
+                return found.group(0).rstrip(".,;:)")  # the link may end a sentence
+        time.sleep(1)
+    sys.exit(f"FAILED: no email to {to} with a {path} link in Mailpit")
+
+
+def sign_in(browser, email, password, code_fn=None):
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    state, nonce = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
+    authorize = "/oauth2/authorize?" + urllib.parse.urlencode({
+        "response_type": "code", "client_id": CLIENT_ID, "redirect_uri": REDIRECT,
+        "scope": "openid profile email", "state": state, "nonce": nonce,
+        "code_challenge": challenge, "code_challenge_method": "S256"})
+    status, headers, _ = browser.request("GET", authorize)
+    expect(status, 302, "authorize redirects to sign-in")
+    login = headers["Location"]
+    if not login.startswith(EDGE):
+        sys.exit(f"FAILED: sign-in redirect left the single origin: {login}")
+    status, _, page = browser.request("GET", login)
+    expect(status, 200, "login page")
+    csrf = re.search(r'name="_csrf"[^>]*\bvalue="([^"]+)"', page).group(1)
+    form = {"username": email, "password": password, "_csrf": csrf}
+    if code_fn:
+        form["mfaCode"] = code_fn()
+    status, headers, body = browser.request("POST", "/login", form, form=True)
+    expect(status, 302, "login form", body)
+    if "error" in headers.get("Location", ""):
+        sys.exit("FAILED: sign-in refused")
+    status, headers, _ = browser.request("GET", authorize)
+    expect(status, 302, "authorize completes")
+    location = headers["Location"]
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
+    if not location.startswith(REDIRECT) or query.get("state") != [state]:
+        sys.exit(f"FAILED: unexpected callback {location}")
+    status, _, body = browser.request("POST", "/oauth2/token", {
+        "grant_type": "authorization_code", "code": query["code"][0], "redirect_uri": REDIRECT,
+        "client_id": CLIENT_ID, "code_verifier": verifier}, form=True)
+    expect(status, 200, "token exchange", body)
+    return json.loads(body)
+
+
+def claims(jwt):
+    part = jwt.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+
+
+def chain(*args):
+    return subprocess.run([os.path.join(BIN, "chain"), *args], check=True, capture_output=True, text=True).stdout
+
+
+def main():
+    email = f"smoke-{secrets.token_hex(4)}@example.com"
+    # A fresh pay-to address each run: crypto-service matches a transfer by address, so two open
+    # invoices on one address would compete for the same payment.
+    pay_to = chain("new-address").strip()  # EIP-55 checksummed, which crypto-service requires
+    password = "correct-horse-battery-" + secrets.token_hex(4)
+    browser = Browser()
+
+    step(f"register {email}")
+    status, _, body = browser.request("POST", "/accounts", {"email": email, "password": password})
+    expect(status, (201, 202), "register", body)
+
+    step("verify from the Mailpit email")
+    link = mail_link(email, "/app/verify")
+    token = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)["token"][0]
+    status, _, body = browser.request("POST", "/accounts/verify-email", {"token": token})
+    expect(status, (200, 204), "verify email", body)
+
+    step("sign in with PKCE (password only)")
+    tokens = sign_in(browser, email, password)
+    bearer = {"Authorization": "Bearer " + tokens["access_token"]}
+
+    step("enroll TOTP")
+    status, _, body = browser.request("POST", "/accounts/me/mfa/totp", headers=bearer)
+    expect(status, 201, "begin enrollment", body)
+    secret = urllib.parse.parse_qs(urllib.parse.urlparse(json.loads(body)["provisioningUri"]).query)["secret"][0]
+    status, _, body = browser.request("POST", "/accounts/me/mfa/totp/confirm", {"code": totp(secret)}, headers=bearer)
+    expect(status, 200, "confirm enrollment", body)
+
+    step("grant MERCHANT")
+    subprocess.run([os.path.join(BIN, "grant-role"), email, "MERCHANT"], check=True, capture_output=True)
+
+    step("sign in again with a TOTP code (fresh browser)")
+    time.sleep(max(0, 31 - time.time() % 30))  # a code may be used once; wait for the next window
+    browser = Browser()
+    tokens = sign_in(browser, email, password, lambda: totp(secret))
+    c = claims(tokens["access_token"])
+    if "MERCHANT" not in c.get("roles", []) or "otp" not in c.get("amr", []):
+        sys.exit(f"FAILED: token lacks MERCHANT or otp: roles={c.get('roles')} amr={c.get('amr')}")
+    bearer = {"Authorization": "Bearer " + tokens["access_token"]}
+
+    def create_invoice(address, reference):
+        status, _, body = browser.request("POST", "/api/v1/invoices", {
+            "chain": "ETHEREUM", "tokenContractAddress": TOKEN, "tokenDecimals": 6, "amount": "2500000",
+            "payToAddress": address, "reference": reference}, headers=bearer)
+        expect(status, 201, "create invoice", body)
+        return json.loads(body)["invoiceUuid"]
+
+    step("create an invoice for 2.5 USDC")
+    invoice = create_invoice(pay_to, "smoke")
+
+    step("pay it on anvil")
+    print("  " + chain("pay", pay_to, "2500000").strip().replace("\n", "\n  "))
+
+    def payments(invoice_uuid):
+        status, _, body = browser.request("GET", f"/api/v1/invoices/{invoice_uuid}/payments", headers=bearer)
+        expect(status, 200, "list payments", body)
+        return json.loads(body)
+
+    def wait_for(states, seconds, invoice_uuid=None):
+        invoice_uuid = invoice_uuid or invoice
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            listed = payments(invoice_uuid)
+            if listed and listed[0]["state"] in states:
+                return listed[0]
+            time.sleep(2)
+        sys.exit(f"FAILED: payment never reached {states}; last: {payments(invoice_uuid)}")
+
+    seen = wait_for({"SEEN", "CONFIRMING"}, 90)
+    step(f"payment {seen['state']} with {seen['confirmations']} confirmation(s)")
+    step("finalize the chain")
+    chain("finalize")
+    attested = wait_for({"ATTESTED"}, 120)
+    step(f"payment ATTESTED, receipt {attested['receiptUuid']}")
+
+    status, _, body = browser.request("GET", f"/api/v1/receipts/{attested['receiptUuid']}", headers=bearer)
+    expect(status, 200, "read receipt", body)
+    receipt = json.loads(body)
+    if receipt["amount"] != "2500000" or not receipt.get("signature"):
+        sys.exit(f"FAILED: unexpected receipt {receipt}")
+
+    step("receipt email in Mailpit")
+    mail_link(email, "/app/receipts/")
+
+    step("a payment from a sender screening blocks is HELD")
+    blocked_pay_to = chain("new-address").strip()
+    held_invoice = create_invoice(blocked_pay_to, "smoke-held")
+    chain("pay-blocked", blocked_pay_to, "2500000")
+    chain("finalize")
+    held = wait_for({"HELD"}, 120, held_invoice)
+    if held.get("receiptUuid"):
+        sys.exit(f"FAILED: a HELD payment has a receipt {held}")
+
+    step("sign out through end-session")
+    status, headers, _ = browser.request("GET", "/connect/logout?" + urllib.parse.urlencode({
+        "id_token_hint": tokens["id_token"], "post_logout_redirect_uri": SIGNED_OUT, "state": "bye"}))
+    expect(status, 302, "end-session")
+    if headers["Location"] != SIGNED_OUT + "?state=bye":
+        sys.exit(f"FAILED: end-session went to {headers['Location']}")
+
+    print("\nSMOKE PASSED: register → verify → MFA → MERCHANT → invoice → pay → ATTESTED → receipt → HELD → sign-out")
+
+
+if __name__ == "__main__":
+    main()

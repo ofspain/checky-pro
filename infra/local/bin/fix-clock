@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Docker Desktop's VM clock falls behind the Mac after sleep. TOTP codes and token lifetimes then
+# fail inside the stack. This resets the VM clock from its hardware clock.
+set -euo pipefail
+docker run --rm --privileged alpine:3.20 hwclock -s
+echo "Docker clock now $(docker run --rm alpine:3.20 date -u +%H:%M:%S), Mac $(date -u +%H:%M:%S) (UTC)"

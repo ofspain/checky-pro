@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Build and start the whole local stack, then wait until every service reports ready.
+#   bin/up              backend only (dependencies + the four services + edge)
+#   bin/up --frontend   also the SPA dev server (needs frontend/package.json, frontend task 1)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+profiles=()
+[[ "${1:-}" == "--frontend" ]] && profiles=(--profile frontend)
+docker compose ${profiles[@]+"${profiles[@]}"} up -d --build
+"$(dirname "$0")/status" --wait

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stop the stack. --reset also deletes the database volume (every account, invoice and payment).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [[ "${1:-}" == "--reset" ]]; then
+  docker compose --profile frontend down -v
+else
+  docker compose --profile frontend down
+fi

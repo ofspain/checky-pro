@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Readiness of each service (through its debug port). --wait polls until all are ready (5 min max).
+set -uo pipefail
+declare -a names=(auth crypto notification payment)
+declare -a ports=(18080 18081 18082 18083)
+check() {
+  local all=0
+  for i in "${!names[@]}"; do
+    if curl -sf "http://localhost:${ports[$i]}/actuator/health/readiness" >/dev/null 2>&1; then
+      printf "  %-13s ready\n" "${names[$i]}"
+    else
+      printf "  %-13s not ready\n" "${names[$i]}"; all=1
+    fi
+  done
+  return $all
+}
+if [[ "${1:-}" == "--wait" ]]; then
+  for _ in $(seq 1 100); do
+    check >/dev/null && break
+    sleep 3
+  done
+fi
+# TOTP codes from a phone use the real time; the stack uses the Docker VM's clock.
+skew=$(( $(date -u +%s) - $(docker compose -f "$(dirname "$0")/../compose.yaml" exec -T postgres date -u +%s 2>/dev/null || date -u +%s) ))
+if (( ${skew#-} > 5 )); then
+  echo "  WARNING: the Docker clock is ${skew}s off the Mac's, so TOTP codes will fail. Run bin/fix-clock."
+fi
+if check; then
+  cat <<'MSG'
+
+Themistra is up.
+  App (single origin)  http://localhost:5173/app/
+  Mailpit (emails)     http://localhost:8025
+  Chain helper         infra/local/bin/chain help
+  Grant a role         infra/local/bin/grant-role <email> MERCHANT|ADMIN
+MSG
+else
+  echo; echo "Not everything is ready. See: docker compose -f infra/local/compose.yaml logs <service>"
+  exit 1
+fi

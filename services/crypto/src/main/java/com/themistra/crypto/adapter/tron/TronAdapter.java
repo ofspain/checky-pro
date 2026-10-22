@@ -6,7 +6,9 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.themistra.crypto.adapter.Chain;
 import com.themistra.crypto.adapter.ChainAdapter;
+import com.themistra.crypto.adapter.HistoricalSubscriber;
 import com.themistra.crypto.adapter.ObservationSink;
+import com.themistra.crypto.adapter.StartBlocks;
 import com.themistra.crypto.adapter.model.FinalityStatus;
 import com.themistra.crypto.adapter.model.Subscription;
 import com.themistra.crypto.adapter.model.TokenInfo;
@@ -29,10 +31,12 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -75,7 +79,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * prefix). {@link #encodeNativeAddress} and {@link #encodeEvmStyleAddress} handle these two cases
  * separately — conflating them would silently corrupt one of the two address sources.
  */
-public class TronAdapter implements ChainAdapter, AutoCloseable {
+public class TronAdapter implements ChainAdapter, HistoricalSubscriber, AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(TronAdapter.class);
 
@@ -95,6 +99,9 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
      * subscription that fell far behind (e.g. after a long pause) does not attempt unbounded
      * catch-up work in one tick. */
     private static final long MAX_BLOCKS_PER_POLL = 50;
+
+    /** A {@link #subscribeAddressSince} cursor whose start block is not resolved yet. */
+    private static final long START_UNRESOLVED = Long.MIN_VALUE;
 
     private final ApiWrapper apiWrapper;
     private final String providerName;
@@ -180,9 +187,19 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
     @Override
     public Subscription subscribeAddress(String address, ObservationSink sink) {
         AtomicLong lastScannedBlock = new AtomicLong(fetchCurrentBlockNumber());
+        return schedulePolling(address, sink, lastScannedBlock, null);
+    }
 
+    @Override
+    public Subscription subscribeAddressSince(String address, Instant since, ObservationSink sink) {
+        Objects.requireNonNull(since, "since");
+        return schedulePolling(address, sink, new AtomicLong(START_UNRESOLVED), since);
+    }
+
+    private Subscription schedulePolling(String address, ObservationSink sink, AtomicLong lastScannedBlock,
+            Instant since) {
         ScheduledFuture<?> future = scheduler.scheduleWithFixedDelay(
-                () -> pollOnce(address, sink, lastScannedBlock),
+                () -> pollOnce(address, sink, lastScannedBlock, since),
                 pollInterval.toMillis(), pollInterval.toMillis(), TimeUnit.MILLISECONDS);
 
         return () -> future.cancel(false);
@@ -231,21 +248,25 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
         }
     }
 
-    private void pollOnce(String address, ObservationSink sink, AtomicLong lastScannedBlock) {
+    private void pollOnce(String address, ObservationSink sink, AtomicLong lastScannedBlock, Instant since) {
         // Phase 9 (Kimi Issue 2/7): scheduleWithFixedDelay silently and permanently cancels all future
         // executions of this task if it ever throws - one transient RPC failure (or a malformed watch
         // address reaching topicForAddress) must not silently end this subscription's polling forever.
         try {
-            pollOnceUnguarded(address, sink, lastScannedBlock);
+            pollOnceUnguarded(address, sink, lastScannedBlock, since);
         } catch (RuntimeException e) {
             logger.error("Provider {} poll tick failed for watch address {} - will retry next tick",
                     providerName, address, e);
         }
     }
 
-    private void pollOnceUnguarded(String address, ObservationSink sink, AtomicLong lastScannedBlock) {
-        long fromBlock = lastScannedBlock.get() + 1;
+    private void pollOnceUnguarded(String address, ObservationSink sink, AtomicLong lastScannedBlock,
+            Instant since) {
         long headBlock = fetchCurrentBlockNumber();
+        if (lastScannedBlock.get() == START_UNRESOLVED) {
+            lastScannedBlock.set(StartBlocks.firstBlockAtOrAfter(headBlock, since, this::blockTimestampMillis) - 1);
+        }
+        long fromBlock = lastScannedBlock.get() + 1;
         if (fromBlock > headBlock) {
             return; // nothing new since the last poll
         }
@@ -447,6 +468,15 @@ public class TronAdapter implements ChainAdapter, AutoCloseable {
             throw new IllegalStateException(
                     "Provider " + providerName + " failed to answer getTransactionInfoByBlockNum for block "
                             + blockNum, e);
+        }
+    }
+
+    private long blockTimestampMillis(long blockNumber) {
+        try {
+            return apiWrapper.getBlockByNum(blockNumber).getBlockHeader().getRawData().getTimestamp();
+        } catch (IllegalException e) {
+            throw new IllegalStateException(
+                    "Provider " + providerName + " failed to answer getBlockByNum for block " + blockNumber, e);
         }
     }
 

@@ -105,6 +105,13 @@
       <artifactId>sesv2</artifactId>
     </dependency>
 
+    <!-- Local development only (2026-10-21): SMTP to the Mailpit container of infra/local, so a
+         developer can read verification and reset emails. Selected by EMAIL_TRANSPORT=smtp. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-mail</artifactId>
+    </dependency>
+
     <!-- Observability -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

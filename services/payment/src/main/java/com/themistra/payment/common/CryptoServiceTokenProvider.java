@@ -32,6 +32,14 @@ public class CryptoServiceTokenProvider {
 
     private static final Duration EXPIRY_SAFETY_MARGIN = Duration.ofSeconds(30);
 
+    /**
+     * The scope crypto-service's internal API requires (crypto {@code ResourceServerConfig}).
+     * auth-service grants a client_credentials token no scope unless one is requested, and
+     * crypto-service then refuses it with 403 (found running the full stack in Docker,
+     * 2026-10-21; every test stubbed the token endpoint).
+     */
+    static final String CRYPTO_SCOPE = "internal.crypto:write";
+
     private final RestClient restClient;
     private final CryptoClientProperties.Auth auth;
     private final Clock clock;
@@ -73,6 +81,7 @@ public class CryptoServiceTokenProvider {
     private CachedToken fetchNewToken() {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("grant_type", "client_credentials");
+        form.add("scope", CRYPTO_SCOPE);
 
         TokenResponse response;
         try {

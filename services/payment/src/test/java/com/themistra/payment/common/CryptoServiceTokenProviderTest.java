@@ -54,7 +54,8 @@ class CryptoServiceTokenProviderTest {
         String token = provider.getAccessToken();
 
         assertThat(token).isEqualTo("token-1");
-        assertThat(capturedBody.get()).isEqualTo("grant_type=client_credentials");
+        // 2026-10-21: the scope crypto-service requires; without it auth issues a token with no scope.
+        assertThat(capturedBody.get()).isEqualTo("grant_type=client_credentials&scope=internal.crypto%3Awrite");
         String expectedBasicAuth = "Basic " + Base64.getEncoder()
                 .encodeToString("payment-service:test-secret".getBytes(StandardCharsets.UTF_8));
         assertThat(capturedAuthHeader.get()).isEqualTo(expectedBasicAuth);

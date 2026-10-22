@@ -1,0 +1,227 @@
+# Themistra local stack: every dependency and every service in Docker.
+#   infra/local/bin/up        build and start everything (bin/up --help)
+#   http://localhost:5173     the single origin (edge) — SPA under /app, APIs behind it
+#   http://localhost:8025     Mailpit: every email the platform sends
+# Host ports are chosen not to clash with services/auth/compose.local.yaml (5432, 9094).
+# Everything here is local-only; no value in this file is a real secret.
+name: themistra-local
+
+x-java-service: &java-service
+  restart: unless-stopped
+  environment: &java-env
+    SPRING_PROFILES_ACTIVE: local
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    AUTH_ISSUER_URI: http://localhost:5173
+    AUTH_JWK_SET_URI: http://auth:8080/oauth2/jwks
+    AWS_ENDPOINT_URL: http://localstack:4566
+    # The SDK addresses a bucket as <bucket>.<endpoint host>. LocalStack serves that form under
+    # s3.localhost.localstack.cloud, and the localstack container answers those names (aliases below).
+    AWS_ENDPOINT_URL_S3: http://s3.localhost.localstack.cloud:4566
+    AWS_REGION: us-east-1
+    AWS_ACCESS_KEY_ID: test
+    AWS_SECRET_ACCESS_KEY: test
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: checky
+      POSTGRES_PASSWORD: checky-local-only
+      POSTGRES_DB: postgres
+    volumes:
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres-data:/var/lib/postgresql/data
+    ports: ["15432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U checky -d payment"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  kafka:
+    image: apache/kafka:3.8.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNAL://kafka:9092,CONTROLLER://kafka:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:19094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports: ["19094:9094"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list >/dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  localstack:
+    image: localstack/localstack:3.8
+    environment:
+      SERVICES: s3,kms
+    volumes:
+      - ./localstack/init.sh:/etc/localstack/init/ready.d/init.sh:ro
+    networks:
+      default:
+        aliases:
+          - s3.localhost.localstack.cloud
+          - themistra-local-receipts.s3.localhost.localstack.cloud
+          - themistra-local-observations.s3.localhost.localstack.cloud
+    ports: ["4566:4566"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf localhost:4566/_localstack/init/ready | grep -q '\"completed\": true'"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports: ["8025:8025"]
+
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:v1.5.1
+    # --state keeps the chain across restarts, so it stays in step with crypto-service's stored
+    # block cursors (written on shutdown, and every 30 s).
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--chain-id", "31337", "--block-time", "2",
+                 "--state", "/anvil/state.json", "--state-interval", "30"]
+    user: root
+    volumes:
+      - anvil-data:/anvil
+    ports: ["8545:8545"]
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  chain-init:
+    image: ghcr.io/foundry-rs/foundry:v1.5.1
+    entrypoint: ["/chain/deploy.sh"]
+    user: root
+    volumes:
+      - ./chain:/chain
+    depends_on:
+      anvil: { condition: service_healthy }
+
+  migrate-crypto: &migrate
+    image: flyway/flyway:11.7.2-alpine
+    command: >-
+      -url=jdbc:postgresql://postgres:5432/crypto -user=checky -password=checky-local-only
+      -schemas=chain -locations=filesystem:/flyway/sql migrate
+    volumes:
+      - ../../services/crypto/src/main/resources/db/migration:/flyway/sql:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  migrate-notification:
+    <<: *migrate
+    command: >-
+      -url=jdbc:postgresql://postgres:5432/notification -user=checky -password=checky-local-only
+      -schemas=notifications -locations=filesystem:/flyway/sql migrate
+    volumes:
+      - ../../services/notification/src/main/resources/db/migration:/flyway/sql:ro
+
+  migrate-payment:
+    <<: *migrate
+    command: >-
+      -url=jdbc:postgresql://postgres:5432/payment -user=checky -password=checky-local-only
+      -schemas=payments -locations=filesystem:/flyway/sql migrate
+    volumes:
+      - ../../services/payment/src/main/resources/db/migration:/flyway/sql:ro
+
+  # auth-service runs its own Flyway at startup (the other three use the migrate-* jobs).
+  auth:
+    <<: *java-service
+    build: { context: ../.., dockerfile: services/auth/Dockerfile }
+    environment:
+      <<: *java-env
+      DB_URL: jdbc:postgresql://postgres:5432/auth
+    ports: ["18080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  crypto:
+    <<: *java-service
+    build: { context: ../.., dockerfile: services/crypto/Dockerfile }
+    environment:
+      <<: *java-env
+      SERVER_PORT: "8080"
+      DB_URL: jdbc:postgresql://postgres:5432/crypto
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/config/crypto.properties
+    volumes:
+      - ./config/crypto.properties:/config/crypto.properties:ro
+    ports: ["18081:8080"]
+    depends_on:
+      migrate-crypto: { condition: service_completed_successfully }
+      chain-init: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+      localstack: { condition: service_healthy }
+
+  notification:
+    <<: *java-service
+    build: { context: ../.., dockerfile: services/notification/Dockerfile }
+    environment:
+      <<: *java-env
+      DB_URL: jdbc:postgresql://postgres:5432/notification
+      EMAIL_TRANSPORT: smtp
+      SPRING_MAIL_HOST: mailpit
+      SPRING_MAIL_PORT: "1025"
+      AUTH_EMAIL_LINK_BASE_URL: http://localhost:5173
+      RETRY_SCHEDULER_INTERVAL_SECONDS: "5"
+    ports: ["18082:8082"]
+    depends_on:
+      migrate-notification: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+      mailpit: { condition: service_started }
+
+  payment:
+    <<: *java-service
+    build: { context: ../.., dockerfile: services/payment/Dockerfile }
+    environment:
+      <<: *java-env
+      DB_URL: jdbc:postgresql://postgres:5432/payment
+      CRYPTO_SERVICE_BASE_URL: http://crypto:8080
+      # A cold crypto JVM on a laptop can take longer than the 5s production read timeout.
+      THEMISTRA_PAYMENT_CRYPTO_READTIMEOUTMS: "15000"
+      CRYPTO_AUTH_TOKEN_URI: http://auth:8080/oauth2/token
+      RECEIPT_BUCKET: themistra-local-receipts
+      KMS_PUBLIC_KEYS_URL: http://crypto:8080/.well-known/themistra-verification-keys
+    ports: ["18083:8083"]
+    depends_on:
+      migrate-payment: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+      localstack: { condition: service_healthy }
+
+  # The SPA dev server (frontend task 1 creates frontend/package.json). Hot reload works through
+  # the bind mount; polling because file events do not cross the macOS Docker VM reliably.
+  frontend:
+    image: node:22-alpine
+    profiles: ["frontend"]
+    working_dir: /repo
+    command: ["sh", "-c", "corepack enable && pnpm install && pnpm -C frontend dev --host 0.0.0.0 --port 5173"]
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    volumes:
+      - ../..:/repo
+      - frontend-node-modules:/repo/node_modules
+      - frontend-app-node-modules:/repo/frontend/node_modules
+
+  edge:
+    image: caddy:2.10-alpine
+    volumes:
+      - ./edge/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports: ["5173:80"]
+    depends_on: [auth, payment, notification]
+
+volumes:
+  postgres-data:
+  anvil-data:
+  frontend-node-modules:
+  frontend-app-node-modules:

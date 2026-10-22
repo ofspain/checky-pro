@@ -19,7 +19,8 @@ class EmailTransportWiringTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withBean(EmailProperties.class, () -> new EmailProperties("no-reply@checky.pro", "fake"))
-            .withUserConfiguration(FakeEmailTransport.class, SesEmailTransport.class, SesClientConfig.class);
+            .withUserConfiguration(FakeEmailTransport.class, SesEmailTransport.class, SesClientConfig.class,
+                    SmtpEmailTransport.class);
 
     @Test
     void fakeTransportIsTheOnlyEmailTransportBeanWhenTransportIsFake() {
@@ -46,12 +47,28 @@ class EmailTransportWiringTest {
                 });
     }
 
+    /** Local development (2026-10-21): smtp needs a mail sender and the local profile. */
+    @Test
+    void smtpTransportIsTheOnlyEmailTransportBeanWhenTransportIsSmtp() {
+        contextRunner.withPropertyValues("themistra.notification.email.transport=smtp")
+                .withBean(org.springframework.mail.javamail.JavaMailSender.class,
+                        org.springframework.mail.javamail.JavaMailSenderImpl::new)
+                .withInitializer(context -> context.getEnvironment().setActiveProfiles("local"))
+                .run(context -> {
+                    assertThat(context).hasSingleBean(EmailTransport.class);
+                    assertThat(context).hasSingleBean(SmtpEmailTransport.class);
+                    assertThat(context).doesNotHaveBean(FakeEmailTransport.class);
+                    assertThat(context).doesNotHaveBean(SesEmailTransport.class);
+                });
+    }
+
     @Test
     void neitherTransportIsRegisteredForAnUnrecognizedValue() {
         contextRunner.withPropertyValues("themistra.notification.email.transport=sendgrid")
                 .run(context -> {
                     assertThat(context).doesNotHaveBean(FakeEmailTransport.class);
                     assertThat(context).doesNotHaveBean(SesEmailTransport.class);
+                    assertThat(context).doesNotHaveBean(SmtpEmailTransport.class);
                 });
     }
 }

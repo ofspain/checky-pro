@@ -1,0 +1,37 @@
+# infra/local edge: the single origin the browser sees (frontend L9), http://localhost:5173.
+# Same prefix map as spec/frontend/design.md §4c (note of 2026-10-21). Host is passed through
+# unchanged, so auth-service's login redirects stay on this origin.
+{
+	auto_https off
+	admin off
+}
+
+:80 {
+	@auth path /oauth2/* /login /login/* /logout /connect/* /.well-known/* /userinfo /error /default-ui.css /accounts /accounts/* /admin /admin/* /api-keys /api-keys/*
+	handle @auth {
+		reverse_proxy auth:8080
+	}
+
+	handle /api/v1/* {
+		reverse_proxy payment:8083
+	}
+
+	# Server-sent events: pass each event through as soon as it is written.
+	handle /notifications/* {
+		reverse_proxy notification:8082 {
+			flush_interval -1
+		}
+	}
+
+	handle /app* {
+		reverse_proxy frontend:5173
+	}
+
+	handle / {
+		redir /app/ 302
+	}
+
+	handle {
+		respond "Not routed by the local edge" 404
+	}
+}

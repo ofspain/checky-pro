@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -475,6 +476,137 @@ class EthereumAdapterTest {
                 .isEqualTo(BigInteger.valueOf(101L)); // seeded at 100 (subscribe-time cursor) + 1
         assertThat(((DefaultBlockParameterNumber) filters.get(1).getFromBlock()).getBlockNumber())
                 .isEqualTo(BigInteger.valueOf(106L)); // first poll advanced the cursor to 105
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aFailedPollTickDoesNotEscapeAndTheNextTickRescansTheSameRangeAndDelivers() throws IOException {
+        // 2026-10-21: an exception escaping the scheduled task would make scheduleWithFixedDelay
+        // cancel the subscription forever. The tick must swallow it, leave the cursor where it was,
+        // and let the next tick rescan the same blocks.
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 100L);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        List<TxResult> received = new ArrayList<>();
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> received.add(result));
+
+        Log matched = transferLog(101L, CONTRACT, "0xsender", WATCHED_ADDRESS, BigInteger.valueOf(10));
+        EthLog logResponse = mock(EthLog.class);
+        when(logResponse.getLogs()).thenReturn(List.of((EthLog.LogResult<?>) () -> matched));
+        Request<?, EthLog> logRequest = requestReturning(logResponse);
+        ArgumentCaptor<EthFilter> filterCaptor = ArgumentCaptor.forClass(EthFilter.class);
+        when(web3j.ethGetLogs(filterCaptor.capture()))
+                .thenThrow(new RuntimeException("connection reset"))
+                .thenReturn((Request) logRequest);
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 101L);
+
+        taskCaptor.getValue().run(); // must not throw
+        assertThat(received).isEmpty();
+        taskCaptor.getValue().run();
+
+        assertThat(received).hasSize(1);
+        List<EthFilter> filters = filterCaptor.getAllValues();
+        assertThat(filters).hasSize(2);
+        assertThat(((DefaultBlockParameterNumber) filters.get(1).getFromBlock()).getBlockNumber())
+                .isEqualTo(BigInteger.valueOf(101L)); // cursor did not advance on the failed tick
+    }
+
+    @SuppressWarnings("unchecked")
+    private void stubBlockTimestamps(long headBlock) throws IOException {
+        // Block n is mined at 1000 + 2n seconds.
+        when(web3j.ethGetBlockByNumber(any(DefaultBlockParameterNumber.class), eq(false))).thenAnswer(invocation -> {
+            long number = ((DefaultBlockParameterNumber) invocation.getArgument(0)).getBlockNumber().longValueExact();
+            EthBlock.Block block = mock(EthBlock.Block.class);
+            when(block.getTimestamp()).thenReturn(BigInteger.valueOf(1_000 + 2 * number));
+            EthBlock response = mock(EthBlock.class);
+            when(response.getBlock()).thenReturn(block);
+            return requestReturning(response);
+        });
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void subscribeAddressSinceScansFromTheFirstBlockMinedAtOrAfterTheInstantNotFromTheHead() throws IOException {
+        // 2026-10-21: a transfer mined between watch registration and the watcher subscribing (block
+        // 101, before the head of 110) must still be found.
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        List<TxResult> received = new ArrayList<>();
+        adapter.subscribeAddressSince(WATCHED_ADDRESS, java.time.Instant.ofEpochSecond(1_200),
+                (provider, result, rawJson) -> received.add(result));
+        verify(web3j, never()).ethGetBlockByNumber(any(), anyBoolean()); // nothing read at subscribe time
+
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 110L);
+        stubBlockTimestamps(110L);
+        Log matched = transferLog(101L, CONTRACT, "0xsender", WATCHED_ADDRESS, BigInteger.valueOf(10));
+        EthLog logResponse = mock(EthLog.class);
+        when(logResponse.getLogs()).thenReturn(List.of((EthLog.LogResult<?>) () -> matched));
+        Request<?, EthLog> logRequest = requestReturning(logResponse);
+        ArgumentCaptor<EthFilter> filterCaptor = ArgumentCaptor.forClass(EthFilter.class);
+        when(web3j.ethGetLogs(filterCaptor.capture())).thenReturn((Request) logRequest);
+
+        taskCaptor.getValue().run();
+
+        assertThat(((DefaultBlockParameterNumber) filterCaptor.getValue().getFromBlock()).getBlockNumber())
+                .isEqualTo(BigInteger.valueOf(100L)); // block 100 is mined at exactly 1200
+        assertThat(((DefaultBlockParameterNumber) filterCaptor.getValue().getToBlock()).getBlockNumber())
+                .isEqualTo(BigInteger.valueOf(110L));
+        assertThat(received).hasSize(1);
+        assertThat(received.get(0).confirmations()).isEqualTo(10); // 110 - 101 + 1, against the head
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aFailedStartBlockLookupIsRetriedOnTheNextTickWithoutSkippingAnything() throws IOException {
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        adapter.subscribeAddressSince(WATCHED_ADDRESS, java.time.Instant.ofEpochSecond(1_200),
+                (provider, result, rawJson) -> { });
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 110L);
+        when(web3j.ethGetBlockByNumber(any(DefaultBlockParameterNumber.class), eq(false)))
+                .thenThrow(new RuntimeException("provider down"));
+
+        taskCaptor.getValue().run(); // must not throw
+        verify(web3j, never()).ethGetLogs(any());
+
+        stubBlockTimestamps(110L);
+        EthLog emptyLogResponse = mock(EthLog.class);
+        when(emptyLogResponse.getLogs()).thenReturn(List.of());
+        Request<?, EthLog> emptyLogRequest = requestReturning(emptyLogResponse);
+        ArgumentCaptor<EthFilter> filterCaptor = ArgumentCaptor.forClass(EthFilter.class);
+        when(web3j.ethGetLogs(filterCaptor.capture())).thenReturn((Request) emptyLogRequest);
+        taskCaptor.getValue().run();
+
+        assertThat(((DefaultBlockParameterNumber) filterCaptor.getValue().getFromBlock()).getBlockNumber())
+                .isEqualTo(BigInteger.valueOf(100L));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aLongCatchUpIsSplitIntoCappedRanges() throws IOException {
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 100L);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        adapter.subscribeAddress(WATCHED_ADDRESS, (provider, result, rawJson) -> { });
+
+        EthLog emptyLogResponse = mock(EthLog.class);
+        when(emptyLogResponse.getLogs()).thenReturn(List.of());
+        Request<?, EthLog> emptyLogRequest = requestReturning(emptyLogResponse);
+        ArgumentCaptor<EthFilter> filterCaptor = ArgumentCaptor.forClass(EthFilter.class);
+        when(web3j.ethGetLogs(filterCaptor.capture())).thenReturn((Request) emptyLogRequest);
+        stubBlockNumber(DefaultBlockParameterName.LATEST, 100L + EthereumAdapter.MAX_BLOCKS_PER_POLL + 5);
+        taskCaptor.getValue().run();
+        taskCaptor.getValue().run();
+
+        List<EthFilter> filters = filterCaptor.getAllValues();
+        assertThat(((DefaultBlockParameterNumber) filters.get(0).getToBlock()).getBlockNumber())
+                .isEqualTo(BigInteger.valueOf(100L + EthereumAdapter.MAX_BLOCKS_PER_POLL));
+        assertThat(((DefaultBlockParameterNumber) filters.get(1).getFromBlock()).getBlockNumber())
+                .isEqualTo(BigInteger.valueOf(101L + EthereumAdapter.MAX_BLOCKS_PER_POLL));
     }
 
     @Test

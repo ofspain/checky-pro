@@ -2,6 +2,8 @@ package com.themistra.payment.invoice;
 
 import com.themistra.payment.common.CryptoServiceUnavailableException;
 import com.themistra.payment.common.ProblemTypes;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -21,6 +23,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class InvoiceExceptionHandler {
 
+    private static final Logger log = LoggerFactory.getLogger(InvoiceExceptionHandler.class);
+
     @ExceptionHandler(InvalidInvoiceRequestException.class)
     ProblemDetail onInvalidRequest(InvalidInvoiceRequestException e) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
@@ -35,6 +39,11 @@ public class InvoiceExceptionHandler {
      * internal detail (agents.md: no internal detail in a 4xx/5xx body). */
     @ExceptionHandler(CryptoServiceUnavailableException.class)
     ProblemDetail onCryptoServiceUnavailable(CryptoServiceUnavailableException e) {
+        // 2026-10-21: the 503 body is deliberately generic, so the cause must be in the log or the
+        // failure can't be diagnosed. The message names the invoice only; the cause's class (not its
+        // message, which could echo a request) says timeout vs refused vs 4xx/5xx.
+        Throwable cause = e.getCause();
+        log.warn("{} (cause: {})", e.getMessage(), cause == null ? "none" : cause.getClass().getSimpleName());
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
         problem.setType(ProblemTypes.CRYPTO_SERVICE_UNAVAILABLE);
         problem.setTitle("Crypto Service unavailable");

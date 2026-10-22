@@ -11,14 +11,18 @@ import com.themistra.payment.consumer.dto.ChainTxConfirmed;
 import com.themistra.payment.consumer.dto.ChainTxFinalized;
 import com.themistra.payment.consumer.dto.ChainTxReorged;
 import com.themistra.payment.consumer.dto.ChainTxSeen;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.lang.reflect.RecordComponent;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
@@ -73,6 +77,30 @@ class CryptoContractConformanceTest {
                 .path("components").path("schemas").path(schemaName);
         assertThat(schema.isMissingNode()).as("%s is in crypto-internal.yaml", schemaName).isFalse();
         assertFieldsMatch(schema, type);
+    }
+
+    /**
+     * 2026-10-21, found running the full stack in Docker: payment requested no scope, auth issued a
+     * token with none, and crypto refused every watch and attest call with 403. The scope payment
+     * requests must be the one every crypto endpoint it calls declares, and auth must register it
+     * for this client.
+     */
+    @Test
+    void theRequestedTokenScopeIsTheOneCryptoRequiresAndAuthGrants() throws IOException {
+        JsonNode paths = new YAMLMapper().readTree(CRYPTO_INTERNAL.toFile()).path("paths");
+        List<String> required = new ArrayList<>();
+        for (String path : List.of("/internal/v1/watches", "/internal/v1/watches/{watchId}", "/internal/v1/attest")) {
+            paths.path(path).forEach(operation -> operation.path("security")
+                    .forEach(requirement -> requirement.path("bearerAuth").forEach(scope -> required.add(scope.asText()))));
+        }
+        assertThat(required).as("crypto-internal.yaml declares the scope on each called operation").isNotEmpty()
+                .containsOnly(CryptoServiceTokenProvider.CRYPTO_SCOPE);
+
+        String authProperties = Files.readString(Path.of("../auth/src/main/resources/application.properties"));
+        assertThat(authProperties)
+                .contains("themistra.auth.clients.services[0].client-id=payment-service")
+                .containsPattern("themistra\\.auth\\.clients\\.services\\[0]\\.scopes\\[\\d+]="
+                        + java.util.regex.Pattern.quote(CryptoServiceTokenProvider.CRYPTO_SCOPE));
     }
 
     private static void assertFieldsMatch(JsonNode schema, Class<?> type) {

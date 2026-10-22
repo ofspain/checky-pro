@@ -29,6 +29,12 @@ class EmailTransportStartupValidationTest {
     }
 
     @Test
+    void acceptsSmtpWithoutThrowing() {
+        assertThatCode(() -> new EmailTransportStartupValidation(new EmailProperties("no-reply@checky.pro", "smtp")))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void rejectsAnyOtherValueWithAClearMessageNamingTheActualValue() {
         assertThatThrownBy(() -> new EmailTransportStartupValidation(new EmailProperties("no-reply@checky.pro", "sendgrid")))
                 .isInstanceOf(IllegalStateException.class)

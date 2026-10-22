@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Local bootstrap only: grant a role straight in auth's database, for the first ADMIN (nothing else
+# can create one) or a MERCHANT before the admin screens exist. MERCHANT and ADMIN accounts must
+# have confirmed MFA, or sign-in refuses them (auth R24), so this refuses them too.
+#   bin/grant-role <email> <USER|MERCHANT|ADMIN|COMPLIANCE>
+set -euo pipefail
+cd "$(dirname "$0")/.."
+[[ $# -eq 2 ]] || { echo "usage: bin/grant-role <email> <role>"; exit 2; }
+email=$1 role=$2
+[[ "$email" =~ ^[^\'[:space:]]+@[^\'[:space:]]+$ ]] || { echo "not an email address: $email"; exit 2; }
+[[ "$role" =~ ^(USER|MERCHANT|ADMIN|COMPLIANCE)$ ]] || { echo "unknown role: $role"; exit 2; }
+docker compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U checky -d auth <<SQL
+DO \$\$
+DECLARE acct auth.accounts%ROWTYPE;
+BEGIN
+  SELECT * INTO acct FROM auth.accounts WHERE email = '$email';
+  IF NOT FOUND THEN RAISE EXCEPTION 'no account for %', '$email'; END IF;
+  IF acct.status <> 'ACTIVE' THEN
+    RAISE EXCEPTION 'account is %, verify the email first (Mailpit: http://localhost:8025)', acct.status;
+  END IF;
+  IF '$role' IN ('MERCHANT', 'ADMIN') AND NOT EXISTS (
+      SELECT 1 FROM auth.mfa_enrollments WHERE account_id = acct.id AND confirmed_at IS NOT NULL) THEN
+    RAISE EXCEPTION '$role needs confirmed MFA: sign in and enroll it at /app/account/mfa first';
+  END IF;
+  INSERT INTO auth.account_roles (account_uuid, role_id, granted_by)
+  SELECT acct.account_uuid, r.id, NULL FROM auth.roles r WHERE r.name = '$role'
+  ON CONFLICT DO NOTHING;
+  RAISE NOTICE 'granted % to %; sign in again for a token that carries it', '$role', '$email';
+END
+\$\$;
+SQL

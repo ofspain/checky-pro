@@ -3,6 +3,7 @@ package com.themistra.crypto.watch;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.Chain;
+import com.themistra.crypto.adapter.HistoricalSubscriber;
 import com.themistra.crypto.adapter.ProviderSet;
 import com.themistra.crypto.adapter.model.FinalityStatus;
 import com.themistra.crypto.adapter.model.Subscription;
@@ -40,6 +41,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -90,6 +92,14 @@ class Watcher {
     private final Map<String, TxCorrelation> correlations = new ConcurrentHashMap<>();
     private final Set<String> evaluatedFacts = ConcurrentHashMap.newKeySet();
     private final Set<String> pendingFinality = ConcurrentHashMap.newKeySet();
+    /** 2026-10-21: each provider's subscription calls {@link #handleObservation} on its own thread,
+     * and {@link #pollFinality} runs on this watcher's scheduler. Every {@link ChainCursor} change is
+     * load, modify, then save of the whole row, so two of these running at once lost updates: a slower
+     * provider's thread saved its stale copy just after the third answer recorded the seen snapshot,
+     * wiping {@code txHash}, and the transaction was then never followed to finality. This lock runs
+     * them one at a time. A {@link ReentrantLock}, not {@code synchronized}, because these are virtual
+     * threads doing database I/O while holding it. */
+    private final ReentrantLock stateLock = new ReentrantLock();
     private final List<Subscription> subscriptions = new CopyOnWriteArrayList<>();
     private final AtomicReference<Instant> lastObservationAt = new AtomicReference<>();
     private volatile boolean running = false;
@@ -163,8 +173,11 @@ class Watcher {
 
         if (matchNewTransactions) {
             for (ProviderSet.NamedAdapter namedAdapter : adapters) {
-                Subscription subscription = namedAdapter.adapter().subscribeAddress(watch.address(),
-                        this::handleObservation);
+                // 2026-10-21: scan from the watch's creation time where the adapter supports it, so a
+                // transfer mined before this (possibly restarted) watcher subscribed is not missed.
+                Subscription subscription = namedAdapter.adapter() instanceof HistoricalSubscriber historical
+                        ? historical.subscribeAddressSince(watch.address(), watch.createdAt(), this::handleObservation)
+                        : namedAdapter.adapter().subscribeAddress(watch.address(), this::handleObservation);
                 subscriptions.add(subscription);
             }
             sweepFuture = sweepScheduler.scheduleWithFixedDelay(this::sweepStaleCorrelations,
@@ -212,6 +225,18 @@ class Watcher {
             return;
         }
 
+        stateLock.lock();
+        try {
+            handleObservationLocked(provider, result, rawResponseJson);
+        } finally {
+            stateLock.unlock();
+        }
+    }
+
+    private void handleObservationLocked(String provider, TxResult result, String rawResponseJson) {
+        if (!running || !matching) {
+            return; // re-checked: matching may have stopped while this thread waited for the lock
+        }
         try {
             logObservation(provider, result, rawResponseJson);
             lastObservationAt.set(clock.instant());
@@ -468,6 +493,15 @@ class Watcher {
      * #handleSeenIfAgreed} once {@code EXISTENCE} agrees {@code true}; removed here once {@code
      * FINALITY} reaches any decided outcome). */
     void pollFinality() {
+        stateLock.lock();
+        try {
+            pollFinalityLocked();
+        } finally {
+            stateLock.unlock();
+        }
+    }
+
+    private void pollFinalityLocked() {
         seedPendingFinalityOnce();
         // T18 Phase 9 (self-review Finding 3 / Kimi Finding 3): each half guarded independently - an
         // uncaught RuntimeException from either must never permanently cancel this entire scheduled

@@ -310,3 +310,9 @@ contracts/events/auth/security-audit.v1.schema.json
 > `invalid_request`: OIDC end-session (`/connect/logout`) never worked, and token revocation by an issued token failed the same
 > way. `SasLoginIntegrationTest.endSessionEndsTheSasSessionAndReturnsToTheSignedOutRoute` and
 > `endSessionRefusesAPostLogoutRedirectOutsideTheAllowlist` cover it. The claims themselves are unchanged.
+
+> **Note (2026-10-22, found by the local Docker stack, `infra/local/`):** CSRF was ignored for `/api/**` and
+> `/api-keys/token` only, so anonymous browser calls such as `POST /accounts` (registration) were refused with 403, which the
+> error forward then turned into a 401. `SecurityChainsConfig` now ignores CSRF for exactly the anonymous endpoints in
+> `PublicEndpoints.METHOD_SCOPED` (method and path). Everything session-backed, including the `/login` form, still requires
+> the token. `PublicEndpointsCsrfIntegrationTest` covers both sides.

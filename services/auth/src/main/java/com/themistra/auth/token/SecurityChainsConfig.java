@@ -17,6 +17,8 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.session.DisableEncodeUrlFilter;
@@ -74,13 +76,15 @@ public class SecurityChainsConfig {
                     auth.anyRequest().authenticated();
                 })
                 // APIs are bearer-authenticated and stateless; CSRF protects only the
-                // session-backed login/authorize pages. /api-keys/token is exempted alongside
-                // /api/** (T25, Phase 9 gate) because it is a genuinely session-less machine
-                // endpoint: the presented API key is its own credential, and a caller with no
-                // prior session has no way to obtain a CSRF token to begin with (confirmed by
-                // SasLoginIntegrationTest's own need to scrape one off /login first, which no
-                // machine client calling this endpoint ever does).
-                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/api-keys/token"))
+                // session-backed login/authorize pages. Bearer requests are exempt through the
+                // resource-server configurer. The anonymous public endpoints are exempt here
+                // (frontend start, 2026-10-21): each one is authorized by what its body carries
+                // (a new account's details, a one-time token, an email, or an API key), never by
+                // the session cookie, so there is nothing for a forged request to ride on. Before
+                // this, the exemption named /api/**, a prefix this service does not serve, and the
+                // SPA's registration, verification and reset calls were all refused (a caller with
+                // no page to scrape has no way to obtain a CSRF token).
+                .csrf(csrf -> csrf.ignoringRequestMatchers(publicEndpointMatchers()))
                 .oauth2ResourceServer(rs -> rs.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
                 // Registering a provider directly on HttpSecurity (rather than relying on the
                 // global AuthenticationManager AuthenticationConfiguration would otherwise build
@@ -102,6 +106,12 @@ public class SecurityChainsConfig {
                 .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    private static RequestMatcher[] publicEndpointMatchers() {
+        return PublicEndpoints.METHOD_SCOPED.stream()
+                .map(m -> PathPatternRequestMatcher.withDefaults().matcher(m.method(), m.pattern()))
+                .toArray(RequestMatcher[]::new);
     }
 
     @Bean

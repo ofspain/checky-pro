@@ -258,6 +258,7 @@ class T01SkeletonRegressionTest {
                     "channel/InAppChannel.java",
                     "channel/NotificationChannel.java",
                     "channel/SesEmailTransport.java",
+                    "channel/SmtpEmailTransport.java", // local development email, 2026-10-21
                     "common/ApiExceptionHandler.java",
                     "common/ClockConfig.java",
                     "common/PublicEndpoints.java",

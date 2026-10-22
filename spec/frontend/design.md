@@ -168,6 +168,15 @@ Scope tags: `[ALL]` platform-level, enduring across every phase. `[P1]`…`[P5]`
 > It did not work before 2026-10-21: list-valued token claims were stored in a form SAS could not read back
 > (`SasLoginIntegrationTest.endSession*`).
 
+> **Note (2026-10-22, local stack — supersedes the Vite-proxy edge in the note above):** the whole local stack, apps
+> included, runs in Docker (`infra/local/`, see its README). The edge is a Caddy container on `http://localhost:5173` with
+> exactly the path map in (2) above; `/app*` goes to the Vite dev server in its own container (`bin/up --frontend`), so the
+> SPA's Vite config needs no `server.proxy`, only `base: '/app/'`, `server.host: true` and HMR through the edge. The rest of
+> (2) stands (issuer `http://localhost:5173`, JWKS straight at auth-service). Emails land in Mailpit (`http://localhost:8025`);
+> payments are made on a local anvil chain with a mock 6-decimal USDC (`bin/chain pay|pay-blocked|finalize|reorg`), so every
+> payment state including `HELD` can be produced by hand. `bin/smoke` drives register → verify → MFA → MERCHANT → invoice →
+> pay → `ATTESTED` → receipt → `HELD` → sign-out through the edge; it passed 2026-10-22.
+
 **Requested scopes**: `openid profile email`.
 
 **Access-token claims** — `contracts/api/token-claims.md`. The SPA depends on no claim outside that table for a given issuance path.

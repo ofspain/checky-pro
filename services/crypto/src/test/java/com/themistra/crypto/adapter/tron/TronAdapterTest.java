@@ -641,6 +641,42 @@ class TronAdapterTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void subscribeAddressSinceScansFromTheFirstBlockMinedAtOrAfterTheInstantNotFromTheHead()
+            throws IllegalException {
+        // 2026-10-21: mirrors EthereumAdapterTest - a transfer mined before the watcher subscribed
+        // (block 101, head 110) must still be found. Block n is mined at (1000 + 3n) seconds.
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(scheduler.scheduleWithFixedDelay(taskCaptor.capture(), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn((ScheduledFuture) mock(ScheduledFuture.class));
+        List<TxResult> received = new ArrayList<>();
+        adapter.subscribeAddressSince(WATCHED_ADDRESS, java.time.Instant.ofEpochSecond(1_300),
+                (provider, result, rawJson) -> received.add(result));
+        verifyNoInteractions(apiWrapper); // nothing read at subscribe time
+
+        stubCurrentBlock(110L);
+        when(apiWrapper.getBlockByNum(anyLong())).thenAnswer(invocation -> {
+            long number = invocation.getArgument(0);
+            Chain.BlockHeader.raw raw = Chain.BlockHeader.raw.newBuilder()
+                    .setNumber(number).setTimestamp((1_000 + 3 * number) * 1_000).build();
+            return org.tron.trident.proto.Response.BlockExtention.newBuilder()
+                    .setBlockHeader(Chain.BlockHeader.newBuilder().setRawData(raw)).build();
+        });
+        TransactionInfo.Log log = transferLog(CONTRACT_BODY, SENDER_BODY, WATCHED_BODY, 10L);
+        for (long block = 100L; block <= 110L; block++) {
+            when(apiWrapper.getTransactionInfoByBlockNum(block)).thenReturn(infoListOf());
+        }
+        when(apiWrapper.getTransactionInfoByBlockNum(101L)).thenReturn(infoListOf(minedInfo(101L, log)));
+
+        taskCaptor.getValue().run();
+
+        verify(apiWrapper).getTransactionInfoByBlockNum(100L); // block 100 is mined at exactly 1300
+        verify(apiWrapper, never()).getTransactionInfoByBlockNum(99L);
+        assertThat(received).hasSize(1);
+        assertThat(received.get(0).confirmations()).isEqualTo(10); // 110 - 101 + 1
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void observationCarriesConfirmationsBasedOnPollHeadBlock() throws IllegalException {
         // Phase 11 Gap 5.
         stubCurrentBlock(100L);

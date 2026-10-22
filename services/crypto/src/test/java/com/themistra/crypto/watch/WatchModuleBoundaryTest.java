@@ -37,6 +37,8 @@ class WatchModuleBoundaryTest {
                     "import com.themistra.crypto.token.AddressValidator;"),
             "com.themistra.crypto.adapter", Set.of(
                     "import com.themistra.crypto.adapter.Chain;",
+                    // 2026-10-21: lets a watcher scan from its watch's creation time (no missed payments)
+                    "import com.themistra.crypto.adapter.HistoricalSubscriber;",
                     "import com.themistra.crypto.adapter.ProviderSet;",
                     "import com.themistra.crypto.adapter.model.FinalityStatus;",
                     "import com.themistra.crypto.adapter.model.Subscription;",

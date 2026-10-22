@@ -3,6 +3,7 @@ package com.themistra.crypto.watch;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.Chain;
 import com.themistra.crypto.adapter.ChainAdapter;
+import com.themistra.crypto.adapter.HistoricalSubscriber;
 import com.themistra.crypto.adapter.ObservationSink;
 import com.themistra.crypto.adapter.FakeChainAdapter;
 import com.themistra.crypto.adapter.ProviderSet;
@@ -55,6 +56,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.withSettings;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -659,6 +661,36 @@ class WatcherTest {
     }
 
     @Test
+    void observationsFromDifferentProvidersAreHandledOneAtATime() throws Exception {
+        // 2026-10-21: providers deliver on their own threads. Handled concurrently, a slower provider's
+        // stale cursor save overwrote the seen snapshot (found by the infra/local Docker stack).
+        ChainCursor cursor = ChainCursor.placeholder("ETHEREUM", watch.watchId(), NOW);
+        when(chainCursorRepository.findByWatchId(watch.watchId())).thenReturn(Optional.of(cursor));
+        java.util.concurrent.CountDownLatch providerAInside = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch releaseProviderA = new java.util.concurrent.CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            providerAInside.countDown();
+            releaseProviderA.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            return null;
+        }).when(observationLog).record(any(), any(), eq("provider-a"), any(), any());
+        Watcher watcher = newWatcher(60_000);
+        watcher.start();
+        TxResult result = tx(true, 100L, BigDecimal.TEN, 3);
+
+        Thread a = Thread.ofVirtual().start(() -> deliver(providerA, result));
+        assertThat(providerAInside.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        Thread b = Thread.ofVirtual().start(() -> deliver(providerB, result));
+
+        assertThat(b.join(java.time.Duration.ofMillis(300))).isFalse(); // waits for provider-a
+        verify(observationLog, never()).record(any(), any(), eq("provider-b"), any(), any());
+
+        releaseProviderA.countDown();
+        assertThat(a.join(java.time.Duration.ofSeconds(5))).isTrue();
+        assertThat(b.join(java.time.Duration.ofSeconds(5))).isTrue();
+        verify(observationLog, times(1)).record(any(), any(), eq("provider-b"), eq(FactType.EXISTENCE), any());
+    }
+
+    @Test
     void doesNotEmitSeenWhenExistenceIsHeld() {
         when(quorumDecisionService.evaluate(eq("ETHEREUM"), eq(TX_HASH), eq(FactType.EXISTENCE), anyList()))
                 .thenReturn(held(FactType.EXISTENCE));
@@ -1121,6 +1153,21 @@ class WatcherTest {
         verify(reorgDetector).reorg(watch.watchId(), watch.invoiceUuid(), watch.chain(), TX_HASH,
                 watch.tokenContractAddress());
         assertThat(cursor.txHash()).isNull();
+    }
+
+    @Test
+    void anAdapterThatCanScanHistorySubscribesFromTheWatchCreationTimeNotTheHead() {
+        // 2026-10-21: the watcher subscribes on a later reconciliation tick (and again after every
+        // restart), so starting at the head would miss a transfer mined in between.
+        ChainAdapter adapter = mock(ChainAdapter.class, withSettings().extraInterfaces(HistoricalSubscriber.class));
+        when(((HistoricalSubscriber) adapter).subscribeAddressSince(eq(ADDRESS), eq(watch.createdAt()), any()))
+                .thenReturn(() -> { });
+        Watcher watcher = newWatcher(60_000, List.of(new ProviderSet.NamedAdapter("provider-a", adapter)));
+
+        watcher.start();
+
+        verify((HistoricalSubscriber) adapter).subscribeAddressSince(eq(ADDRESS), eq(watch.createdAt()), any());
+        verify(adapter, never()).subscribeAddress(any(), any());
     }
 
     @Test

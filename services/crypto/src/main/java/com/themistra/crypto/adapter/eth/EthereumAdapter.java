@@ -4,11 +4,15 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.themistra.crypto.adapter.Chain;
 import com.themistra.crypto.adapter.ChainAdapter;
+import com.themistra.crypto.adapter.HistoricalSubscriber;
 import com.themistra.crypto.adapter.ObservationSink;
+import com.themistra.crypto.adapter.StartBlocks;
 import com.themistra.crypto.adapter.model.FinalityStatus;
 import com.themistra.crypto.adapter.model.Subscription;
 import com.themistra.crypto.adapter.model.TokenInfo;
 import com.themistra.crypto.adapter.model.TxResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.web3j.abi.FunctionEncoder;
 import org.web3j.abi.FunctionReturnDecoder;
 import org.web3j.abi.TypeEncoder;
@@ -34,10 +38,12 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -70,11 +76,20 @@ import java.util.concurrent.atomic.AtomicLong;
  * anything wrapping them) as potentially sensitive, not just the log lines this class writes itself
  * (which never include the key directly).</p>
  */
-public class EthereumAdapter implements ChainAdapter, AutoCloseable {
+public class EthereumAdapter implements ChainAdapter, HistoricalSubscriber, AutoCloseable {
+
+    private static final Logger logger = LoggerFactory.getLogger(EthereumAdapter.class);
 
     /** keccak256("Transfer(address,address,uint256)") — the standard ERC-20 Transfer event topic. */
     private static final String TRANSFER_EVENT_TOPIC =
             "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+    /** A {@link #subscribeAddressSince} cursor whose start block is not resolved yet. */
+    private static final long START_UNRESOLVED = Long.MIN_VALUE;
+
+    /** Caps one eth_getLogs range, so a subscription catching up from an old start block never asks
+     * a provider for an unbounded range in one tick (providers reject very large ranges). */
+    static final long MAX_BLOCKS_PER_POLL = 1000;
 
     private final Web3j web3j;
     private final String providerName;
@@ -148,8 +163,19 @@ public class EthereumAdapter implements ChainAdapter, AutoCloseable {
     public Subscription subscribeAddress(String address, ObservationSink sink) {
         AtomicLong lastScannedBlock = new AtomicLong(fetchLatestBlockNumber().longValue());
 
+        return schedulePolling(address, sink, lastScannedBlock, null);
+    }
+
+    @Override
+    public Subscription subscribeAddressSince(String address, Instant since, ObservationSink sink) {
+        Objects.requireNonNull(since, "since");
+        return schedulePolling(address, sink, new AtomicLong(START_UNRESOLVED), since);
+    }
+
+    private Subscription schedulePolling(String address, ObservationSink sink, AtomicLong lastScannedBlock,
+            Instant since) {
         ScheduledFuture<?> future = scheduler.scheduleWithFixedDelay(
-                () -> pollOnce(address, sink, lastScannedBlock),
+                () -> pollOnce(address, sink, lastScannedBlock, since),
                 pollInterval.toMillis(), pollInterval.toMillis(), TimeUnit.MILLISECONDS);
 
         return () -> future.cancel(false);
@@ -187,12 +213,31 @@ public class EthereumAdapter implements ChainAdapter, AutoCloseable {
         scheduler.shutdown();
     }
 
-    private void pollOnce(String address, ObservationSink sink, AtomicLong lastScannedBlock) {
+    private void pollOnce(String address, ObservationSink sink, AtomicLong lastScannedBlock, Instant since) {
+        // scheduleWithFixedDelay silently and permanently cancels all future runs of this task if it
+        // ever throws, so one transient RPC failure must not end this subscription's polling forever.
+        // Mirrors TronAdapter's guard. The cursor only advances on a successful tick, so the failed
+        // range is rescanned next time (2026-10-21, found by the infra/local Docker stack).
+        try {
+            pollOnceUnguarded(address, sink, lastScannedBlock, since);
+        } catch (RuntimeException e) {
+            logger.error("Provider {} poll tick failed for watch address {} - will retry next tick",
+                    providerName, address, e);
+        }
+    }
+
+    private void pollOnceUnguarded(String address, ObservationSink sink, AtomicLong lastScannedBlock,
+            Instant since) {
+        BigInteger headBlock = fetchLatestBlockNumber();
+        if (lastScannedBlock.get() == START_UNRESOLVED) {
+            long startBlock = StartBlocks.firstBlockAtOrAfter(headBlock.longValue(), since, this::blockTimestampMillis);
+            lastScannedBlock.set(startBlock - 1);
+        }
         BigInteger fromBlock = BigInteger.valueOf(lastScannedBlock.get() + 1);
-        BigInteger toBlock = fetchLatestBlockNumber();
-        if (fromBlock.compareTo(toBlock) > 0) {
+        if (fromBlock.compareTo(headBlock) > 0) {
             return; // nothing new since the last poll
         }
+        BigInteger toBlock = headBlock.min(fromBlock.add(BigInteger.valueOf(MAX_BLOCKS_PER_POLL - 1)));
 
         EthFilter filter = new EthFilter(
                 DefaultBlockParameter.valueOf(fromBlock), DefaultBlockParameter.valueOf(toBlock),
@@ -208,7 +253,7 @@ public class EthereumAdapter implements ChainAdapter, AutoCloseable {
         List<EthLog.LogResult<?>> logs = fetchLogs(filter);
         for (EthLog.LogResult<?> logResult : logs) {
             Log log = (Log) logResult.get();
-            TxResult result = buildTxResultFromLog(log, toBlock);
+            TxResult result = buildTxResultFromLog(log, headBlock);
             sink.onObservation(providerName, result, toRawJson(log, result));
         }
 
@@ -342,6 +387,21 @@ public class EthereumAdapter implements ChainAdapter, AutoCloseable {
         } catch (IOException e) {
             throw new IllegalStateException(
                     "Provider " + providerName + " failed to answer eth_getTransactionReceipt for " + txHash, e);
+        }
+    }
+
+    private long blockTimestampMillis(long blockNumber) {
+        try {
+            EthBlock.Block block = web3j.ethGetBlockByNumber(
+                    DefaultBlockParameter.valueOf(BigInteger.valueOf(blockNumber)), false).send().getBlock();
+            if (block == null) {
+                throw new IllegalStateException(
+                        "Provider " + providerName + " returned no block for eth_getBlockByNumber(" + blockNumber + ")");
+            }
+            return block.getTimestamp().longValueExact() * 1000;
+        } catch (IOException e) {
+            throw new IllegalStateException(
+                    "Provider " + providerName + " failed to answer eth_getBlockByNumber(" + blockNumber + ")", e);
         }
     }
 

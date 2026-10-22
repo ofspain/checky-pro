@@ -2,6 +2,7 @@ package com.themistra.crypto.screening;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -16,8 +17,12 @@ import java.util.Objects;
  * claiming one was ruled out ({@code CLEARED}), since no real screening ever ran (frozen brief Phase 4,
  * Finding #1 disposition). Every call still persists a {@link ScreeningResult} row, honoring
  * {@link ScreeningClient}'s own audit-trail contract.
+ *
+ * <p>The default in every environment. {@link LocalDevScreeningClient} replaces it only when
+ * {@code themistra.crypto.screening.mode=local-dev} is set (infra/local, 2026-10-21).</p>
  */
 @Component
+@ConditionalOnProperty(name = "themistra.crypto.screening.mode", havingValue = "fail-closed", matchIfMissing = true)
 public class FailClosedScreeningClient implements ScreeningClient {
 
     private static final Logger log = LoggerFactory.getLogger(FailClosedScreeningClient.class);

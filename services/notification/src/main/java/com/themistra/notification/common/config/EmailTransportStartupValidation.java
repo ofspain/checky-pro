@@ -5,7 +5,8 @@ import org.springframework.stereotype.Component;
 import java.util.Set;
 
 /**
- * Enforces that {@link EmailProperties#transport()} is exactly {@code "ses"} or {@code "fake"} -
+ * Enforces that {@link EmailProperties#transport()} is exactly {@code "ses"}, {@code "fake"} or
+ * {@code "smtp"} (local development only, 2026-10-21) -
  * mirrors {@link LinkPropertiesStartupValidation}'s own established pattern (Kimi Phase 8
  * Finding #8, self-review Finding #5). Unlike that validation, this one is unconditional (no
  * {@code @Profile} guard): an invalid value is wrong in every profile, not only outside
@@ -21,7 +22,7 @@ import java.util.Set;
 @Component
 class EmailTransportStartupValidation {
 
-    private static final Set<String> ALLOWED_VALUES = Set.of("ses", "fake");
+    private static final Set<String> ALLOWED_VALUES = Set.of("ses", "fake", "smtp");
 
     EmailTransportStartupValidation(EmailProperties emailProperties) {
         if (!ALLOWED_VALUES.contains(emailProperties.transport())) {

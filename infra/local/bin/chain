@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Drive the local anvil chain. Payments are made in MockUSDC (6 decimals) from anvil account 0.
+#   bin/chain pay <toAddress> <amount>   send <amount> base units (1 USDC = 1000000) to an address
+#   bin/chain pay-blocked <to> <amount>  the same from the sender local screening blocks (→ HELD)
+#   bin/chain mine [n]                   mine n blocks now (default 1)
+#   bin/chain finalize                   mine 64 blocks, so everything so far is finalized
+#   bin/chain reorg <depth>              replace the last <depth> blocks (drops their transactions)
+#   bin/chain status                     latest and finalized block numbers
+#   bin/chain balance <address>          MockUSDC balance in base units
+#   bin/chain addresses                  anvil's funded accounts, to use as pay-to addresses
+#   bin/chain new-address                a fresh, checksummed pay-to address (crypto requires EIP-55)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+TOKEN=0x5FbDB2315678afecb367f032d93F642f64180aa3
+# anvil's well-known development key for account 0; it controls nothing outside this local chain.
+KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+# anvil account 2 (0x3C44Cd…93BC), the address local screening reports as BLOCKED.
+BLOCKED_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+run() { docker compose exec -T anvil "$@"; }
+rpc=(--rpc-url http://localhost:8545)
+case "${1:-help}" in
+  pay)
+    [[ $# -eq 3 ]] || { echo "usage: bin/chain pay <toAddress> <amount-in-base-units>"; exit 2; }
+    run cast send "$TOKEN" "transfer(address,uint256)" "$2" "$3" --private-key "$KEY" "${rpc[@]}" \
+      | grep -E "^(transactionHash|blockNumber|status) " ;;
+  pay-blocked)
+    [[ $# -eq 3 ]] || { echo "usage: bin/chain pay-blocked <toAddress> <amount-in-base-units>"; exit 2; }
+    run cast send "$TOKEN" "transfer(address,uint256)" "$2" "$3" --private-key "$BLOCKED_KEY" "${rpc[@]}" \
+      | grep -E "^(transactionHash|blockNumber|status) " ;;
+  mine) run cast rpc anvil_mine "$(printf '0x%x' "${2:-1}")" "${rpc[@]}" >/dev/null; "$0" status ;;
+  finalize) run cast rpc anvil_mine 0x40 "${rpc[@]}" >/dev/null; "$0" status ;;
+  reorg)
+    [[ $# -eq 2 ]] || { echo "usage: bin/chain reorg <depth>"; exit 2; }
+    run cast rpc anvil_reorg "$2" '[]' "${rpc[@]}" >/dev/null; echo "replaced the last $2 blocks"; "$0" status ;;
+  status)
+    echo "latest    $(run cast block-number "${rpc[@]}")"
+    echo "finalized $(run cast block finalized --field number "${rpc[@]}")" ;;
+  balance) run cast call "$TOKEN" "balanceOf(address)(uint256)" "$2" "${rpc[@]}" ;;
+  addresses)
+    for i in 1 2 3 4 5; do run cast wallet address --mnemonic "test test test test test test test test test test test junk" --mnemonic-index "$i"; done ;;
+  new-address) run cast to-check-sum-address "0x$(openssl rand -hex 20)" ;;
+  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

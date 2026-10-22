@@ -453,3 +453,11 @@ Tests mirror the layout under `src/test/java/com/themistra/payment/`. Contract f
 > is looked up for the merchant first, so another merchant's invoice is the same 404 as an unknown one (R28). Read-only, across
 > module seams through views only (L12): `InvoiceService.getViewForMerchant`, `PaymentService.listForInvoice` (`PaymentView`),
 > `ReceiptReadService.receiptUuidsByPaymentId`. It serves frontend R32–R34, R39, R55 and R56. Handler count 5 → 6.
+
+> **Note (2026-10-22, found by the local Docker stack, `infra/local/`):** (1) `CryptoServiceTokenProvider` requested
+> its client-credentials token with no `scope`, so crypto-service saw no authorities and refused every watch and attestation
+> call. It now requests `internal.crypto:write`; `CryptoContractConformanceTest` checks that this is the scope
+> `crypto-internal.yaml` requires and auth-service registers for `payment-service`. (2) The crypto-unavailable 503 is now logged
+> at WARN with the cause's class (timeout, refused, 4xx/5xx), because the problem body is deliberately generic. Open: a crypto
+> 400 (e.g. a non-EIP-55 pay-to address) is still reported as this 503 instead of a 400, and a `chain.tx.confirmed` that arrives
+> before its `chain.tx.seen` (separate topics) is dropped, so the confirmation count can lag until finality.

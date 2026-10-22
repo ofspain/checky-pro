@@ -239,3 +239,8 @@ common/
 ```
 
 Tests mirror the layout under `src/test/java/com/themistra/notification/` with a capturing fake transport. This service authors no new published-event contract at launch (consume-only, L2); it deserializes against the existing `contracts/events/{auth,payments}/*` schemas. If O5 is taken, add `contracts/events/notifications/*` and an outbox module.
+
+> **Note (2026-10-22, local stack):** `EMAIL_TRANSPORT=smtp` selects `channel/SmtpEmailTransport` (Spring
+> `JavaMailSender`, plain-text UTF-8), for Mailpit in `infra/local/`. Allowed values are now `ses`, `fake`, `smtp`. It refuses
+> to start outside the `local` profile, and a send failure surfaces as `EmailDeliveryException` naming only the exception
+> class, never the message or recipient. Production stays on `ses`.
