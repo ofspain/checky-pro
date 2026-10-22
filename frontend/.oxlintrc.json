@@ -1,0 +1,63 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "off",
+    "suspicious": "off",
+    "pedantic": "off",
+    "perf": "off",
+    "style": "off",
+    "restriction": "off",
+    "nursery": "off"
+  },
+  "rules": {
+    "no-restricted-globals": [
+      "error",
+      {
+        "name": "fetch",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "name": "XMLHttpRequest",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      }
+    ],
+    "no-restricted-properties": [
+      "error",
+      {
+        "object": "window",
+        "property": "fetch",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "globalThis",
+        "property": "fetch",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "self",
+        "property": "fetch",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "top",
+        "property": "fetch",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "parent",
+        "property": "fetch",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "opener",
+        "property": "fetch",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      },
+      {
+        "object": "frames",
+        "property": "fetch",
+        "message": "Call the backend through @themistra/api-client (L6)."
+      }
+    ]
+  }
+}
