@@ -65,12 +65,36 @@ function fakeLocks(): TabLocks & { isHeld(): boolean } {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/**
+ * A real BroadcastChannel that reports each post as it is made, and can hold delivery back. Holding it back
+ * reproduces the cross-tab case the grace wait exists for: the lock reaches the follower before the outcome does.
+ */
+class ObservedChannel extends BroadcastChannel {
+  readonly #onPost: (message: unknown) => void;
+  readonly #delayMs: number;
+
+  constructor(name: string, onPost: (message: unknown) => void, delayMs = 0) {
+    super(name);
+    this.#onPost = onPost;
+    this.#delayMs = delayMs;
+  }
+
+  override postMessage(message: unknown): void {
+    this.#onPost(message);
+    if (this.#delayMs === 0) return super.postMessage(message);
+    setTimeout(() => super.postMessage(message), this.#delayMs);
+  }
+}
+
 let channelName: string;
 let opened: Array<{ close(): void }>;
 let channelSequence = 0;
 
 /** One simulated tab: its own fake LocalSession, sharing the test's channel name and lock manager. */
-function openTab(locks: TabLocks, options: { timeoutMs?: number; graceMs?: number; adopt?: (token: string) => void } = {}) {
+function openTab(
+  locks: TabLocks,
+  options: { timeoutMs?: number; graceMs?: number; adopt?: (token: string) => void; channel?: BroadcastChannel } = {},
+) {
   let token: string | null = 'old';
   const attempts: Array<Deferred<string>> = [];
   const renew = vi.fn(() => {
@@ -89,7 +113,7 @@ function openTab(locks: TabLocks, options: { timeoutMs?: number; graceMs?: numbe
   );
   const local: LocalSession = { current: () => token, renew, adopt };
   const shared: SharedRenewal = shareRenewalAcrossTabs(local, {
-    channel: new BroadcastChannel(channelName),
+    channel: options.channel ?? new BroadcastChannel(channelName),
     locks,
     graceMs: options.graceMs ?? 25,
     timeoutMs: options.timeoutMs,
@@ -112,6 +136,21 @@ function vanishingLeader(locks: TabLocks) {
   const gone = deferred<void>();
   void locks.request(RENEWAL_LOCK, {}, () => gone.promise);
   return { vanish: () => gone.resolve() };
+}
+
+/** Starts capturing console output; the returned check fails if any token reached storage, cookies or the console. */
+function watchForTokenLeaks(...tokens: string[]) {
+  const cookieBefore = document.cookie;
+  const consoleSpies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+    vi.spyOn(console, level).mockImplementation(() => undefined),
+  );
+  return (...errors: unknown[]) => {
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(document.cookie).toBe(cookieBefore);
+    const surfaced = JSON.stringify([consoleSpies.map((spy) => spy.mock.calls), errors.map((error) => String(error))]);
+    for (const token of tokens) expect(surfaced).not.toContain(token);
+  };
 }
 
 const settled = <T>(promise: Promise<T>) =>
@@ -159,6 +198,7 @@ describe('siblingTabsShareOneRenewal', () => {
     const observer = observeChannel();
     const a = openTab(locks);
     const b = openTab(locks);
+    const assertNoTokenLeaked = watchForTokenLeaks('old');
 
     const leading = settled(a.shared.renew());
     await vi.waitFor(() => expect(a.renew).toHaveBeenCalledTimes(1));
@@ -173,6 +213,7 @@ describe('siblingTabsShareOneRenewal', () => {
     expect(b.renew).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(observer.seen).toHaveLength(1));
     expect(observer.seen).toEqual([{ type: 'renewal:failed' }]);
+    assertNoTokenLeaked(outcome.ok ? undefined : outcome.error);
   });
 
   it('runs one renewal when two tabs ask in the same tick (AC4)', async () => {
@@ -253,9 +294,11 @@ describe('siblingTabsShareOneRenewal', () => {
     const locks = fakeLocks();
     const observer = observeChannel();
     const a = openTab(locks, { timeoutMs: 60 });
+    const assertNoTokenLeaked = watchForTokenLeaks('old');
 
     const hung = await settled(a.shared.renew());
     expect(hung.ok ? 'resolved' : (hung.error as Error).name).toBe('RenewalTimeoutError');
+    assertNoTokenLeaked(hung.ok ? undefined : hung.error);
     await vi.waitFor(() => expect(observer.seen).toEqual([{ type: 'renewal:failed' }]));
     expect(locks.isHeld()).toBe(false);
 
@@ -450,6 +493,138 @@ describe('siblingTabsShareOneRenewal', () => {
     expect(await following).toBe('fresh');
     expect(b.renew).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(uncaught).toEqual([adoptDefect]));
+  });
+
+  it('keeps listening after an idle tab\'s adopt throws, and surfaces each defect', async () => {
+    const realQueueMicrotask = globalThis.queueMicrotask;
+    const uncaught: unknown[] = [];
+    vi.stubGlobal('queueMicrotask', (task: () => void) =>
+      realQueueMicrotask(() => {
+        try {
+          task();
+        } catch (error) {
+          uncaught.push(error);
+        }
+      }),
+    );
+    const locks = fakeLocks();
+    const adoptDefect = new Error('adopt defect');
+    const a = openTab(locks);
+    const idle = openTab(locks, {
+      adopt: () => {
+        throw adoptDefect;
+      },
+    });
+
+    for (const [attempt, token] of [[0, 'fresh'], [1, 'fresher']] as const) {
+      const renewal = a.shared.renew();
+      await vi.waitFor(() => expect(a.renew).toHaveBeenCalledTimes(attempt + 1));
+      a.attempts[attempt]!.resolve(token);
+      expect(await renewal).toBe(token);
+      await vi.waitFor(() => expect(idle.adopt).toHaveBeenCalledTimes(attempt + 1));
+    }
+
+    expect(idle.adopt.mock.calls).toEqual([['fresh'], ['fresher']]);
+    await vi.waitFor(() => expect(uncaught).toEqual([adoptDefect, adoptDefect]));
+    expect(idle.renew).not.toHaveBeenCalled();
+  });
+
+  it('waits out a delayed outcome that lands after the lock, and uses it instead of renewing (grace, AC1)', async () => {
+    const locks = fakeLocks();
+    const a = openTab(locks, { channel: new ObservedChannel(channelName, () => undefined, 30) });
+    const b = openTab(locks, { graceMs: 200 });
+
+    const leading = a.shared.renew();
+    await vi.waitFor(() => expect(a.renew).toHaveBeenCalledTimes(1));
+    const following = b.shared.renew();
+    a.attempts[0]!.resolve('fresh');
+
+    // A releases the lock at once, but its message reaches B 30 ms later, inside B's grace wait.
+    expect(await leading).toBe('fresh');
+    await vi.waitFor(() => expect(locks.isHeld()).toBe(true));
+    expect(await following).toBe('fresh');
+    expect(b.renew).not.toHaveBeenCalled();
+  });
+
+  it('posts the outcome while still holding the lock, so a follower cannot get the lock first', async () => {
+    const locks = fakeLocks();
+    const heldAtPost: boolean[] = [];
+    const a = openTab(locks, { channel: new ObservedChannel(channelName, () => heldAtPost.push(locks.isHeld())) });
+
+    const success = a.shared.renew();
+    await vi.waitFor(() => expect(a.renew).toHaveBeenCalledTimes(1));
+    a.attempts[0]!.resolve('fresh');
+    await success;
+
+    const failure = settled(a.shared.renew());
+    await vi.waitFor(() => expect(a.renew).toHaveBeenCalledTimes(2));
+    a.attempts[1]!.reject(new Error('no SAS session'));
+    await failure;
+
+    expect(heldAtPost).toEqual([true, true]);
+  });
+
+  it('shares nothing when the leader only succeeds after its deadline (P7-1)', async () => {
+    const locks = fakeLocks();
+    const observer = observeChannel();
+    const a = openTab(locks, { timeoutMs: 40 });
+    const b = openTab(locks);
+
+    const leading = settled(a.shared.renew());
+    await vi.waitFor(() => expect(a.renew).toHaveBeenCalledTimes(1));
+    const result = await leading;
+    a.attempts[0]!.resolve('too-late');
+    await sleep(20);
+
+    expect(result.ok ? 'resolved' : (result.error as Error).name).toBe('RenewalTimeoutError');
+    expect(observer.seen).toEqual([{ type: 'renewal:failed' }]);
+    expect(b.adopt).not.toHaveBeenCalled();
+  });
+
+  it('keeps the deadline after close(): a renewal still pending then rejects, and nothing is posted (P8-2 contract)', async () => {
+    const locks = fakeLocks();
+    const observer = observeChannel();
+    const a = openTab(locks, { timeoutMs: 150 });
+
+    const inFlight = settled(a.shared.renew());
+    await vi.waitFor(() => expect(a.renew).toHaveBeenCalledTimes(1), { interval: 1 });
+    // close() lands well inside the deadline: nothing has been posted yet.
+    expect(observer.seen).toEqual([]);
+    a.shared.close();
+    const result = await inFlight;
+    a.attempts[0]!.resolve('too-late');
+    await sleep(20);
+
+    expect(result.ok ? 'resolved' : (result.error as Error).name).toBe('RenewalTimeoutError');
+    expect(locks.isHeld()).toBe(false);
+    expect(observer.seen).toEqual([]);
+  });
+
+  it('still renews through the lock after close(), as a tab on its own', async () => {
+    const locks = fakeLocks();
+    const observer = observeChannel();
+    const a = openTab(locks);
+    a.shared.close();
+
+    const renewal = a.shared.renew();
+    await vi.waitFor(() => expect(a.renew).toHaveBeenCalledTimes(1));
+    a.attempts[0]!.resolve('fresh');
+
+    expect(await renewal).toBe('fresh');
+    await sleep(10);
+    expect(observer.seen).toEqual([]);
+  });
+
+  it("reads current() from the tab's own session", async () => {
+    const locks = fakeLocks();
+    const a = openTab(locks);
+    expect(a.shared.current()).toBe('old');
+
+    const renewal = a.shared.renew();
+    await vi.waitFor(() => expect(a.renew).toHaveBeenCalledTimes(1));
+    a.attempts[0]!.resolve('fresh');
+    await renewal;
+    expect(a.shared.current()).toBe('fresh');
   });
 
   it('defaults the grace period to one second', () => {
