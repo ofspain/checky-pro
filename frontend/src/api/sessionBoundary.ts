@@ -16,7 +16,10 @@ export interface SessionTokens {
 /** Upper bound on one renewal, so a renewal that never settles can't hold every waiting call forever. */
 export const RENEWAL_TIMEOUT_MS = 30_000;
 
-/** One per tab: every client's middleware shares this boundary's single in-flight renewal (R21, L18). */
+/**
+ * One per tab: every client's middleware shares this boundary's single in-flight renewal (R21, L18). Production wiring
+ * creates exactly one and passes it to every client; a second boundary would run its own renewals.
+ */
 export interface SessionBoundary {
   /** Joins the renewal in flight, or starts exactly one. */
   renew(): Promise<string>;
@@ -51,7 +54,8 @@ export function createSessionBoundary(
   let inFlight: Promise<string> | null = null;
 
   function withTimeout(attempt: Promise<string>): Promise<string> {
-    // A result that arrives after the timeout is ignored, and must not surface as an unhandled rejection.
+    // A result that arrives after the timeout is ignored here (SessionTokens offers no cancellation), and must not
+    // surface as an unhandled rejection. If it still updates current(), later requests simply use the newer token.
     attempt.catch(() => undefined);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -76,7 +80,10 @@ export function createSessionBoundary(
   }
 
   function middleware(publicOperations: ReadonlySet<string>): Middleware {
-    const pending = new Map<string, { clone: Request | null; tokenUsed: string | null }>();
+    const pending = new Map<
+      string,
+      { clone: Request | null; tokenUsed: string | null; waitedOnFailedRenewal: boolean }
+    >();
     const isPublic = (request: Request, schemaPath: string) => publicOperations.has(`${request.method} ${schemaPath}`);
     const setBearer = (request: Request, token: string | null) => {
       if (token) request.headers.set('Authorization', `Bearer ${token}`);
@@ -86,8 +93,10 @@ export function createSessionBoundary(
     return {
       async onRequest({ request, schemaPath, id }) {
         if (isPublic(request, schemaPath)) return undefined;
-        // Don't knowingly send a token that is being replaced; the renewal's outcome is handled on the response.
-        if (inFlight) await inFlight.catch(() => undefined);
+        // Don't knowingly send a token that is being replaced. If that renewal fails, this request's 401 must not
+        // start another one straight away: the failure has already been reported for this burst.
+        let waitedOnFailedRenewal = false;
+        if (inFlight) waitedOnFailedRenewal = await inFlight.then(() => false, () => true);
         const tokenUsed = tokens.current();
         setBearer(request, tokenUsed);
         let clone: Request | null = null;
@@ -96,7 +105,7 @@ export function createSessionBoundary(
         } catch {
           // An uncloneable body can't be re-sent; its 401 still drives the renewal.
         }
-        pending.set(id, { clone, tokenUsed });
+        pending.set(id, { clone, tokenUsed, waitedOnFailedRenewal });
         return request;
       },
 
@@ -107,6 +116,7 @@ export function createSessionBoundary(
 
         // A different current token means a renewal already completed after this request was sent.
         if (entry.tokenUsed === tokens.current()) {
+          if (entry.waitedOnFailedRenewal) return response;
           try {
             await renew();
           } catch {
@@ -115,6 +125,8 @@ export function createSessionBoundary(
         }
         if (!entry.clone) return response;
         setBearer(entry.clone, tokens.current());
+        // Straight to the transport: no middleware sees the re-send, and a transport rejection here reaches the caller
+        // directly, not onError. createAuthClient() sets no init extensions, so the single argument is complete.
         return clientOptions.fetch(entry.clone);
       },
 
