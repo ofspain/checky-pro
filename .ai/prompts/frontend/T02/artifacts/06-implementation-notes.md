@@ -26,7 +26,7 @@ Not touched: `vite.config.ts`, `index.html`, `main.tsx`, `shellBuildsAndMounts.t
     nothing and logs React Router's "does not start with the basename" warning on stderr, twice per mounting case because
     of StrictMode.
   - The `innerHTML === ''` assertion and the no-fetch/storage/worker assertions hold.
-- `pnpm -C frontend build`: clean. The single bundle is 312.6 kB, 98.7 kB gzipped; it was 190 kB before the router.
+- `pnpm -C frontend build`: clean. The single bundle is 312.6 kB, 98.7 kB gzipped. The size before the router was not measured.
 
 ## Live checks through the edge (`http://localhost:5173`), AC5
 | Request | Status | SPA HTML |
