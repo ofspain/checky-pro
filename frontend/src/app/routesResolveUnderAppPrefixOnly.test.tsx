@@ -13,29 +13,25 @@ const SAMPLE_UUID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 const DECLARED_PATHS: readonly string[] = [...PUBLIC_ROUTE_PATHS, ...AUTHENTICATED_ROUTE_PATHS];
 
-/** Edge prefixes that belong to the backend services (design.md §4c note 2026-10-21 (2)), each bare and with a sub-path. */
-const BACKEND_PATHS = [
+/** The edge prefixes that belong to the backend services, verbatim from design.md §4c note 2026-10-21 (2).
+ * If the edge gains a prefix, add it here. */
+const BACKEND_PREFIXES = [
   '/oauth2',
-  '/oauth2/authorize',
-  '/oauth2/token',
   '/login',
   '/logout',
   '/connect',
-  '/connect/logout',
   '/.well-known',
-  '/.well-known/openid-configuration',
   '/userinfo',
   '/error',
   '/accounts',
-  '/accounts/me',
   '/admin',
-  '/admin/accounts',
   '/api-keys',
   '/api/v1',
-  '/api/v1/invoices',
   '/notifications',
-  '/notifications/preferences',
-];
+] as const;
+
+/** Each prefix bare, with a trailing slash, and with a representative sub-path. */
+const BACKEND_PATHS = BACKEND_PREFIXES.flatMap((prefix) => [prefix, `${prefix}/`, `${prefix}/x`]);
 
 function concrete(path: string): string {
   return path.replaceAll(':id', SAMPLE_UUID);
@@ -51,6 +47,23 @@ function pathTree(routes: readonly RouteObject[]): unknown[] {
   return routes.map((route) => [route.path, route.children ? pathTree(route.children) : []]);
 }
 
+async function renderAt(location: string) {
+  const router = createMemoryRouter(appRoutes, { basename: APP_BASENAME, initialEntries: [location] });
+  toDispose = router;
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  mounted = { root, container };
+  await act(async () => {
+    root.render(
+      <AppShell>
+        <RouterProvider router={router} />
+      </AppShell>,
+    );
+  });
+  return { router, shellText: container.querySelector('[data-testid="app-shell"]')?.textContent };
+}
+
 let mounted: { root: Root; container: HTMLElement } | undefined;
 let toDispose: { dispose(): void } | undefined;
 
@@ -63,6 +76,7 @@ afterEach(async () => {
   }
   toDispose?.dispose();
   toDispose = undefined;
+  window.history.replaceState(null, '', '/');
 });
 
 describe('routesResolveUnderAppPrefixOnly', () => {
@@ -72,6 +86,15 @@ describe('routesResolveUnderAppPrefixOnly', () => {
     }
   });
 
+  it('resolves an emailed link with a query string and keeps the query (AC1, AC5)', async () => {
+    expect(leafPath(`${APP_BASENAME}/verify?token=abc`)).toBe('verify');
+    expect(leafPath(`${APP_BASENAME}/reset?token=abc`)).toBe('reset');
+
+    const { router } = await renderAt(`${APP_BASENAME}/verify?token=abc`);
+    expect(router.state.location.pathname).toBe('/app/verify');
+    expect(router.state.location.search).toBe('?token=abc');
+  });
+
   it('resolves none of the declared routes without the /app prefix (AC2)', () => {
     for (const path of DECLARED_PATHS) {
       expect(matchRoutes(appRoutes, `/${concrete(path)}`, APP_BASENAME), path).toBeNull();
@@ -79,38 +102,37 @@ describe('routesResolveUnderAppPrefixOnly', () => {
   });
 
   it('resolves no backend edge prefix (AC3, L9)', () => {
+    expect(BACKEND_PATHS).toHaveLength(36);
     for (const path of BACKEND_PATHS) {
       expect(matchRoutes(appRoutes, path, APP_BASENAME), path).toBeNull();
     }
   });
 
   it('sends an unmatched /app path to the silent catch-all, so the shell shows no text (AC4, L11)', async () => {
-    const router = createMemoryRouter(appRoutes, {
-      basename: APP_BASENAME,
-      initialEntries: [`${APP_BASENAME}/no-such-route`],
-    });
-    toDispose = router;
-    const container = document.createElement('div');
-    document.body.append(container);
-    const root = createRoot(container);
-    mounted = { root, container };
-
-    await act(async () => {
-      root.render(
-        <AppShell>
-          <RouterProvider router={router} />
-        </AppShell>,
-      );
-    });
+    const { router, shellText } = await renderAt(`${APP_BASENAME}/no-such-route`);
 
     expect(router.state.matches.map((match) => match.route.path)).toEqual(['/', '*']);
     expect(router.state.errors).toBeNull();
-    expect(container.querySelector('[data-testid="app-shell"]')?.textContent).toBe('');
+    expect(shellText).toBe('');
+  });
+
+  it('treats the bare /app/ as no route: only the root matches and nothing renders (T41 owns its redirect)', async () => {
+    const { router, shellText } = await renderAt(`${APP_BASENAME}/`);
+
+    expect(router.state.matches.map((match) => match.route.path)).toEqual(['/']);
+    expect(router.state.errors).toBeNull();
+    expect(shellText).toBe('');
   });
 
   it('declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)', () => {
-    expect(PUBLIC_ROUTE_PATHS).toHaveLength(9);
-    expect(AUTHENTICATED_ROUTE_PATHS).toHaveLength(11);
+    expect(PUBLIC_ROUTE_PATHS).toEqual([
+      'sign-in', 'callback', 'register', 'register/sent', 'verify', 'resend-verification', 'reset/request', 'reset',
+      'signed-out',
+    ]);
+    expect(AUTHENTICATED_ROUTE_PATHS).toEqual([
+      'home', 'account', 'account/sessions', 'account/mfa', 'api-keys', 'admin', 'invoices', 'invoices/:id', 'payments',
+      'notifications', 'receipts/:id',
+    ]);
     expect(new Set(DECLARED_PATHS).size).toBe(20);
     for (const path of DECLARED_PATHS) {
       expect(path.startsWith('/'), path).toBe(false);
@@ -119,11 +141,26 @@ describe('routesResolveUnderAppPrefixOnly', () => {
     expect(pathTree(appRoutes)).toEqual([['/', [...DECLARED_PATHS.map((path) => [path, []]), ['*', []]]]]);
   });
 
-  it('creates the browser router with the /app basename and the declared routes', () => {
+  it('attaches no screen to any route yet: the paths carry no element or component (L11)', () => {
+    const walk = (routes: readonly RouteObject[]): RouteObject[] =>
+      routes.flatMap((route) => [route, ...walk(route.children ?? [])]);
+    for (const route of walk(appRoutes)) {
+      expect(route.element, route.path).toBeUndefined();
+      expect(route.Component, route.path).toBeUndefined();
+      expect(route.errorElement, route.path).toBeUndefined();
+    }
+  });
+
+  it('creates a browser router with the /app basename and the declared routes', async () => {
     const router = createAppRouter();
     toDispose = router;
 
     expect(router.basename).toBe('/app');
     expect(pathTree(router.routes)).toEqual(pathTree(appRoutes));
+
+    // Only a browser router moves the real address bar; a memory or hash router would leave the path at '/'.
+    await router.navigate('/home');
+    expect(window.location.pathname).toBe('/app/home');
+    expect(window.location.hash).toBe('');
   });
 });
