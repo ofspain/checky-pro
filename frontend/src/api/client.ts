@@ -1,4 +1,5 @@
 import { createAuthClient } from '@themistra/api-client';
+import type { RateLimitNoticeState } from './rateLimitNotice';
 import type { SessionBoundary } from './sessionBoundary';
 
 /** The `security: []` operations of contracts/api/auth.yaml: sent without a bearer, and never renewed on 401. */
@@ -12,9 +13,13 @@ export const AUTH_PUBLIC_OPERATIONS: ReadonlySet<string> = new Set([
 
 export type AuthApi = ReturnType<typeof createAuthClient>;
 
-/** The auth-service client behind the tab's session boundary; screens call the backend through this, never directly. */
-export function createAuthApi(boundary: SessionBoundary): AuthApi {
+/** The auth-service client behind the tab's session boundary; screens call the backend through this, never directly.
+ * Production wiring passes the tab's rate-limit notice; it is optional only so callers without one keep working. */
+export function createAuthApi(boundary: SessionBoundary, rateLimit?: RateLimitNoticeState): AuthApi {
   const client = createAuthClient();
+  // Registered first on purpose: openapi-fetch runs onResponse in reverse registration order, so the notice runs
+  // last and sees the final response, including a 429 on the session boundary's re-send after a renewal.
+  if (rateLimit) client.use(rateLimit.middleware);
   client.use(boundary.middleware(AUTH_PUBLIC_OPERATIONS));
   return client;
 }
