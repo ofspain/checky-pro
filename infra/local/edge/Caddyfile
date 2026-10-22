@@ -6,7 +6,9 @@
 	admin off
 }
 
-:80 {
+# :5173 as well, so a container sharing the edge's network (Playwright, see KIMI-LOCAL-STACK.md)
+# reaches the same http://localhost:5173 origin the browser and the OIDC redirects use.
+:80, :5173 {
 	@auth path /oauth2/* /login /login/* /logout /connect/* /.well-known/* /userinfo /error /default-ui.css /accounts /accounts/* /admin /admin/* /api-keys /api-keys/*
 	handle @auth {
 		reverse_proxy auth:8080

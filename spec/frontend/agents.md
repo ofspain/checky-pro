@@ -103,3 +103,8 @@ this file and records only what is specific to the feature. No spec may override
 **Process**
 - Trunk-based. `main` stays deployable. Material design changes require an ADR in `docs/adr/`.
 - Frontend specs are authored with the `spec-authoring` skill and `references/frontend.md`.
+
+> **Note (2026-10-22, local testing environment):** every frontend task is checked against the whole platform running in
+> Docker (`infra/local/`). The agent working a task, Kimi included, starts and drives it per
+> `.ai/prompts/frontend/KIMI-LOCAL-STACK.md`: `bin/up --frontend`, `bin/dev-account`, `bin/chain`, Mailpit, Playwright in
+> the edge's network. Never touch the developer's `auth-postgres-1` / `auth-kafka-1` containers.

@@ -61,6 +61,11 @@ Pay less or more than the invoice to see UNDERPAID or OVERPAID. Pay with `bin/ch
 a HELD payment with no receipt: local screening (`LocalDevScreeningClient`, `mode=local-dev`) clears
 every sender except that one. `bin/chain help` lists every command.
 
+`infra/local/bin/dev-account [USER|MERCHANT|ADMIN]` creates a ready account in one step (verified, TOTP enrolled, role
+granted, signed in) and prints its email, password, TOTP secret and an access token; `bin/totp <secret>` prints the current
+code. To see EXPIRED quickly: `LOCAL_INVOICE_TTL_MINUTES=1 LOCAL_EXPIRY_SWEEP_CRON="*/20 * * * * *" bin/up`.
+Agents testing frontend work: see `.ai/prompts/frontend/KIMI-LOCAL-STACK.md` (includes Playwright in Docker).
+
 `infra/local/bin/smoke` runs the whole path through the edge (register, verify from Mailpit, PKCE
 sign-in, MFA, MERCHANT, invoice, payment, receipt, sign-out) and prints SMOKE PASSED.
 

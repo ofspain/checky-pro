@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Create a ready-to-use account on the running local stack and print it as JSON.
+
+    infra/local/bin/dev-account [USER|MERCHANT|ADMIN] [--email you@example.com]
+
+Registers, verifies from Mailpit, enrolls TOTP (MERCHANT and ADMIN must have it), grants the role, signs
+in again through the real PKCE flow, and prints {email, password, role, totpSecret, accessToken,
+idToken}. The access token lives 15 minutes; sign in again (browser or Playwright) with the email,
+password and `bin/totp <totpSecret>`. Local only: the password is printed on purpose.
+"""
+import argparse, importlib.machinery, importlib.util, json, os, secrets, subprocess, sys, time, urllib.parse
+
+BIN = os.path.dirname(os.path.abspath(__file__))
+def _load_smoke():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "smoke")
+    loader = importlib.machinery.SourceFileLoader("smoke", path)
+    spec = importlib.util.spec_from_loader("smoke", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+smoke = _load_smoke()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Create a ready local account.")
+    parser.add_argument("role", nargs="?", default="MERCHANT", choices=["USER", "MERCHANT", "ADMIN"])
+    parser.add_argument("--email", default=None)
+    args = parser.parse_args()
+    email = args.email or f"dev-{args.role.lower()}-{secrets.token_hex(3)}@example.com"
+    password = "local-dev-" + secrets.token_hex(6)
+    browser = smoke.Browser()
+
+    status, _, body = browser.request("POST", "/accounts", {"email": email, "password": password})
+    smoke.expect(status, (201, 202), "register", body)
+    link = smoke.mail_link(email, "/app/verify")
+    token = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)["token"][0]
+    status, _, body = browser.request("POST", "/accounts/verify-email", {"token": token})
+    smoke.expect(status, (200, 204), "verify email", body)
+
+    tokens = smoke.sign_in(browser, email, password)
+    bearer = {"Authorization": "Bearer " + tokens["access_token"]}
+    status, _, body = browser.request("POST", "/accounts/me/mfa/totp", headers=bearer)
+    smoke.expect(status, 201, "begin TOTP enrollment", body)
+    secret = urllib.parse.parse_qs(urllib.parse.urlparse(json.loads(body)["provisioningUri"]).query)["secret"][0]
+    status, _, body = browser.request("POST", "/accounts/me/mfa/totp/confirm",
+                                      {"code": smoke.totp(secret)}, headers=bearer)
+    smoke.expect(status, 200, "confirm TOTP enrollment", body)
+
+    if args.role != "USER":
+        subprocess.run([os.path.join(BIN, "grant-role"), email, args.role], check=True, capture_output=True)
+
+    time.sleep(max(0, 31 - time.time() % 30))  # a TOTP code is single-use; wait for the next window
+    browser = smoke.Browser()
+    tokens = smoke.sign_in(browser, email, password, lambda: smoke.totp(secret))
+    print(json.dumps({"email": email, "password": password, "role": args.role, "totpSecret": secret,
+                      "accessToken": tokens["access_token"], "idToken": tokens.get("id_token")}, indent=2))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

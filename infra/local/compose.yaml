@@ -189,6 +189,9 @@ services:
       CRYPTO_SERVICE_BASE_URL: http://crypto:8080
       # A cold crypto JVM on a laptop can take longer than the 5s production read timeout.
       THEMISTRA_PAYMENT_CRYPTO_READTIMEOUTMS: "15000"
+      # Shorten to test EXPIRED: LOCAL_INVOICE_TTL_MINUTES=2 LOCAL_EXPIRY_SWEEP_CRON="*/20 * * * * *" bin/up
+      THEMISTRA_PAYMENT_INVOICE_DEFAULTTTLMINUTES: ${LOCAL_INVOICE_TTL_MINUTES:-60}
+      THEMISTRA_PAYMENT_INVOICE_EXPIRYSWEEP_CRON: ${LOCAL_EXPIRY_SWEEP_CRON:-0 */5 * * * *}
       CRYPTO_AUTH_TOKEN_URI: http://auth:8080/oauth2/token
       RECEIPT_BUCKET: themistra-local-receipts
       KMS_PUBLIC_KEYS_URL: http://crypto:8080/.well-known/themistra-verification-keys
