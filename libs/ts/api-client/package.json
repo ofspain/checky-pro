@@ -6,7 +6,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "generate": "openapi-typescript ../../../contracts/api/auth.yaml -o src/generated/auth.ts"
+    "generate": "openapi-typescript ../../../contracts/api/auth.yaml -o src/generated/auth.ts",
+    "typecheck": "../../../frontend/node_modules/typescript/bin/tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "openapi-fetch": "0.17.0"

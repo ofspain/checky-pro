@@ -16,5 +16,4 @@ pnpm -C libs/ts/api-client generate
 
 `typescript@5.9.3` is here only because the generator needs the TypeScript 5 compiler API. The project itself compiles
 with TypeScript 7 (`frontend/`), and the generated code must type-check there. Note that `pnpm -C libs/ts/api-client exec tsc`
-would run 5.9. To check the package with the project compiler, run
-`frontend/node_modules/typescript/bin/tsc --noEmit -p libs/ts/api-client/tsconfig.json`.
+would run 5.9. To check the package with the project compiler, run `pnpm -C libs/ts/api-client typecheck`.
