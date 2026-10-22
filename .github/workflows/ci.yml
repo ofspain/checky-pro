@@ -27,7 +27,7 @@ jobs:
             payment: ['services/payment/**', 'libs/java/**', 'contracts/**']
             crypto: ['services/crypto/**', 'libs/java/**', 'contracts/**']
             notification: ['services/notification/**', 'libs/java/**', 'contracts/**']
-            frontend: ['frontend/**', 'libs/ts/**', 'contracts/api/**']
+            frontend: ['frontend/**', 'libs/ts/**', 'contracts/api/**', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
             infra: ['infra/**']
             contracts: ['contracts/**']
 
@@ -43,6 +43,20 @@ jobs:
           java-version: "21"
           cache: maven
       - run: mvn -B -pl services/auth verify
+
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C frontend test
+      - run: pnpm -C frontend build
 
   # Further per-component jobs plug in here (Maven for Java services, pnpm for TS), gated on
   # the path-filter outputs above.
