@@ -138,6 +138,7 @@ docker run --rm --network container:themistra-local-edge-1 \
 | Invoice creation returns 503 every time | Usually a non-checksummed pay-to address: crypto returns 400 and payment reports it as 503 (known, section 8). Use `bin/chain new-address`. |
 | Payment never appears | A pay-to address reused from another invoice, or a TRON invoice (TRON has no local chain; only ETHEREUM moves). |
 | A container keeps restarting or exited with 137 | Out of memory; see section 2. `docker compose -p themistra-local -f infra/local/compose.yaml ps -a`. |
+| Dev server returns 500 "Cannot find module …/node_modules/.pnpm/…" | A dependency was added or removed while it ran, so pnpm re-linked packages under new paths. `docker compose -p themistra-local -f infra/local/compose.yaml restart frontend`. Restart it after every `pnpm add`/`remove`. |
 | Need a clean slate | `infra/local/bin/down --reset` (deletes all data), then `bin/up`. |
 | Backend code changed (pulled a fix) | `docker compose -p themistra-local -f infra/local/compose.yaml up -d --build <service>` |
 | See what a service is doing | `docker compose -p themistra-local -f infra/local/compose.yaml logs -f <service>` |
