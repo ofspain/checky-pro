@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crypto Service Branch Review — Board Summary</title>
+  <style>
+    :root {
+      --bg: #f8f9fa;
+      --panel: #ffffff;
+      --text: #1f2328;
+      --muted: #57606a;
+      --accent: #0550ae;
+      --accent-light: #ddf4ff;
+      --warn: #9a6700;
+      --warn-bg: #fff8c5;
+      --danger: #cf222e;
+      --danger-bg: #ffebe9;
+      --success: #1a7f37;
+      --success-bg: #dafbe1;
+      --border: #d0d7de;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      margin: 0;
+      padding: 0;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 40px 24px;
+    }
+
+    header {
+      border-bottom: 3px solid var(--accent);
+      padding-bottom: 24px;
+      margin-bottom: 32px;
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin: 0 0 8px;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 1.1rem;
+    }
+
+    h2 {
+      font-size: 1.5rem;
+      margin-top: 40px;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h3 {
+      font-size: 1.2rem;
+      margin-top: 28px;
+      margin-bottom: 12px;
+      color: var(--text);
+    }
+
+    p {
+      margin: 0 0 16px;
+    }
+
+    .callout {
+      border-left: 5px solid var(--accent);
+      background: var(--accent-light);
+      padding: 16px 20px;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      margin: 20px 0;
+    }
+
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: var(--warn-bg);
+    }
+
+    .callout.danger {
+      border-left-color: var(--danger);
+      background: var(--danger-bg);
+    }
+
+    .callout.success {
+      border-left-color: var(--success);
+      background: var(--success-bg);
+    }
+
+    .callout strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin: 16px 0 24px;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f6f8fa;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.9em;
+      background: rgba(175, 184, 193, 0.2);
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .badge.ok {
+      background: var(--success-bg);
+      color: var(--success);
+    }
+
+    .badge.warn {
+      background: var(--warn-bg);
+      color: var(--warn);
+    }
+
+    .badge.danger {
+      background: var(--danger-bg);
+      color: var(--danger);
+    }
+
+    ul, ol {
+      margin: 0 0 16px;
+      padding-left: 24px;
+    }
+
+    li {
+      margin-bottom: 8px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin: 20px 0;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+
+    .card h4 {
+      margin-top: 0;
+      margin-bottom: 12px;
+      font-size: 1.1rem;
+    }
+
+    footer {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    /* Project status blocks */
+    .status-section {
+      margin: 24px 0;
+    }
+
+    .status-group {
+      margin-bottom: 28px;
+    }
+
+    .status-group h3 {
+      margin-top: 0;
+      margin-bottom: 12px;
+      font-size: 1.1rem;
+      color: var(--muted);
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+
+    .status-card {
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-left: 5px solid;
+      background: var(--panel);
+    }
+
+    .status-card .name {
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+
+    .status-card .detail {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .status-card .label {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .status-complete { border-left-color: var(--success); background: var(--success-bg); }
+    .status-complete .label { background: var(--success); color: #fff; }
+
+    .status-spec { border-left-color: var(--accent); background: var(--accent-light); }
+    .status-spec .label { background: var(--accent); color: #fff; }
+
+    .status-partial { border-left-color: var(--warn); background: var(--warn-bg); }
+    .status-partial .label { background: var(--warn); color: #fff; }
+
+    .status-missing { border-left-color: var(--danger); background: var(--danger-bg); }
+    .status-missing .label { background: var(--danger); color: #fff; }
+
+    .status-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin: 16px 0 24px;
+    }
+
+    .status-legend .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.9rem;
+    }
+
+    .status-legend .dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+    }
+
+    .dot-complete { background: var(--success); }
+    .dot-spec { background: var(--accent); }
+    .dot-partial { background: var(--warn); }
+    .dot-missing { background: var(--danger); }
+
+    @media print {
+      body { background: #fff; }
+      .callout, .status-card, table { break-inside: avoid; }
+    }
+
+    @media (max-width: 760px) {
+      .grid { grid-template-columns: 1fr; }
+      .status-grid { grid-template-columns: 1fr; }
+      table { font-size: 0.85rem; }
+      th, td { padding: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Crypto Service Branch Review</h1>
+      <div class="subtitle">Board summary: comparing <code>spec/service-specs-and-ai-framework</code> and <code>feat/crypto-quorum-and-evm-adapter</code></div>
+    </header>
+
+    <section id="executive-summary">
+      <h2>Executive Summary</h2>
+      <p>
+        The repository currently contains <strong>two independent Crypto Service implementations</strong>.
+        One was delivered by the <code>spec</code> branch as a full, design-compliant stack; the other was delivered by the <code>feat</code> branch as a minimal, runnable slice.
+        They are not interchangeable, and they do not safely compose in <code>main</code> today.
+      </p>
+
+      <div class="callout success">
+        <strong>Recommendation</strong>
+        Adopt the <code>spec</code> stack as the project’s Crypto Service implementation. It is the only stack that satisfies the architectural locked decisions in <code>spec/crypto-service/design.md</code> and <code>agents.md</code>. Selected ideas from the <code>feat</code> branch should be ported into it, not the other way around.
+      </div>
+
+      <div class="callout danger">
+        <strong>Current risk in <code>main</code></strong>
+        Because both stacks were merged, <code>main</code> now has incompatible types, duplicate scheduled watchers, and a broken hybrid. The service does not compile cleanly and should not be deployed until one stack is selected and the other is removed.
+      </div>
+    </section>
+
+    <section id="project-landscape">
+      <h2>Project Landscape — What Exists in <code>main</code></h2>
+      <p>
+        The approved architecture calls for four backend services, shared libraries, contracts, a frontend, and infrastructure.
+        From the <code>main</code> branch today, only the Auth Service is fully implemented; the Crypto Service is partially built but internally conflicted; everything else is either specified only or not yet started.
+      </p>
+
+      <div class="status-legend">
+        <div class="legend-item"><div class="dot dot-complete"></div> Code implemented</div>
+        <div class="legend-item"><div class="dot dot-spec"></div> Design / spec complete</div>
+        <div class="legend-item"><div class="dot dot-partial"></div> Partial / conflicted</div>
+        <div class="legend-item"><div class="dot dot-missing"></div> Not implemented</div>
+      </div>
+
+      <div class="status-group">
+        <h3>Backend Services</h3>
+        <div class="status-grid">
+          <div class="status-card status-complete">
+            <div class="name">Auth Service</div>
+            <div class="detail">Full implementation: accounts, MFA/TOTP, sessions, API keys, audit, outbox events, migrations, tests.</div>
+            <span class="label">Complete</span>
+          </div>
+          <div class="status-card status-partial">
+            <div class="name">Crypto Service</div>
+            <div class="detail">Two overlapping, incompatible stacks (spec adapter + feat chain). Does not compile cleanly. Needs consolidation.</div>
+            <span class="label">Conflicted</span>
+          </div>
+          <div class="status-card status-missing">
+            <div class="name">Payment &amp; Verification Service</div>
+            <div class="detail">Core domain service. README only; no code, schema, or verification state machine yet.</div>
+            <span class="label">Not started</span>
+          </div>
+          <div class="status-card status-missing">
+            <div class="name">Notification Service</div>
+            <div class="detail">Consumer of domain events. README only; no implementation.</div>
+            <span class="label">Not started</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-group">
+        <h3>Shared Libraries</h3>
+        <div class="status-grid">
+          <div class="status-card status-missing">
+            <div class="name">libs/java/outbox</div>
+            <div class="detail">Transactional outbox pattern. Empty placeholder.</div>
+            <span class="label">Not started</span>
+          </div>
+          <div class="status-card status-missing">
+            <div class="name">libs/java/kafka-core</div>
+            <div class="detail">Shared Kafka producer/consumer helpers. Empty placeholder.</div>
+            <span class="label">Not started</span>
+          </div>
+          <div class="status-card status-missing">
+            <div class="name">libs/java/security-core</div>
+            <div class="detail">Shared JWT/resource-server helpers. Empty placeholder.</div>
+            <span class="label">Not started</span>
+          </div>
+          <div class="status-card status-missing">
+            <div class="name">libs/ts/api-client</div>
+            <div class="detail">TypeScript API client for frontend. Empty placeholder.</div>
+            <span class="label">Not started</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-group">
+        <h3>Contracts &amp; Specifications</h3>
+        <div class="status-grid">
+          <div class="status-card status-spec">
+            <div class="name">Service Specifications</div>
+            <div class="detail">Auth, Crypto, Payment, and Notification specs complete under <code>spec/</code>.</div>
+            <span class="label">Spec complete</span>
+          </div>
+          <div class="status-card status-partial">
+            <div class="name">API / Event Contracts</div>
+            <div class="detail">Auth and Crypto contracts partially authored. Payment/Notification contracts mostly absent.</div>
+            <span class="label">Partial</span>
+          </div>
+          <div class="status-card status-spec">
+            <div class="name">.ai Prompt Framework</div>
+            <div class="detail">T01–T40 task prompt pipelines present under <code>.ai/prompts/</code>.</div>
+            <span class="label">Spec complete</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-group">
+        <h3>Frontend, Infrastructure &amp; Edge</h3>
+        <div class="status-grid">
+          <div class="status-card status-missing">
+            <div class="name">Frontend</div>
+            <div class="detail">React web app. README only; no implementation.</div>
+            <span class="label">Not started</span>
+          </div>
+          <div class="status-card status-missing">
+            <div class="name">Infrastructure (CDK / K8s)</div>
+            <div class="detail">Deployable stacks, manifests, networking. Placeholders only.</div>
+            <span class="label">Not started</span>
+          </div>
+          <div class="status-card status-missing">
+            <div class="name">Edge / API Gateway</div>
+            <div class="detail">Defined as CloudFront → WAF → ALB → ingress-nginx; no code or config in repo.</div>
+            <span class="label">Not started</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-group">
+        <h3>Cross-Cutting Documents</h3>
+        <div class="status-grid">
+          <div class="status-card status-complete">
+            <div class="name">System Architecture</div>
+            <div class="detail"><code>ARCHITECTURE.md</code> approved baseline topology, services, security design.</div>
+            <span class="label">Complete</span>
+          </div>
+          <div class="status-card status-partial">
+            <div class="name">Security Threat Model</div>
+            <div class="detail"><code>SECURITY-THREAT-MODEL.md</code> exists but is minimal and needs expansion before crypto launch.</div>
+            <span class="label">Draft</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="branch-snapshot">
+      <h2>Branch Snapshot</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Branch</th>
+            <th>Local tip</th>
+            <th>Origin tip</th>
+            <th>Status vs <code>main</code></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>main</code></td>
+            <td><code>54f25b0</code></td>
+            <td><code>54f25b0</code></td>
+            <td><span class="badge ok">Baseline</span></td>
+          </tr>
+          <tr>
+            <td><code>spec/service-specs-and-ai-framework</code></td>
+            <td><code>54f25b0</code></td>
+            <td><code>54f25b0</code></td>
+            <td><span class="badge ok">Identical to main</span></td>
+          </tr>
+          <tr>
+            <td><code>feat/crypto-quorum-and-evm-adapter</code></td>
+            <td><code>37d95cb</code></td>
+            <td><code>37d95cb</code></td>
+            <td><span class="badge danger">1 commit ahead, many behind</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="two-stacks">
+      <h2>The Two Crypto Service Stacks</h2>
+      <div class="grid">
+        <div class="card">
+          <h4>1. Spec stack — <code>com.themistra.crypto.adapter</code></h4>
+          <p>A comprehensive implementation derived from <code>spec/crypto-service/design.md</code>.</p>
+          <ul>
+            <li>Push/subscription-based adapters</li>
+            <li>Verbatim observation log + S3 snapshots</li>
+            <li>Reorg-safe cursors and <code>chain.tx.reorged</code></li>
+            <li>Per-chain finality policies</li>
+            <li>Attestation + KMS signing</li>
+            <li>Fail-closed OFAC screening</li>
+            <li>Signed token allowlist</li>
+            <li>Transactional outbox for Kafka</li>
+            <li>Multi-replica watcher sharding with ShedLock</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h4>2. Feat stack — <code>com.themistra.crypto.chain</code></h4>
+          <p>A minimal runnable path: register a watch, discover a payment, verify it by quorum, publish an event.</p>
+          <ul>
+            <li>Pull/log-scan-based EVM adapter (<code>eth_getLogs</code>)</li>
+            <li>Virtual-thread provider fan-out</li>
+            <li>Watch registration with caller-reference idempotency</li>
+            <li>Scheduled scan watcher</li>
+            <li>Local-dev UI for watches</li>
+            <li><strong>Explicitly omits:</strong> reorg handling, observation log, provider-lag weighting, work sharding, attestation, screening, token allowlist, outbox</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="comparison">
+      <h2>Concern-by-Concern Comparison</h2>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:22%">Concern</th>
+            <th style="width:39%">Spec stack</th>
+            <th style="width:39%">Feat stack</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Chain identity</strong></td>
+            <td><code>Chain</code> enum: <code>ETHEREUM</code>, <code>TRON</code></td>
+            <td><code>ChainId</code> CAIP-2 record: <code>eip155:1</code>, <code>tron:...</code></td>
+          </tr>
+          <tr>
+            <td><strong>Adapter contract</strong></td>
+            <td><code>ChainAdapter</code> with <code>subscribeAddress</code> callback</td>
+            <td><code>ChainAdapter</code> with <code>findIncomingTransfers</code> log scan</td>
+          </tr>
+          <tr>
+            <td><strong>Discovery</strong></td>
+            <td>Push subscriptions / polling per provider</td>
+            <td><code>eth_getLogs</code> block-range scan</td>
+          </tr>
+          <tr>
+            <td><strong>Transaction fact</strong></td>
+            <td><code>TxResult</code> (<code>exists</code> boolean, <code>BigDecimal</code> amount)</td>
+            <td><code>TxObservation</code> (<code>BigInteger</code> amount, <code>fact()</code> projection)</td>
+          </tr>
+          <tr>
+            <td><strong>Token metadata</strong></td>
+            <td><code>adapter.model.TokenInfo</code></td>
+            <td><code>chain.TokenInfo</code> (different fields)</td>
+          </tr>
+          <tr>
+            <td><strong>Finality status</strong></td>
+            <td><code>adapter.model.FinalityStatus</code></td>
+            <td><code>chain.FinalityStatus</code> (different shape)</td>
+          </tr>
+          <tr>
+            <td><strong>Quorum engine</strong></td>
+            <td><code>QuorumEvaluator</code> — pure, exactly-3 answers</td>
+            <td><code>QuorumReader</code> — configurable threshold, virtual threads</td>
+          </tr>
+          <tr>
+            <td><strong>Provider answer</strong></td>
+            <td>Generic <code>ProviderAnswer&lt;T&gt;</code> with <code>provider()</code>/<code>value()</code></td>
+            <td>Non-generic <code>ProviderAnswer</code> with <code>providerLabel</code>/<code>observation</code>/<code>failure</code></td>
+          </tr>
+          <tr>
+            <td><strong>Watch model</strong></td>
+            <td>Spec design: <code>watchId</code>, <code>chain</code>, <code>invoiceUuid</code>, status <code>REGISTERED/UNREGISTERED/EXPIRED</code></td>
+            <td>Feat model: <code>callerReference</code>, <code>chainId</code>, <code>recipientAddress</code>/<code>tokenAddress</code>, status <code>ACTIVE/CANCELLED/SATISFIED/EXPIRED</code></td>
+          </tr>
+          <tr>
+            <td><strong>Watcher runtime</strong></td>
+            <td><code>WatcherRegistry</code> + per-watch <code>Watcher</code> (ShedLock sharding)</td>
+            <td><code>WatcherService</code> scheduled scan of all active watches</td>
+          </tr>
+          <tr>
+            <td><strong>Observation log</strong></td>
+            <td>Full append-only log + S3 snapshot</td>
+            <td>Absent</td>
+          </tr>
+          <tr>
+            <td><strong>Reorg handling</strong></td>
+            <td><code>ReorgDetector</code> + cursor walk-back</td>
+            <td>Absent</td>
+          </tr>
+          <tr>
+            <td><strong>Attestation / KMS</strong></td>
+            <td><code>AttestController</code>, <code>AttestationService</code>, <code>KmsSigner</code></td>
+            <td>Absent</td>
+          </tr>
+          <tr>
+            <td><strong>Screening</strong></td>
+            <td>Fail-closed <code>ScreeningClient</code></td>
+            <td>Absent</td>
+          </tr>
+          <tr>
+            <td><strong>Event delivery</strong></td>
+            <td>Transactional outbox + Kafka relay</td>
+            <td>Direct <code>PaymentVerifiedEvent</code> publish</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="overlap-discrepancy">
+      <h2>Overlap &amp; Discrepancy</h2>
+
+      <h3>Overlap</h3>
+      <ul>
+        <li>Both implement per-provider chain adapters behind a common interface.</li>
+        <li>Both enforce a 2-of-3 quorum across independent providers.</li>
+        <li>Both register watches and attempt to detect incoming payments.</li>
+        <li>Both keep money exact in base units (spec uses <code>BigDecimal</code>; feat uses <code>BigInteger</code>).</li>
+      </ul>
+      <p>The only file both PRs touched is <code>pom.xml</code>. The real overlap is in package names and class names, which is why the current code is fragile.</p>
+
+      <h3>Discrepancy</h3>
+      <div class="callout danger">
+        <strong>Structural incompatibility in <code>main</code></strong>
+        <ul>
+          <li><strong><code>ProviderAnswer</code> collision:</strong> spec expects a generic <code>ProviderAnswer&lt;T&gt;</code> with <code>provider()</code>/<code>value()</code>; feat supplies a non-generic record with <code>providerLabel</code>/<code>observation</code>/<code>failure</code>. This breaks <code>QuorumDecisionService</code>, <code>HeldFactAlerter</code>, and <code>Watcher</code>.</li>
+          <li><strong>Watch entity mismatch:</strong> <code>WatcherRegistry</code> (spec) calls <code>WatchStatus.REGISTERED</code>, <code>watch.watchId()</code>, and <code>watch.chain()</code>; the current <code>Watch</code> entity (feat) has different fields/accessors and a different enum.</li>
+          <li><strong>Duplicate scheduled watchers:</strong> <code>WatcherRegistry.reconcile()</code> and <code>WatcherService.checkActiveWatches()</code> are both <code>@Scheduled</code>; if both run, they compete.</li>
+          <li><strong>Completeness gap:</strong> the feat stack lacks observation logs, reorg handling, attestation, screening, token allowlist, and transactional outbox — all locked requirements.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="recommendation">
+      <h2>Recommendation</h2>
+
+      <div class="callout success">
+        <strong>Pick the spec stack</strong>
+        The <code>spec/service-specs-and-ai-framework</code> Crypto Service is the only implementation that can satisfy the platform’s design, security, and compliance requirements. The feat branch is a useful proof-of-concept and a source of implementation ideas, but it is not a production-grade Crypto Service.
+      </div>
+
+      <h3>Why the spec stack wins</h3>
+      <ul>
+        <li>It is the only stack aligned with the locked decisions in <code>spec/crypto-service/agents.md</code> and <code>design.md</code>.</li>
+        <li>It provides the internal API (<code>POST /internal/v1/watches</code>, <code>POST /internal/v1/attest</code>, verification-keys endpoint) that the Payment Service depends on.</li>
+        <li>It includes the audit and compliance controls the platform needs: verbatim observation log, reorg handling, fail-closed screening, and KMS-only signing.</li>
+        <li>It is explicitly described as the project’s “single largest correctness risk”; choosing the smaller stack would knowingly accept that risk without mitigation.</li>
+      </ul>
+
+      <h3>Why the feat stack is not sufficient</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th>Feat stack status</th>
+            <th>Risk if chosen</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Verbatim observation log</td><td>Absent</td><td>Cannot defend past attestations</td></tr>
+          <tr><td>Reorg handling</td><td>Absent</td><td>Payments may be verified on reorged blocks</td></tr>
+          <tr><td>Attestation / KMS signing</td><td>Absent</td><td>Cannot produce signed receipts</td></tr>
+          <tr><td>OFAC / sanctions screening</td><td>Absent</td><td>Compliance violation</td></tr>
+          <tr><td>Signed token allowlist</td><td>Absent</td><td>Could accept fake tokens</td></tr>
+          <tr><td>Transactional outbox</td><td>Absent</td><td>Duplicate or lost events under failure</td></tr>
+          <tr><td>Authenticated internal endpoints</td><td>Absent</td><td><code>/internal/watches</code> is unauthenticated</td></tr>
+          <tr><td>Multi-replica watcher coordination</td><td>Absent</td><td>Risk of double-driving watches</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="porting">
+      <h2>Guideline: Porting Novel Ideas from Feat into Spec</h2>
+      <p>
+        Although the feat stack should not replace the spec stack, it contains several ideas that can strengthen the spec stack once the underlying models are aligned.
+      </p>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width:28%">Novel idea from feat</th>
+            <th style="width:36%">Where it helps the spec stack</th>
+            <th style="width:36%">Porting approach</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>EVM log-scan discovery</strong><br><code>findIncomingTransfers</code> via <code>eth_getLogs</code></td>
+            <td>The spec stack’s watcher must discover candidate transactions for a watched address. A polling/log-scan adapter is simpler to operate than persistent websocket subscriptions.</td>
+            <td>Implement a polling <code>ChainAdapter</code> (or a subscription adapter backed by periodic log scans) that returns observations through the existing <code>ObservationSink</code>. Keep the verbatim observation log and quorum flow unchanged.</td>
+          </tr>
+          <tr>
+            <td><strong>CAIP-2 chain identifiers</strong><br><code>ChainId</code> namespace + reference</td>
+            <td>The spec <code>Chain</code> enum only supports Ethereum and Tron. CAIP-2 identifiers are chain-agnostic and align with cross-chain standards.</td>
+            <td>Replace or augment <code>Chain</code> with a CAIP-2-based value object. Update finality policies and adapter registries to key off it. Keep the launch scope to Ethereum/Tron until design approval.</td>
+          </tr>
+          <tr>
+            <td><strong>Virtual-thread provider fan-out</strong><br><code>QuorumReader</code> with <code>Executors.newVirtualThreadPerTaskExecutor()</code></td>
+            <td>The spec stack queries providers but currently structures the call path differently. Concurrent virtual-thread queries reduce latency and improve isolation.</td>
+            <td>Introduce a provider-query orchestrator inside the spec stack that fans out over virtual threads, records each answer verbatim into the observation log, and then hands normalized facts to <code>QuorumEvaluator</code>.</td>
+          </tr>
+          <tr>
+            <td><strong>Provider-answer classification</strong><br><code>saw</code> / <code>absent</code> / <code>failed</code></td>
+            <td>The spec stack needs to distinguish “provider did not see the tx” from “provider could not answer.” That distinction is needed for correct quorum and health tracking.</td>
+            <td>Adopt the classification pattern when recording observations. Ensure the observation log stores the raw response plus the classification, and that <code>QuorumEvaluator</code> treats absence as a first-class answer.</td>
+          </tr>
+          <tr>
+            <td><strong>Address normalization</strong><br><code>ChainAddress.normalise</code></td>
+            <td>Address validation and normalization are required by the spec (EIP-55, Base58Check) but the feat implementation is concrete and tested.</td>
+            <td>Port the normalization rules into the spec stack’s <code>token/AddressValidator</code> and use them at watch-registration and adapter boundaries.</td>
+          </tr>
+          <tr>
+            <td><strong>Caller-reference idempotency</strong><br><code>callerReference</code> field on <code>Watch</code></td>
+            <td>The spec API accepts an <code>invoiceUuid</code>; callers need safe retry semantics.</td>
+            <td>Add a caller-reference / idempotency key to the spec watch model and return the existing watch when the same reference is reused with identical terms.</td>
+          </tr>
+          <tr>
+            <td><strong>Readable-amount dev UI</strong><br>Decimal formatting in <code>DevWatchController</code></td>
+            <td>Developers and operators need human-readable amounts in local tools without changing wire-format behavior.</td>
+            <td>Port the UI formatting into the spec stack’s dev controller, keeping base units authoritative on the wire.</td>
+          </tr>
+          <tr>
+            <td><strong>Local-dev explorer</strong><br><code>DevExplorerController</code>, <code>DevSampleService</code></td>
+            <td>The spec stack needs local observability to verify the full pipeline end-to-end.</td>
+            <td>Adapt the dev controllers to drive the spec adapter/quorum/watch path. Ensure dev endpoints are <code>@Profile("local")</code> and never reachable in production.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Suggested porting sequence</h3>
+      <ol>
+        <li><strong>Choose a single chain-identity model.</strong> Recommend CAIP-2 records, mapped to the spec’s finality-policy and adapter registry.</li>
+        <li><strong>Reconcile the watch data model.</strong> Keep the spec design’s fields/statuses but add caller-reference idempotency and address normalization from feat.</li>
+        <li><strong>Reconcile the quorum layer.</strong> Keep spec’s <code>QuorumEvaluator</code> pure logic; replace or wrap provider query execution with feat-style virtual-thread fan-out and <code>saw/absent/failed</code> classification, feeding the verbatim observation log.</li>
+        <li><strong>Implement chain adapters consistently.</strong> Provide a polling/log-scan EVM adapter and a subscription-based adapter behind the same spec <code>ChainAdapter</code> interface.</li>
+        <li><strong>Remove the duplicate scheduled watcher.</strong> Keep the spec <code>WatcherRegistry</code> and remove/disable <code>WatcherService</code>.</li>
+        <li><strong>Restore missing modules.</strong> Ensure observation log, reorg detector, screening client, token allowlist, attest/KMS path, and transactional outbox are wired and tested.</li>
+        <li><strong>Port the dev UI.</strong> Move the readable-amount formatting and local explorer onto the spec stack’s dev endpoints.</li>
+        <li><strong>Make the service compile and pass tests.</strong> Fix dependency versions and module boundaries.</li>
+      </ol>
+    </section>
+
+    <section id="next-steps">
+      <h2>Board-Level Next Steps</h2>
+      <ol>
+        <li><strong>Approve the spec stack</strong> as the project’s Crypto Service baseline.</li>
+        <li><strong>Approve a consolidation sprint</strong> to remove the feat stack from <code>main</code> and repair the spec stack (estimated scope: data-model reconciliation, dependency fixes, test restoration, and dev-UI port).</li>
+        <li><strong>Keep the feat branch available</strong> as a reference for implementation ideas during the port, but do not merge it again without explicit design review.</li>
+        <li><strong>Gate deployment</strong> on the service compiling cleanly, passing contract tests, and satisfying the locked decisions in <code>spec/crypto-service/agents.md</code>.</li>
+      </ol>
+    </section>
+
+    <footer>
+      <p>Generated from branch analysis of <code>ofspain/checky-pro</code>. Local and remote branches were verified to be in sync before producing this report.</p>
+    </footer>
+  </div>
+</body>
+</html>

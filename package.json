@@ -1,0 +1,14 @@
+{
+  "name": "checky-pro",
+  "private": true,
+  "packageManager": "pnpm@9.12.2",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm -C frontend dev",
+    "build": "pnpm -C frontend build",
+    "test": "pnpm -C frontend test",
+    "lint": "pnpm -C frontend lint"
+  }
+}
