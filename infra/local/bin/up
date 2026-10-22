@@ -7,4 +7,4 @@ cd "$(dirname "$0")/.."
 profiles=()
 [[ "${1:-}" == "--frontend" ]] && profiles=(--profile frontend)
 docker compose ${profiles[@]+"${profiles[@]}"} up -d --build
-"$(dirname "$0")/status" --wait
+bin/status --wait  # cwd is infra/local after the cd above
