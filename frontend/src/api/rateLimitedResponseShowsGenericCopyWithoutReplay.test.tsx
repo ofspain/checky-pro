@@ -520,9 +520,12 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
     expect(session.renew).toHaveBeenCalledTimes(1);
     expect(sent.map((request) => request.auth)).toEqual(['Bearer old', 'Bearer new']);
     expect(failures).toEqual([]);
-    // And the copy is lost, which is why wiring must pass the notice.
+    // And the copy is lost, which is why wiring must pass the notice. The live region itself is always rendered
+    // (AC5), so what must be absent is the copy and the control, not the region.
     expect(notice.isShown()).toBe(false);
+    expect(view.region()).not.toBeNull();
     expect(view.text()).toBe('');
+    expect(view.button()).toBeNull();
   });
 
   it('writes nothing to storage or cookies, logs nothing, and leaves the URL alone (AC8)', async () => {
@@ -565,7 +568,16 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
     notice.subscribe(() => {
       throw defect;
     });
+    // Registered after the thrower, so it only runs if the notification loop carries on past it.
+    let healthy = 0;
+    notice.subscribe(() => {
+      healthy += 1;
+    });
     const view = await renderNotice(notice);
+    const cookieBefore = document.cookie;
+    const consoleSpies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation(() => undefined),
+    );
 
     const result = await callThrough(() => api.GET('/accounts/me'));
     await act(async () => settle());
@@ -573,7 +585,101 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
     expect(result.response.status).toBe(429);
     expect(notice.isShown()).toBe(true);
     expect(view.text()).toBe(en.rateLimit.message);
+    expect(healthy).toBe(1);
     expect(uncaught).toEqual([defect]);
     expect(sent).toHaveLength(1);
+    // The error path is no excuse for logging or storing anything (AC8).
+    expect(consoleSpies.flatMap((spy) => spy.mock.calls)).toEqual([]);
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(document.cookie).toBe(cookieBefore);
+  });
+
+  it('gives one notice and one notification for a protected and a public 429 together (AC4, phase 11 gap 1)', async () => {
+    const sent = installTransport(() => RATE_LIMITED);
+    const notice = createRateLimitNotice();
+    const api = createApi(notice);
+    const view = await renderNotice(notice);
+    let notifications = 0;
+    notice.subscribe(() => {
+      notifications += 1;
+    });
+
+    // One bearing a token, one not: the notice is the tab's, not the request's.
+    const results = await callThrough(() =>
+      Promise.all([api.GET('/accounts/me'), api.POST('/accounts/password-reset', { body: PASSWORD_RESET_BODY })]),
+    );
+
+    expect(results.map((result) => result.response.status)).toEqual([429, 429]);
+    expect(sent.map((request) => `${request.method} ${request.path} ${request.auth}`).sort()).toEqual([
+      'GET /accounts/me Bearer token',
+      'POST /accounts/password-reset null',
+    ]);
+    expect(notifications).toBe(1);
+    expect(notice.isShown()).toBe(true);
+    expect(view.text()).toBe(en.rateLimit.message);
+  });
+
+  it('clears on a direct dismiss() call, and shows again on a 429 after a 200 (AC4, phase 11 gaps 2 and 6)', async () => {
+    const server = { status: 429 };
+    const sent = installTransport(() => (server.status === 429 ? RATE_LIMITED : { status: 200 }));
+    const notice = createRateLimitNotice();
+    const api = createApi(notice);
+    const view = await renderNotice(notice);
+    let notifications = 0;
+    notice.subscribe(() => {
+      notifications += 1;
+    });
+
+    await callThrough(() => api.GET('/accounts/me'));
+    expect(notifications).toBe(1);
+
+    // dismiss() is public API: wiring or a screen may call it without the button being clicked.
+    await act(async () => notice.dismiss());
+    expect(notice.isShown()).toBe(false);
+    expect(view.text()).toBe('');
+    expect(view.button()).toBeNull();
+    expect(notifications).toBe(2);
+
+    // Already dismissed: a second call changes nothing and notifies nobody.
+    await act(async () => notice.dismiss());
+    expect(notifications).toBe(2);
+
+    // 429 -> dismiss -> 200 -> 429: the next episode starts cleanly.
+    server.status = 200;
+    expect((await callThrough(() => api.GET('/accounts/me'))).response.status).toBe(200);
+    expect(notice.isShown()).toBe(false);
+    server.status = 429;
+    await callThrough(() => api.GET('/accounts/me'));
+    expect(notice.isShown()).toBe(true);
+    expect(view.text()).toBe(en.rateLimit.message);
+    expect(notifications).toBe(3);
+    expect(sent).toHaveLength(3);
+  });
+
+  it("ignores the body and headers of a 429 on the boundary's re-send too (AC2, phase 11 gap 3)", async () => {
+    const session = fakeSession('old');
+    const noisy: Reply = {
+      status: 429,
+      headers: { 'Content-Type': 'text/html', 'Retry-After': '3600' },
+      body: '<html><body>Too many requests — wait 60 minutes</body></html>',
+    };
+    const sent = installTransport((request) =>
+      request.headers.get('Authorization') === 'Bearer old' ? { status: 401 } : noisy,
+    );
+    const notice = createRateLimitNotice();
+    const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed), notice);
+    const view = await renderNotice(notice);
+
+    await act(async () => {
+      const call = api.GET('/accounts/me');
+      await vi.waitFor(() => expect(session.renew).toHaveBeenCalledTimes(1));
+      session.attempts[0]!.resolve('new');
+      expect((await call).response.status).toBe(429);
+    });
+
+    expect(view.container.textContent).toBe(`${en.rateLimit.message}${en.rateLimit.dismiss}`);
+    expect(sent).toHaveLength(2);
+    expect(failures).toEqual([]);
   });
 });
