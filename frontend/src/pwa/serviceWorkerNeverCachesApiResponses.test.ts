@@ -112,14 +112,48 @@ describe('serviceWorkerNeverCachesApiResponses', () => {
   });
 
   // AC2 — the shell and its built assets ARE cacheable, so AC1 is not vacuously true (design.md §5).
-  it.each([...SHELL_DOCUMENT_PATHS, '/app/assets/main-abc123.js', '/app/assets/style-abc123.css'])(
-    'caches the shell or asset at %s (AC2)',
-    async (path) => {
-      await expect(simulateRequestRoute(path, cache)).resolves.toBe('network-then-cached');
-      expect(isCacheableRequest(new URL(path, ORIGIN))).toBe(true);
-      expect(cache.match).toHaveBeenCalledWith(path);
-    },
-  );
+  it.each([
+    ...SHELL_DOCUMENT_PATHS,
+    '/app/assets/main-abc123.js',
+    '/app/assets/style-abc123.css',
+    '/app/assets/',
+    '/app/assets/deep/chunk-abc123.js',
+  ])('caches the shell or asset at %s (AC2)', async (path) => {
+    await expect(simulateRequestRoute(path, cache)).resolves.toBe('network-then-cached');
+    expect(isCacheableRequest(new URL(path, ORIGIN))).toBe(true);
+    expect(cache.match).toHaveBeenCalledWith(path);
+    // The write must use the key the read used, or a worker would miss forever and re-fetch every time.
+    expect(cache.put).toHaveBeenCalledWith(path, expect.any(String));
+    expect(keys).toEqual([path, path]);
+  });
+
+  it.each([
+    ['/app/index.html?state=s1', '/app/index.html'],
+    ['/app/assets/main-abc123.js#chunk', '/app/assets/main-abc123.js'],
+    ['/app/assets/main-abc123.js?v=2', '/app/assets/main-abc123.js'],
+  ])('caches %s by pathname alone (AC2)', async (requested, expectedKey) => {
+    await expect(simulateRequestRoute(requested, cache)).resolves.toBe('network-then-cached');
+    expect(isCacheableRequest(new URL(requested, ORIGIN))).toBe(true);
+    expect(keys).toEqual([expectedKey, expectedKey]);
+  });
+
+  it.each(['/app/index.html', '/app/'])('serves a cached shell at %s from the cache (AC2)', async (path) => {
+    cache.match.mockImplementation((key: string) => {
+      keys.push(key);
+      return Promise.resolve('cached shell');
+    });
+
+    await expect(simulateRequestRoute(path, cache)).resolves.toBe('from-cache');
+    expect(cache.put).not.toHaveBeenCalled();
+    expect(keys).toEqual([path]);
+  });
+
+  it('keeps an asset cacheable whatever the method (AC2, AC4)', async () => {
+    await expect(simulateRequestRoute('/app/assets/main-abc123.js', cache, 'POST')).resolves.toBe(
+      'network-then-cached',
+    );
+    expect(isCacheableRequest(new URL('/app/assets/main-abc123.js', ORIGIN))).toBe(true);
+  });
 
   it('serves a cached asset from the cache on a hit (AC2)', async () => {
     cache.match.mockImplementation((key: string) => {
@@ -263,6 +297,18 @@ describe('serviceWorkerNeverCachesApiResponses', () => {
 
     expect(declared).toHaveLength(12);
     expect(declared).toEqual([...NETWORK_ONLY_PATH_PREFIXES]);
+  });
+
+  // AC9 (second half) — guard the sentence that actually mandates this policy, not only the map it is derived
+  // from. T09 and T10 each guard their own rule's wording in agents.md; this task cited it but did not.
+  it('still finds the NetworkOnly rule in agents.md (AC9)', async () => {
+    const agents = await readFile(repoFile('spec/frontend/agents.md'), 'utf8');
+    // Both rules are prose that the file wraps across lines, so whitespace is collapsed before matching: a rewrap
+    // must not fail this guard, while a softened or deleted rule must.
+    const prose = agents.replace(/\s+/g, ' ');
+    expect(prose).toContain('**Service worker (LOCKED');
+    expect(prose).toContain('API routes use NetworkOnly.');
+    expect(prose).toContain('Sensitive response bodies (account, token, receipt, evidence) are never cached.');
   });
 
   // AC10 — the two predicates are one decision, and the module stays pure.
