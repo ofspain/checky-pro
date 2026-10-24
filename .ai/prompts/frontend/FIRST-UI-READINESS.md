@@ -67,8 +67,14 @@ plainly rather than claim as a result it engineered.
 
 ## Running it in front of the full backend stack
 
-Verified on 2026-10-24. Docker Desktop's VM now has **8.3 GB** (the 8 GB recommendation was applied; the stack needs
-about 2.5 GB).
+**Verified end to end on 2026-10-24**, after the anvil reset below: all four services report ready, the edge serves
+`/app/` and `/app/sign-in` with 200 (the blank shell, title "Checky Pro"), discovery through the edge gives issuer
+`http://localhost:5173` with `/oauth2/authorize` and `/connect/logout`, and `infra/local/bin/smoke` printed
+**SMOKE PASSED** — register → verify → PKCE sign-in → MFA → MERCHANT → invoice → pay → ATTESTED → receipt → HELD →
+sign-out. Docker Desktop's VM now has **8.3 GB** (the 8 GB recommendation was applied; the stack needs about 2.5 GB).
+
+That discovery output is also the empirical check on the runtime-derivation decision above: the issuer the browser
+sees *is* the SPA's own origin, so nothing has to be baked in to find it.
 
 ```
 open -a Docker                       # the daemon must be up first
