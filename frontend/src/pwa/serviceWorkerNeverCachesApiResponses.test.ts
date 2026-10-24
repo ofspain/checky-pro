@@ -156,16 +156,45 @@ describe('serviceWorkerNeverCachesApiResponses', () => {
     expect(isNetworkOnlyRequest(new URL('/accounts/me', ORIGIN))).toBe(true);
   });
 
-  // AC5 — the two policies compose: T09 owns navigations, this module owns requests (D8).
-  it.each(['/accounts', '/admin', '/api-keys', '/userinfo', '/api/v1/invoices'])(
-    'declines %s as a navigation (T09) and as a request (T11) (AC5)',
-    (path) => {
-      const url = new URL(path, ORIGIN);
-      expect(isDenylistedNavigation(url, 'navigate')).toBe(true);
-      expect(isShellNavigation(url, 'navigate')).toBe(false);
-      expect(isNetworkOnlyRequest(url)).toBe(true);
-    },
-  );
+  // AC5 — the two policies compose, across all twelve prefixes (D8).
+  //
+  // R57's navigation list is not the same set as the edge map: it covers `/connect` only at `/connect/logout`, and
+  // it does not mention `/notifications` at all, because that is an API route and therefore this task's business.
+  // So the invariant that holds for every prefix is "never the shell, always NetworkOnly"; being a denylisted
+  // *navigation* is true only for the ten R57 also names.
+  const navigationOverlap: [string, boolean][] = [
+    ['/oauth2', true],
+    ['/login', true],
+    ['/logout', true],
+    ['/connect', false],
+    ['/.well-known', true],
+    ['/userinfo', true],
+    ['/error', true],
+    ['/accounts', true],
+    ['/admin', true],
+    ['/api-keys', true],
+    ['/api', true],
+    ['/notifications', false],
+  ];
+
+  it('pairs every edge prefix with its navigation classification (AC5)', () => {
+    expect(navigationOverlap.map(([prefix]) => prefix)).toEqual([...NETWORK_ONLY_PATH_PREFIXES]);
+  });
+
+  it.each(navigationOverlap)('composes with the navigation policy at %s (AC5)', (path, denylistedNavigation) => {
+    const url = new URL(path, ORIGIN);
+
+    expect(isNetworkOnlyRequest(url)).toBe(true);
+    expect(isShellNavigation(url, 'navigate')).toBe(false);
+    expect(isDenylistedNavigation(url, 'navigate')).toBe(denylistedNavigation);
+  });
+
+  it('still denylists the end-session navigation under /connect (AC5)', () => {
+    // So the `false` above for bare /connect is read as R57's wording, not as a gap: T10 owns this path's flow.
+    const url = new URL('/connect/logout', ORIGIN);
+    expect(isDenylistedNavigation(url, 'navigate')).toBe(true);
+    expect(isNetworkOnlyRequest(url)).toBe(true);
+  });
 
   it('leaves an SPA route to the navigation fallback, not to this cache set (AC5)', () => {
     const url = new URL('/app/sign-in', ORIGIN);
@@ -184,6 +213,9 @@ describe('serviceWorkerNeverCachesApiResponses', () => {
     '/favicon.ico',
     '/',
     '/accountsxyz',
+    // The map says /api/v1; the module normalises to /api, so a version nobody has written yet is already covered.
+    '/api/v2/accounts',
+    '/api/health',
   ])('treats the unenumerated path %s as NetworkOnly (AC6)', async (path) => {
     await expect(simulateRequestRoute(path, cache)).resolves.toBe('network-only');
     expect(isCacheableRequest(new URL(path, ORIGIN))).toBe(false);
