@@ -1,4 +1,5 @@
 /// <reference types="node" />
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -10,11 +11,23 @@ import {
   isShellNavigation,
 } from './navigationDenylist';
 
-// repoRoot is computed at module load from Vitest's testPath, as T01, T05 and T08 do, because jsdom gives
-// import.meta.url a non-file URL and the working directory depends on how the runner was started. The reads below
-// assert the file was found before parsing it, so a moved file fails loudly instead of as a silent parse miss.
+// repoRoot is computed from Vitest's testPath, as T01, T05 and T08 do, because jsdom gives import.meta.url a
+// non-file URL and the working directory depends on how the runner was started. That couples the path to this
+// file's depth in the tree, so repoFile() checks the target exists and names the computed root when it does not:
+// a moved file or a different runner then fails with that sentence instead of an ENOENT from the middle of a case.
 const repoRoot = dirname(dirname(dirname(dirname(expect.getState().testPath as string))));
-const MODULE_PATH = join(repoRoot, 'frontend/src/pwa/navigationDenylist.ts');
+
+function repoFile(relativePath: string): string {
+  const path = join(repoRoot, relativePath);
+  if (!existsSync(path)) {
+    throw new Error(
+      `${relativePath} is not under the repository root computed from Vitest's testPath (${repoRoot}). ` +
+        'If this test file moved, the number of dirname() calls above has to move with it.',
+    );
+  }
+
+  return path;
+}
 
 const ORIGIN = 'https://app.example.test';
 const SHELL = '/app/index.html';
@@ -168,7 +181,7 @@ describe('sasNavigationBypassesServiceWorker', () => {
 
   // AC7 — the list is the one in agents.md, in that order; a change to the standing rule fails here.
   it('matches the service-worker rule in agents.md exactly, in order (AC7)', async () => {
-    const agents = await readFile(join(repoRoot, 'spec/frontend/agents.md'), 'utf8');
+    const agents = await readFile(repoFile('spec/frontend/agents.md'), 'utf8');
     expect(agents).toContain('**Service worker (LOCKED');
 
     const start = agents.indexOf('Navigation requests to these paths are never answered from cache');
@@ -197,7 +210,7 @@ describe('sasNavigationBypassesServiceWorker', () => {
 
   // AC8 — the verbatim list stays cited, so a later reader knows where it came from and what owns it.
   it('cites R57 and agents.md in the module source (AC8)', async () => {
-    const source = await readFile(MODULE_PATH, 'utf8');
+    const source = await readFile(repoFile('frontend/src/pwa/navigationDenylist.ts'), 'utf8');
     expect(source).toContain('R57');
     expect(source).toContain('agents.md');
     expect(source).toContain('L17');
@@ -205,7 +218,7 @@ describe('sasNavigationBypassesServiceWorker', () => {
 
   // AC9 — the policy module stays a pure decision: no worker globals, no storage, no session coupling.
   it('uses no network, cache, storage or cross-tab global (AC9)', async () => {
-    const source = await readFile(MODULE_PATH, 'utf8');
+    const source = await readFile(repoFile('frontend/src/pwa/navigationDenylist.ts'), 'utf8');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     expect(code).toContain('DENYLISTED_NAVIGATION_PATHS');
 
