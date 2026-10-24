@@ -703,35 +703,48 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
   // T08 - No POST replay (tasks.md task 8, the second half of R23 under this same named test).
   // ---------------------------------------------------------------------------------------------------------------
   describe('no POST replay', () => {
-    type PostCase = { name: string; path: string; call: (api: AuthApi) => Promise<{ response: Response }> };
+    /** `body` is the object the case sends, so the assertion and the call share one literal and cannot drift.
+     * It is absent for the operations auth.yaml declares with no request body. */
+    type PostCase = {
+      name: string;
+      path: string;
+      body?: unknown;
+      call: (api: AuthApi) => Promise<{ response: Response }>;
+    };
 
     const SAMPLE_UUID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+    const NEW_ACCOUNT = { email: 'someone@example.com', password: 'twelve-chars-ok' };
+    const VERIFY_EMAIL = { token: 'verification-token' };
+    const RESEND = { email: 'someone@example.com' };
+    const RESET_REQUEST = { email: 'someone@example.com' };
+    const NEW_API_KEY = { name: 'ci key' };
+    const CHANGE_PASSWORD = { currentPassword: 'twelve-chars-ok', newPassword: 'thirteen-chars-x' };
 
     /** The five `security: []` POST operations of auth.yaml: a JSON body, sent without a bearer. */
     const PUBLIC_POSTS: PostCase[] = [
-      {
-        name: 'POST /accounts',
-        path: '/accounts',
-        call: (api) => api.POST('/accounts', { body: { email: 'someone@example.com', password: 'twelve-chars-ok' } }),
-      },
+      { name: 'POST /accounts', path: '/accounts', body: NEW_ACCOUNT, call: (api) => api.POST('/accounts', { body: NEW_ACCOUNT }) },
       {
         name: 'POST /accounts/verify-email',
         path: '/accounts/verify-email',
-        call: (api) => api.POST('/accounts/verify-email', { body: { token: 'verification-token' } }),
+        body: VERIFY_EMAIL,
+        call: (api) => api.POST('/accounts/verify-email', { body: VERIFY_EMAIL }),
       },
       {
         name: 'POST /accounts/resend-verification',
         path: '/accounts/resend-verification',
-        call: (api) => api.POST('/accounts/resend-verification', { body: { email: 'someone@example.com' } }),
+        body: RESEND,
+        call: (api) => api.POST('/accounts/resend-verification', { body: RESEND }),
       },
       {
         name: 'POST /accounts/password-reset-request',
         path: '/accounts/password-reset-request',
-        call: (api) => api.POST('/accounts/password-reset-request', { body: { email: 'someone@example.com' } }),
+        body: RESET_REQUEST,
+        call: (api) => api.POST('/accounts/password-reset-request', { body: RESET_REQUEST }),
       },
       {
         name: 'POST /accounts/password-reset',
         path: '/accounts/password-reset',
+        body: PASSWORD_RESET_BODY,
         call: (api) => api.POST('/accounts/password-reset', { body: PASSWORD_RESET_BODY }),
       },
     ];
@@ -741,15 +754,14 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
       {
         name: 'POST /api-keys (JSON body)',
         path: '/api-keys',
-        call: (api) => api.POST('/api-keys', { body: { name: 'ci key' } }),
+        body: NEW_API_KEY,
+        call: (api) => api.POST('/api-keys', { body: NEW_API_KEY }),
       },
       {
         name: 'POST /accounts/me/password (sensitive body)',
         path: '/accounts/me/password',
-        call: (api) =>
-          api.POST('/accounts/me/password', {
-            body: { currentPassword: 'twelve-chars-ok', newPassword: 'thirteen-chars-x' },
-          }),
+        body: CHANGE_PASSWORD,
+        call: (api) => api.POST('/accounts/me/password', { body: CHANGE_PASSWORD }),
       },
       {
         name: 'POST /accounts/me/mfa/totp (no body)',
@@ -793,7 +805,7 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
       '/admin/role-templates',
     ];
 
-    it.each(PUBLIC_POSTS)('sends $name once and never re-sends it on a 429 (AC1, AC2)', async ({ path, call }) => {
+    it.each(PUBLIC_POSTS)('sends $name once and never re-sends it on a 429 (AC1, AC2)', async ({ path, body, call }) => {
       const sent = installTransport(() => RATE_LIMITED);
       const notice = createRateLimitNotice();
       const api = createApi(notice);
@@ -806,27 +818,35 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
       expect(sent[0]!.method).toBe('POST');
       expect(sent[0]!.path).toBe(path);
       expect(sent[0]!.auth).toBeNull();
-      expect(sent[0]!.body).not.toBe('');
+      // The exact body the case sent, so a swapped or dropped body fails even though the call count is right.
+      expect(sent[0]!.body).toBe(JSON.stringify(body));
       expect(notice.isShown()).toBe(true);
       expect(view.text()).toBe(en.rateLimit.message);
+      expect(failures).toEqual([]);
     });
 
-    it.each(PROTECTED_POSTS)('sends $name once and never re-sends it on a 429 (AC1, AC2)', async ({ path, call }) => {
-      const sent = installTransport(() => RATE_LIMITED);
-      const notice = createRateLimitNotice();
-      const api = createApi(notice);
-      const view = await renderNotice(notice);
+    it.each(PROTECTED_POSTS)(
+      'sends $name once and never re-sends it on a 429 (AC1, AC2)',
+      async ({ path, body, call }) => {
+        const sent = installTransport(() => RATE_LIMITED);
+        const notice = createRateLimitNotice();
+        const api = createApi(notice);
+        const view = await renderNotice(notice);
 
-      const result = await callThrough(() => call(api));
+        const result = await callThrough(() => call(api));
 
-      expect(result.response.status).toBe(429);
-      expect(sent).toHaveLength(1);
-      expect(sent[0]!.method).toBe('POST');
-      expect(sent[0]!.path).toBe(path);
-      expect(sent[0]!.auth).toBe('Bearer token');
-      expect(notice.isShown()).toBe(true);
-      expect(view.text()).toBe(en.rateLimit.message);
-    });
+        expect(result.response.status).toBe(429);
+        expect(sent).toHaveLength(1);
+        expect(sent[0]!.method).toBe('POST');
+        expect(sent[0]!.path).toBe(path);
+        expect(sent[0]!.auth).toBe('Bearer token');
+        // '' for the two operations auth.yaml declares with no request body.
+        expect(sent[0]!.body).toBe(body === undefined ? '' : JSON.stringify(body));
+        expect(notice.isShown()).toBe(true);
+        expect(view.text()).toBe(en.rateLimit.message);
+        expect(failures).toEqual([]);
+      },
+    );
 
     it('re-sends nothing on a 429 even with no notice passed to the client (AC1)', async () => {
       for (const { name, call } of [...PUBLIC_POSTS, ...PROTECTED_POSTS]) {
@@ -960,7 +980,12 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
     });
 
     it('accounts for every POST operation in auth.yaml, so a new one cannot escape this file (AC7)', async () => {
-      const contract = await readFile(join(repoRoot, 'contracts/api/auth.yaml'), 'utf8');
+      // repoRoot is computed at module load from Vitest's testPath, as T01 and T05 do, because jsdom gives
+      // import.meta.url a non-file URL and the working directory depends on how the runner was started. This
+      // assertion makes a moved file or a changed runner fail here, loudly, instead of further down as a parse miss.
+      const contractPath = join(repoRoot, 'contracts/api/auth.yaml');
+      const contract = await readFile(contractPath, 'utf8');
+      expect(contract).toContain('openapi:');
       const declaredPosts: string[] = [];
       let path = '';
       for (const line of contract.split('\n')) {
