@@ -6,6 +6,10 @@ import { VitePWA } from 'vite-plugin-pwa';
 // the edge, which owns every backend route (L9), so there is no server.proxy here.
 export default defineConfig({
   base: '/app/',
+  // Stated rather than inherited: only VITE_-prefixed values are ever inlined, and the four public keys in
+  // design.md 4c are the whole allowlist (R58, L10). An empty or broadened prefix would bake every variable of
+  // the build machine into the bundle, which is a one-word edit away without this line.
+  envPrefix: ['VITE_'],
   plugins: [
     react(),
     // injectManifest, not generateSW: the worker is written by hand in src/pwa so it can import the
