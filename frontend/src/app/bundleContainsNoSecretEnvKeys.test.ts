@@ -60,6 +60,11 @@ const KNOWN_ABSOLUTE_URLS = [
 /** This platform's own services. No emitted file may name one (L9, and the leak that would matter most). */
 const PLATFORM_HOSTS = ['auth', 'payment', 'notification', 'crypto', 'postgres', 'localstack'] as const;
 
+/**
+ * Only Vite's own two shapes. A value inlined by a `define` block under an arbitrary name - `__API_BASE__` - is
+ * invisible here by design: mechanism closure is the primary instrument, and the "declares no define block" case
+ * below is this pattern's counterweight. Do not read a green key scan as "nothing was inlined".
+ */
 const ENV_KEY_PATTERNS = [/VITE_[A-Z0-9_]+/g, /process\.env\.([A-Za-z0-9_]+)/g];
 
 const SECRET_PATTERNS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
@@ -77,7 +82,12 @@ const SECRET_PATTERNS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
  */
 const REAL_PLATFORM_VALUES = ['checky-local-only'] as const;
 
-const ABSOLUTE_URL_PATTERN = /https?:\/\/[A-Za-z0-9._:-]+(?:\/[A-Za-z0-9._\-/]*)?/g;
+/**
+ * Query and fragment characters are included deliberately. Without them the pattern stopped at `?`, so
+ * `https://bit.ly/wb-precache?key=SECRET` reduced to an allowlisted entry and set equality passed - the secret
+ * laundered through the allowlist. The negative control carries exactly that shape.
+ */
+const ABSOLUTE_URL_PATTERN = /https?:\/\/[A-Za-z0-9._:-]+(?:[/?#][A-Za-z0-9._\-/?#&=%+~]*)?/g;
 
 type BundleScan = {
   files: string[];
@@ -113,7 +123,9 @@ async function scanBundle(treeRoot: string): Promise<BundleScan> {
   const absoluteUrls = new Set<string>();
 
   for (const file of files) {
-    const source = await readFile(join(treeRoot, file), 'utf8');
+    // latin1, not utf8: every pattern here is ASCII, and a byte-preserving decode means a future binary asset
+    // (a font, an inlined image) cannot swallow an ASCII secret behind replacement characters.
+    const source = (await readFile(join(treeRoot, file))).toString('latin1');
     for (const pattern of ENV_KEY_PATTERNS) {
       for (const match of source.matchAll(pattern)) envKeys.add(match[1] ?? match[0]);
     }
@@ -143,11 +155,15 @@ async function allowlistFromSpec(): Promise<string[]> {
   const headingIndex = lines.findIndex((line) => /Environment keys/i.test(line));
   expect(headingIndex, 'design.md no longer declares an "Environment keys" section').toBeGreaterThan(-1);
 
-  const paragraph: string[] = [];
+  // To the next Markdown heading, not the first blank line: a reflow into a bulleted list would otherwise cut
+  // the section short. That direction fails *closed* - a smaller allowlist makes the key check stricter and the
+  // set-equality case below fail - but reading the whole section is still the correct parse.
+  const section: string[] = [];
   for (let i = headingIndex; i < lines.length; i += 1) {
-    if (i > headingIndex && lines[i]!.trim() === '') break;
-    paragraph.push(lines[i]!);
+    if (i > headingIndex && /^#{1,6}\s/.test(lines[i]!)) break;
+    section.push(lines[i]!);
   }
+  const paragraph = section;
   const tokens = [...paragraph.join(' ').matchAll(/`([^`]+)`/g)].map((match) => match[1]!);
   return [...new Set(tokens.filter((token) => /^VITE_[A-Z0-9_]+$/.test(token)))].sort();
 }
@@ -155,6 +171,7 @@ async function allowlistFromSpec(): Promise<string[]> {
 describe('bundleContainsNoSecretEnvKeys', () => {
   let outDir: string;
   let scan: BundleScan;
+  let buildEnv: NodeJS.ProcessEnv;
 
   beforeAll(async () => {
     outDir = await mkdtemp(join(tmpdir(), 'checky-bundle-scan-'));
@@ -165,10 +182,17 @@ describe('bundleContainsNoSecretEnvKeys', () => {
     // NODE_ENV must not be inherited. Vitest sets it to `test`, and a child build that sees it keeps React's
     // development build - so the environment is cleaned to what a shell running `pnpm build` would give, letting
     // `vite build` apply its own production default.
-    const buildEnv = { ...process.env };
+    buildEnv = { ...process.env };
     delete buildEnv.NODE_ENV;
     delete buildEnv.VITEST;
     delete buildEnv.VITEST_MODE;
+    // Every VITE_ variable the shell carries is removed too. Not because one would be dumped into the bundle on
+    // its own - the positive control below shows it would not; Vite only substitutes keys that source actually
+    // reads - but because `{...import.meta.env}` in some future file would pull in whatever the host holds, and
+    // this build should judge the repository rather than whose laptop it runs on.
+    for (const key of Object.keys(buildEnv)) {
+      if (key.startsWith('VITE_')) delete buildEnv[key];
+    }
     await run(join(frontendDir, 'node_modules/.bin/vite'), ['build', '--outDir', outDir, '--emptyOutDir'], {
       cwd: frontendDir,
       env: buildEnv,
@@ -195,9 +219,15 @@ describe('bundleContainsNoSecretEnvKeys', () => {
       // The property that makes every assertion below meaningful. A development bundle is a different artifact
       // with a different surface: it keeps React's warning machinery, and it would keep anything else the build
       // strips. Asserted on the artifact, so a change of build invocation cannot quietly swap what is scanned.
-      const chunk = await readFile(join(outDir, scan.files.find((f) => f.startsWith('assets/'))!), 'utf8');
-      expect(chunk).not.toMatch(/react\.dev\/(link|warnings)/);
-      expect(chunk).not.toContain('process.env.NODE_ENV');
+      // Every emitted JS file, not only the app chunk: the worker is built by a second vite-plugin-pwa pipeline
+      // and could be development-mode independently of it.
+      const scripts = scan.files.filter((file) => file.endsWith('.js'));
+      expect(scripts.length).toBeGreaterThanOrEqual(2);
+      for (const file of scripts) {
+        const source = await readFile(join(outDir, file), 'utf8');
+        expect(source, file).not.toMatch(/react\.dev\/(link|warnings)/);
+        expect(source, file).not.toContain('process.env.NODE_ENV');
+      }
     });
 
     it('includes the files that sit outside assets/, which a JS glob would skip', () => {
@@ -226,6 +256,9 @@ describe('bundleContainsNoSecretEnvKeys', () => {
           'const f = "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.not-a-real-signature";',
           'const g = "AKIAIOSFODNN7EXAMPLE";',
           'const h = "http://auth:8080/oauth2/token";',
+          // The S1 bypass: a secret hung off an allowlisted URL. Before the pattern consumed query characters
+          // this scanned as plain "https://bit.ly/wb-precache" and passed set equality.
+          'const i = "https://bit.ly/wb-precache?key=SUPERSECRET";',
         ].join('\n'),
       );
       await writeFile(join(controlDir, 'assets/leaky.js.map'), '{"version":3}');
@@ -261,6 +294,15 @@ describe('bundleContainsNoSecretEnvKeys', () => {
       expect(controlScan.absoluteUrls.filter((url) => !(KNOWN_ABSOLUTE_URLS as readonly string[]).includes(url))).not.toEqual([]);
     });
 
+    it('reports a secret appended to an allowlisted URL (S1)', () => {
+      expect(controlScan.absoluteUrls).toContain('https://bit.ly/wb-precache?key=SUPERSECRET');
+      expect(controlScan.absoluteUrls).not.toContain('https://bit.ly/wb-precache');
+      // And it is rejected by the real assertion's instrument, not merely present in the record.
+      expect(
+        controlScan.absoluteUrls.filter((url) => !(KNOWN_ABSOLUTE_URLS as readonly string[]).includes(url)),
+      ).toContain('https://bit.ly/wb-precache?key=SUPERSECRET');
+    });
+
     it('reports a sourcemap', () => {
       expect(controlScan.sourcemaps).toEqual(['assets/leaky.js.map']);
     });
@@ -272,6 +314,60 @@ describe('bundleContainsNoSecretEnvKeys', () => {
       } finally {
         await rm(empty, { recursive: true, force: true });
       }
+    });
+  });
+
+  // ── AC7 · the positive control: Vite's inlining, and the scanner, on a project that does read a key ────────
+
+  describe('a referenced key is baked in and reported (AC7, Kimi 8.1)', () => {
+    let injectedScan: BundleScan;
+    let projectDir: string;
+    let injectedDir: string;
+
+    beforeAll(async () => {
+      // A throwaway Vite project, not this one. It reads an environment key, which no file in frontend/src may
+      // do (T01), so the mechanism cannot be demonstrated against our own source without breaking that rule.
+      projectDir = await mkdtemp(join(tmpdir(), 'checky-inline-project-'));
+      injectedDir = join(projectDir, 'dist');
+      await mkdir(join(projectDir, 'src'), { recursive: true });
+      await writeFile(
+        join(projectDir, 'index.html'),
+        '<!doctype html><html><body><script type="module" src="/src/main.ts"></script></body></html>',
+      );
+      await writeFile(
+        join(projectDir, 'src/main.ts'),
+        'export const leaked = import.meta.env.VITE_INJECTED_SECRET;\nconsole.log(leaked);\n',
+      );
+      await writeFile(
+        join(projectDir, 'vite.config.ts'),
+        "import { defineConfig } from 'vite';\nexport default defineConfig({ envPrefix: ['VITE_'] });\n",
+      );
+      await run(join(frontendDir, 'node_modules/.bin/vite'), ['build', '--outDir', injectedDir, '--emptyOutDir'], {
+        cwd: projectDir,
+        env: { ...buildEnv, VITE_INJECTED_SECRET: 'checky-local-only' },
+      });
+      injectedScan = await scanBundle(injectedDir);
+    }, 120_000);
+
+    afterAll(async () => {
+      await rm(projectDir, { recursive: true, force: true });
+    });
+
+    it('inlines the key\'s VALUE, not its name - which is what makes the real-value scan necessary', () => {
+      // The correction that produced this case. A host variable is NOT dumped into a bundle wholesale: Vite
+      // substitutes `import.meta.env.X` where source reads it, and the artifact then holds the *value* with no
+      // trace of the key name. So a key-name scan alone cannot see this leak at all.
+      expect(injectedScan.envKeys).toEqual([]);
+      expect(injectedScan.secrets.map((secret) => secret.hit)).toContain(
+        'real platform value checky-local-only',
+      );
+    });
+
+    it('is caught by the real-value half of the scanner', () => {
+      expect(injectedScan.secrets).not.toEqual([]);
+      // And the real bundle has neither the key nor the value.
+      expect(scan.envKeys).toEqual([]);
+      expect(scan.secrets).toEqual([]);
     });
   });
 
@@ -353,17 +449,28 @@ describe('bundleContainsNoSecretEnvKeys', () => {
       expect(scan.absoluteUrls).toEqual([...KNOWN_ABSOLUTE_URLS]);
     });
 
-    it('names no service of this platform', () => {
+    it('names no service of this platform, as a bare host or a labelled one', () => {
+      // Previously `//auth[:/]` only, which flagged http://auth:8080 but not https://auth.checky.example. The
+      // service name is now matched as a host label anywhere in the authority. Set equality above is still the
+      // real guard - this case exists to say *why* a URL would be rejected.
       for (const url of scan.absoluteUrls) {
         for (const host of PLATFORM_HOSTS) {
-          expect(url, `${url} names ${host}`).not.toMatch(new RegExp(`//${host}[:/]|//${host}$`));
+          expect(url, `${url} names ${host}`).not.toMatch(new RegExp(`//(?:[^/]*\\.)?${host}(?:[.:/]|$)`));
         }
       }
     });
 
-    it('keeps every entry justified, not merely listed', async () => {
-      // Each KNOWN_ABSOLUTE_URLS entry must sit under a comment line, so a future addition cannot be slipped in
-      // without a reason. Asserted over this file's own source.
+    it('carries no query string or fragment on any emitted URL', () => {
+      // None does today. One appearing is worth a human look, and it is the shape that used to be invisible.
+      for (const url of scan.absoluteUrls) {
+        expect(url, url).not.toMatch(/[?#]/);
+      }
+    });
+
+    it('keeps the allowlist commented, which is a smell check and not a proof', async () => {
+      // Honest about its reach: it counts comment lines in the KNOWN_ABSOLUTE_URLS block, so it would not notice
+      // a new entry tucked under an existing comment. Review is what enforces one reason per entry; this only
+      // fails if the reasons are deleted wholesale.
       const self = await readFile(expect.getState().testPath as string, 'utf8');
       const block = self.slice(
         self.indexOf('const KNOWN_ABSOLUTE_URLS'),
