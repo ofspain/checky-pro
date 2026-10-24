@@ -1,3 +1,6 @@
+/// <reference types="node" />
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import i18next, { type i18n } from 'i18next';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -14,7 +17,10 @@ import { createSessionBoundary, type SessionTokens } from './sessionBoundary';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type Reply = { status: number; headers?: Record<string, string>; body?: string };
-type Sent = { method: string; path: string; auth: string | null; response?: Response };
+type Sent = { method: string; path: string; auth: string | null; body: string; response?: Response };
+
+// This file is frontend/src/api/<name>; jsdom gives import.meta.url a non-file URL (T05's technique).
+const repoRoot = dirname(dirname(dirname(dirname(expect.getState().testPath as string))));
 
 /** The live 429, as probed through the edge on 2026-10-22: problem+json, a title, and Retry-After. */
 const RATE_LIMITED: Reply = {
@@ -66,10 +72,20 @@ function installTransport(respond: (request: Request) => Reply | Promise<Reply>)
     'fetch',
     vi.fn(async (request: Request) => {
       if (request.signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+      let body = '';
+      if (request.method !== 'GET') {
+        // A case may make clone() throw on purpose (T08 AC4); the call still counts.
+        try {
+          body = await request.clone().text();
+        } catch {
+          body = '<uncloneable>';
+        }
+      }
       const record: Sent = {
         method: request.method,
         path: new URL(request.url).pathname,
         auth: request.headers.get('Authorization'),
+        body,
       };
       sent.push(record);
       const reply = await respond(request);
@@ -681,5 +697,334 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
     expect(view.container.textContent).toBe(`${en.rateLimit.message}${en.rateLimit.dismiss}`);
     expect(sent).toHaveLength(2);
     expect(failures).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // T08 - No POST replay (tasks.md task 8, the second half of R23 under this same named test).
+  // ---------------------------------------------------------------------------------------------------------------
+  describe('no POST replay', () => {
+    type PostCase = { name: string; path: string; call: (api: AuthApi) => Promise<{ response: Response }> };
+
+    const SAMPLE_UUID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+
+    /** The five `security: []` POST operations of auth.yaml: a JSON body, sent without a bearer. */
+    const PUBLIC_POSTS: PostCase[] = [
+      {
+        name: 'POST /accounts',
+        path: '/accounts',
+        call: (api) => api.POST('/accounts', { body: { email: 'someone@example.com', password: 'twelve-chars-ok' } }),
+      },
+      {
+        name: 'POST /accounts/verify-email',
+        path: '/accounts/verify-email',
+        call: (api) => api.POST('/accounts/verify-email', { body: { token: 'verification-token' } }),
+      },
+      {
+        name: 'POST /accounts/resend-verification',
+        path: '/accounts/resend-verification',
+        call: (api) => api.POST('/accounts/resend-verification', { body: { email: 'someone@example.com' } }),
+      },
+      {
+        name: 'POST /accounts/password-reset-request',
+        path: '/accounts/password-reset-request',
+        call: (api) => api.POST('/accounts/password-reset-request', { body: { email: 'someone@example.com' } }),
+      },
+      {
+        name: 'POST /accounts/password-reset',
+        path: '/accounts/password-reset',
+        call: (api) => api.POST('/accounts/password-reset', { body: PASSWORD_RESET_BODY }),
+      },
+    ];
+
+    /** One protected POST per request shape in auth.yaml: a JSON body, a sensitive body, no body, a path parameter. */
+    const PROTECTED_POSTS: PostCase[] = [
+      {
+        name: 'POST /api-keys (JSON body)',
+        path: '/api-keys',
+        call: (api) => api.POST('/api-keys', { body: { name: 'ci key' } }),
+      },
+      {
+        name: 'POST /accounts/me/password (sensitive body)',
+        path: '/accounts/me/password',
+        call: (api) =>
+          api.POST('/accounts/me/password', {
+            body: { currentPassword: 'twelve-chars-ok', newPassword: 'thirteen-chars-x' },
+          }),
+      },
+      {
+        name: 'POST /accounts/me/mfa/totp (no body)',
+        path: '/accounts/me/mfa/totp',
+        call: (api) => api.POST('/accounts/me/mfa/totp'),
+      },
+      {
+        name: 'POST /admin/accounts/{accountUuid}/activate (path parameter)',
+        path: `/admin/accounts/${SAMPLE_UUID}/activate`,
+        call: (api) =>
+          api.POST('/admin/accounts/{accountUuid}/activate', { params: { path: { accountUuid: SAMPLE_UUID } } }),
+      },
+    ];
+
+    /** The contract paths the cases above drive end to end. */
+    const EXERCISED_POST_PATHS = [
+      '/accounts',
+      '/accounts/verify-email',
+      '/accounts/resend-verification',
+      '/accounts/password-reset-request',
+      '/accounts/password-reset',
+      '/api-keys',
+      '/accounts/me/password',
+      '/accounts/me/mfa/totp',
+      '/admin/accounts/{accountUuid}/activate',
+    ];
+
+    /** The rest of auth.yaml's POST operations. Each repeats a shape already exercised above - a JSON body, no body,
+     * or a path parameter - and the boundary is operation-agnostic, so they are accounted for rather than driven. The
+     * drift guard below fails if the contract gains a POST that is in neither list. */
+    const UNEXERCISED_POST_PATHS = [
+      '/accounts/me/mfa/totp/confirm',
+      '/accounts/me/mfa/recovery-codes',
+      '/admin/accounts/{accountUuid}/suspend',
+      '/admin/accounts/{accountUuid}/reinstate',
+      '/admin/accounts/{accountUuid}/unlock',
+      '/api-keys/token',
+      '/admin/accounts/{accountUuid}/roles/{roleName}',
+      '/admin/accounts/{accountUuid}/role-templates/{templateName}',
+      '/admin/roles',
+      '/admin/role-templates',
+    ];
+
+    it.each(PUBLIC_POSTS)('sends $name once and never re-sends it on a 429 (AC1, AC2)', async ({ path, call }) => {
+      const sent = installTransport(() => RATE_LIMITED);
+      const notice = createRateLimitNotice();
+      const api = createApi(notice);
+      const view = await renderNotice(notice);
+
+      const result = await callThrough(() => call(api));
+
+      expect(result.response.status).toBe(429);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.method).toBe('POST');
+      expect(sent[0]!.path).toBe(path);
+      expect(sent[0]!.auth).toBeNull();
+      expect(sent[0]!.body).not.toBe('');
+      expect(notice.isShown()).toBe(true);
+      expect(view.text()).toBe(en.rateLimit.message);
+    });
+
+    it.each(PROTECTED_POSTS)('sends $name once and never re-sends it on a 429 (AC1, AC2)', async ({ path, call }) => {
+      const sent = installTransport(() => RATE_LIMITED);
+      const notice = createRateLimitNotice();
+      const api = createApi(notice);
+      const view = await renderNotice(notice);
+
+      const result = await callThrough(() => call(api));
+
+      expect(result.response.status).toBe(429);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.method).toBe('POST');
+      expect(sent[0]!.path).toBe(path);
+      expect(sent[0]!.auth).toBe('Bearer token');
+      expect(notice.isShown()).toBe(true);
+      expect(view.text()).toBe(en.rateLimit.message);
+    });
+
+    it('re-sends nothing on a 429 even with no notice passed to the client (AC1)', async () => {
+      for (const { name, call } of [...PUBLIC_POSTS, ...PROTECTED_POSTS]) {
+        const sent = installTransport(() => RATE_LIMITED);
+        const api = createApi(); // no notice: the copy is lost, but a replay must still not happen
+        const result = await call(api);
+        expect(result.response.status, name).toBe(429);
+        expect(sent, name).toHaveLength(1);
+      }
+    });
+
+    it('neither renews nor re-sends on a 429, even when a renewal would succeed (AC1, AC3)', async () => {
+      // The other cases use a client whose renew() rejects, which would hide a renewal attempt. Here it would
+      // succeed, so a boundary that treated 429 like 401 would renew and re-send - and be caught.
+      const session = fakeSession('old');
+      const sent = installTransport(() => RATE_LIMITED);
+      const notice = createRateLimitNotice();
+      const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed), notice);
+      const view = await renderNotice(notice);
+
+      const result = await callThrough(() => api.POST('/api-keys', { body: { name: 'ci key' } }));
+      await act(async () => settle());
+
+      expect(result.response.status).toBe(429);
+      expect(session.renew).not.toHaveBeenCalled();
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.auth).toBe('Bearer old');
+      expect(notice.isShown()).toBe(true);
+      expect(view.text()).toBe(en.rateLimit.message);
+      expect(failures).toEqual([]);
+    });
+
+    it('sends a POST at most twice - the 401 re-send - and a 429 on that re-send ends it (AC3)', async () => {
+      // R23's no-replay clause is scoped to the 429 case: its WHEN is a 429, and agents.md's API-access rule puts
+      // the sentence inside 429 handling. T05's single re-send is 401-driven (R21, L18) and repeats a request the
+      // server rejected before business logic, so two sends here are correct. A third would be the replay R23
+      // forbids. Frozen at T08 phase 4 by owner decision.
+      const session = fakeSession('old');
+      const sent = installTransport((request) =>
+        request.headers.get('Authorization') === 'Bearer old' ? { status: 401 } : RATE_LIMITED,
+      );
+      const notice = createRateLimitNotice();
+      const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed), notice);
+      const view = await renderNotice(notice);
+
+      let status = 0;
+      await act(async () => {
+        const call = api.POST('/api-keys', { body: { name: 'ci key' } });
+        await vi.waitFor(() => expect(session.renew).toHaveBeenCalledTimes(1));
+        session.attempts[0]!.resolve('new');
+        status = (await call).response.status;
+      });
+
+      expect(status).toBe(429);
+      expect(sent.map((request) => `${request.method} ${request.path} ${request.auth}`)).toEqual([
+        'POST /api-keys Bearer old',
+        'POST /api-keys Bearer new',
+      ]);
+      expect(sent[0]!.body).toBe('{"name":"ci key"}');
+      expect(sent[1]!.body).toBe(sent[0]!.body);
+      expect(session.renew).toHaveBeenCalledTimes(1);
+      expect(notice.isShown()).toBe(true);
+      expect(view.text()).toBe(en.rateLimit.message);
+
+      // And nothing arrives afterwards.
+      await act(async () => settle());
+      expect(sent).toHaveLength(2);
+      expect(failures).toEqual([]);
+    });
+
+    it("returns a 429 unchanged for a POST whose clone() throws, and re-sends nothing (AC4)", async () => {
+      const sent = installTransport(() => RATE_LIMITED);
+      const notice = createRateLimitNotice();
+      const api = createApi(notice);
+      const view = await renderNotice(notice);
+      // T05's technique: an uncloneable body is a real path in sessionBoundary.ts, where entry.clone stays null.
+      vi.spyOn(Request.prototype, 'clone').mockImplementation(() => {
+        throw new TypeError('body cannot be cloned');
+      });
+
+      const result = await callThrough(() => api.POST('/api-keys', { body: { name: 'ci key' } }));
+
+      expect(result.response.status).toBe(429);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.body).toBe('<uncloneable>');
+      expect(notice.isShown()).toBe(true);
+      expect(view.text()).toBe(en.rateLimit.message);
+    });
+
+    it('exposes only onResponse on the 429 middleware, and it returns undefined (AC5)', async () => {
+      const notice = createRateLimitNotice();
+      // An onRequest or onError here would be the only way the notice itself could ever send something.
+      expect(Object.keys(notice.middleware)).toEqual(['onResponse']);
+
+      const rateLimited = new Response('{}', { status: 429 });
+      type ResponseParams = Parameters<NonNullable<typeof notice.middleware.onResponse>>[0];
+      const result = await notice.middleware.onResponse!({
+        request: new Request('/api-keys', { method: 'POST' }),
+        response: rateLimited,
+        schemaPath: '/api-keys',
+        id: 'post-429',
+      } as ResponseParams);
+
+      expect(result).toBeUndefined();
+      expect(notice.isShown()).toBe(true);
+    });
+
+    it('starts no timer on a POST 429, and resumes nothing over an hour or on dismissal (AC6)', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
+      const sent = installTransport(() => RATE_LIMITED);
+      const notice = createRateLimitNotice();
+      const api = createApi(notice);
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+
+      // No component mounted, so React's scheduling cannot account for a timer the handling did not create.
+      const result = await api.POST('/api-keys', { body: { name: 'ci key' } });
+
+      expect(result.response.status).toBe(429);
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
+      expect(setIntervalSpy).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      expect(sent).toHaveLength(1);
+      expect(notice.isShown()).toBe(true);
+
+      notice.dismiss();
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      expect(notice.isShown()).toBe(false);
+      expect(sent).toHaveLength(1);
+    });
+
+    it('accounts for every POST operation in auth.yaml, so a new one cannot escape this file (AC7)', async () => {
+      const contract = await readFile(join(repoRoot, 'contracts/api/auth.yaml'), 'utf8');
+      const declaredPosts: string[] = [];
+      let path = '';
+      for (const line of contract.split('\n')) {
+        const pathLine = /^ {2}(\/\S*):\s*$/.exec(line);
+        if (pathLine) path = pathLine[1]!;
+        if (/^ {4}post:\s*$/.test(line)) declaredPosts.push(path);
+      }
+
+      expect(declaredPosts.length).toBeGreaterThan(0);
+      expect(declaredPosts.sort()).toEqual([...EXERCISED_POST_PATHS, ...UNEXERCISED_POST_PATHS].sort());
+    });
+
+    it('never logs, stores or displays a POST body (AC8)', async () => {
+      const marker = 'MARKER-fWq7x-not-a-real-password';
+      const sent = installTransport(() => RATE_LIMITED);
+      const notice = createRateLimitNotice();
+      const api = createApi(notice);
+      const view = await renderNotice(notice);
+      const hrefBefore = window.location.href;
+      const cookieBefore = document.cookie;
+      const consoleSpies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+        vi.spyOn(console, level).mockImplementation(() => undefined),
+      );
+
+      await callThrough(() =>
+        api.POST('/accounts/me/password', { body: { currentPassword: marker, newPassword: 'thirteen-chars-x' } }),
+      );
+
+      // It reached the transport, and nowhere else.
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.body).toContain(marker);
+      expect(view.container.textContent).toBe(`${en.rateLimit.message}${en.rateLimit.dismiss}`);
+      expect(JSON.stringify(consoleSpies.map((spy) => spy.mock.calls))).not.toContain(marker);
+      expect(window.localStorage.length).toBe(0);
+      expect(window.sessionStorage.length).toBe(0);
+      expect(document.cookie).toBe(cookieBefore);
+      expect(window.location.href).toBe(hrefBefore);
+
+      await act(async () => view.button()!.click());
+      expect(sent).toHaveLength(1);
+    });
+
+    it('leaves T05 alone: a 401 on a POST renews once and re-sends once to a 201 (AC9, L12)', async () => {
+      const session = fakeSession('old');
+      const sent = installTransport((request) => ({
+        status: request.headers.get('Authorization') === 'Bearer new' ? 201 : 401,
+      }));
+      const notice = createRateLimitNotice();
+      const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed), notice);
+
+      let status = 0;
+      await act(async () => {
+        const call = api.POST('/api-keys', { body: { name: 'ci key' } });
+        await vi.waitFor(() => expect(session.renew).toHaveBeenCalledTimes(1));
+        session.attempts[0]!.resolve('new');
+        status = (await call).response.status;
+      });
+
+      expect(status).toBe(201);
+      expect(sent.map((request) => request.auth)).toEqual(['Bearer old', 'Bearer new']);
+      expect(sent[1]!.body).toBe(sent[0]!.body);
+      expect(session.renew).toHaveBeenCalledTimes(1);
+      expect(notice.isShown()).toBe(false);
+      expect(failures).toEqual([]);
+    });
   });
 });
