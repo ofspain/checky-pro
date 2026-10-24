@@ -32,6 +32,14 @@ const FORBIDDEN = ['skipWaiting', 'clients.claim', 'clientsClaim'] as const;
 /** The origin the SPA is served from, used to resolve the build's base-relative precache URLs. */
 const ORIGIN = 'http://localhost:5173';
 
+/** Source with whole-line comments removed, so a doc comment explaining a rule is not read as breaking it. */
+function codeOf(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+    .join('\n');
+}
+
 function repoFile(...parts: string[]): Promise<string> {
   return readFile(join(repoRoot, ...parts), 'utf8');
 }
@@ -231,6 +239,62 @@ describe('serviceWorkerUpdateWaitsForReload', () => {
       registration.waiting = new FakeWorker();
       registration.dispatchEvent(new Event('updatefound'));
       await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
+    });
+
+    it('reports a second build no further times, because the state has not changed (Kimi 11.2)', async () => {
+      // Deliberate, and the opposite of what the review suggested. "An update is waiting" is a state, not an
+      // event: it becomes true when a build arrives and stays true until a load applies it, which is the only
+      // thing that can. A second build replacing the first does not change it, so a prompt already on screen
+      // has nothing new to say. A fresh subscriber still learns it immediately - the case below.
+      const registration = new FakeRegistration();
+      installFakeContainer(registration);
+      const { registerServiceWorker, onUpdateWaiting } = await freshRegistrationModule();
+      await registerServiceWorker();
+
+      const listener = vi.fn();
+      onUpdateWaiting(listener);
+      registration.pushUpdate();
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      registration.pushUpdate();
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      // ...and the state is still readable by anyone who arrives later.
+      const later = vi.fn();
+      onUpdateWaiting(later);
+      expect(later).toHaveBeenCalledTimes(1);
+    });
+
+    it('unsubscribes only the listener it was given (Kimi 11.5)', async () => {
+      // The shape a React effect uses: subscribe, return the cleanup, and the cleanup must not take the others
+      // with it.
+      const registration = new FakeRegistration();
+      installFakeContainer(registration);
+      const { registerServiceWorker, onUpdateWaiting } = await freshRegistrationModule();
+      await registerServiceWorker();
+
+      const removed = vi.fn();
+      const kept = vi.fn();
+      const cleanup = onUpdateWaiting(removed);
+      onUpdateWaiting(kept);
+      cleanup();
+      expect(() => cleanup()).not.toThrow(); // a second cleanup, as a double-invoked effect would do
+      registration.pushUpdate();
+
+      expect(removed).not.toHaveBeenCalled();
+      expect(kept).toHaveBeenCalledTimes(1);
+    });
+
+    it('is safe to subscribe where there is no service worker at all (Kimi 11.7)', async () => {
+      // Corrected premise: since phase 9, onUpdateWaiting does not register, so there is no registration to
+      // resolve to undefined. What matters is that subscribing is still harmless on jsdom or an insecure origin.
+      const { onUpdateWaiting } = await freshRegistrationModule();
+
+      const listener = vi.fn();
+      const cleanup = onUpdateWaiting(listener);
+
+      expect(listener).not.toHaveBeenCalled();
+      expect(() => cleanup()).not.toThrow();
     });
 
     it('observing does not register; main.tsx owns that (S3)', async () => {
@@ -512,6 +576,12 @@ describe('serviceWorkerUpdateWaitsForReload', () => {
       expect(NAVIGATION_DENYLIST.some((p) => p.test('../login'))).toBe(false);
     });
 
+    it('does not precache the worker itself (Kimi 11.6)', async () => {
+      const { SERVICE_WORKER_URL } = await import('./registerServiceWorker');
+      const resolved = precacheManifest(worker).map(({ url }) => new URL(url, `${ORIGIN}/app/`).pathname);
+      expect(resolved).not.toContain(SERVICE_WORKER_URL);
+    });
+
     it('precaches the shell the fallback is bound to', () => {
       const resolved = precacheManifest(worker).map(({ url }) => new URL(url, `${ORIGIN}/app/`).pathname);
       expect(resolved).toContain(SHELL_DOCUMENT_URL);
@@ -558,6 +628,13 @@ describe('serviceWorkerUpdateWaitsForReload', () => {
         const source = await repoFile('frontend', path);
         expect(source).not.toContain('i18next');
         expect(source).not.toMatch(/\bt\(/);
+        // Absence of a translation call is not absence of copy: a bare sentence would have passed both
+        // assertions above. Every string literal in these two modules is a path or a module specifier, so
+        // none contains a space - which is what a sentence has and a path does not (Kimi 11.8).
+        const literals = [...codeOf(source).matchAll(/'([^']*)'|"([^"]*)"/g)].map((m) => m[1] ?? m[2] ?? '');
+        for (const literal of literals) {
+          expect(literal, `${path} holds the string "${literal}"`).not.toMatch(/\S\s\S/);
+        }
       },
     );
   });
