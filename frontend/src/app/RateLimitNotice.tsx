@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useRef, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RateLimitNoticeState } from '../api/rateLimitNotice';
 
@@ -13,13 +13,25 @@ import type { RateLimitNoticeState } from '../api/rateLimitNotice';
 export function RateLimitNotice({ notice }: { notice: RateLimitNoticeState }) {
   const shown = useSyncExternalStore(notice.subscribe, notice.isShown);
   const { t } = useTranslation();
+  const wrapper = useRef<HTMLDivElement>(null);
+  const dismissButton = useRef<HTMLButtonElement>(null);
+
+  // Dismissing unmounts the button, which would drop a keyboard user's focus to <body> (L11). The wrapper is
+  // focusable programmatically only (tabIndex -1) and takes the focus the button is about to lose. A screen can
+  // later restore the element that had focus before the notice appeared; the component can't know it.
+  function dismiss() {
+    const buttonHadFocus = document.activeElement === dismissButton.current;
+    notice.dismiss();
+    if (buttonHadFocus) wrapper.current?.focus();
+  }
+
   return (
-    <div>
+    <div ref={wrapper} tabIndex={-1}>
       <div role="status" aria-live="polite">
         {shown ? t('rateLimit.message') : null}
       </div>
       {shown ? (
-        <button type="button" onClick={notice.dismiss}>
+        <button type="button" ref={dismissButton} onClick={dismiss}>
           {t('rateLimit.dismiss')}
         </button>
       ) : null}

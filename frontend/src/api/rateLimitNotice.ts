@@ -5,6 +5,9 @@ import type { Middleware } from './sessionBoundary';
  * request log, no link to renewal or the transport. A 429 on any call through a client carrying `middleware` raises
  * it; only `dismiss()`, a user action, clears it. There is no timer, and the 429's body and headers (including
  * `Retry-After`) are never read, so the copy is the same for every 429.
+ *
+ * Wiring creates exactly one instance per tab and passes that same instance to `createAuthApi` and to
+ * `<RateLimitNotice>`; with two, the component subscribes to a flag the middleware never sets.
  */
 export interface RateLimitNoticeState {
   readonly middleware: Middleware;
