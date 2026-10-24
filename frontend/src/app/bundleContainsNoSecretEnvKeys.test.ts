@@ -294,6 +294,17 @@ describe('bundleContainsNoSecretEnvKeys', () => {
       expect(controlScan.absoluteUrls.filter((url) => !(KNOWN_ABSOLUTE_URLS as readonly string[]).includes(url))).not.toEqual([]);
     });
 
+    it('reports a URL naming a platform service, by bare host and by label', () => {
+      // The platform-host rule over the real bundle can only ever pass - no such URL is there. Here it is given
+      // URLs that do violate it, so the rule itself is known to work (the bare form is in the control file; the
+      // labelled form is checked against the same expression).
+      const names = (url: string) =>
+        PLATFORM_HOSTS.some((host) => new RegExp(`//(?:[^/]*\\.)?${host}(?:[.:/]|$)`).test(url));
+      expect(controlScan.absoluteUrls.filter(names)).toEqual(['http://auth:8080/oauth2/token']);
+      expect(names('https://auth.checky.example/oauth2/token')).toBe(true);
+      expect(names('https://bit.ly/wb-precache')).toBe(false);
+    });
+
     it('reports a secret appended to an allowlisted URL (S1)', () => {
       expect(controlScan.absoluteUrls).toContain('https://bit.ly/wb-precache?key=SUPERSECRET');
       expect(controlScan.absoluteUrls).not.toContain('https://bit.ly/wb-precache');
