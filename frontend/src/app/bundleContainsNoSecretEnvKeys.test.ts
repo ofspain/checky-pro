@@ -12,6 +12,15 @@
  * the build machine can be baked in), no `define` block, no committed `.env` file, no surviving
  * `import.meta.env.` access, and no sourcemap. Shape matching is the second net, not the first.
  *
+ * WHAT THIS SCANNER CANNOT DO, stated here because 32 passing cases invite the opposite conclusion. Vite inlines
+ * an environment key's **value**, not its name: a build that reads `import.meta.env.VITE_X` ships the value with
+ * no trace of `VITE_X` anywhere. The positive control below demonstrates exactly that. So the key scan cannot see
+ * that class of leak at all, and the real-value scan catches it only for values this repository already knows.
+ * For a genuine production secret, neither the name nor the value is known in advance and **no scan of the
+ * artifact could find it**. The actual defence is the mechanism closure - nothing in `src/` reads the environment
+ * object (T01), `envPrefix` is pinned, there is no `define` block, no `.env` file and no sourcemap - and those
+ * cases, not the pattern scans, are the ones to keep working.
+ *
  * Everything goes through one `scanBundle`, and the negative control feeds synthetic files to the *same* function.
  * A verification task whose scanner has never been shown to catch a leak has verified nothing - and a scan over an
  * empty tree satisfies every prohibition in this file at once, which is why `scanBundle` refuses one.
@@ -148,12 +157,20 @@ async function scanBundle(treeRoot: string): Promise<BundleScan> {
   };
 }
 
-/** The five-step parser from the frozen brief: find the heading, take the backticked VITE_ tokens under it. */
-async function allowlistFromSpec(): Promise<string[]> {
-  const design = await readFile(join(repoRoot, 'spec/frontend/design.md'), 'utf8');
+/** Vite loads `.env*` from its root, so the detector is a directory listing. Separated out so it can be tested. */
+async function findEnvFiles(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.startsWith('.env'))
+    .map((entry) => entry.name)
+    .sort();
+}
+
+/** The five-step parser from the frozen brief, over text, so it can be tested without editing the spec. */
+function allowlistFromSpecText(design: string): string[] {
   const lines = design.split('\n');
   const headingIndex = lines.findIndex((line) => /Environment keys/i.test(line));
-  expect(headingIndex, 'design.md no longer declares an "Environment keys" section').toBeGreaterThan(-1);
+  if (headingIndex === -1) return [];
 
   // To the next Markdown heading, not the first blank line: a reflow into a bulleted list would otherwise cut
   // the section short. That direction fails *closed* - a smaller allowlist makes the key check stricter and the
@@ -166,6 +183,10 @@ async function allowlistFromSpec(): Promise<string[]> {
   const paragraph = section;
   const tokens = [...paragraph.join(' ').matchAll(/`([^`]+)`/g)].map((match) => match[1]!);
   return [...new Set(tokens.filter((token) => /^VITE_[A-Z0-9_]+$/.test(token)))].sort();
+}
+
+async function allowlistFromSpec(): Promise<string[]> {
+  return allowlistFromSpecText(await readFile(join(repoRoot, 'spec/frontend/design.md'), 'utf8'));
 }
 
 describe('bundleContainsNoSecretEnvKeys', () => {
@@ -207,6 +228,13 @@ describe('bundleContainsNoSecretEnvKeys', () => {
   // ── The tree the prohibitions are asserted over (AC1) ──────────────────────────────────────────────────────
 
   describe('the artifact being scanned', () => {
+    it('was built from an environment carrying no VITE_ variable (Kimi 11.5)', () => {
+      // Pins the setup rather than the artifact: the scrubbing loop is what keeps this file judging the
+      // repository instead of whichever shell ran it.
+      expect(Object.keys(buildEnv).filter((key) => key.startsWith('VITE_'))).toEqual([]);
+      expect(buildEnv.NODE_ENV).toBeUndefined();
+    });
+
     it('is the whole emitted tree, discovered rather than assumed', () => {
       expect(scan.files.length).toBeGreaterThan(0);
       expect(scan.files).toContain('index.html');
@@ -261,7 +289,22 @@ describe('bundleContainsNoSecretEnvKeys', () => {
           'const i = "https://bit.ly/wb-precache?key=SUPERSECRET";',
         ].join('\n'),
       );
-      await writeFile(join(controlDir, 'assets/leaky.js.map'), '{"version":3}');
+      // A secret inside a sourcemap body, not just the file's existence (Kimi 11.4).
+      await writeFile(
+        join(controlDir, 'assets/leaky.js.map'),
+        JSON.stringify({ version: 3, sourcesContent: ['const k = "AKIAIOSFODNN7EXAMPLE";'] }),
+      );
+      // A binary asset carrying an ASCII secret between non-UTF-8 bytes (Kimi 11.1). This is what the
+      // byte-preserving read exists for: decoded as utf8, the surrounding bytes become replacement characters
+      // and the needle can be lost.
+      await writeFile(
+        join(controlDir, 'assets/font.woff2'),
+        Buffer.concat([
+          Buffer.from([0x77, 0x4f, 0x46, 0x32, 0xff, 0xfe, 0x80, 0x81]),
+          Buffer.from('checky-local-only', 'ascii'),
+          Buffer.from([0xff, 0xc0, 0x00, 0x90]),
+        ]),
+      );
       controlScan = await scanBundle(controlDir);
     });
 
@@ -314,8 +357,16 @@ describe('bundleContainsNoSecretEnvKeys', () => {
       ).toContain('https://bit.ly/wb-precache?key=SUPERSECRET');
     });
 
-    it('reports a sourcemap', () => {
+    it('reports a sourcemap, and a secret inside its body (Kimi 11.4)', () => {
       expect(controlScan.sourcemaps).toEqual(['assets/leaky.js.map']);
+      expect(controlScan.secrets).toContainEqual({ file: 'assets/leaky.js.map', hit: 'AWS access key id' });
+    });
+
+    it('reports a secret inside a binary asset (Kimi 11.1)', () => {
+      expect(controlScan.secrets).toContainEqual({
+        file: 'assets/font.woff2',
+        hit: 'real platform value checky-local-only',
+      });
     });
 
     it('refuses an empty tree instead of passing every prohibition vacuously', async () => {
@@ -417,6 +468,35 @@ describe('bundleContainsNoSecretEnvKeys', () => {
       expect(allowed).toHaveLength(4);
       for (const key of allowed) expect(key).toMatch(/^VITE_[A-Z0-9_]+$/);
     });
+
+    it('reads the whole section, including a list with blank lines (Kimi 11.3)', () => {
+      // Why the parser reads to the next heading rather than the first blank line. A reflow into bullets would
+      // otherwise cut the section short - which fails closed, but is still the wrong parse.
+      const reflowed = [
+        '## 4c. Something',
+        '',
+        '**Environment keys**:',
+        '',
+        '- `VITE_OIDC_ISSUER`',
+        '',
+        '- `VITE_OIDC_CLIENT_ID`',
+        '',
+        '- `VITE_OIDC_REDIRECT_URI`',
+        '',
+        '- `VITE_API_BASE_PATH`',
+        '',
+        '## 5. Next section',
+        '',
+        '- `VITE_NOT_IN_THE_SECTION`',
+      ].join('\n');
+      expect(allowlistFromSpecText(reflowed)).toEqual([...EXPECTED_ALLOWLIST]);
+    });
+
+    it('returns nothing if the section disappears, so the equality case fails closed', () => {
+      expect(allowlistFromSpecText('# Some other document\n\n`VITE_OIDC_ISSUER`\n'.replace('Some', 'Some'))).toEqual(
+        [],
+      );
+    });
   });
 
   // ── AC2, AC5 · secrets ─────────────────────────────────────────────────────────────────────────────────────
@@ -444,8 +524,21 @@ describe('bundleContainsNoSecretEnvKeys', () => {
     });
 
     it('has no .env file for Vite to load', async () => {
-      const entries = await readdir(frontendDir, { withFileTypes: true });
-      expect(entries.filter((entry) => entry.name.startsWith('.env')).map((entry) => entry.name)).toEqual([]);
+      expect(await findEnvFiles(frontendDir)).toEqual([]);
+    });
+
+    it('would find one if there were - the detector, not the invariant (Kimi 11.2)', async () => {
+      // AC4 has no mutant: creating a real .env would commit the thing being prohibited. So the detector is
+      // exercised against a temp directory instead, and the real case above calls the same function.
+      const dir = await mkdtemp(join(tmpdir(), 'checky-envfiles-'));
+      try {
+        await writeFile(join(dir, '.env'), 'VITE_X=1\n');
+        await writeFile(join(dir, '.env.local'), 'VITE_Y=2\n');
+        await writeFile(join(dir, 'vite.config.ts'), '');
+        expect(await findEnvFiles(dir)).toEqual(['.env', '.env.local']);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     });
 
     it('emits no sourcemap, which would carry original source text (AC10)', () => {
