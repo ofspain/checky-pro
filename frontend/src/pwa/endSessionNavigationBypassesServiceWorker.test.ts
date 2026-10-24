@@ -68,6 +68,8 @@ const endSessionUrls: [string, string][] = [
     'a foreign-origin post_logout_redirect_uri (the 400 case)',
     `${END_SESSION_PATH}?id_token_hint=${ID_TOKEN}&post_logout_redirect_uri=${encodeURIComponent('https://evil.example/signed-out')}&state=s2`,
   ],
+  // A browser never sends the fragment, but a decision that read `url.hash` would still classify differently.
+  ['a fragment', `${END_SESSION_PATH}?id_token_hint=${ID_TOKEN}#section`],
 ];
 
 interface FakeCache {
@@ -130,7 +132,7 @@ describe('endSessionNavigationBypassesServiceWorker', () => {
   });
 
   // AC3 — the other half of the flow: the 302's target is the shell's to answer, so sign-out still renders (R19).
-  it.each([SIGNED_OUT_PATH, `${SIGNED_OUT_PATH}?state=s1`])(
+  it.each([SIGNED_OUT_PATH, `${SIGNED_OUT_PATH}?state=s1`, `${SIGNED_OUT_PATH}#reset`])(
     'answers the post-logout target %s with the shell (AC3)',
     async (path) => {
       await expect(simulateNavigationFallback(path, 'navigate', cache)).resolves.toBe(SHELL);
@@ -177,6 +179,42 @@ describe('endSessionNavigationBypassesServiceWorker', () => {
 
     expect(cache.match).not.toHaveBeenCalled();
     expect(cache.put).not.toHaveBeenCalled();
+  });
+
+  // AC3 (repeat) — the shell answer must not be stateful: the mirror of AC6, for the other half of the flow.
+  it('answers a repeated signed-out navigation from the shell every time (AC3)', async () => {
+    const target = `${SIGNED_OUT_PATH}?state=s1`;
+
+    await expect(simulateNavigationFallback(target, 'navigate', cache)).resolves.toBe(SHELL);
+    await expect(simulateNavigationFallback(target, 'navigate', cache)).resolves.toBe(SHELL);
+
+    expect(cache.match).toHaveBeenCalledTimes(2);
+    expect(keys).toEqual([SHELL, SHELL]);
+    expect(cache.put).not.toHaveBeenCalled();
+  });
+
+  // AC4 (negative) — the segment rule, re-pinned for this path: a regression that loosened it only for
+  // /connect/logout would break R19 without touching any other denylisted path.
+  it.each(['/connect/logoutx', '/connect/logout-extra', '/connect/logoutsomething'])(
+    'does not treat %s as the end-session endpoint (AC4)',
+    async (path) => {
+      const url = new URL(path, ORIGIN);
+      expect(isDenylistedNavigation(url, 'navigate')).toBe(false);
+      expect(isShellNavigation(url, 'navigate')).toBe(false);
+      await expect(simulateNavigationFallback(path, 'navigate', cache)).resolves.toBeUndefined();
+    },
+  );
+
+  // AC6 — navigation-only, asserted for the real end-session URL and not only the bare path: R19 is a navigation,
+  // and API-style requests are task 11's NetworkOnly policy, not this module's.
+  it.each(['cors', 'same-origin', 'no-cors'])('declines the end-session URL in %s mode (AC6)', async (mode) => {
+    const [, fullUrl] = endSessionUrls[0]!;
+    const url = new URL(fullUrl, ORIGIN);
+
+    expect(isDenylistedNavigation(url, mode)).toBe(false);
+    expect(isShellNavigation(url, mode)).toBe(false);
+    await expect(simulateNavigationFallback(fullUrl, mode, cache)).resolves.toBeUndefined();
+    expect(cache.match).not.toHaveBeenCalled();
   });
 
   // AC7 — the two paths this task depends on are still the ones the spec and the route table declare.
