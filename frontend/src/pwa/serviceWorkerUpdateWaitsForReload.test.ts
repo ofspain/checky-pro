@@ -98,7 +98,7 @@ afterEach(() => {
 
 describe('serviceWorkerUpdateWaitsForReload', () => {
   describe('the worker never promotes itself (AC1, AC2)', () => {
-    it.each(['src/pwa/serviceWorker.ts', 'src/pwa/registerServiceWorker.ts', 'vite.config.ts'])(
+    it.each(['src/pwa/serviceWorker.ts', 'src/pwa/registerServiceWorker.ts', 'src/main.tsx', 'vite.config.ts'])(
       '%s names no call that would activate a waiting worker',
       async (path) => {
         const source = await repoFile('frontend', path);
@@ -163,15 +163,70 @@ describe('serviceWorkerUpdateWaitsForReload', () => {
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
-    it('tells a late subscriber that a build is already waiting', async () => {
+    it('tells a late subscriber that a build is already waiting, exactly once', async () => {
       const registration = new FakeRegistration();
       registration.waiting = new FakeWorker();
       installFakeContainer(registration);
-      const { onUpdateWaiting } = await freshRegistrationModule();
+      const { registerServiceWorker, onUpdateWaiting } = await freshRegistrationModule();
+      await registerServiceWorker();
 
       const listener = vi.fn();
       onUpdateWaiting(listener);
-      await vi.waitFor(() => expect(listener).toHaveBeenCalled());
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('tells a subscriber that arrives before registration settles exactly once (S1)', async () => {
+      // The ordering that used to double-notify: trackWaiting fanned out to the whole listener set for an
+      // already-waiting worker, and onUpdateWaiting's own promise path reported the same build again.
+      const registration = new FakeRegistration();
+      registration.waiting = new FakeWorker();
+      installFakeContainer(registration);
+      const { registerServiceWorker, onUpdateWaiting } = await freshRegistrationModule();
+
+      const pending = registerServiceWorker();
+      const listener = vi.fn();
+      onUpdateWaiting(listener);
+      await pending;
+      await Promise.resolve();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports one waiting build once, however many lifecycle events announce it (S4)', async () => {
+      const registration = new FakeRegistration();
+      installFakeContainer(registration);
+      const { registerServiceWorker, onUpdateWaiting } = await freshRegistrationModule();
+      await registerServiceWorker();
+
+      const listener = vi.fn();
+      onUpdateWaiting(listener);
+      registration.pushUpdate();
+      registration.pushUpdate();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not drop an update whose installing worker is already gone (S4)', async () => {
+      const registration = new FakeRegistration();
+      installFakeContainer(registration);
+      const { registerServiceWorker, onUpdateWaiting } = await freshRegistrationModule();
+      await registerServiceWorker();
+
+      const listener = vi.fn();
+      onUpdateWaiting(listener);
+      // updatefound with no `installing`: the lifecycle should not do this, so the fallback is what is tested.
+      registration.waiting = new FakeWorker();
+      registration.dispatchEvent(new Event('updatefound'));
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
+    });
+
+    it('observing does not register; main.tsx owns that (S3)', async () => {
+      const container = installFakeContainer(new FakeRegistration());
+      const { onUpdateWaiting } = await freshRegistrationModule();
+
+      onUpdateWaiting(vi.fn());
+
+      expect(container.register).not.toHaveBeenCalled();
     });
 
     it('stops reporting after unsubscribe', async () => {
@@ -242,6 +297,42 @@ describe('serviceWorkerUpdateWaitsForReload', () => {
       expect(SERVICE_WORKER_URL.startsWith(SERVICE_WORKER_SCOPE)).toBe(true);
     });
 
+    it('keeps scope and worker URL in step with the build config (S7)', async () => {
+      const config = await repoFile('frontend', 'vite.config.ts');
+      const { SERVICE_WORKER_SCOPE, SERVICE_WORKER_URL } = await import('./registerServiceWorker');
+
+      const base = config.match(/base: '([^']+)'/)?.[1];
+      const filename = config.match(/filename: '([^']+)'/g);
+      expect(base, 'vite.config.ts no longer states a base').toBe(SERVICE_WORKER_SCOPE);
+      // S8's other half: exactly one worker filename, so there cannot be a second worker-wide policy.
+      expect(filename).toHaveLength(1);
+      const emitted = (filename as string[])[0]!.replace("filename: '", '').replace("'", '').replace(/\.ts$/, '.js');
+      expect(SERVICE_WORKER_URL).toBe(`${base}${emitted}`);
+    });
+
+    it('keeps the scope trailing slash, which is a segment boundary rather than a prefix (Kimi 8.1)', async () => {
+      const { SERVICE_WORKER_SCOPE } = await import('./registerServiceWorker');
+      // Scope matching is a prefix match over the whole URL string. Dropping the slash would claim `/apple.html`
+      // too, which is wider than the SPA (AC5, L14). The accepted cost: a client at exactly `/app` would be
+      // uncontrolled - and the edge serves no such URL.
+      expect(SERVICE_WORKER_SCOPE.endsWith('/')).toBe(true);
+      expect('/apple.html'.startsWith(SERVICE_WORKER_SCOPE)).toBe(false);
+      expect('/app'.startsWith(SERVICE_WORKER_SCOPE)).toBe(false);
+      expect('/app/sign-in'.startsWith(SERVICE_WORKER_SCOPE)).toBe(true);
+    });
+
+    it('declares exactly one precache manifest in the whole of src (S8)', async () => {
+      const entries = await readdir(srcDir, { withFileTypes: true, recursive: true });
+      const sources = entries
+        .filter((e) => e.isFile() && /\.(ts|tsx)$/.test(e.name) && !/\.test\.(ts|tsx)$/.test(e.name))
+        .map((e) => join(e.parentPath, e.name));
+      const declaring: string[] = [];
+      for (const file of sources) {
+        if ((await readFile(file, 'utf8')).includes('__WB_MANIFEST')) declaring.push(file);
+      }
+      expect(declaring).toEqual([join(srcDir, 'pwa', 'serviceWorker.ts')]);
+    });
+
     it('degrades quietly where there is no service worker at all', async () => {
       const { registerServiceWorker } = await freshRegistrationModule();
       await expect(registerServiceWorker()).resolves.toBeUndefined();
@@ -251,6 +342,17 @@ describe('serviceWorkerUpdateWaitsForReload', () => {
       installFakeContainer(undefined, { reject: true });
       const { registerServiceWorker } = await freshRegistrationModule();
       await expect(registerServiceWorker()).resolves.toBeUndefined();
+    });
+
+    it('makes one attempt per page load and does not retry a failure (S2)', async () => {
+      const container = installFakeContainer(undefined, { reject: true });
+      const { registerServiceWorker } = await freshRegistrationModule();
+
+      await registerServiceWorker();
+      await expect(registerServiceWorker()).resolves.toBeUndefined();
+
+      // Deliberate: the memo holds the failure, so nothing retries behind the user's back.
+      expect(container.register).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -363,6 +465,10 @@ describe('serviceWorkerUpdateWaitsForReload', () => {
       expect(worker.length).toBeGreaterThan(0);
     });
 
+    // Depends on the production build minifying the worker: serviceWorker.ts's own doc comment names both calls
+    // in order to explain their absence, so setting `injectManifest.minify = false` would ship that prose and
+    // fail this case for a reason unrelated to the policy. A loud failure is the right outcome; this note is so
+    // whoever sees it knows where to look.
     it.each(FORBIDDEN)('ships no %s, in the worker or in any app chunk', async (forbidden) => {
       expect(worker).not.toContain(forbidden);
       for (const asset of (await readdir(join(outDir, 'assets'))).filter((n) => n.endsWith('.js'))) {
