@@ -60,7 +60,7 @@ each revert, following T08's contract-mutation precedent.
 | **`design.md` §4c (2)** the prefix list is the edge map's | Yes | `:24-37` | `:282` (parsed, order included) | No | No |
 | **L3 / L16** nothing sensitive persisted client-side | Yes, by construction | the module holds no cache reference | `:333` (purity scan) | **Runtime enforcement is task 12's** | **Yes — D10, declared** |
 | **L14** `/app` is the SPA's | Yes | `:40-43` | `:259`, `:267` | No | No |
-| **L12** phase additivity | Yes | two new files | suite 315/316 | No | No |
+| **L12** phase additivity | Yes | two new files | suite 314/316 | No | No |
 
 ## Acceptance criteria
 
@@ -76,13 +76,24 @@ each revert, following T08's contract-mutation precedent.
 | AC8 the notification stream | **PASS** | `:273` |
 | AC9 drift against the edge map **and** the standing rule | **PASS** | `:282`, `:304` |
 | AC10 negation identity; purity | **PASS** | `:315`, `:333` |
-| AC11 suite green, no T01–T10 edit | **PASS with one environmental failure** | 304/305 |
+| AC11 suite green, no T01–T10 edit | **PASS with two environmental failures** | 314/316 |
 
-## The one failing test, stated plainly
+## The two failing tests, stated plainly
 
-`src/api/lintRejectsHandWrittenBackendFetch.test.ts` AC4 expects `oxlint` to print `Found 0 warnings and 0 errors`;
-this host's `oxlint@1.87.0` prints no summary line at all. Verified in T07 with all changes stashed and against a
-deliberately introduced real `fetch` violation. Environmental, predates this task, **never counted as passing**.
+Both are in `src/api/lintRejectsHandWrittenBackendFetch.test.ts` (T07), both environmental, both predating this task,
+and **neither has ever been counted as passing**:
+
+1. **AC4** expects `oxlint` to print `Found 0 warnings and 0 errors`; this host's `oxlint@1.87.0` prints no summary
+   line at all. Verified in T07 with all changes stashed and against a deliberately introduced real `fetch`
+   violation.
+2. **AC2 end to end** shells out to `pnpm run build`: `spawn pnpm ENOENT`. **`pnpm` is not installed on this host**
+   (`packageManager: pnpm@12.14.0`, `~/Library/pnpm/store` exists but the binary does not; only `npm` is on PATH).
+
+An earlier reading in this task said 315/316, counting AC2 as passing. Re-run with the environment inspected, the
+honest figure is **314/316**: the suite total is unchanged and no T11 case is involved, but the AC2 case fails on any
+host without `pnpm`, so it is now stated as a second known failure rather than a one-off. **This is a live
+constraint on task 12, which must add `vite-plugin-pwa` to `package.json` (L13) — an install this host cannot
+perform.** See phase 13.
 
 ## Coverage, honestly
 

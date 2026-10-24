@@ -66,14 +66,16 @@ No existing file modified. `navigationDenylist.ts`, the T09/T10 tests, every T01
 | Check | Result |
 |---|---|
 | `vitest run src/pwa` | **167/167** (T09 61 + T10 23 + T11 83) |
-| `vitest run` (whole suite) | **315/316** |
+| `vitest run` (whole suite) | **314/316** |
 | `tsc --noEmit` | clean |
 | `oxlint` | no violations |
 | Mutation pass | **13 code/harness mutants, 11 caught**; 2 guard weakenings, closed by 3 mutants on the guarded sources |
 | `spec/frontend/agents.md` | **byte-identical** after each spec mutation was reverted |
 
-The one failure is `lintRejectsHandWrittenBackendFetch` AC4: this host's `oxlint@1.87.0` prints no summary line.
-Baselined in T07 both ways; predates and is unaffected by this task.
+Both failures are in `lintRejectsHandWrittenBackendFetch` (T07), environmental, and unaffected by this task: **AC4**,
+because this host's `oxlint@1.87.0` prints no summary line (baselined in T07 both ways), and **AC2 end to end**,
+which shells out to `pnpm run build` and gets `spawn pnpm ENOENT` — `pnpm` is not installed on this host at all.
+An earlier reading in this task said 315/316, counting AC2 as passing; 314/316 is the honest figure.
 
 ## Carried forward — task 12 now owns four obligations
 
@@ -88,6 +90,18 @@ Baselined in T07 both ways; predates and is unaffected by this task.
 4. **Collapse the duplicated helper.** `segmentPrefixPattern` now exists in `navigationDenylist.ts` (private) and in
    `apiRequestPolicy.ts` (a copy). Task 12 legitimately opens the first file, so it is the moment to share one
    implementation — which also closes the one branch T11's suite does not exercise.
+
+**And a new blocker for task 12, found while verifying this task's own numbers.** Task 12 must add `vite-plugin-pwa`
+to `frontend/package.json` (L13 names it, with Workbox, as the confirmed stack), and neither it nor any `workbox-*`
+package is in `pnpm-lock.yaml` or the local store. The registry is reachable, but **`pnpm` is not installed on this
+host**, and `npm install` in a pnpm workspace would write the wrong lockfile. Task 12 cannot reach its own phase 6
+until that is resolved — owner input, not a design choice.
+
+A second constraint, from T07's AC5: `.oxlintrc.json` is asserted to have **no `overrides` key** and the lint run is
+asserted to execute **exactly 2 rules**. So task 12 cannot carve out a lint exemption for the worker; either the
+worker never names `fetch`/`XMLHttpRequest` in a restricted form (Workbox's own call lives in `node_modules`, which
+is not linted), or T07's frozen assertions must be re-opened. This supersedes the earlier assumption that task 12
+would simply add an `.oxlintrc.json` override.
 
 Plus, unchanged from T10: the real 302 redirect chain and cross-tab cache isolation need integration coverage, not
 jsdom; `bin/smoke` already exercises the former outside the SPA.
