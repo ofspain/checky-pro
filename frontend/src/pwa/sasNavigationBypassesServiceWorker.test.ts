@@ -134,6 +134,12 @@ describe('sasNavigationBypassesServiceWorker', () => {
     ['/application', false, false],
     ['/app/accounts', false, true],
     ['/app/login', false, true],
+    // The SPA owns only /app (L14), so the root is the worker's business either way: it reaches the network.
+    ['/', false, false],
+    // `URL` does not decode %2F, so these stay one segment and match neither list. That is the safe direction:
+    // an unclassified navigation is handed to the network, never to the shell.
+    ['/login%2Fstep-two', false, false],
+    ['/app%2Fsign-in', false, false],
   ];
 
   it.each(boundaries)('classifies %s by path segment (AC4)', (path, denylisted, shell) => {
@@ -146,6 +152,30 @@ describe('sasNavigationBypassesServiceWorker', () => {
     expect(isDenylistedNavigation(new URL('/login?redirect=/app/x#frag', ORIGIN), 'navigate')).toBe(true);
     expect(isShellNavigation(new URL('/app/sign-in?next=/app/home#top', ORIGIN), 'navigate')).toBe(true);
     expect(isDenylistedNavigation(new URL('/app/home?path=/login', ORIGIN), 'navigate')).toBe(false);
+  });
+
+  it('classifies a navigation by its resolved path, dot segments included (AC4)', () => {
+    // Unlike %2F, dot segments are resolved by the URL parser, so /app/../login is a navigation to /login and is
+    // denylisted on that basis. A path-string check done before resolution would get this backwards.
+    expect(new URL('/app/../login', ORIGIN).pathname).toBe('/login');
+    expect(isDenylistedNavigation(new URL('/app/../login', ORIGIN), 'navigate')).toBe(true);
+    expect(isShellNavigation(new URL('/app/../login', ORIGIN), 'navigate')).toBe(false);
+    expect(isShellNavigation(new URL('/accounts/../app/home', ORIGIN), 'navigate')).toBe(true);
+  });
+
+  it('reads the path only, whatever the origin (AC4)', () => {
+    // A worker with a wide enough scope can be asked about a cross-origin navigation. The policy is about the path,
+    // so the decision must not change with the origin.
+    expect(isDenylistedNavigation(new URL('https://other.example.test/login'), 'navigate')).toBe(true);
+    expect(isShellNavigation(new URL('https://other.example.test/app/home'), 'navigate')).toBe(true);
+    expect(isDenylistedNavigation(new URL('http://localhost:5173/accounts/me'), 'navigate')).toBe(true);
+  });
+
+  it('treats an origin with no path as the root, not as the shell (AC4)', () => {
+    const bare = new URL(ORIGIN);
+    expect(bare.pathname).toBe('/');
+    expect(isDenylistedNavigation(bare, 'navigate')).toBe(false);
+    expect(isShellNavigation(bare, 'navigate')).toBe(false);
   });
 
   it('never classifies one navigation as both denylisted and shell (AC4)', () => {
