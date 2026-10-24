@@ -36,8 +36,14 @@ export const NETWORK_ONLY_PATH_PREFIXES = [
   '/notifications',
 ] as const;
 
+/**
+ * The shell document's own URL, under the `/app` base (L14). The worker binds its navigation fallback to this one
+ * constant rather than to a literal, so the fallback and the cacheable set cannot drift apart.
+ */
+export const SHELL_DOCUMENT_URL = '/app/index.html';
+
 /** The shell document itself, the only HTML the worker may hold (design.md §5). */
-export const SHELL_DOCUMENT_PATHS = ['/app', '/app/', '/app/index.html'] as const;
+export const SHELL_DOCUMENT_PATHS = ['/app', '/app/', SHELL_DOCUMENT_URL] as const;
 
 /** Built assets live here, hashed, so they are safe to cache (T01 asserts the `/app/assets/<name>-<hash>` shape). */
 export const ASSET_PATH_PREFIX = '/app/assets';

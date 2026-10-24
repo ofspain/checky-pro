@@ -71,12 +71,19 @@ describe('shellBuildsAndMounts', () => {
         expect(source).toMatch(/^\/app\/assets\/[^/]+\.js$/);
       }
 
-      // No worker yet (T09-T12 own it): nothing registers one and no worker or manifest is emitted.
+      // T12 registers the worker, so it is emitted now - under the plugin's own `filename`, not Workbox's
+      // default, and still with no web app manifest (`manifest: false`; an installable PWA is a later task).
+      expect(existsSync(join(outDir, 'serviceWorker.js'))).toBe(true);
       expect(existsSync(join(outDir, 'sw.js'))).toBe(false);
       expect(existsSync(join(outDir, 'manifest.webmanifest'))).toBe(false);
+      // The bundle may now name `navigator.serviceWorker` - one registration site does (T12). What it may never
+      // do is promote a waiting worker: the update policy is prompt-to-reload (agents.md line 91), so neither
+      // call that would activate a new build behind the user may appear in anything that ships.
       const assets = await readdir(join(outDir, 'assets'));
       for (const asset of assets.filter((name) => name.endsWith('.js'))) {
-        expect(await readFile(join(outDir, 'assets', asset), 'utf8'), asset).not.toContain('serviceWorker');
+        const source = await readFile(join(outDir, 'assets', asset), 'utf8');
+        expect(source, asset).not.toContain('skipWaiting');
+        expect(source, asset).not.toContain('clients.claim');
       }
     } finally {
       await rm(outDir, { recursive: true, force: true });
@@ -128,13 +135,17 @@ describe('shellBuildsAndMounts', () => {
   it('keeps the entry to a single mountShell call (shell code lives in src/app/)', async () => {
     const entry = await readFile(join(srcDir, 'main.tsx'), 'utf8');
     const imports = [...entry.matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)].map((match) => match[1]);
-    expect(imports).toEqual(['./app/mountShell']);
+    expect(imports).toEqual(['./app/mountShell', './pwa/registerServiceWorker']);
 
     const statements = entry
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line !== '' && !line.startsWith('import ') && !line.startsWith('//'));
-    expect(statements).toEqual(["mountShell(document.getElementById('root'));"]);
+    // T12 adds the one registration call. The entry stays thin: two statements, each a call into a module.
+    expect(statements).toEqual([
+      "mountShell(document.getElementById('root'));",
+      'void registerServiceWorker();',
+    ]);
   });
 
   it('throws when the root element is missing instead of rendering nothing', () => {
