@@ -36,6 +36,19 @@ function repoFile(...parts: string[]): Promise<string> {
   return readFile(join(repoRoot, ...parts), 'utf8');
 }
 
+/**
+ * The AC7 rule itself, as a function, because the build cannot produce a violation of it while `base` is `/app/`.
+ * Entries are base-relative ("index.html"), and Workbox resolves them against the worker's own location, so they
+ * must be resolved before matching patterns anchored at "^/" - match the raw strings and every assertion passes
+ * vacuously. Exercised below against both the real manifest and entries no build would emit.
+ */
+function denylistedPrecacheUrls(urls: readonly string[], base = `${ORIGIN}/app/`): string[] {
+  return urls.filter((url) => {
+    const { pathname } = new URL(url, base);
+    return NAVIGATION_DENYLIST.some((pattern) => pattern.test(pathname));
+  });
+}
+
 /** The precache manifest the build injected, read back out of the emitted worker. */
 function precacheManifest(workerSource: string): Array<{ url: string; revision: string | null }> {
   const match = workerSource.match(/\[\{"revision":.*?\}\]/s);
@@ -477,18 +490,26 @@ describe('serviceWorkerUpdateWaitsForReload', () => {
     });
 
     it('precaches nothing a navigation denylist would have refused', () => {
-      const manifest = precacheManifest(worker);
-      expect(manifest.length).toBeGreaterThan(0);
-      for (const { url } of manifest) {
-        // The build writes these base-relative ("index.html"), and Workbox resolves them against the worker's own
-        // location. Matching the raw strings against patterns anchored at "^/" would pass vacuously, so each one
-        // is resolved first - and asserted to land under /app/, which is why none of them can be denylisted.
-        const resolved = new URL(url, `${ORIGIN}/app/`);
-        expect(resolved.pathname.startsWith('/app/'), url).toBe(true);
-        for (const pattern of NAVIGATION_DENYLIST) {
-          expect(pattern.test(resolved.pathname), `${url} is denylisted`).toBe(false);
-        }
+      const urls = precacheManifest(worker).map(({ url }) => url);
+      expect(urls.length).toBeGreaterThan(0);
+      expect(denylistedPrecacheUrls(urls)).toEqual([]);
+      // Why it can hold: every entry resolves under the SPA's own prefix, and /app is not a denylisted path.
+      for (const url of urls) {
+        expect(new URL(url, `${ORIGIN}/app/`).pathname.startsWith('/app/'), url).toBe(true);
       }
+    });
+
+    it('would refuse a denylisted precache entry, which no build emits today', () => {
+      // The honest limit, made testable: while `base` is `/app/` the build cannot produce a violation, so the
+      // case above can only ever pass. This one exercises the same matcher with entries that do violate it -
+      // including a dot-segment escape, which URL resolution really does collapse - so the guard is known to
+      // work rather than merely known to pass.
+      expect(denylistedPrecacheUrls(['../login'])).toEqual(['../login']);
+      expect(denylistedPrecacheUrls(['../api/v1/invoices'])).toEqual(['../api/v1/invoices']);
+      expect(denylistedPrecacheUrls(['/oauth2/authorize'])).toEqual(['/oauth2/authorize']);
+      expect(denylistedPrecacheUrls(['index.html', 'assets/index-abc123.js'])).toEqual([]);
+      // And it is the resolution that does the work: unresolved, the same entry matches nothing.
+      expect(NAVIGATION_DENYLIST.some((p) => p.test('../login'))).toBe(false);
     });
 
     it('precaches the shell the fallback is bound to', () => {
