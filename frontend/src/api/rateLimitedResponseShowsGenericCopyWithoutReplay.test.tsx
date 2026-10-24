@@ -74,11 +74,16 @@ function installTransport(respond: (request: Request) => Reply | Promise<Reply>)
       if (request.signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
       let body = '';
       if (request.method !== 'GET') {
-        // A case may make clone() throw on purpose (T08 AC4); the call still counts.
         try {
           body = await request.clone().text();
         } catch {
-          body = '<uncloneable>';
+          // A case may make clone() throw on purpose (T08 AC4). Read the original instead: we are the send, so
+          // consuming it here harms nothing, and it proves the body the caller gave actually reached the transport.
+          try {
+            body = await request.text();
+          } catch {
+            body = '<unreadable>';
+          }
         }
       }
       const record: Sent = {
@@ -849,12 +854,15 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
     );
 
     it('re-sends nothing on a 429 even with no notice passed to the client (AC1)', async () => {
-      for (const { name, call } of [...PUBLIC_POSTS, ...PROTECTED_POSTS]) {
+      for (const { name, body, call } of [...PUBLIC_POSTS, ...PROTECTED_POSTS]) {
         const sent = installTransport(() => RATE_LIMITED);
         const api = createApi(); // no notice: the copy is lost, but a replay must still not happen
         const result = await call(api);
         expect(result.response.status, name).toBe(429);
         expect(sent, name).toHaveLength(1);
+        // This path still runs through the boundary and openapi-fetch, and a dropped body on a public POST is not
+        // expressible as a mutant of our code, so the assertion is the only guard.
+        expect(sent[0]!.body, name).toBe(body === undefined ? '' : JSON.stringify(body));
       }
     });
 
@@ -931,7 +939,9 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
 
       expect(result.response.status).toBe(429);
       expect(sent).toHaveLength(1);
-      expect(sent[0]!.body).toBe('<uncloneable>');
+      // The clone is gone, but the original body still reached the transport: a change that consumed it before the
+      // send would leave the call count at one and the server with nothing.
+      expect(sent[0]!.body).toBe(JSON.stringify(NEW_API_KEY));
       expect(notice.isShown()).toBe(true);
       expect(view.text()).toBe(en.rateLimit.message);
     });
@@ -959,15 +969,16 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
       const sent = installTransport(() => RATE_LIMITED);
       const notice = createRateLimitNotice();
       const api = createApi(notice);
-      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
-      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
 
-      // No component mounted, so React's scheduling cannot account for a timer the handling did not create.
-      const result = await api.POST('/api-keys', { body: { name: 'ci key' } });
+      // No component mounted, so React's scheduling cannot account for a timer the handling did not create. The
+      // count comes from the fake clock itself: spying on globalThis.setTimeout here would be restored out of order
+      // by afterEach (useRealTimers first, then the spy putting the fake back), which hangs every later real-timer
+      // wait in this file.
+      expect(vi.getTimerCount()).toBe(0);
+      const result = await api.POST('/api-keys', { body: NEW_API_KEY });
 
       expect(result.response.status).toBe(429);
-      expect(setTimeoutSpy).not.toHaveBeenCalled();
-      expect(setIntervalSpy).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
 
       await vi.advanceTimersByTimeAsync(3_600_000);
       expect(sent).toHaveLength(1);
@@ -1026,6 +1037,73 @@ describe('rateLimitedResponseShowsGenericCopyWithoutReplay', () => {
 
       await act(async () => view.button()!.click());
       expect(sent).toHaveLength(1);
+    });
+
+    it('shows the same copy for a POST 429 whatever its body and headers carry (AC2, phase 11 gap 1)', async () => {
+      installTransport(() => ({
+        status: 429,
+        headers: { 'Content-Type': 'text/html', 'Retry-After': '3600' },
+        body: '<html><body>Too many writes - try again in 60 minutes</body></html>',
+      }));
+      const notice = createRateLimitNotice();
+      const api = createApi(notice);
+      const view = await renderNotice(notice);
+
+      const result = await callThrough(() => api.POST('/api-keys', { body: NEW_API_KEY }));
+
+      expect(result.response.status).toBe(429);
+      expect(view.container.textContent).toBe(`${en.rateLimit.message}${en.rateLimit.dismiss}`);
+    });
+
+    it('gives one notification for a burst of three POST 429s (AC1, phase 11 gap 2)', async () => {
+      const sent = installTransport(() => RATE_LIMITED);
+      const notice = createRateLimitNotice();
+      const api = createApi(notice);
+      const view = await renderNotice(notice);
+      let notifications = 0;
+      notice.subscribe(() => {
+        notifications += 1;
+      });
+
+      const results = await callThrough(() =>
+        Promise.all([
+          api.POST('/api-keys', { body: NEW_API_KEY }),
+          api.POST('/accounts/me/password', { body: CHANGE_PASSWORD }),
+          api.POST('/accounts', { body: NEW_ACCOUNT }),
+        ]),
+      );
+
+      expect(results.map((result) => result.response.status)).toEqual([429, 429, 429]);
+      expect(sent).toHaveLength(3);
+      expect(notifications).toBe(1);
+      expect(notice.isShown()).toBe(true);
+      expect(view.text()).toBe(en.rateLimit.message);
+    });
+
+    it('re-sends nothing when a POST 401 and the renewal fails (AC3, phase 11 gap 5)', async () => {
+      const session = fakeSession('old');
+      const sent = installTransport(() => ({ status: 401 }));
+      const notice = createRateLimitNotice();
+      const api = createAuthApi(createSessionBoundary(session.tokens, onRenewalFailed), notice);
+      const view = await renderNotice(notice);
+
+      // No act() here: nothing in this case raises the notice, so React never re-renders - and act() does not
+      // settle around a rejected renewal (it times out), unlike the resolved one in the cases above.
+      const noSession = new Error('no SAS session');
+      const call = api.POST('/api-keys', { body: NEW_API_KEY });
+      await vi.waitFor(() => expect(session.renew).toHaveBeenCalledTimes(1));
+      session.attempts[0]!.reject(noSession);
+      const status = (await call).response.status;
+      await settle();
+
+      // The caller gets its own 401 back and the write is not repeated: resuming is the user's to do.
+      expect(status).toBe(401);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.body).toBe(JSON.stringify(NEW_API_KEY));
+      expect(session.renew).toHaveBeenCalledTimes(1);
+      expect(failures).toEqual([noSession]);
+      expect(notice.isShown()).toBe(false);
+      expect(view.text()).toBe('');
     });
 
     it('leaves T05 alone: a 401 on a POST renews once and re-sends once to a 201 (AC9, L12)', async () => {
