@@ -347,11 +347,17 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
       // A string, not a boolean: React renders aria-* booleans as "true"/"false" attribute values.
       expect(action.getAttribute('aria-disabled')).toBe('false');
 
+      // aria-busy as well as aria-disabled: "inert" and "working" are different things to announce, and the
+      // attribute was added in phase 9 in response to a review finding and shipped untested - mutant M23 removed
+      // it and the whole suite stayed green.
+      expect(action.getAttribute('aria-busy')).toBe('false');
+
       await clickAndSettle(action);
 
       expect(assign).toHaveBeenCalledTimes(1);
       expect(button(container).disabled).toBe(false);
       expect(button(container).getAttribute('aria-disabled')).toBe('true');
+      expect(button(container).getAttribute('aria-busy')).toBe('true');
       expect(componentSource).not.toMatch(/\sdisabled=/);
     });
 
@@ -394,7 +400,10 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
       const headings = container.querySelectorAll('h1');
       expect(headings).toHaveLength(1);
       expect(headings[0]?.textContent).toBe(en.signIn.heading);
-      expect(container.querySelector('main')).not.toBeNull();
+      // Count, not existence: two main landmarks is a worse failure than none, and querySelector cannot tell
+      // them apart. Same for the live region.
+      expect(container.querySelectorAll('main')).toHaveLength(1);
+      expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
 
       const region = liveRegion(container);
       expect(region.getAttribute('aria-live')).toBe('polite');
