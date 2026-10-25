@@ -92,8 +92,13 @@ nuisance, one that fails open is a hole.
 - **S4.** Closed as part of the positive control rather than with a marker string: the real bundle's `envKeys` and
   `secrets` are now asserted **against** the injected build's, so the two differ by exactly the leak. A near-empty
   chunk could not produce that contrast.
-- **S5.** Files are read as `latin1` — every pattern here is ASCII, and a byte-preserving decode means a future
-  binary asset cannot swallow an ASCII secret behind replacement characters.
+- **S5.** Files are read as `latin1` — every pattern here is ASCII, and the decode is byte-exact.
+  **Corrected in phase 12 (2026-10-25):** the justification written here — "a future binary asset cannot swallow an
+  ASCII secret behind replacement characters" — is **false**, and was falsified by M12 surviving twice. Node's UTF-8
+  decoder resynchronises after an invalid byte, so a contiguous ASCII needle is found under either decode; and the
+  two arrangements where detection genuinely fails (a needle split by a stray lead byte, a needle stored UTF-16)
+  fail under `latin1` too. The change is still correct and marginally safer, but it removes no risk that exists for
+  ASCII patterns. Measurements in phase 12.
 - **S6.** A comment at `ENV_KEY_PATTERNS` names the limit and points at the "no `define` block" case as its
   counterweight, so a green key scan is not read as "nothing was inlined" — which K1 makes concrete.
 - **S7.** Renamed to "keeps the allowlist commented, which is a smell check and not a proof", with a comment

@@ -74,12 +74,17 @@ copy of the source shipped alongside the bundle.
 ## M12 survived, and why that is the honest result
 
 Reading files as `utf8` instead of byte-preserving `latin1` (S5's fix) changes nothing today, because **every
-emitted file is text**. The fix is forward-looking: it protects against a future binary asset — a font, an inlined
-image — swallowing an ASCII secret behind replacement characters.
+emitted file is text**.
 
-Following T11's precedent, this is reported as **survived** rather than dressed up. It cannot be caught without
-adding a binary asset to the real build, which would be a change to the application for the sake of a test. The
-property is stated in the scanner's comment and left at that.
+Following T11's precedent, this is reported as **survived** rather than dressed up.
+
+**Corrected in phase 12 (2026-10-25).** The reason given here for keeping the change — that it "protects against a
+future binary asset swallowing an ASCII secret behind replacement characters" — is **wrong**. Kimi's phase-11 gap 1
+proposed exactly the case that would prove it, the case was added, and **M12 survived a second time**. Measuring the
+five byte arrangements directly showed why: Node's UTF-8 decoder resynchronises, so a contiguous ASCII needle
+survives either decode, and where detection does fail `latin1` fails identically. The corrected statement is in
+phase 12 and in the scanner's own comment; this section is left in place with the error marked rather than
+rewritten, because the surviving mutant is what exposed it.
 
 ## What each acceptance criterion rests on
 

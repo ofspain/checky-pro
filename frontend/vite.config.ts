@@ -7,8 +7,10 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig({
   base: '/app/',
   // Stated rather than inherited: only VITE_-prefixed values are ever inlined, and the four public keys in
-  // design.md 4c are the whole allowlist (R58, L10). An empty or broadened prefix would bake every variable of
-  // the build machine into the bundle, which is a one-word edit away without this line.
+  // design.md 4c are the whole allowlist (R58, L10). Vite rejects an empty prefix itself, so the reachable risk
+  // is a BROADENED one - ['V'], or a second prefix naming a backend's variables - which Vite accepts without
+  // complaint and which would bake those variables of the build machine into the bundle. Measured: both are
+  // caught only by the test that reads this line.
   envPrefix: ['VITE_'],
   plugins: [
     react(),

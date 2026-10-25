@@ -132,8 +132,11 @@ async function scanBundle(treeRoot: string): Promise<BundleScan> {
   const absoluteUrls = new Set<string>();
 
   for (const file of files) {
-    // latin1, not utf8: every pattern here is ASCII, and a byte-preserving decode means a future binary asset
-    // (a font, an inlined image) cannot swallow an ASCII secret behind replacement characters.
+    // latin1, not utf8, because it is byte-exact and allocates no replacement characters. It is NOT the reason an
+    // ASCII secret is found in a binary file: measured, Node's UTF-8 decoder resynchronises after an invalid
+    // byte, so a contiguous ASCII needle survives either decode. Where it does not - a needle split by a stray
+    // byte, or stored UTF-16 - latin1 fails too. The real limit of any text scan, stated so it is not mistaken
+    // for a solved problem.
     const source = (await readFile(join(treeRoot, file))).toString('latin1');
     for (const pattern of ENV_KEY_PATTERNS) {
       for (const match of source.matchAll(pattern)) envKeys.add(match[1] ?? match[0]);
@@ -294,9 +297,9 @@ describe('bundleContainsNoSecretEnvKeys', () => {
         join(controlDir, 'assets/leaky.js.map'),
         JSON.stringify({ version: 3, sourcesContent: ['const k = "AKIAIOSFODNN7EXAMPLE";'] }),
       );
-      // A binary asset carrying an ASCII secret between non-UTF-8 bytes (Kimi 11.1). This is what the
-      // byte-preserving read exists for: decoded as utf8, the surrounding bytes become replacement characters
-      // and the needle can be lost.
+      // A binary asset carrying an ASCII secret between non-UTF-8 bytes (Kimi 11.1). It proves the scanner reads
+      // binary files at all rather than skipping or failing on them - not that the latin1 decode rescues the
+      // needle, which the comment in scanBundle corrects.
       await writeFile(
         join(controlDir, 'assets/font.woff2'),
         Buffer.concat([
