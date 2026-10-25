@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   PKCE_CODE_CHALLENGE_METHOD,
   PKCE_VERIFIER_MAX_LENGTH,
@@ -50,24 +50,45 @@ const SAMPLE_SIZE = 2000;
  */
 const CHI_SQUARE_THRESHOLD = 139;
 
-/** Every name whose presence in the module would be a defect - the verifier must never reach a URL, store or log. */
-const FORBIDDEN_IN_SOURCE = [
-  'Math.random',
-  'Date.now',
-  'localStorage',
-  'sessionStorage',
-  'document.cookie',
-  'console',
-  'Buffer',
-  'http',
-  'https',
-  'URL',
-  'location',
-  'history',
-  'encodeURIComponent',
-  'fetch',
-  'XMLHttpRequest',
-] as const;
+/**
+ * Every name whose presence in the module would be a defect - the verifier must never reach a URL, a store or a log.
+ *
+ * Matched as whole identifiers, not substrings: a bare `includes('URL')` would flag a helper renamed to
+ * `base64URLFromBytes`, which has nothing to do with the global. `\bURL\b` keeps the reach - it still matches
+ * `new URL(`, `URL.createObjectURL` and `globalThis.URL` - and loses the trap.
+ */
+const FORBIDDEN_IN_SOURCE: ReadonlyArray<readonly [string, RegExp]> = [
+  ['Math.random', /\bMath\.random\b/],
+  ['Date.now', /\bDate\.now\b/],
+  ['localStorage', /\blocalStorage\b/],
+  ['sessionStorage', /\bsessionStorage\b/],
+  ['document.cookie', /\bdocument\.cookie\b/],
+  ['console', /\bconsole\b/],
+  ['Buffer', /\bBuffer\b/],
+  ['an http(s) URL', /https?/],
+  ['URL', /\bURL\b/],
+  ['location', /\blocation\b/],
+  ['history', /\bhistory\b/],
+  ['encodeURIComponent', /\bencodeURIComponent\b/],
+  ['fetch', /\bfetch\b/],
+  ['XMLHttpRequest', /\bXMLHttpRequest\b/],
+];
+
+/**
+ * Comments stripped so the module may quote the rules it obeys - its doc comments name Buffer, sessionStorage and
+ * plain on purpose, in explaining why each is absent.
+ *
+ * Block comments are removed wholesale; a line comment is removed only where `//` begins the trimmed line. The
+ * obvious `//.*$` eats everything after a `//` inside a string literal, which would hide a forbidden name appearing
+ * later on that same line - measured, not theorised (phase 7, S1).
+ */
+function codeWithoutComments(source: string): string {
+  return source
+    .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n');
+}
 
 function chiSquare(counts: readonly number[], total: number): number {
   const expected = total / counts.length;
@@ -79,6 +100,13 @@ describe('pkceVerifierMeetsRfc7636', () => {
   let moduleSource: string;
 
   beforeAll(async () => {
+    // Before the sample, not after: generating it calls getRandomValues, so a missing Web Crypto would throw here
+    // and the readable environment case below would never run (Kimi 8.1).
+    if (typeof crypto?.getRandomValues !== 'function' || typeof crypto?.subtle?.digest !== 'function') {
+      throw new Error(
+        'This suite needs Web Crypto: crypto.getRandomValues and crypto.subtle.digest must both be functions',
+      );
+    }
     sample = Array.from({ length: SAMPLE_SIZE }, () => generateCodeVerifier());
     const here = dirname(expect.getState().testPath as string);
     moduleSource = await readFile(join(here, 'pkce.ts'), 'utf8');
@@ -129,6 +157,17 @@ describe('pkceVerifierMeetsRfc7636', () => {
       await expect(deriveCodeChallenge(pair.verifier)).resolves.toBe(pair.challenge);
     });
 
+    // Every other derivation case uses a 43-character verifier, so a derivation that assumed 43 would pass the file
+    // while the published contract is 43-128 (phase 7, S5).
+    it('derives for a verifier at the other end of the legal range, 128 characters', async () => {
+      const long = `${'a'.repeat(127)}~`;
+      expect(long).toHaveLength(PKCE_VERIFIER_MAX_LENGTH);
+      expect(isValidCodeVerifier(long)).toBe(true);
+      const challenge = await deriveCodeChallenge(long);
+      expect(challenge).toMatch(/^[A-Za-z0-9\-_]{43}$/);
+      await expect(deriveCodeChallenge('a'.repeat(43))).resolves.not.toBe(challenge);
+    });
+
     it('rejects an invalid verifier instead of hashing it (AC9)', async () => {
       await expect(deriveCodeChallenge('a'.repeat(42))).rejects.toThrow(TypeError);
       await expect(deriveCodeChallenge(`${'a'.repeat(42)}+`)).rejects.toThrow(TypeError);
@@ -152,6 +191,27 @@ describe('pkceVerifierMeetsRfc7636', () => {
 
     it('is different every time, over the whole sample (AC2)', () => {
       expect(new Set(sample).size).toBe(SAMPLE_SIZE);
+    });
+
+    // AC1's length case catches a changed byte count indirectly - 31 bytes encodes to 42 characters and 33 to 44 -
+    // but nothing pinned the contract with the CSPRNG itself (Kimi 8.3).
+    it('asks the platform CSPRNG for exactly 32 bytes, once', () => {
+      const getRandomValues = vi.spyOn(crypto, 'getRandomValues');
+      try {
+        generateCodeVerifier();
+        expect(getRandomValues).toHaveBeenCalledTimes(1);
+        const [filled] = getRandomValues.mock.calls[0];
+        expect(filled).toBeInstanceOf(Uint8Array);
+        expect((filled as Uint8Array).byteLength).toBe(32);
+      } finally {
+        getRandomValues.mockRestore();
+      }
+    });
+
+    it('gives each pair its own verifier, at the public API (Kimi 8.4)', async () => {
+      const [first, second] = await Promise.all([generatePkcePair(), generatePkcePair()]);
+      expect(first.verifier).not.toBe(second.verifier);
+      expect(first.challenge).not.toBe(second.challenge);
     });
 
     it('is valid for every member of the sample (AC1)', () => {
@@ -218,20 +278,46 @@ describe('pkceVerifierMeetsRfc7636', () => {
   });
 
   describe('the module cannot leak the verifier (AC2, AC6, AC10)', () => {
+    // Over the code, not the raw file: a module that only MENTIONED this in a doc comment while calling something
+    // else would otherwise satisfy the assertion (phase 7, S2).
     it('draws from the platform CSPRNG', () => {
-      expect(moduleSource).toContain('crypto.getRandomValues');
+      expect(codeWithoutComments(moduleSource)).toContain('crypto.getRandomValues');
     });
 
-    it.each(FORBIDDEN_IN_SOURCE.map((name) => [name]))('never names %s', (name) => {
-      // Comments are stripped first: the rules these names appear in are quoted in the doc comments on purpose.
-      const code = moduleSource.replaceAll(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-      expect(code).not.toContain(name);
+    it.each(FORBIDDEN_IN_SOURCE)('never names %s', (_label, pattern) => {
+      expect(codeWithoutComments(moduleSource)).not.toMatch(pattern);
+    });
+
+    it('does not flag the module\'s own base64Url helper, which is not the URL global', () => {
+      expect(moduleSource).toContain('base64UrlFromBytes');
+      expect(codeWithoutComments(moduleSource)).not.toMatch(/\bURL\b/);
     });
 
     it('runs in a browser: no Node-only global, and btoa is the encoder (AC10)', () => {
-      const code = moduleSource.replaceAll(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+      const code = codeWithoutComments(moduleSource);
       expect(code).toContain('btoa(');
       expect(code).not.toMatch(/\bnode:|require\(|process\./);
+    });
+
+    // The scan reads text; this watches behaviour. They fail for different reasons, which is why both are here
+    // (phase 7, S7).
+    it('touches no storage and no log while producing a pair', async () => {
+      const spies = [
+        vi.spyOn(globalThis.sessionStorage, 'setItem'),
+        vi.spyOn(globalThis.localStorage, 'setItem'),
+        vi.spyOn(globalThis.console, 'log'),
+        vi.spyOn(globalThis.console, 'debug'),
+        vi.spyOn(globalThis.console, 'info'),
+        vi.spyOn(globalThis.console, 'warn'),
+        vi.spyOn(globalThis.console, 'error'),
+      ];
+      try {
+        const pair = await generatePkcePair();
+        expect(pair.verifier).not.toBe('');
+        for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+      }
     });
   });
 });
