@@ -128,6 +128,26 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
         parameters(url).get('code_challenge'),
       );
     });
+
+    // M7 proves a request that STORES one pair and SENDS another is caught. The remaining shape is a request that
+    // derives two pairs and happens to use one consistently: correct, but it draws twice from the CSPRNG and runs
+    // SHA-256 twice, and it means the challenge in the URL was not the only one this call created.
+    it('derives exactly one pair, not one per use', async () => {
+      let calls = 0;
+      vi.doMock('./pkce', async () => {
+        const actual = await vi.importActual<typeof import('./pkce')>('./pkce');
+        return {
+          ...actual,
+          generatePkcePair: async () => {
+            calls += 1;
+            return actual.generatePkcePair();
+          },
+        };
+      });
+      const { buildAuthorizeRequest: build } = await import('./authorizeRequest');
+      await build();
+      expect(calls).toBe(1);
+    });
   });
 
   describe('state and nonce (AC4)', () => {
@@ -148,6 +168,14 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
       for (let i = 0; i < 50; i += 1) requests.push(await buildAuthorizeRequest());
       expect(new Set(requests.map((r) => r.state)).size).toBe(50);
       expect(new Set(requests.map((r) => r.nonce)).size).toBe(50);
+    });
+
+    // D-2's whole purpose: state, nonce and the verifier share one CSPRNG path. A hardcoded 43-character string
+    // fails the freshness case above (mutant M14), so this pins the mechanism rather than the symptom - two call
+    // sites, matched as calls rather than as mentions, so the import line and the doc comment do not count.
+    it('are drawn from the shared helper, at two call sites', () => {
+      const callSites = moduleSource.match(/\brandomUrlSafeToken\s*\(/g) ?? [];
+      expect(callSites).toHaveLength(2);
     });
 
     it('come from the CSPRNG, in both modules', () => {
@@ -205,6 +233,16 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
       expect(withExtra).toContain('login_hint');
     });
 
+    it('and would notice one of the eight going missing', async () => {
+      const { url } = await buildAuthorizeRequest();
+      const expected = [...parameters(url).keys()].sort();
+      const parsed = new URL(url);
+      parsed.searchParams.delete('nonce');
+      const withFewer = [...parsed.searchParams.keys()].sort();
+      expect(withFewer).not.toEqual(expected);
+      expect(withFewer).not.toContain('nonce');
+    });
+
     it('derives the redirect URI from the route table, not a literal', async () => {
       const { url } = await buildAuthorizeRequest();
       const redirect = parameters(url).get('redirect_uri') as string;
@@ -213,6 +251,10 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
       expect(parsed.pathname).toBe('/app/callback');
       expect(parsed.pathname.startsWith(APP_BASENAME)).toBe(true);
       expect(parsed.pathname).not.toContain('//');
+      // Both halves of the round trip on one origin (L9). Each is separately asserted to equal location.origin,
+      // which in this environment is a single fixed value - so a hardcoded origin on one side could satisfy both
+      // checks while differing from the other. Compared directly, it cannot.
+      expect(parsed.origin).toBe(new URL(url).origin);
     });
 
     // Pinned rather than left incidental: the stub below is narrower than a real Location, which is only safe
@@ -297,6 +339,21 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
       expect(parameters(url).has('code_verifier')).toBe(false);
     });
 
+    // The comment above says this matcher cannot see a re-encoded or split verifier. Demonstrated rather than
+    // asserted, so the limit is a measured fact and not a claim that quietly rots: both of these ARE leaks, and
+    // both pass. This is why the structural defence - the verifier is absent from AuthorizeRequest - is the real
+    // one, and why this matcher is only ever used to prove the real URL is clean of the literal value.
+    it('cannot see a re-encoded or split verifier, which is its documented limit', async () => {
+      const { url } = await buildAuthorizeRequest();
+      const verifier = globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier) as string;
+      const reEncoded = btoa(verifier).replaceAll('=', '');
+      expect(reEncoded).not.toBe(verifier);
+      expect(urlLeaksVerifier(`${url}&leak=${reEncoded}`, verifier)).toBe(false);
+      const half = Math.floor(verifier.length / 2);
+      const split = `${url}&a=${verifier.slice(0, half)}&b=${verifier.slice(half)}`;
+      expect(urlLeaksVerifier(split, verifier)).toBe(false);
+    });
+
     it('is not returned to the caller either', async () => {
       const request = await buildAuthorizeRequest();
       expect(Object.keys(request).sort()).toEqual(['nonce', 'state', 'url']);
@@ -345,6 +402,14 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
     it('names no localStorage and no Buffer in its own source', () => {
       expect(moduleSource).not.toMatch(/\blocalStorage\s*[.[]/);
       expect(moduleSource).not.toMatch(/\bBuffer\s*[.(]/);
+    });
+
+    // Duplication, deliberately: T01's shell suite already scans every non-test file under src/** for both of
+    // these, and that scan is the authoritative one. This copy exists because the frozen brief required it here
+    // and because a module-local failure names this module instead of handing the reader a list of paths.
+    it('reads no compile-time environment object and hardcodes no absolute address', () => {
+      expect(moduleSource).not.toContain('import.meta' + '.env');
+      expect(moduleSource).not.toMatch(/https?:\/\//);
     });
   });
 
