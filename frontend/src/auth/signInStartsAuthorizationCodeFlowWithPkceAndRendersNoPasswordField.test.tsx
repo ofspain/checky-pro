@@ -459,6 +459,27 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
       expect(Object.keys(globalThis.sessionStorage)).toEqual([]);
     });
 
+    // The handler is invoked as `void startSignIn()`, so anything it rethrows becomes an unhandled rejection
+    // rather than a visible failure. Mutant M8 did exactly that and every other case stayed green: the screen
+    // looks right, and the noise lands somewhere nothing in this package watches.
+    it('lets no rejection escape the handler', async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (event: Event) => {
+        unhandled.push(event);
+        event.preventDefault();
+      };
+      globalThis.addEventListener('unhandledrejection', onUnhandled);
+      try {
+        stubLocation();
+        const container = await renderWithFailingRequest('escaping');
+        await clickAndSettle(button(container));
+        for (let index = 0; index < 5; index += 1) await turn();
+        expect(unhandled).toEqual([]);
+      } finally {
+        globalThis.removeEventListener('unhandledrejection', onUnhandled);
+      }
+    });
+
     it('never shows the underlying error text', async () => {
       stubLocation();
       const container = await renderWithFailingRequest('verifier contract violated at offset 7');
