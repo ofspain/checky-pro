@@ -292,9 +292,30 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
     // component source is full of quoted strings. Reading the catalogue's values and forbidding them as literals
     // fails the moment someone inlines the real copy.
     it('holds none of the catalogue values as a literal in its own source', () => {
-      for (const value of Object.values(en.signIn)) {
-        expect(componentSource, value).not.toContain(value);
+      // The input is asserted non-empty first. Without that, a scan that iterated nothing would pass - measured:
+      // mutant M20 emptied this loop and the whole suite stayed green.
+      const values = Object.values(en.signIn);
+      expect(values.length).toBeGreaterThanOrEqual(5);
+      expect(values.filter((value) => componentSource.includes(value))).toEqual([]);
+    });
+
+    /**
+     * The wording is the owner's (OQ-1) and every other case here compares the screen to the catalogue, which
+     * means the catalogue is compared with itself - mutant M18 changed "Sign in" to "Sign in now" and the whole
+     * suite stayed green. That is correct for wording, which must be changeable in one file. It is NOT correct
+     * for the properties the wording must have, which come from requirements and are pinned here.
+     */
+    it('says nothing about a password and discloses no account state (R6, L2, L4)', () => {
+      const copy = Object.values(en.signIn).join(' ').toLowerCase();
+      for (const forbidden of ['password', 'passcode', 'pin ', 'username', 'email address']) {
+        expect(copy, forbidden).not.toContain(forbidden);
       }
+      // Nothing that would differ between a known and an unknown account, or claim what the server will ask for.
+      for (const forbidden of ['account exists', 'no such', 'not found', 'locked', 'suspended', 'incorrect']) {
+        expect(copy, forbidden).not.toContain(forbidden);
+      }
+      // And the matcher has reach: it finds a phrase that would break the rule.
+      expect(['Enter your password'].join(' ').toLowerCase()).toContain('password');
     });
 
     it('and that scan reports a source which does inline the copy (AC12)', () => {
