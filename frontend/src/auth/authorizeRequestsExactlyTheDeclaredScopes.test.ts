@@ -32,9 +32,21 @@ function parameters(url: string): URLSearchParams {
   return new URL(url).searchParams;
 }
 
-/** One implementation of "this URL exposes the verifier", used in both directions (D-9). */
+/**
+ * One implementation of "this URL exposes the verifier", used in both directions (D-9).
+ *
+ * A raw substring search, deliberately: a verifier is 43 characters from the RFC 7636 unreserved set, and
+ * `encodeURIComponent` escapes none of them - so percent-encoding is NOT a channel that can hide it, and an earlier
+ * version's `decodeURIComponent` was dead logic that also threw URIError on a malformed escape rather than
+ * answering (phase 7, S2/S3; Kimi 8.1).
+ *
+ * Measured limits, so this is not over-trusted: a verifier re-encoded (base64, say) or split across two parameters
+ * is NOT detected by any substring scan. Neither is reachable for code that never handles the value - which is the
+ * stronger guard here: the verifier is absent from `AuthorizeRequest` entirely, so a caller cannot place it
+ * anywhere.
+ */
 function urlLeaksVerifier(url: string, verifier: string): boolean {
-  return decodeURIComponent(url).includes(verifier);
+  return url.includes(verifier);
 }
 
 /** "scope" is exactly these three - the matcher, so wrong values can be fed to it (AC9). */
@@ -117,8 +129,11 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
   describe('state and nonce (AC4)', () => {
     it('are both present and are not each other', async () => {
       const { url, state, nonce } = await buildAuthorizeRequest();
+      // 43 is T14's default token size, so this couples to it on purpose: the size is a property worth pinning,
+      // and a failure here after a change in pkce.ts is informative rather than noise (phase 7, S7).
       expect(state).toHaveLength(43);
       expect(nonce).toHaveLength(43);
+      expect(state).toHaveLength(randomUrlSafeToken().length);
       expect(state).not.toBe(nonce);
       expect(parameters(url).get('state')).toBe(state);
       expect(parameters(url).get('nonce')).toBe(nonce);
@@ -157,6 +172,35 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
       expect(parsed.pathname).toBe(AUTHORIZE_ENDPOINT_PATH);
     });
 
+    /**
+     * Default-deny over the request itself (phase 7, S1; Kimi corroborated it as the most important defect).
+     *
+     * Every parameter above is asserted individually, which only covers the half I intended to send. A ninth -
+     * `prompt`, a `login_hint` carrying an email address, a stray debugging value - would have passed this whole
+     * file. For a request that leaves the browser, "nothing I did not intend" is the half that matters.
+     */
+    it('carries exactly these eight parameters and no others', async () => {
+      const { url } = await buildAuthorizeRequest();
+      expect([...parameters(url).keys()].sort()).toEqual([
+        'client_id',
+        'code_challenge',
+        'code_challenge_method',
+        'nonce',
+        'redirect_uri',
+        'response_type',
+        'scope',
+        'state',
+      ]);
+    });
+
+    it('and the matcher for that would notice a ninth (AC9)', async () => {
+      const { url } = await buildAuthorizeRequest();
+      const expected = [...parameters(url).keys()].sort();
+      const withExtra = [...parameters(`${url}&login_hint=someone%40example.com`).keys()].sort();
+      expect(withExtra).not.toEqual(expected);
+      expect(withExtra).toContain('login_hint');
+    });
+
     it('derives the redirect URI from the route table, not a literal', async () => {
       const { url } = await buildAuthorizeRequest();
       const redirect = parameters(url).get('redirect_uri') as string;
@@ -167,8 +211,25 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
       expect(parsed.pathname).not.toContain('//');
     });
 
+    // Pinned rather than left incidental: the stub below is narrower than a real Location, which is only safe
+    // while the module reads nothing else from it (phase 7, S5).
+    it('reads only the origin from location', () => {
+      const uses = moduleSource.match(/\blocation\s*\.\s*[A-Za-z]+/g) ?? [];
+      expect(uses.length).toBeGreaterThan(0);
+      for (const use of uses) expect(use).toMatch(/location\s*\.\s*origin/);
+    });
+
     it('follows the origin it is served from', async () => {
-      vi.stubGlobal('location', { origin: 'https://checky.example' });
+      vi.stubGlobal('location', {
+        origin: 'https://checky.example',
+        href: 'https://checky.example/app/sign-in',
+        protocol: 'https:',
+        host: 'checky.example',
+        hostname: 'checky.example',
+        pathname: '/app/sign-in',
+        search: '',
+        hash: '',
+      });
       const { url } = await buildAuthorizeRequest();
       expect(url.startsWith(`https://checky.example${AUTHORIZE_ENDPOINT_PATH}?`)).toBe(true);
       expect(parameters(url).get('redirect_uri')).toBe('https://checky.example/app/callback');
@@ -185,9 +246,12 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
     // Fed a leak it must find, three ways, before the real URL's clean result means anything.
     it.each([
       ['as a query parameter', (u: string, v: string) => `${u}&code_verifier=${v}`],
-      ['percent-encoded', (u: string, v: string) => `${u}&x=${encodeURIComponent(v)}`],
       ['in the fragment', (u: string, v: string) => `${u}#${v}`],
       ['inside a nested redirect_uri', (u: string, v: string) => `${u}&r=${encodeURIComponent(`/cb?v=${v}`)}`],
+      // Not a query string at all - proves the matcher reads the whole URL. (Replaces a 'percent-encoded' row that
+      // was byte-identical to the first, since the unreserved set survives encodeURIComponent unchanged.)
+      ['in a path segment', (u: string, v: string) => u.replace('?', `/${v}?`)],
+      ['as a repeated parameter', (u: string, v: string) => `${u}&state=${v}`],
     ])('the matcher finds the verifier %s', async (_label, leak) => {
       const { url } = await buildAuthorizeRequest();
       const verifier = globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier) as string;
@@ -214,6 +278,23 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
       const keys = Object.keys(globalThis.sessionStorage).sort();
       expect(keys).toEqual([...Object.values(AUTHORIZE_STORAGE_KEYS)].sort());
       expect(globalThis.localStorage.length).toBe(0);
+    });
+
+    // The frozen brief says each call overwrites the last, because only the most recent request may be completed.
+    // Nothing asserted it: a stale verifier surviving a re-attempt would be exchanged at the next callback and look
+    // like a server fault (phase 7, S4).
+    it('replaces the previous attempt rather than accumulating', async () => {
+      const first = await buildAuthorizeRequest();
+      const firstVerifier = globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier);
+      const second = await buildAuthorizeRequest();
+      expect(second.state).not.toBe(first.state);
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe(second.state);
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe(second.nonce);
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).not.toBe(firstVerifier);
+      expect(Object.keys(globalThis.sessionStorage)).toHaveLength(3);
+      // And the second request's challenge matches the second verifier, not the first's.
+      const stored = globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier) as string;
+      await expect(deriveCodeChallenge(stored)).resolves.toBe(parameters(second.url).get('code_challenge'));
     });
 
     it('touches no other Storage and no console while building', async () => {
