@@ -59,6 +59,20 @@ export function isValidCodeVerifier(candidate: string): boolean {
 }
 
 /**
+ * `byteLength` CSPRNG bytes as base64url - the shared mechanism behind a code verifier and behind task 15's `state`
+ * and `nonce`, which need the same unguessable URL-safe token under a different contract.
+ *
+ * Published here rather than in a new module because T14's own suite asserts that `btoa(` appears in this file, so
+ * moving the encoder out would break a passing test; and published rather than duplicated because a second copy of
+ * the encoder is the mistake this repository already carries once, in `segmentPrefixPattern`.
+ */
+export function randomUrlSafeToken(byteLength = VERIFIER_BYTE_LENGTH): string {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return base64UrlFromBytes(bytes);
+}
+
+/**
  * A fresh code verifier: 43 characters of base64url over 32 CSPRNG bytes.
  *
  * base64url rather than a draw from all 66 unreserved characters, because 64 divides 256 and the encoding is
@@ -67,9 +81,7 @@ export function isValidCodeVerifier(candidate: string): boolean {
  * entropy.
  */
 export function generateCodeVerifier(): string {
-  const bytes = new Uint8Array(VERIFIER_BYTE_LENGTH);
-  crypto.getRandomValues(bytes);
-  return base64UrlFromBytes(bytes);
+  return randomUrlSafeToken(VERIFIER_BYTE_LENGTH);
 }
 
 /**
