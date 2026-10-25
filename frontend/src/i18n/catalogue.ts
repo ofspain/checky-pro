@@ -4,4 +4,14 @@ export const en = {
     message: 'Too many requests right now. Wait a moment, then try again.',
     dismiss: 'Dismiss',
   },
+  // In the order a visitor meets them, not alphabetical, so a translator reads the screen rather than a list.
+  // Deliberately neutral: nothing here discloses whether an account exists or what the sign-in page will ask for
+  // (L4), and nothing promises a password step, because which factors are required is the server's to decide (L2).
+  signIn: {
+    heading: 'Sign in',
+    explanation: 'Continue to the secure sign-in page to enter your details.',
+    action: 'Continue to sign in',
+    starting: 'Taking you to the sign-in page…',
+    failed: 'Sign-in could not be started. Try again.',
+  },
 } as const;

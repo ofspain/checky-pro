@@ -1,4 +1,5 @@
 import { createBrowserRouter, type RouteObject } from 'react-router';
+import { SignInScreen } from '../auth/SignInScreen';
 
 /** Every SPA route lives under this prefix, which is disjoint from the backend prefixes the edge sends to the services (L14). */
 export const APP_BASENAME = '/app';
@@ -37,7 +38,7 @@ export const appRoutes: RouteObject[] = [
   {
     path: '/',
     children: [
-      ...PUBLIC_ROUTE_PATHS.map((path) => ({ path })),
+      ...PUBLIC_ROUTE_PATHS.map((path) => (path === 'sign-in' ? { path, element: <SignInScreen /> } : { path })),
       ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),
       { path: '*' },
     ],

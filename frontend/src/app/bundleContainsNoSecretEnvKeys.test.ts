@@ -63,6 +63,12 @@ const KNOWN_ABSOLUTE_URLS = [
   // Documentation links inside library warning and error messages.
   'https://bit.ly/wb-precache',
   'https://react.dev/errors/',
+  // Added 2026-10-25 by T16, and justified as this list's own comment requires. react-i18next's useTranslation
+  // puts this in the error it throws when no i18n instance can be found. The hook was already used by
+  // RateLimitNotice, but nothing imported that component, so it was tree-shaken out of the bundle; T16's sign-in
+  // screen is reachable from main.tsx, so the hook - and its error string - now ship. A vendor documentation
+  // link in a thrown message: not a fetch target, not configuration, and not ours.
+  'https://react.i18next.com/latest/usetranslation-hook',
   'https://reactrouter.com/en/main/routers/picking-a-router.',
 ] as const;
 

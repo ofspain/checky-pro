@@ -13,6 +13,17 @@ const SAMPLE_UUID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 const DECLARED_PATHS: readonly string[] = [...PUBLIC_ROUTE_PATHS, ...AUTHENTICATED_ROUTE_PATHS];
 
+/** The screens attached so far, in route order. A task that attaches one adds it here deliberately (T16: sign-in). */
+const SCREENS_ATTACHED_SO_FAR = ['sign-in'] as const;
+
+/** Every route path carrying a rendered element, by whichever of the three keys React Router accepts. */
+function routesWithElements(routes: readonly RouteObject[]): string[] {
+  return routes.flatMap((route) => {
+    const attached = route.element !== undefined || route.Component !== undefined || route.errorElement !== undefined;
+    return [...(attached && route.path !== undefined ? [route.path] : []), ...routesWithElements(route.children ?? [])];
+  });
+}
+
 /** The edge prefixes that belong to the backend services, verbatim from design.md §4c note 2026-10-21 (2).
  * If the edge gains a prefix, add it here. */
 const BACKEND_PREFIXES = [
@@ -141,14 +152,20 @@ describe('routesResolveUnderAppPrefixOnly', () => {
     expect(pathTree(appRoutes)).toEqual([['/', [...DECLARED_PATHS.map((path) => [path, []]), ['*', []]]]]);
   });
 
-  it('attaches no screen to any route yet: the paths carry no element or component (L11)', () => {
-    const walk = (routes: readonly RouteObject[]): RouteObject[] =>
-      routes.flatMap((route) => [route, ...walk(route.children ?? [])]);
-    for (const route of walk(appRoutes)) {
-      expect(route.element, route.path).toBeUndefined();
-      expect(route.Component, route.path).toBeUndefined();
-      expect(route.errorElement, route.path).toBeUndefined();
-    }
+  // Narrowed by T16, which attached the first screen. It was "no route carries an element", which was the
+  // route-table twin of T01's "the shell renders nothing" - and like those, it retires one exception at a time
+  // rather than all at once. A task that attaches a screen must come here and name it, which is the point.
+  it('attaches a screen only to the routes whose task has run (L11, L12)', () => {
+    expect(routesWithElements(appRoutes)).toEqual([...SCREENS_ATTACHED_SO_FAR]);
+
+    // The predicate counts, rather than always returning a one-element list that happens to match: given two
+    // attached routes it reports both, and given none it reports none.
+    const twoAttached: RouteObject[] = [
+      { path: 'a', element: <i /> },
+      { path: 'b', children: [{ path: 'c', Component: () => null }] },
+    ];
+    expect(routesWithElements(twoAttached)).toEqual(['a', 'c']);
+    expect(routesWithElements([{ path: 'plain' }])).toEqual([]);
   });
 
   it('creates a browser router with the /app basename and the declared routes', async () => {
