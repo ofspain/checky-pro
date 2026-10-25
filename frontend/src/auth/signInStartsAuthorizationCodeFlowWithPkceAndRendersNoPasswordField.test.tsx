@@ -463,12 +463,12 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
     // rather than a visible failure. Mutant M8 did exactly that and every other case stayed green: the screen
     // looks right, and the noise lands somewhere nothing in this package watches.
     it('lets no rejection escape the handler', async () => {
+      // On process, not on window: measured in this environment, an unhandled rejection surfaces as Node's
+      // `unhandledRejection` and jsdom dispatches no window event for it. A guard on the window channel passed
+      // while mutant M8 was live, which is how the channel came to be checked rather than assumed.
       const unhandled: unknown[] = [];
-      const onUnhandled = (event: Event) => {
-        unhandled.push(event);
-        event.preventDefault();
-      };
-      globalThis.addEventListener('unhandledrejection', onUnhandled);
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
       try {
         stubLocation();
         const container = await renderWithFailingRequest('escaping');
@@ -476,7 +476,7 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
         for (let index = 0; index < 5; index += 1) await turn();
         expect(unhandled).toEqual([]);
       } finally {
-        globalThis.removeEventListener('unhandledrejection', onUnhandled);
+        process.off('unhandledRejection', onUnhandled);
       }
     });
 
