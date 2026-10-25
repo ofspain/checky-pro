@@ -1,4 +1,8 @@
 import { createBrowserRouter, type RouteObject } from 'react-router';
+// This import closes a cycle: routes -> SignInScreen -> authorizeRequest -> routes, because authorizeRequest reads
+// APP_BASENAME to derive the redirect URI. It resolves because APP_BASENAME is read inside a function there, never
+// at module scope, so nothing touches the binding while it is still in its temporal dead zone. That property is
+// pinned by a test in the sign-in suite; if it is ever broken the application fails to start, not a test.
 import { SignInScreen } from '../auth/SignInScreen';
 
 /** Every SPA route lives under this prefix, which is disjoint from the backend prefixes the edge sends to the services (L14). */

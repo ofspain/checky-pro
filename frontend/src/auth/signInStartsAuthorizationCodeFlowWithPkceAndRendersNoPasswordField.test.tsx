@@ -5,6 +5,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { APP_BASENAME } from '../app/routes';
 import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
 import { AUTHORIZE_ENDPOINT_PATH, AUTHORIZE_STORAGE_KEYS, buildAuthorizeRequest } from './authorizeRequest';
@@ -156,7 +157,22 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
     it('and the same selectors find a password field when one is there (AC12)', () => {
       const decoy = document.createElement('div');
       decoy.innerHTML = '<form><input type="password" name="p" /></form>';
-      expect(credentialInputsIn(decoy)).toEqual(['input[type=password]', 'input', 'form']);
+      // Containment, not equality: an exact list would couple this control to the order and membership of
+      // CREDENTIAL_SELECTORS, so adding a selector would fail it for no real reason. The meaningful equality is
+      // the empty one, on the real screen.
+      const found = credentialInputsIn(decoy);
+      expect(found).toContain('input[type=password]');
+      expect(found).toContain('form');
+    });
+
+    // "No credential input" and "exactly one control, and it is the sign-in button" are different claims, and on
+    // the one screen an unauthenticated visitor meets, the second is worth pinning: a stray second button or an
+    // unexpected link would satisfy every other case in this file.
+    it('offers exactly one interactive control, and it is the action', () => {
+      const container = renderSignIn();
+      const controls = container.querySelectorAll('button, a, input, select, textarea, [tabindex]');
+      expect(controls).toHaveLength(1);
+      expect(controls[0]).toBe(button(container));
     });
 
     it('renders no password-ish attribute anywhere in its own source either', () => {
@@ -307,6 +323,7 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
       const action = button(container);
 
       expect(action.disabled).toBe(false);
+      // A string, not a boolean: React renders aria-* booleans as "true"/"false" attribute values.
       expect(action.getAttribute('aria-disabled')).toBe('false');
 
       await clickAndSettle(action);
@@ -363,7 +380,20 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
       expect(region.textContent).toBe('');
     });
 
-    it('announces the in-flight state while the browser is still navigating', async () => {
+    // Visual proximity is not association: a keyboard user tabbing straight to the button would otherwise never
+    // hear that they are about to leave the application for a server-hosted page.
+    it('associates the explanation with the action for assistive technology', () => {
+      const container = renderSignIn();
+      const describedBy = button(container).getAttribute('aria-describedby');
+      expect(describedBy).not.toBeNull();
+      const description = container.querySelector(`#${describedBy as string}`);
+      expect(description?.textContent).toBe(en.signIn.explanation);
+    });
+
+    // Asserts the state is RENDERED, not that it is heard. In a real browser the document is replaced - measured
+    // in phase 7, where the page became SAS's /login - so the window this occupies may be imperceptible. It still
+    // earns its place: a slow or blocked navigation leaves it on screen, which is exactly when it is needed.
+    it('renders the in-flight state while the browser is still navigating', async () => {
       stubLocation();
       const container = renderSignIn();
       await clickAndSettle(button(container));
@@ -417,14 +447,43 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
       expect(container.textContent ?? '').not.toContain('offset 7');
     });
 
-    it('re-arms the button, so a second attempt is possible', async () => {
-      stubLocation();
-      const container = await renderWithFailingRequest('transient');
-      const action = button(container);
-      await clickAndSettle(action);
+    // aria-disabled returning to "false" is the RENDERED consequence of setStatus('failed'), which is not the
+    // same fact as the in-flight ref having been reset. If a regression reset the status but not the ref, the
+    // button would look enabled and do nothing - the worst failure mode, because it is invisible. So the retry is
+    // actually performed.
+    it('re-arms the attempt itself: a second click after a failure succeeds', async () => {
+      const assign = stubLocation();
+      let shouldFail = true;
+      vi.doMock('./authorizeRequest', async () => {
+        const actual = await vi.importActual<typeof import('./authorizeRequest')>('./authorizeRequest');
+        return {
+          ...actual,
+          buildAuthorizeRequest: async () => {
+            if (shouldFail) throw new TypeError('transient');
+            return actual.buildAuthorizeRequest();
+          },
+        };
+      });
+      const { SignInScreen: Screen } = await import('./SignInScreen');
+      const container = document.createElement('div');
+      document.body.append(container);
+      const root = createRoot(container);
+      act(() => {
+        root.render(
+          <I18nextProvider i18n={createI18n()}>
+            <Screen />
+          </I18nextProvider>,
+        );
+      });
+      mounted = { root, container };
 
+      await clickAndSettle(button(container));
+      expect(assign).not.toHaveBeenCalled();
       expect(button(container).getAttribute('aria-disabled')).toBe('false');
-      expect(document.activeElement === document.body || document.activeElement === button(container)).toBe(true);
+
+      shouldFail = false;
+      await clickAndSettle(button(container));
+      expect(assign).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -437,6 +496,8 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
       const consoleSpies = Object.keys(globalThis.console)
         .filter((key) => typeof (globalThis.console as unknown as Record<string, unknown>)[key] === 'function')
         .map((key) => vi.spyOn(globalThis.console as unknown as Record<string, () => void>, key));
+      // A sample, not an exhaustive guard: it covers console's own enumerable function keys, so a host exposing
+      // them non-enumerably would be under-spied. The source scan below is the authoritative check.
       expect(consoleSpies.length).toBeGreaterThan(10);
 
       const container = renderSignIn();
@@ -456,7 +517,47 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
     });
   });
 
+  /**
+   * T16 closed a cycle: app/routes -> auth/SignInScreen -> auth/authorizeRequest -> app/routes, because
+   * authorizeRequest reads APP_BASENAME to derive the redirect URI. It resolves only because that read happens
+   * inside a function, so nothing touches the binding while it is still in its temporal dead zone. Hoisting it to
+   * module scope - an ordinary-looking refactor - would throw at application START, and Rollup emits no
+   * circular-dependency warning, so nothing in the build would say so. The safety is pinned here rather than left
+   * to where one const happens to sit.
+   */
+  describe('the circular import it introduces stays safe (AC15)', () => {
+    it('reads APP_BASENAME only inside a function body, never at module scope', async () => {
+      const here = dirname(expect.getState().testPath as string);
+      const source = await readFile(join(here, 'authorizeRequest.ts'), 'utf8');
+
+      const uses = [...source.matchAll(/^(\s*).*\bAPP_BASENAME\b.*$/gm)]
+        .filter((match) => !match[0].trimStart().startsWith('*') && !match[0].trimStart().startsWith('//'))
+        .filter((match) => !match[0].startsWith('import'));
+      expect(uses.length).toBeGreaterThan(0);
+      // Every remaining use is indented, which at this file's top level means it is inside a block.
+      for (const match of uses) expect(match[1], match[0].trim()).not.toBe('');
+    });
+
+    it('resolves under the order the application actually loads it in', async () => {
+      // mountShell imports app/routes first; that is the order that puts authorizeRequest in the middle of the
+      // cycle. If the dead zone were ever touched, this import would throw rather than return.
+      const routes = await import('../app/routes');
+      const { buildAuthorizeRequest: build } = await import('./authorizeRequest');
+
+      expect(routes.APP_BASENAME).toBe('/app');
+      const assign = stubLocation();
+      expect(assign).not.toHaveBeenCalled();
+      const { url } = await build();
+      expect(new URL(url).searchParams.get('redirect_uri')).toBe(`${STUB_ORIGIN}${routes.APP_BASENAME}/callback`);
+    });
+  });
+
   describe('it is reachable in the real application (AC14)', () => {
+    // T02's file disposes every router it creates (toDispose/afterEach). This case cannot: mountShell returns the
+    // React Root, not the router it built, so the history subscription outlives the unmount. Accepted rather than
+    // worked around, because the alternative - rebuilding mountShell's tree by hand here - would stop this case
+    // testing the thing it exists to test, which is that the REAL entry point renders the screen. jsdom is torn
+    // down per file, so the leak does not reach another file.
     it('renders at /app/sign-in, and the shell outside /app still renders nothing', async () => {
       const { mountShell } = await import('../app/mountShell');
 
@@ -477,7 +578,11 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
       }
 
       // T01's invariant, asserted here rather than only inherited: outside the basename the router matches
-      // nothing, so the shell is empty even now that a screen exists.
+      // nothing, so the shell is empty even now that a screen exists. The origin is asserted first because it is
+      // the REASON the shell is empty - without it the case would pass for an unrelated reason.
+      expect(globalThis.location.origin).toBe(JSDOM_ORIGIN);
+      expect(globalThis.location.pathname.startsWith(APP_BASENAME)).toBe(false);
+
       const outside = document.createElement('div');
       document.body.append(outside);
       let outsideRoot: Root | undefined;
@@ -490,7 +595,6 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
         if (outsideRoot) act(() => (outsideRoot as Root).unmount());
         outside.remove();
       }
-      expect(JSDOM_ORIGIN).toBe('http://localhost:3000');
     });
   });
 });
