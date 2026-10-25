@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APP_BASENAME } from '../app/routes';
@@ -76,7 +76,11 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    // Both, in this order: resetModules drops the loaded instances, doUnmock drops the factories that would
+    // otherwise still be waiting for the next dynamic import in a later case.
     vi.resetModules();
+    vi.doUnmock('./pkce');
+    vi.doUnmock('../app/routes');
   });
 
   describe('the scopes (AC1)', () => {
@@ -235,6 +239,33 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
       expect(parameters(url).get('redirect_uri')).toBe('https://checky.example/app/callback');
     });
 
+    // M10 (phase 10) survived every case above: while APP_BASENAME is '/app', `const base = '/app'` and
+    // `const base = APP_BASENAME` produce the same string, so no assertion against the real route table can
+    // separate derivation from coincidence. This one moves the route table and watches the redirect follow.
+    it('follows the route table when the basename changes, rather than hardcoding /app', async () => {
+      vi.doMock('../app/routes', async () => {
+        const actual = await vi.importActual<typeof import('../app/routes')>('../app/routes');
+        return { ...actual, APP_BASENAME: '/console' };
+      });
+      const { buildAuthorizeRequest: build } = await import('./authorizeRequest');
+      const { url } = await build();
+      const redirect = parameters(url).get('redirect_uri') as string;
+      expect(redirect).toBe(`${globalThis.location.origin}/console/callback`);
+      expect(redirect).not.toContain('/app');
+    });
+
+    it('strips a trailing slash the route table might grow, measured on the module itself', async () => {
+      vi.doMock('../app/routes', async () => {
+        const actual = await vi.importActual<typeof import('../app/routes')>('../app/routes');
+        return { ...actual, APP_BASENAME: '/console/' };
+      });
+      const { buildAuthorizeRequest: build } = await import('./authorizeRequest');
+      const { url } = await build();
+      // Not `/console//callback`: an exact-match redirect_uri comparison on the server rejects that, and the
+      // rejection would surface at sign-in with nothing here failing first.
+      expect(parameters(url).get('redirect_uri')).toBe(`${globalThis.location.origin}/console/callback`);
+    });
+
     it('would survive a trailing slash on the route basename', () => {
       // The derivation's rule, applied to the value a future edit might introduce.
       const strip = (base: string) => (base.endsWith('/') ? base.slice(0, -1) : base);
@@ -360,6 +391,27 @@ describe('authorizeRequestsExactlyTheDeclaredScopes', () => {
       expect(authMatcher).toContain('/oauth2/*');
       // The endpoint this task builds must fall under that prefix, or the edge sends it nowhere.
       expect(AUTHORIZE_ENDPOINT_PATH.startsWith('/oauth2/')).toBe(true);
+    });
+
+    /**
+     * M12 (phase 10) survived: `/oauth2/authorise` satisfies the prefix check above, and the URL case asserts
+     * `parsed.pathname === AUTHORIZE_ENDPOINT_PATH` - the constant compared with itself, which no misspelling can
+     * fail. The spelling therefore needs an authority outside this module. Two exist: a literal written out here
+     * independently, and the auth service's own integration tests, which drive these paths against a live
+     * Spring Authorization Server. If SAS ever moved the endpoint, those tests would be the first to change.
+     */
+    it('spells the authorize endpoint exactly as the auth service drives it', async () => {
+      expect(AUTHORIZE_ENDPOINT_PATH).toBe('/oauth2/authorize');
+
+      const authTests = join(repoRoot, 'services/auth/src/test/java');
+      const files = (await readdir(authTests, { recursive: true })).filter((name) => name.endsWith('.java'));
+      expect(files.length).toBeGreaterThan(50);
+      const sources = await Promise.all(files.map((name) => readFile(join(authTests, name), 'utf8')));
+      const backendPaths = new Set(
+        sources.flatMap((source) => source.match(/"\/oauth2\/[a-zA-Z0-9_/-]*"/g) ?? []).map((m) => m.slice(1, -1)),
+      );
+      expect(backendPaths, 'the auth service no longer names any /oauth2 path').not.toEqual(new Set());
+      expect([...backendPaths].sort()).toContain(AUTHORIZE_ENDPOINT_PATH);
     });
 
     it('tracks the callback route this task redirects to', async () => {
