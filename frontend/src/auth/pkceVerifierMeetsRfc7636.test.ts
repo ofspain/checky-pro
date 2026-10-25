@@ -78,16 +78,58 @@ const FORBIDDEN_IN_SOURCE: ReadonlyArray<readonly [string, RegExp]> = [
  * Comments stripped so the module may quote the rules it obeys - its doc comments name Buffer, sessionStorage and
  * plain on purpose, in explaining why each is absent.
  *
- * Block comments are removed wholesale; a line comment is removed only where `//` begins the trimmed line. The
- * obvious `//.*$` eats everything after a `//` inside a string literal, which would hide a forbidden name appearing
- * later on that same line - measured, not theorised (phase 7, S1).
+ * A scanner rather than a regex, because BOTH regex forms have a demonstrated hole: `//.*$` eats everything after a
+ * `//` inside a string literal (phase 7, S1) and the block form eats from a `/*` inside a string literal to the
+ * next real terminator (Kimi 11.1). Either hides a forbidden name that follows. This tracks string and template
+ * state, so a comment delimiter inside a literal is just text.
+ *
+ * Residual limit, stated rather than implied: an UNESCAPED comment delimiter inside a regular-expression character
+ * class would still be read as a comment start, because telling a regex literal from a division needs real parse
+ * context. Not reachable in this module, and the negative control below covers every form that is.
  */
 function codeWithoutComments(source: string): string {
-  return source
-    .replaceAll(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .filter((line) => !line.trimStart().startsWith('//'))
-    .join('\n');
+  type Mode = 'code' | 'line' | 'block' | "'" | '"' | '`';
+  let mode: Mode = 'code';
+  let out = '';
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index];
+    const following = source[index + 1];
+    if (mode === 'code') {
+      if (character === '/' && following === '/') {
+        mode = 'line';
+        index += 2;
+      } else if (character === '/' && following === '*') {
+        mode = 'block';
+        index += 2;
+      } else {
+        if (character === "'" || character === '"' || character === '`') mode = character;
+        out += character;
+        index += 1;
+      }
+    } else if (mode === 'line') {
+      if (character === '\n') {
+        mode = 'code';
+        out += character;
+      }
+      index += 1;
+    } else if (mode === 'block') {
+      if (character === '*' && following === '/') {
+        mode = 'code';
+        index += 2;
+      } else {
+        index += 1;
+      }
+    } else if (character === '\\') {
+      out += character + (following ?? '');
+      index += 2;
+    } else {
+      if (character === mode) mode = 'code';
+      out += character;
+      index += 1;
+    }
+  }
+  return out;
 }
 
 function chiSquare(counts: readonly number[], total: number): number {
@@ -170,6 +212,9 @@ describe('pkceVerifierMeetsRfc7636', () => {
 
     it('rejects an invalid verifier instead of hashing it (AC9)', async () => {
       await expect(deriveCodeChallenge('a'.repeat(42))).rejects.toThrow(TypeError);
+      // The upper bound too: deriveCodeChallenge is advertised as self-validating, so it may not rely on a caller
+      // having consulted isValidCodeVerifier first (Kimi 11.3).
+      await expect(deriveCodeChallenge('a'.repeat(129))).rejects.toThrow(TypeError);
       await expect(deriveCodeChallenge(`${'a'.repeat(42)}+`)).rejects.toThrow(TypeError);
       await expect(deriveCodeChallenge('')).rejects.toThrow(TypeError);
     });
@@ -246,6 +291,8 @@ describe('pkceVerifierMeetsRfc7636', () => {
       expect(withDotAndTilde).toHaveLength(43);
       expect(isValidCodeVerifier(withDotAndTilde)).toBe(true);
       expect(isValidCodeVerifier(`${'~'.repeat(21)}${'.'.repeat(22)}`)).toBe(true);
+      // The most stressful valid input: the upper bound AND the two characters base64url omits (Kimi 11.4).
+      expect(isValidCodeVerifier(`${'a'.repeat(126)}.~`)).toBe(true);
     });
   });
 
@@ -288,6 +335,52 @@ describe('pkceVerifierMeetsRfc7636', () => {
       expect(codeWithoutComments(moduleSource)).not.toMatch(pattern);
     });
 
+    // Every row above asserts an ABSENCE over a file that contains none of these names, so a broken pattern or a
+    // broken stripper would be silently green. These feed the same detection logic a source that does contain each
+    // one, including both comment-delimiter-inside-a-string forms that were real holes (Kimi 11.6).
+    describe('the scanner itself detects what it is looking for', () => {
+      it.each(FORBIDDEN_IN_SOURCE)('finds %s in a synthetic source', (label, pattern) => {
+        const snippet = {
+          'Math.random': 'const r = Math.random();',
+          'Date.now': 'const t = Date.now();',
+          localStorage: "localStorage.setItem('k', v);",
+          sessionStorage: "sessionStorage.setItem('k', v);",
+          'document.cookie': "document.cookie = 'v=' + v;",
+          console: 'console.log(v);',
+          Buffer: "Buffer.from(v, 'utf8');",
+          'an http(s) URL': "const u = 'https://auth:8080/oauth2/token';",
+          URL: "new URL('/x', origin);",
+          location: 'location.assign(target);',
+          history: "history.pushState({}, '', target);",
+          encodeURIComponent: 'encodeURIComponent(v);',
+          fetch: 'fetch(target);',
+          XMLHttpRequest: 'new XMLHttpRequest();',
+        }[label];
+        expect(snippet, `no synthetic source for ${label}`).toBeDefined();
+        expect(codeWithoutComments(snippet as string)).toMatch(pattern);
+      });
+
+      it.each([
+        ['a // inside a string literal, same line (phase 7, S1)', "const x = 'a//b'; localStorage.setItem('k', v);"],
+        ['a block delimiter inside a string literal (Kimi 11.1)', "const x = '/*'; localStorage.setItem('k', v);\n/** real */"],
+        ['a line comment after real code', "localStorage.setItem('k', v); // a trailing comment"],
+        ['a template literal holding //', 'const x = `a//b`; localStorage.setItem(\'k\', v);'],
+      ])('is not blinded by %s', (_label, snippet) => {
+        expect(codeWithoutComments(snippet)).toMatch(/\blocalStorage\b/);
+      });
+
+      it('still removes the comments it is meant to remove', () => {
+        const source = [
+          '/** names Buffer and sessionStorage on purpose */',
+          '// and localStorage here',
+          'const a = 1;',
+        ].join('\n');
+        const code = codeWithoutComments(source);
+        expect(code).toContain('const a = 1;');
+        for (const name of ['Buffer', 'sessionStorage', 'localStorage']) expect(code).not.toContain(name);
+      });
+    });
+
     it('does not flag the module\'s own base64Url helper, which is not the URL global', () => {
       expect(moduleSource).toContain('base64UrlFromBytes');
       expect(codeWithoutComments(moduleSource)).not.toMatch(/\bURL\b/);
@@ -299,18 +392,25 @@ describe('pkceVerifierMeetsRfc7636', () => {
       expect(code).not.toMatch(/\bnode:|require\(|process\./);
     });
 
-    // The scan reads text; this watches behaviour. They fail for different reasons, which is why both are here
-    // (phase 7, S7).
-    it('touches no storage and no log while producing a pair', async () => {
+    /**
+     * The scan reads text; this watches behaviour. They fail for different reasons, which is why both are here
+     * (phase 7, S7).
+     *
+     * Every Storage method and every function on `console`, not a hand-picked few (Kimi 11.2, 11.5). The asymmetry
+     * that remains is worth naming: an indexed assignment onto a Storage object is a property set, not a method
+     * call, so NO method spy can see it. For that form the source scan is the authoritative guard and these spies
+     * are the second opinion - not the other way round.
+     */
+    it('calls no Storage method and no console method while producing a pair', async () => {
       const spies = [
-        vi.spyOn(globalThis.sessionStorage, 'setItem'),
-        vi.spyOn(globalThis.localStorage, 'setItem'),
-        vi.spyOn(globalThis.console, 'log'),
-        vi.spyOn(globalThis.console, 'debug'),
-        vi.spyOn(globalThis.console, 'info'),
-        vi.spyOn(globalThis.console, 'warn'),
-        vi.spyOn(globalThis.console, 'error'),
+        ...(['setItem', 'getItem', 'removeItem', 'clear', 'key'] as const).map((method) =>
+          vi.spyOn(Storage.prototype, method),
+        ),
+        ...Object.keys(globalThis.console)
+          .filter((key) => typeof (globalThis.console as unknown as Record<string, unknown>)[key] === 'function')
+          .map((key) => vi.spyOn(globalThis.console as unknown as Record<string, () => void>, key)),
       ];
+      expect(spies.length, 'expected a non-trivial spy surface').toBeGreaterThan(10);
       try {
         const pair = await generatePkcePair();
         expect(pair.verifier).not.toBe('');
