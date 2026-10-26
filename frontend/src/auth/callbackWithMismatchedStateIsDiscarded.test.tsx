@@ -108,6 +108,20 @@ async function arriveAtMocked(
   return { container, router };
 }
 
+/**
+ * The scan AC12 rests on: every use of `name` that is not a comment or an import must be indented, which at
+ * these files' top level means it sits inside a block. Extracted from the assertion so the scan itself can be
+ * fed a known violation - it is the only thing in this suite that can catch the TDZ defect, so an unproven
+ * regex here would be a silent hole rather than a weak test.
+ */
+function moduleScopeUses(source: string, name: string): string[] {
+  return [...source.matchAll(new RegExp(String.raw`^(\s*).*\b${name}\b.*$`, 'gm'))]
+    .filter((match) => !match[0].trimStart().startsWith('*') && !match[0].trimStart().startsWith('//'))
+    .filter((match) => !match[0].startsWith('import'))
+    .filter((match) => match[1] === '')
+    .map((match) => match[0].trim());
+}
+
 /** The three URL shapes R8's "missing" antecedent covers, plus the no-query case a bookmark produces. */
 const DISCARD_SHAPES: readonly [string, string][] = [
   ['no state parameter at all', '/callback?code=abc'],
@@ -259,6 +273,15 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       expect(router.state.location.pathname).not.toContain('/callback/');
     });
 
+    // Privacy: an authorization code carried onto the sign-in URL would sit in browser history, and in any
+    // referrer the sign-in page later sends. The pathname assertions above would not notice.
+    it.each(DISCARD_SHAPES)('carries no part of the callback query onward: %s', async (_label, url) => {
+      const { router } = await arriveAt(url);
+
+      expect(router.state.location.search).toBe('');
+      expect(router.state.location.hash).toBe('');
+    });
+
     // Against hard-coded literals, deliberately. PUBLIC_ROUTE_PATHS is now built FROM these two constants, so
     // asserting the list contains them would compare each constant with itself - the defect this suite has
     // caught seven times in other tasks. What is actually at stake is external: auth registers the SPA's
@@ -373,6 +396,16 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       expect(container.querySelector('form')).toBeNull();
     });
 
+    // The inverted scan below proves the screen does not inline the copy. It would pass just as well against
+    // keys whose values were empty, where i18next renders nothing and the live region is silent.
+    it('has real wording behind every key the callback screen renders', () => {
+      for (const [key, value] of Object.entries(en.callback)) {
+        expect(value, key).toBeTruthy();
+        expect(value.trim().length, key).toBeGreaterThan(0);
+      }
+      expect(en.signIn.discarded.trim().length).toBeGreaterThan(0);
+    });
+
     it('holds none of the catalogue values as a literal in its own source', () => {
       const values = [...Object.values(en.callback), en.signIn.discarded];
       expect(values.length).toBeGreaterThanOrEqual(3);
@@ -444,13 +477,27 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
   // catch-all. T16's guard covers authorizeRequest only; this covers the strand T17 introduced.
   describe('the second strand of the circular import stays safe (AC12)', () => {
     it('reads SIGN_IN_PATH only inside a function body, never at module scope', () => {
-      const uses = [...callbackSource.matchAll(/^(\s*).*\bSIGN_IN_PATH\b.*$/gm)]
-        .filter((match) => !match[0].trimStart().startsWith('*') && !match[0].trimStart().startsWith('//'))
-        .filter((match) => !match[0].startsWith('import'));
+      // Non-vacuity: the screen must actually use the name, or an empty result would prove nothing.
+      expect(callbackSource).toContain('SIGN_IN_PATH');
 
-      expect(uses.length).toBeGreaterThan(0);
-      // Every remaining use is indented, which at this file's top level means it sits inside a block.
-      for (const match of uses) expect(match[1], match[0].trim()).not.toBe('');
+      expect(moduleScopeUses(callbackSource, 'SIGN_IN_PATH')).toEqual([]);
+    });
+
+    // The scan is the ONLY thing that catches this defect class: hoisting the read fails nothing else in the
+    // suite, because Vitest's module resolution does not reproduce the TDZ failure Vite produces. So the scan
+    // is itself fed a violation, the same way every other matcher here is.
+    it('and the scan detects a module-scope use when one is present', () => {
+      const hoisted = [
+        "import { SIGN_IN_PATH } from '../app/routes';",
+        '// SIGN_IN_PATH in a comment must not count',
+        ' * SIGN_IN_PATH in a doc block must not count',
+        'const DISCARD_TARGET = "/" + SIGN_IN_PATH;',
+        'function f() {',
+        '  const fine = SIGN_IN_PATH;',
+        '}',
+      ].join('\n');
+
+      expect(moduleScopeUses(hoisted, 'SIGN_IN_PATH')).toEqual(['const DISCARD_TARGET = "/" + SIGN_IN_PATH;']);
     });
 
     it('resolves under the order the application actually loads it in', async () => {
@@ -497,6 +544,42 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       // Neutral: the server's own error_description must not reach the visitor (L4).
       expect(container.textContent ?? '').not.toContain('user said no');
       expect(container.textContent ?? '').not.toContain('access_denied');
+    });
+
+    // The trim must apply on the way THROUGH, not only in the discard test. A regression that trimmed only
+    // for the emptiness check would hand task 20 a padded code the authorization server never issued.
+    it('trims padding off a usable code and state before the exchange sees them', async () => {
+      const { calls, routes } = await spyOnExchange();
+      await arriveAtMocked(routes, '/callback?code=%20abc%20&state=%09xyz%0A');
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toEqual(expect.objectContaining({ code: 'abc', state: 'xyz' }));
+    });
+
+    // Both `error` and `code` is malformed: the server sends one or the other. Locked as a discard (D-12).
+    it('discards a response carrying BOTH an error and a code', async () => {
+      const { calls, routes } = await spyOnExchange();
+      const { router } = await arriveAtMocked(routes, '/callback?error=access_denied&code=abc&state=xyz');
+
+      expect(calls).toEqual([]);
+      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+    });
+
+    // The boundary T18 and T20 will cross. Pinned now so the suite says when it moves rather than letting a
+    // read drift in unannounced.
+    it('reads none of the three stored items, even on the success path', async () => {
+      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.state, 'stored-state');
+      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.nonce, 'stored-nonce');
+      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.codeVerifier, 'stored-verifier');
+      const getItem = vi.spyOn(Storage.prototype, 'getItem');
+      const setItem = vi.spyOn(Storage.prototype, 'setItem');
+      const { calls, routes } = await spyOnExchange();
+      await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
+
+      expect(calls).toHaveLength(1);
+      const read = getItem.mock.calls.map(([key]) => key);
+      for (const key of Object.values(AUTHORIZE_STORAGE_KEYS)) expect(read, key).not.toContain(key);
+      expect(setItem).not.toHaveBeenCalled();
     });
 
     // A duplicated security parameter is a parameter-pollution shape. URLSearchParams.get returns the FIRST,

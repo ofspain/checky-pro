@@ -37,6 +37,11 @@ export function CallbackScreen() {
     // server did not send.
     const state = params.get('state')?.trim() ?? null;
     const code = params.get('code')?.trim() ?? null;
+    // An authorization error response carries `error` in PLACE of `code` (RFC 6749 §4.1.2.1). A URL carrying
+    // both is malformed - the server sends one or the other - so it is an injected or mangled link rather than
+    // anything this flow produced, and the safe reading is that no usable grant arrived. Task 19 owns telling
+    // the visitor anything about the error itself; T17's only outcome is the discard.
+    const error = params.get('error')?.trim() ?? null;
 
     /** R8's consequent, and the only outcome T17 produces. Neutral by requirement: it names no cause (L4). */
     const discard = () => {
@@ -45,6 +50,11 @@ export function CallbackScreen() {
       // the catch-all, silently. `replace` so a discarded callback is not reachable with the back button.
       navigate(`/${SIGN_IN_PATH}`, { replace: true });
     };
+
+    if (error !== null && error !== '') {
+      discard();
+      return;
+    }
 
     // R8's antecedent, in T17's half. A missing `code` is discarded too - beyond R8's literal words, which speak
     // only of `state`, but the alternative is handing the exchange a grant it cannot use and calling that
