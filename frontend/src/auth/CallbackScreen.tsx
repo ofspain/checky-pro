@@ -113,14 +113,20 @@ export function CallbackScreen() {
     // from the token endpoint, a clock skew - and a dropped rejection there would leave the visitor on this
     // holding screen indefinitely. Handled here so the failure mode is defined by the task that introduced the
     // seam rather than inherited by the one that fills it. Task 20 may route it somewhere more specific.
-    exchangeAuthorizationCode({ code, state })
-      .then((response) => {
-        // The nonce decides whether this token belongs to the request this tab made (R7, L1). The reason the
-        // check failed is deliberately dropped here: it exists so the tests can tell the five rejection modes
-        // apart, and L4 forbids any of it reaching the visitor.
-        if (!idTokenNonceMatchesStoredValue(response.idToken).ok) discard();
-      })
-      .catch(discard);
+    exchangeAuthorizationCode({ code, state }).then((response) => {
+      // The nonce decides whether this token belongs to the request this tab made (R7, L1). The reason the check
+      // failed is deliberately dropped here: it exists so the tests can tell the five rejection modes apart, and
+      // L4 forbids any of it reaching the visitor.
+      //
+      // This runs INSIDE the exchange's fulfillment, after the state check admitted the callback, and it may not
+      // be moved earlier. R8 requires a bad state to discard before any nonce work: hoisting this would read the
+      // stored nonce for callbacks that were never this tab's to begin with.
+      if (!idTokenNonceMatchesStoredValue(response.idToken).ok) discard();
+      // Two arguments rather than a trailing .catch, so that a failure INSIDE this handler is not then handed to
+      // `discard` a second time. Both calls would navigate to the same place, so nothing visible would differ -
+      // but a screen whose whole design is a single-invocation latch should not carry a second way to run its
+      // one outcome twice.
+    }, discard);
   }, []);
 
   return (

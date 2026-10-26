@@ -73,8 +73,16 @@ async function arriveAt(url: string, options: { strict?: boolean } = {}): Promis
  * and a test that signed it would be asserting a property the production code does not have.
  */
 function idTokenWith(claims: Record<string, unknown>): string {
-  const segment = (value: unknown) =>
-    btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  // Through TextEncoder, not btoa(JSON.stringify(...)) directly: btoa throws above U+00FF, so that shorter form
+  // cannot mint a payload with a non-ASCII claim - which is exactly the input the decoder's TextDecoder step
+  // exists to handle. A helper that cannot build the case leaves that line unfalsifiable, and robustness no
+  // test can reach reads as protection without being it.
+  const segment = (value: unknown) => {
+    const bytes = new TextEncoder().encode(JSON.stringify(value));
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  };
   return `${segment({ alg: 'RS256', kid: 'test' })}.${segment(claims)}.c2lnbmF0dXJl`;
 }
 

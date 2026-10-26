@@ -49,10 +49,19 @@ export type NonceResult = { ok: true } | { ok: false; reason: NonceRejection };
  * `null` is excluded explicitly because `typeof null === 'object'`, and a JSON payload of `null` would otherwise
  * be accepted here and then produce a confusing read of `.nonce` on nothing.
  */
-function decodePayload(idToken: string): Record<string, unknown> | null {
+function decodePayload(idToken: unknown): Record<string, unknown> | null {
+  // `unknown`, not `string`, because the value crosses a network boundary the compiler cannot see: task 20 builds
+  // it from a token response, and an endpoint that returns no `id_token` - which is what happens whenever `openid`
+  // is not among the authorized scopes - hands this `undefined` with the type still claiming otherwise. Checked
+  // before `.split` rather than after, so the rejection is the designed one instead of a TypeError that some
+  // caller's `catch` happens to rescue.
+  if (typeof idToken !== 'string') return null;
+
   const segments = idToken.split('.');
-  // Exactly three. A two-segment value is an unsecured JWT shape and a four-segment one is JWE, and neither is
-  // what the token endpoint returned; accepting either would mean comparing against a payload nobody signed.
+  // Exactly three, and that is a security decision rather than a format preference. A TWO-segment value is an
+  // unsecured JWT (`alg: none`): accepting one would let anybody hand this screen a payload nobody signed, which
+  // is precisely the substitution the nonce exists to stop. A FOUR-segment value is JWE, which this code cannot
+  // decrypt and must not pretend to read. The token endpoint returns signed, unencrypted ID tokens.
   if (segments.length !== 3) return null;
 
   try {
@@ -93,15 +102,20 @@ function storedNonce(): string | null {
 }
 
 /**
- * The decision. Reads exactly one stored item and never throws.
+ * The decision. Reads exactly one stored item, and REJECTS rather than throwing for every input - a non-string,
+ * a malformed token, a bad claim, an unreadable store. Nothing escapes it, because there is no error boundary in
+ * production source and a throw at the end of a sign-in blanks the screen.
  *
  * The comparison is `!==` on two strings: no trim, no case folding, no prefix or length comparison. A nonce that
  * differs by one character is a different nonce, and every softening of that is a way for a substituted token to
  * pass. The supplied side is not trimmed either - unlike the callback `state`, which task 17 trims because query
  * padding is a client-side artefact. A claim comes out of a JSON document, so whitespace in it was put there by
  * whoever minted the token, and that is exactly who this check does not trust.
+ *
+ * Only `null` is tested for absence on the stored side: `storedNonce` has already folded a missing item and an
+ * empty one into that one value, so an empty store cannot match an empty claim by both being `''`.
  */
-export function idTokenNonceMatchesStoredValue(idToken: string): NonceResult {
+export function idTokenNonceMatchesStoredValue(idToken: unknown): NonceResult {
   const payload = decodePayload(idToken);
   if (payload === null) return { ok: false, reason: 'malformed-token' };
 
