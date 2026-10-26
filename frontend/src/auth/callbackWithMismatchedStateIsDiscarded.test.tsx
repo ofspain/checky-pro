@@ -65,8 +65,29 @@ async function arriveAt(url: string, options: { strict?: boolean } = {}): Promis
   return { container, router };
 }
 
-/** Replaces the seam with a spy. Returns the spy and the freshly imported screen's route table. */
-async function spyOnExchange(options: { rejects?: boolean } = {}) {
+/**
+ * Mints an ID token carrying the given claims.
+ *
+ * Three base64url segments, because task 19 rejects anything else. The signature segment is filler: nothing in
+ * the SPA reads or verifies it (OIDC Core 3.1.3.7 - the token comes straight from the token endpoint over TLS),
+ * and a test that signed it would be asserting a property the production code does not have.
+ */
+function idTokenWith(claims: Record<string, unknown>): string {
+  const segment = (value: unknown) =>
+    btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${segment({ alg: 'RS256', kid: 'test' })}.${segment(claims)}.c2lnbmF0dXJl`;
+}
+
+/**
+ * Replaces the seam with a spy. Returns the spy and the freshly imported screen's route table.
+ *
+ * **The resolving mock hands back an ID token carrying whatever nonce is stored at the moment of the call**,
+ * which is what a real authorization server does - it echoes back the nonce it was sent. Before task 19 this
+ * mock resolved `undefined`, which was honest while the seam returned `Promise<void>` and is not any more: a
+ * success path that resolved nothing would now fail on the nonce check for a reason no production flow has.
+ * `idToken` overrides it for the cases that are about the token itself.
+ */
+async function spyOnExchange(options: { rejects?: boolean; idToken?: string } = {}) {
   const calls: unknown[] = [];
   vi.doMock('./codeExchange', async () => {
     const actual = await vi.importActual<typeof import('./codeExchange')>('./codeExchange');
@@ -76,6 +97,14 @@ async function spyOnExchange(options: { rejects?: boolean } = {}) {
         calls.push(grant);
         // What task 20's network call will do on a 400, a revoked verifier or an offline tab.
         if (options.rejects === true) throw new Error('the token endpoint refused the grant');
+        if (options.idToken !== undefined) return { idToken: options.idToken };
+        let nonce: string | null = null;
+        try {
+          nonce = globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce);
+        } catch {
+          nonce = null;
+        }
+        return { idToken: idTokenWith(nonce === null ? {} : { nonce }) };
       },
     };
   });
@@ -301,7 +330,12 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       expect(calls[0]).toEqual(expect.objectContaining({ code: 'abc', state: 'xyz' }));
     });
 
+    // Seeds the nonce as well as the state from task 19 onward. An arrival that passes the state check is now
+    // only a success if the ID token's nonce agrees too, and a real flow always has a stored nonce - task 15
+    // writes all three together. Without this the case would assert the holding screen against a flow that
+    // fails for a reason no browser ever produces.
     it('and the reached callback stays put rather than returning to sign-in', async () => {
+      seedNonceAndVerifier();
       storeState(MATCHING_STATE);
       const { routes } = await spyOnExchange();
       const { router, container } = await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
@@ -643,14 +677,19 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
     });
 
-    // Reaching the comparison reads the state and NOTHING else - identically whether it matches or not, because
-    // the read happens before the outcome is known. The nonce is task 19's and the verifier task 20's.
-    it.each([
-      ['a match', MATCHING_STATE],
-      ['a mismatch', 'a-different-stored-value'],
-    ])('reads the state key and no other once the comparison is reached: %s', async (_label, storedValue) => {
+    /**
+     * Reaching the comparison reads the state. What happens NEXT is what task 19 changed, so the two outcomes
+     * are no longer one case.
+     *
+     * The rows used to run together and assert "the state and nothing else" for both. That was right while the
+     * nonce had no reader; it is wrong now, and the honest correction is to split them rather than to weaken
+     * the surviving row. A DISCARD still reads nothing but the state - the arrival is rejected before any nonce
+     * work - and that assertion is load-bearing: it is what would catch a nonce read creeping above the state
+     * check, where a forged callback could reach it.
+     */
+    it('reads the state key and no other when the comparison discards', async () => {
       seedNonceAndVerifier();
-      storeState(storedValue);
+      storeState('a-different-stored-value');
       const getItem = vi.spyOn(Storage.prototype, 'getItem');
       const setItem = vi.spyOn(Storage.prototype, 'setItem');
       const { routes } = await spyOnExchange();
@@ -659,6 +698,24 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       const read = getItem.mock.calls.map(([key]) => key);
       expect(read).toContain(AUTHORIZE_STORAGE_KEYS.state);
       expect(read).not.toContain(AUTHORIZE_STORAGE_KEYS.nonce);
+      expect(read).not.toContain(AUTHORIZE_STORAGE_KEYS.codeVerifier);
+      expect(setItem).not.toHaveBeenCalled();
+    });
+
+    // A match now reads the nonce too, because task 19 validates the ID token against it. The verifier is still
+    // never read: that is task 20's, and this is the assertion that will fail if task 20 is written here by
+    // mistake. Nothing is written on either path - deleting all three is task 23's.
+    it('reads the state and the nonce, and never the verifier, when the comparison matches', async () => {
+      seedNonceAndVerifier();
+      storeState(MATCHING_STATE);
+      const getItem = vi.spyOn(Storage.prototype, 'getItem');
+      const setItem = vi.spyOn(Storage.prototype, 'setItem');
+      const { routes } = await spyOnExchange();
+      await arriveAtMocked(routes, `/callback?code=abc&state=${MATCHING_STATE}`);
+
+      const read = getItem.mock.calls.map(([key]) => key);
+      expect(read).toContain(AUTHORIZE_STORAGE_KEYS.state);
+      expect(read).toContain(AUTHORIZE_STORAGE_KEYS.nonce);
       expect(read).not.toContain(AUTHORIZE_STORAGE_KEYS.codeVerifier);
       expect(setItem).not.toHaveBeenCalled();
     });
@@ -882,6 +939,10 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     ])('flips from discard to exchange when only the stored value is changed to match: %s', async (_label, matching) => {
       const url = arrivalWith(matching);
 
+      // The nonce is seeded once and survives resetBetweenArrivals, which clears modules and the notice but not
+      // storage. Both arrivals therefore differ in exactly one thing - the stored state - which is the whole
+      // point of the case.
+      seedNonceAndVerifier();
       storeState('not-the-supplied-value');
       const first = await spyOnExchange();
       const mismatched = await arriveAtMocked(first.routes, url);

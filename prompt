@@ -1,0 +1,65 @@
+You are to perform a specification audit before implementing anything.
+
+Analyze the ENTIRE project specification, architecture, task breakdown, contracts, and supporting documentation to determine the purpose and ownership of every artifact referenced by the Auth Service tasks.
+
+Analyse and evaluate the whole of .ai directory
+
+Pay particular attention to any following recurring or non-recurring references:
+
+Eg for .ai/prompts/auth/T01, the following has been identified
+
+1. Task statements (for example):
+   "Schema V5. Add V5__lockout_cleanup_and_shedlock.sql with the ShedLock table and lockout index. Run mvn -pl services/auth flyway:migrate against the local Docker Compose Postgres."
+
+2. Referenced contracts, such as:
+   - contracts/api/auth.yaml
+   - contracts/api/token-claims.md
+   - contracts/events/auth/email-requested.v1.schema.json
+   - contracts/events/auth/security-audit.v1.schema.json
+
+Your objectives are:
+
+1. Explain the purpose of such Task Statement.
+   - Why is it included in every task?
+   - Is it the actual implementation work or merely the work item being analyzed?
+   - How should it influence the current phase?
+
+2. Explain the purpose of the Contracts section.
+   For every referenced contract:
+   - What does it represent?
+   - Why is it referenced by the task?
+   - Is it an input to this task or an output?
+   - Which service owns it?
+   - Which service consumes it?
+   - Is it expected to already exist, or is it supposed to be generated during this project?
+
+3. Analyze the entire project and determine the ownership of every referenced contract.
+   Do not assume they already exist.
+
+4. If any referenced contract is missing:
+   - Determine whether this is intentional.
+   - Determine whether an earlier task should have created it.
+   - Determine whether the current project expects Claude to generate it.
+   - Justify your conclusion using the project specifications.
+
+5. If the specifications indicate that the contract should exist but it is missing, generate it.
+   The generated contract must:
+   - conform to the project architecture,
+   - satisfy all relevant requirements,
+   - be implementation-independent,
+   - become the authoritative contract for subsequent implementation tasks.
+
+6. If a contract should NOT be generated yet, explain why and identify the task or phase responsible for creating it.
+
+Do not begin implementation of the Auth Service until this analysis is complete.
+
+Your deliverable should include:
+- An explanation of the Task Statement.
+- An explanation of the Contracts section.
+- A contract ownership matrix.
+- A missing artifact analysis.
+- Newly generated contracts (only if justified by the specification).
+- A final conclusion stating whether implementation can proceed or whether the specification contains unresolved gaps.
+
+
+You can report your your findings under the root directory as AI_CONTEXT_ANALYSIS.md

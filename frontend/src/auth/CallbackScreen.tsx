@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import { SIGN_IN_PATH } from '../app/routes';
 import { AUTHORIZE_STORAGE_KEYS } from './authorizeRequest';
 import { exchangeAuthorizationCode } from './codeExchange';
+import { idTokenNonceMatchesStoredValue } from './idTokenNonce';
 import { setSignInNotice } from './signInNotice';
 
 /**
@@ -14,11 +15,21 @@ import { setSignInNotice } from './signInNotice';
  * return the visitor to the sign-in start with the same neutral copy - identical by requirement, since L4
  * forbids copy that would tell a visitor which check failed.
  *
- * This screen reads exactly one stored item, the `state`, and only once the query has been found usable. The
- * read is guarded: if storage is denied the value is treated as absent, which discards safely and preserves L4.
- * It writes nothing and deletes nothing: the `nonce` is task 19's, the `code_verifier` is task 20's, and
- * deleting all three is task 23's. A discarded attempt leaves a verifier whose challenge was never used, which
- * T15's next request overwrites.
+ * R7's first clause lives here too. A callback that survives both halves of R8 is exchanged, and the ID token
+ * that comes back is only accepted if its `nonce` claim is the value this tab stored (T19). That is a different
+ * protection from `state`: a token minted for some other login, substituted into this callback, carries a
+ * perfectly good `state` and is caught by nothing but the nonce.
+ *
+ * This screen reads two stored items, and neither before the query has been found usable: the `state` here, and
+ * the `nonce` inside `idTokenNonce.ts`. Both reads are guarded - if storage is denied the value is treated as
+ * absent, which discards safely and preserves L4. It writes nothing and deletes nothing: the `code_verifier` is
+ * task 20's, and deleting all three is task 23's. A discarded attempt leaves a verifier whose challenge was
+ * never used, which T15's next request overwrites.
+ *
+ * Every failure on this screen ends the same way, by requirement. A missing `state`, a mismatched `state`, a
+ * refused exchange and a bad `nonce` are four different faults and one single outcome: the same neutral notice,
+ * the same replaced history entry, the same sign-in screen. They share the one `discard` closure below rather
+ * than four copies of it, so they cannot drift apart (L4).
  */
 export function CallbackScreen() {
   const { t } = useTranslation();
@@ -102,7 +113,14 @@ export function CallbackScreen() {
     // from the token endpoint, a clock skew - and a dropped rejection there would leave the visitor on this
     // holding screen indefinitely. Handled here so the failure mode is defined by the task that introduced the
     // seam rather than inherited by the one that fills it. Task 20 may route it somewhere more specific.
-    exchangeAuthorizationCode({ code, state }).catch(discard);
+    exchangeAuthorizationCode({ code, state })
+      .then((response) => {
+        // The nonce decides whether this token belongs to the request this tab made (R7, L1). The reason the
+        // check failed is deliberately dropped here: it exists so the tests can tell the five rejection modes
+        // apart, and L4 forbids any of it reaching the visitor.
+        if (!idTokenNonceMatchesStoredValue(response.idToken).ok) discard();
+      })
+      .catch(discard);
   }, []);
 
   return (
