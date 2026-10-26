@@ -15,7 +15,7 @@
 
 ## Disposition of Kimi's phase 11 test review
 
-**Six of eight accepted and applied** (commit `0d8b4d3`-series, pushed). Recorded here because phase 11 is a
+**Six of eight accepted and applied** (commit `edeaf363`). Recorded here because phase 11 is a
 review phase with no resolution phase of its own.
 
 | # | Gap | Disposition | Mutant |
