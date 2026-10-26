@@ -748,6 +748,55 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     });
   });
 
+  describe('the error check still precedes the comparison (D-12 ordering)', () => {
+    // The early-return no-read sweep runs over DISCARD_SHAPES, which carries no `error` row - so until now
+    // nothing proved an error response short-circuits BEFORE the state is consulted. With a matching stored
+    // state in place, a regression that reordered the two guards would exchange an error response.
+    it.each([
+      ['an error with a matching code and state', '/callback?error=access_denied&code=abc&state='],
+      ['an error alone', '/callback?error=access_denied&state='],
+    ])('discards without reading the stored state: %s', async (_label, prefix) => {
+      seedNonceAndVerifier();
+      storeState(MATCHING_STATE);
+      const getItem = vi.spyOn(Storage.prototype, 'getItem');
+      const { calls, routes } = await spyOnExchange();
+      const { router } = await arriveAtMocked(routes, `${prefix}${MATCHING_STATE}`);
+
+      expect(calls).toEqual([]);
+      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+      const read = getItem.mock.calls.map(([key]) => key);
+      expect(read).not.toContain(AUTHORIZE_STORAGE_KEYS.state);
+    });
+  });
+
+  describe('OQ-2: the stored state is compared but not consumed (task 23 will change this)', () => {
+    /**
+     * A TRIPWIRE, deliberately, in the shape T17 used for the storage boundary. L16 calls the four items
+     * "single-use and deleted at callback", but D-7 placed deletion with task 23 by name, so until then the
+     * same callback URL compares equal every time it arrives.
+     *
+     * Largely defused by the backend - an authorization code is single-use at the token endpoint, and until
+     * task 20 the exchange does nothing at all - but it is real, and this pins it so task 23 inherits a stated
+     * position and a failing test rather than a surprise. **Task 23 is expected to invert this case.**
+     */
+    it('lets the same callback match twice, because deletion is task 23\'s', async () => {
+      const url = arrivalWith(MATCHING_STATE);
+
+      storeState(MATCHING_STATE);
+      const first = await spyOnExchange();
+      await arriveAtMocked(first.routes, url);
+      expect(first.calls).toHaveLength(1);
+
+      resetBetweenArrivals();
+
+      // Nothing re-seeds storage here: the point is that the first arrival left it intact.
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe(MATCHING_STATE);
+      const second = await spyOnExchange();
+      await arriveAtMocked(second.routes, url);
+      expect(second.calls, 'task 23 will make this an empty array').toHaveLength(1);
+    });
+  });
+
   describe('storage denial does not strand the visitor (I1)', () => {
     /**
      * Touching sessionStorage can throw rather than answer - site data blocked, some embedded webviews. There
