@@ -10,6 +10,7 @@ import { APP_BASENAME, appRoutes, CALLBACK_PATH, PUBLIC_ROUTE_PATHS, SIGN_IN_PAT
 import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
 import { AUTHORIZE_STORAGE_KEYS } from './authorizeRequest';
+import { randomUrlSafeToken } from './pkce';
 import { setSignInNotice, takeSignInNotice } from './signInNotice';
 
 /**
@@ -152,8 +153,8 @@ function seedNonceAndVerifier(): void {
  * the VALUE and not the query - a row like that would otherwise appear to pass for the wrong reason. Cases
  * that deliberately exercise percent-encoded whitespace pass their URL literally instead.
  */
-function arrivalWith(state: string, code = 'abc'): string {
-  return `/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+function arrivalWith(state: string): string {
+  return `/callback?code=abc&state=${encodeURIComponent(state)}`;
 }
 
 /**
@@ -769,6 +770,45 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     });
   });
 
+  describe('the comparison holds at the production shape and through decoding (Gaps 3, 5)', () => {
+    // Generated, not a hardcoded 43-character literal: T18-D7 kept the production length out of the fixtures
+    // to avoid coupling them to T15, and using the real generator gets the shape without the coupling.
+    it('matches a real randomUrlSafeToken end to end', async () => {
+      const token = randomUrlSafeToken();
+      expect(token.length).toBeGreaterThan(20);
+      storeState(token);
+      const { calls, routes } = await spyOnExchange();
+      await arriveAtMocked(routes, arrivalWith(token));
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toEqual(expect.objectContaining({ state: token }));
+    });
+
+    /**
+     * Kimi left the expected behaviour of a literal percent-encoded state open. It is a MATCH, and deliberately
+     * so: URLSearchParams decodes `xyz%20` to `'xyz '`, and T17 trims the SUPPLIED value because a padded query
+     * is a client-side artefact (its F3). The stored value is still never trimmed - that asymmetry is T18-D3,
+     * and the mismatch table's padded row pins the other direction.
+     */
+    it('treats a trailing percent-encoded space in the url as padding, and still matches', async () => {
+      storeState('xyz');
+      const { calls, routes } = await spyOnExchange();
+      await arriveAtMocked(routes, '/callback?code=abc&state=xyz%20');
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toEqual(expect.objectContaining({ state: 'xyz' }));
+    });
+
+    it('but does not match when the padding is in the STORED value', async () => {
+      storeState('xyz ');
+      const { calls, routes } = await spyOnExchange();
+      const { router } = await arriveAtMocked(routes, '/callback?code=abc&state=xyz%20');
+
+      expect(calls).toEqual([]);
+      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+    });
+  });
+
   describe('OQ-2: the stored state is compared but not consumed (task 23 will change this)', () => {
     /**
      * A TRIPWIRE, deliberately, in the shape T17 used for the storage boundary. L16 calls the four items
@@ -782,6 +822,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     it('lets the same callback match twice, because deletion is task 23\'s', async () => {
       const url = arrivalWith(MATCHING_STATE);
 
+      seedNonceAndVerifier();
       storeState(MATCHING_STATE);
       const first = await spyOnExchange();
       await arriveAtMocked(first.routes, url);
@@ -791,6 +832,8 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
 
       // Nothing re-seeds storage here: the point is that the first arrival left it intact.
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe(MATCHING_STATE);
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe('stored-nonce');
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
       const second = await spyOnExchange();
       await arriveAtMocked(second.routes, url);
       expect(second.calls, 'task 23 will make this an empty array').toHaveLength(1);
@@ -804,8 +847,14 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
      * sign-in. A denial is treated as nothing stored, which is also the honest security reading.
      */
     it('discards when reading the stored state throws, rather than blanking the page', async () => {
-      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-        throw new DOMException('The operation is insecure.', 'SecurityError');
+      // Narrowed to the one key under test: a broader stub would also throw for any harness read and would
+      // make this case brittle to changes that have nothing to do with the guard.
+      const real = Storage.prototype.getItem;
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+        if (key === AUTHORIZE_STORAGE_KEYS.state) {
+          throw new DOMException('The operation is insecure.', 'SecurityError');
+        }
+        return real.call(this, key);
       });
       const { calls, routes } = await spyOnExchange();
       const { router, container } = await arriveAtMocked(routes, arrivalWith(MATCHING_STATE));
