@@ -14,10 +14,11 @@ import { setSignInNotice } from './signInNotice';
  * return the visitor to the sign-in start with the same neutral copy - identical by requirement, since L4
  * forbids copy that would tell a visitor which check failed.
  *
- * This screen reads exactly one stored item, the `state`, and only once the query has been found usable. It
- * writes nothing and deletes nothing: the `nonce` is task 19's, the `code_verifier` is task 20's, and deleting
- * all three is task 23's. A discarded attempt leaves a verifier whose challenge was never used, which T15's
- * next request overwrites.
+ * This screen reads exactly one stored item, the `state`, and only once the query has been found usable. The
+ * read is guarded: if storage is denied the value is treated as absent, which discards safely and preserves L4.
+ * It writes nothing and deletes nothing: the `nonce` is task 19's, the `code_verifier` is task 20's, and
+ * deleting all three is task 23's. A discarded attempt leaves a verifier whose challenge was never used, which
+ * T15's next request overwrites.
  */
 export function CallbackScreen() {
   const { t } = useTranslation();
@@ -71,7 +72,18 @@ export function CallbackScreen() {
     // R8's other half. The stored state is the only evidence that this callback answers a request THIS tab
     // made: without the comparison, anyone able to open /app/callback?code=...&state=... in the visitor's
     // browser could have the exchange run on a code of their choosing.
-    const stored = globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state);
+    // Reading is wrapped because TOUCHING sessionStorage can throw, not merely return null: a context with site
+    // data blocked raises instead of answering. There is no error boundary in this application, so an uncaught
+    // throw here would blank the page at the end of a sign-in, after the visitor has already authenticated. A
+    // denial is treated as nothing stored, which is also the honest security reading - without the stored value
+    // there is no evidence the callback belongs to a request this tab made - and is L4-neutral, since the
+    // visitor gets the same sentence as every other discard.
+    let stored: string | null = null;
+    try {
+      stored = globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state);
+    } catch {
+      stored = null;
+    }
     // Nothing stored is tested on its own, so no reader has to work out whether `null !== state` happened to be
     // true for the right reason. The stored value is never trimmed or case-folded - T15 wrote it, so padding
     // there would mean something is wrong - and anything that widens equality widens the injection surface.

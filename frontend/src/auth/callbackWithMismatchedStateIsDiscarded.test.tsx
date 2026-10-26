@@ -141,6 +141,38 @@ function storeState(value: string): void {
   globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.state, value);
 }
 
+/** Seeds the two items T18 must never read, leaving storeState the only writer of the state key. */
+function seedNonceAndVerifier(): void {
+  globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.nonce, 'stored-nonce');
+  globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.codeVerifier, 'stored-verifier');
+}
+
+/**
+ * A callback arrival, with the state encoded. Encoding by default so a row carrying `&`, `#` or `=` reshapes
+ * the VALUE and not the query - a row like that would otherwise appear to pass for the wrong reason. Cases
+ * that deliberately exercise percent-encoded whitespace pass their URL literally instead.
+ */
+function arrivalWith(state: string, code = 'abc'): string {
+  return `/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+}
+
+/**
+ * The teardown two multi-arrival cases need between their arrivals. One definition, so it cannot drift out of
+ * step with afterEach the way an inlined copy would.
+ */
+function resetBetweenArrivals(): void {
+  if (mounted) {
+    const { root, container, router } = mounted;
+    act(() => root.unmount());
+    container.remove();
+    router.dispose();
+    mounted = undefined;
+  }
+  takeSignInNotice();
+  vi.resetModules();
+  vi.doUnmock('./codeExchange');
+}
+
 /** The three URL shapes R8's "missing" antecedent covers, plus the no-query case a bookmark produces. */
 const DISCARD_SHAPES: readonly [string, string][] = [
   ['no state parameter at all', '/callback?code=abc'],
@@ -604,6 +636,10 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       const read = getItem.mock.calls.map(([key]) => key);
       for (const key of Object.values(AUTHORIZE_STORAGE_KEYS)) expect(read, key).not.toContain(key);
       expect(setItem).not.toHaveBeenCalled();
+      // Survival, not just restraint: nothing here may pre-empt task 23's deletion either.
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe('stored-state');
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe('stored-nonce');
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
     });
 
     // Reaching the comparison reads the state and NOTHING else - identically whether it matches or not, because
@@ -612,7 +648,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       ['a match', MATCHING_STATE],
       ['a mismatch', 'a-different-stored-value'],
     ])('reads the state key and no other once the comparison is reached: %s', async (_label, storedValue) => {
-      seedAllThree();
+      seedNonceAndVerifier();
       storeState(storedValue);
       const getItem = vi.spyOn(Storage.prototype, 'getItem');
       const setItem = vi.spyOn(Storage.prototype, 'setItem');
@@ -654,6 +690,9 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     ['a difference of case only', 'abc', 'ABC'],
     ['the stored value a prefix of the supplied one', 'abc', 'abcd'],
     ['the supplied value a prefix of the stored one', 'abcd', 'abc'],
+    // Only this direction belongs here. The inverse - stored 'abc', supplied ' abc ' - is a MATCH by design,
+    // because T17 trims the supplied value before the comparison ever runs; it is covered as a success case by
+    // 'trims padding off a usable code and state'. Adding it as a mismatch row would assert the opposite.
     ['the stored value padded with whitespace', ' abc ', 'abc'],
     ['the supplied value a suffix of the stored one', 'abc', 'bc'],
   ];
@@ -662,14 +701,14 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     it.each(MISMATCH_SHAPES)('does not exchange: %s', async (_label, storedValue, supplied) => {
       if (storedValue !== null) storeState(storedValue);
       const { calls, routes } = await spyOnExchange();
-      await arriveAtMocked(routes, `/callback?code=abc&state=${supplied}`);
+      await arriveAtMocked(routes, arrivalWith(supplied));
 
       expect(calls).toEqual([]);
     });
 
     it.each(MISMATCH_SHAPES)('returns the visitor to the sign-in start: %s', async (_label, storedValue, supplied) => {
       if (storedValue !== null) storeState(storedValue);
-      const { container } = await arriveAt(`/callback?code=abc&state=${supplied}`);
+      const { container } = await arriveAt(arrivalWith(supplied));
 
       expect(container.textContent ?? '').toContain(en.signIn.discarded);
     });
@@ -678,7 +717,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     // prefix would turn one of these rows into an exchange.
     it.each(MISMATCH_SHAPES)('lands exactly on the sign-in route: %s', async (_label, storedValue, supplied) => {
       if (storedValue !== null) storeState(storedValue);
-      const { router } = await arriveAt(`/callback?code=abc&state=${supplied}`);
+      const { router } = await arriveAt(arrivalWith(supplied));
 
       expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
       expect(router.state.location.search).toBe('');
@@ -709,6 +748,27 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     });
   });
 
+  describe('storage denial does not strand the visitor (I1)', () => {
+    /**
+     * Touching sessionStorage can throw rather than answer - site data blocked, some embedded webviews. There
+     * is no error boundary in this application, so an uncaught throw would blank the page at the end of a
+     * sign-in. A denial is treated as nothing stored, which is also the honest security reading.
+     */
+    it('discards when reading the stored state throws, rather than blanking the page', async () => {
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new DOMException('The operation is insecure.', 'SecurityError');
+      });
+      const { calls, routes } = await spyOnExchange();
+      const { router, container } = await arriveAtMocked(routes, arrivalWith(MATCHING_STATE));
+
+      expect(calls).toEqual([]);
+      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+      // Still a rendered screen, and the same neutral sentence as every other discard (L4).
+      expect(container.querySelectorAll('main')).toHaveLength(1);
+      expect(container.textContent ?? '').toContain(en.signIn.discarded);
+    });
+  });
+
   describe('the comparison is against the stored value, not a constant (AC5)', () => {
     /**
      * The case this task most needs. Two navigations carry the SAME url state and code; only the stored value
@@ -716,8 +776,13 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
      * every other assertion in this file - that defect has shipped eight times in this package - and would fail
      * only here.
      */
-    it('flips from discard to exchange when only the stored value is changed to match', async () => {
-      const url = `/callback?code=abc&state=${MATCHING_STATE}`;
+    it.each([
+      ['the usual pair', MATCHING_STATE],
+      // A second, unrelated value. Without it every success-path case seeds the same literal, and a comparison
+      // of the STORED value against that hardcoded literal passes the whole file - measured at 125 of 126.
+      ['an unrelated matching value', 'a-quite-different-state-value'],
+    ])('flips from discard to exchange when only the stored value is changed to match: %s', async (_label, matching) => {
+      const url = arrivalWith(matching);
 
       storeState('not-the-supplied-value');
       const first = await spyOnExchange();
@@ -725,16 +790,9 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       expect(first.calls, 'a stored value that differs must not exchange').toEqual([]);
       expect(mismatched.router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
 
-      const { root, container, router } = mounted as Mounted;
-      act(() => root.unmount());
-      container.remove();
-      router.dispose();
-      mounted = undefined;
-      takeSignInNotice();
-      vi.resetModules();
-      vi.doUnmock('./codeExchange');
+      resetBetweenArrivals();
 
-      storeState(MATCHING_STATE);
+      storeState(matching);
       const second = await spyOnExchange();
       const matched = await arriveAtMocked(second.routes, url);
       expect(second.calls, 'the same url must exchange once the stored value agrees').toHaveLength(1);
@@ -744,7 +802,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
 
   describe('a mismatch is indistinguishable from a missing state (AC7, L4)', () => {
     /** Collected from the real screens and compared to EACH OTHER, never to the catalogue. */
-    async function outcomeOf(url: string, storedValue?: string) {
+    async function outcomeAfterReset(url: string, storedValue?: string) {
       if (storedValue !== undefined) storeState(storedValue);
       const { container, router } = await arriveAt(url);
       const outcome = {
@@ -753,20 +811,16 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
         search: router.state.location.search,
         action: router.state.historyAction,
       };
-      const { root, container: node, router: r } = mounted as Mounted;
-      act(() => root.unmount());
-      node.remove();
-      r.dispose();
-      mounted = undefined;
-      takeSignInNotice();
+      // The reset is in the name: three of these run back to back and must not see each other's state.
+      resetBetweenArrivals();
       globalThis.sessionStorage.clear();
       return outcome;
     }
 
     it('produces a byte-identical outcome for a mismatch and for a missing state', async () => {
-      const missing = await outcomeOf('/callback?code=abc');
-      const mismatched = await outcomeOf(`/callback?code=abc&state=${MATCHING_STATE}`, 'something-else');
-      const unstored = await outcomeOf(`/callback?code=abc&state=${MATCHING_STATE}`);
+      const missing = await outcomeAfterReset('/callback?code=abc');
+      const mismatched = await outcomeAfterReset(arrivalWith(MATCHING_STATE), 'something-else');
+      const unstored = await outcomeAfterReset(arrivalWith(MATCHING_STATE));
 
       expect(mismatched).toEqual(missing);
       expect(unstored).toEqual(missing);
