@@ -122,6 +122,25 @@ function moduleScopeUses(source: string, name: string): string[] {
     .map((match) => match[0].trim());
 }
 
+/**
+ * The state that makes a callback reach the exchange. Since T18 the success path needs TWO things to agree: the
+ * value in the URL and the value T15 stored. Every case that wants the exchange reached must seed the stored
+ * side, which is why this is a named pair rather than a bare literal in each arrival.
+ */
+const MATCHING_STATE = 'xyz';
+
+/** Seeds all three L16 items, so a no-read assertion is about restraint rather than about an empty store. */
+function seedAllThree(): void {
+  globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.state, 'stored-state');
+  globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.nonce, 'stored-nonce');
+  globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.codeVerifier, 'stored-verifier');
+}
+
+/** Writes the stored side of the comparison. The test writes it directly - see T18-D7 for why. */
+function storeState(value: string): void {
+  globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.state, value);
+}
+
 /** The three URL shapes R8's "missing" antecedent covers, plus the no-query case a bookmark produces. */
 const DISCARD_SHAPES: readonly [string, string][] = [
   ['no state parameter at all', '/callback?code=abc'],
@@ -205,6 +224,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     // The positive control. Without it every assertion above would hold for a screen that can never exchange at
     // all, and the negative cases would be about absent code rather than about a collaborator that was not used.
     it('but the seam IS reached when the callback carries a state and a code (AC4, AC14)', async () => {
+      storeState(MATCHING_STATE);
       const { calls, routes } = await spyOnExchange();
       await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
 
@@ -219,6 +239,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     // and nothing in this suite would have noticed the regression landing there.
     it('returns the visitor to the start when the exchange rejects (F1)', async () => {
       globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.codeVerifier, 'stored-verifier');
+      storeState(MATCHING_STATE);
       const { calls, routes } = await spyOnExchange({ rejects: true });
       const { router, container } = await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
       await turn();
@@ -233,6 +254,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     // The effect's dependency list is empty on purpose. This pins the behaviour that makes that correct, so a
     // later edit cannot reintroduce `params` as a dependency and quietly exchange a second grant.
     it('handles one callback per mount, ignoring a second set of parameters (F2)', async () => {
+      storeState(MATCHING_STATE);
       const { calls, routes } = await spyOnExchange();
       const { router } = await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
       expect(calls).toHaveLength(1);
@@ -247,6 +269,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     });
 
     it('and the reached callback stays put rather than returning to sign-in', async () => {
+      storeState(MATCHING_STATE);
       const { routes } = await spyOnExchange();
       const { router, container } = await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
 
@@ -349,6 +372,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
 
   describe('it handles the callback once, under StrictMode (AC14, D-8)', () => {
     it('reaches the seam exactly once although the effect is invoked twice', async () => {
+      storeState(MATCHING_STATE);
       const { calls, routes } = await spyOnExchange();
       await arriveAtMocked(routes, '/callback?code=abc&state=xyz', { strict: true });
 
@@ -549,6 +573,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     // The trim must apply on the way THROUGH, not only in the discard test. A regression that trimmed only
     // for the emptiness check would hand task 20 a padded code the authorization server never issued.
     it('trims padding off a usable code and state before the exchange sees them', async () => {
+      storeState(MATCHING_STATE);
       const { calls, routes } = await spyOnExchange();
       await arriveAtMocked(routes, '/callback?code=%20abc%20&state=%09xyz%0A');
 
@@ -565,31 +590,258 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
     });
 
-    // The boundary T18 and T20 will cross. Pinned now so the suite says when it moves rather than letting a
-    // read drift in unannounced.
-    it('reads none of the three stored items, even on the success path', async () => {
-      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.state, 'stored-state');
-      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.nonce, 'stored-nonce');
-      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.codeVerifier, 'stored-verifier');
+    // T18-D4 split this in two rather than loosening it. The boundary is still guarded for tasks 19 and 20:
+    // what changed is that reaching the COMPARISON now reads one key, so the split is by whether the effect got
+    // that far - not by whether anything was found, since discovering that nothing is stored IS the read.
+    it.each(DISCARD_SHAPES)('reads no stored key at all when it returns early: %s', async (_label, url) => {
+      seedAllThree();
       const getItem = vi.spyOn(Storage.prototype, 'getItem');
       const setItem = vi.spyOn(Storage.prototype, 'setItem');
       const { calls, routes } = await spyOnExchange();
-      await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
+      await arriveAtMocked(routes, url);
 
-      expect(calls).toHaveLength(1);
+      expect(calls).toEqual([]);
       const read = getItem.mock.calls.map(([key]) => key);
       for (const key of Object.values(AUTHORIZE_STORAGE_KEYS)) expect(read, key).not.toContain(key);
+      expect(setItem).not.toHaveBeenCalled();
+    });
+
+    // Reaching the comparison reads the state and NOTHING else - identically whether it matches or not, because
+    // the read happens before the outcome is known. The nonce is task 19's and the verifier task 20's.
+    it.each([
+      ['a match', MATCHING_STATE],
+      ['a mismatch', 'a-different-stored-value'],
+    ])('reads the state key and no other once the comparison is reached: %s', async (_label, storedValue) => {
+      seedAllThree();
+      storeState(storedValue);
+      const getItem = vi.spyOn(Storage.prototype, 'getItem');
+      const setItem = vi.spyOn(Storage.prototype, 'setItem');
+      const { routes } = await spyOnExchange();
+      await arriveAtMocked(routes, `/callback?code=abc&state=${MATCHING_STATE}`);
+
+      const read = getItem.mock.calls.map(([key]) => key);
+      expect(read).toContain(AUTHORIZE_STORAGE_KEYS.state);
+      expect(read).not.toContain(AUTHORIZE_STORAGE_KEYS.nonce);
+      expect(read).not.toContain(AUTHORIZE_STORAGE_KEYS.codeVerifier);
       expect(setItem).not.toHaveBeenCalled();
     });
 
     // A duplicated security parameter is a parameter-pollution shape. URLSearchParams.get returns the FIRST,
     // so that is what the exchange receives and what task 18 will compare against the stored value.
     it('uses the first state when the query carries two', async () => {
+      storeState('first');
       const { calls, routes } = await spyOnExchange();
       await arriveAtMocked(routes, '/callback?code=abc&state=first&state=second');
 
       expect(calls).toHaveLength(1);
       expect(calls[0]).toEqual(expect.objectContaining({ state: 'first' }));
+    });
+  });
+
+  // ----- T18: a state that does not match the stored value (R8's other half) -----
+
+  /**
+   * Every pair here is a discard. The stored side is written by the test, which is the only way to produce the
+   * case-differing, padded, prefix and suffix shapes: T15's writer emits a 43-character base64url token and
+   * nothing else (T18-D7). Short literals on purpose - replicating the production length would couple this to
+   * T15's implementation and prove nothing extra.
+   */
+  const MISMATCH_SHAPES: readonly [string, string | null, string][] = [
+    ['a wholly different stored value', 'stored-state', 'xyz'],
+    ['nothing stored at all', null, 'xyz'],
+    ['an empty stored value', '', 'xyz'],
+    ['one character different', 'abc', 'abd'],
+    ['a difference of case only', 'abc', 'ABC'],
+    ['the stored value a prefix of the supplied one', 'abc', 'abcd'],
+    ['the supplied value a prefix of the stored one', 'abcd', 'abc'],
+    ['the stored value padded with whitespace', ' abc ', 'abc'],
+    ['the supplied value a suffix of the stored one', 'abc', 'bc'],
+  ];
+
+  describe('a callback whose state does not match the stored value is discarded (AC1, AC2, AC3, AC6)', () => {
+    it.each(MISMATCH_SHAPES)('does not exchange: %s', async (_label, storedValue, supplied) => {
+      if (storedValue !== null) storeState(storedValue);
+      const { calls, routes } = await spyOnExchange();
+      await arriveAtMocked(routes, `/callback?code=abc&state=${supplied}`);
+
+      expect(calls).toEqual([]);
+    });
+
+    it.each(MISMATCH_SHAPES)('returns the visitor to the sign-in start: %s', async (_label, storedValue, supplied) => {
+      if (storedValue !== null) storeState(storedValue);
+      const { container } = await arriveAt(`/callback?code=abc&state=${supplied}`);
+
+      expect(container.textContent ?? '').toContain(en.signIn.discarded);
+    });
+
+    // The comparison is exact (T18-D3). A mutant that trims the stored value, folds case, or matches on a
+    // prefix would turn one of these rows into an exchange.
+    it.each(MISMATCH_SHAPES)('lands exactly on the sign-in route: %s', async (_label, storedValue, supplied) => {
+      if (storedValue !== null) storeState(storedValue);
+      const { router } = await arriveAt(`/callback?code=abc&state=${supplied}`);
+
+      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+      expect(router.state.location.search).toBe('');
+    });
+  });
+
+  describe('the comparison is against the stored value, not a constant (AC5)', () => {
+    /**
+     * The case this task most needs. Two navigations carry the SAME url state and code; only the stored value
+     * changes between them, and the outcome flips. A comparison against a hardcoded constant would satisfy
+     * every other assertion in this file - that defect has shipped eight times in this package - and would fail
+     * only here.
+     */
+    it('flips from discard to exchange when only the stored value is changed to match', async () => {
+      const url = `/callback?code=abc&state=${MATCHING_STATE}`;
+
+      storeState('not-the-supplied-value');
+      const first = await spyOnExchange();
+      const mismatched = await arriveAtMocked(first.routes, url);
+      expect(first.calls, 'a stored value that differs must not exchange').toEqual([]);
+      expect(mismatched.router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+
+      const { root, container, router } = mounted as Mounted;
+      act(() => root.unmount());
+      container.remove();
+      router.dispose();
+      mounted = undefined;
+      takeSignInNotice();
+      vi.resetModules();
+      vi.doUnmock('./codeExchange');
+
+      storeState(MATCHING_STATE);
+      const second = await spyOnExchange();
+      const matched = await arriveAtMocked(second.routes, url);
+      expect(second.calls, 'the same url must exchange once the stored value agrees').toHaveLength(1);
+      expect(matched.router.state.location.pathname).toBe(`${APP_BASENAME}/callback`);
+    });
+  });
+
+  describe('a mismatch is indistinguishable from a missing state (AC7, L4)', () => {
+    /** Collected from the real screens and compared to EACH OTHER, never to the catalogue. */
+    async function outcomeOf(url: string, storedValue?: string) {
+      if (storedValue !== undefined) storeState(storedValue);
+      const { container, router } = await arriveAt(url);
+      const outcome = {
+        text: (container.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        pathname: router.state.location.pathname,
+        search: router.state.location.search,
+        action: router.state.historyAction,
+      };
+      const { root, container: node, router: r } = mounted as Mounted;
+      act(() => root.unmount());
+      node.remove();
+      r.dispose();
+      mounted = undefined;
+      takeSignInNotice();
+      globalThis.sessionStorage.clear();
+      return outcome;
+    }
+
+    it('produces a byte-identical outcome for a mismatch and for a missing state', async () => {
+      const missing = await outcomeOf('/callback?code=abc');
+      const mismatched = await outcomeOf(`/callback?code=abc&state=${MATCHING_STATE}`, 'something-else');
+      const unstored = await outcomeOf(`/callback?code=abc&state=${MATCHING_STATE}`);
+
+      expect(mismatched).toEqual(missing);
+      expect(unstored).toEqual(missing);
+      // Non-vacuity: the collected outcome must carry something, or three empty objects would compare equal.
+      expect(missing.text).toContain(en.signIn.discarded);
+      expect(missing.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+    });
+  });
+
+  describe('a mismatch leaves storage and the page as T17 does (AC8, AC10, AC11, AC12)', () => {
+    it('leaves all three stored items present and unchanged', async () => {
+      seedAllThree();
+      const before = Object.keys(globalThis.sessionStorage).sort();
+
+      await arriveAt(`/callback?code=abc&state=${MATCHING_STATE}`);
+
+      // Deleting them is task 23's by name (D-7), and a failed comparison is not a reason to pre-empt it.
+      expect(Object.keys(globalThis.sessionStorage).sort()).toEqual(before);
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe('stored-state');
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe('stored-nonce');
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
+    });
+
+    it('writes and removes nothing while discarding a mismatch', async () => {
+      storeState('stored-state');
+      const setItem = vi.spyOn(Storage.prototype, 'setItem');
+      const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+      const clear = vi.spyOn(Storage.prototype, 'clear');
+
+      await arriveAt(`/callback?code=abc&state=${MATCHING_STATE}`);
+
+      expect(setItem).not.toHaveBeenCalled();
+      expect(removeItem).not.toHaveBeenCalled();
+      expect(clear).not.toHaveBeenCalled();
+    });
+
+    it('compares once under StrictMode, navigating once and never exchanging', async () => {
+      storeState('stored-state');
+      const { calls, routes } = await spyOnExchange();
+      const { router } = await arriveAtMocked(routes, `/callback?code=abc&state=${MATCHING_STATE}`, {
+        strict: true,
+      });
+
+      expect(calls).toEqual([]);
+      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+      expect(router.state.historyAction).toBe('REPLACE');
+    });
+
+    it('leaves the landed screen with one h1, one main and one live region', async () => {
+      storeState('stored-state');
+      const { container } = await arriveAt(`/callback?code=abc&state=${MATCHING_STATE}`);
+
+      expect(container.querySelectorAll('h1')).toHaveLength(1);
+      expect(container.querySelectorAll('main')).toHaveLength(1);
+      expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+      expect(container.querySelector('input')).toBeNull();
+    });
+  });
+
+  describe('the comparison is not widened in source (AC16, AC17)', () => {
+    // Each pattern carries its own negative control, so inserting a row cannot misalign the two lists.
+    const widening: readonly { label: string; pattern: RegExp; violation: string }[] = [
+      { label: 'loose equality', pattern: /[^=!<>]==[^=]/, violation: 'if (stored == state) {' },
+      { label: 'case folding', pattern: /\.toLowerCase\s*\(|\.toUpperCase\s*\(/, violation: 'stored.toLowerCase()' },
+      { label: 'unicode normalisation', pattern: /\.normalize\s*\(/, violation: 'stored.normalize()' },
+      { label: 'a prefix or suffix match', pattern: /\.startsWith\s*\(|\.endsWith\s*\(/, violation: 'stored.startsWith(state)' },
+      { label: 'a substring match on the state', pattern: /\bstored\s*\.\s*includes\s*\(/, violation: 'stored.includes(state)' },
+      { label: 'a trim of the stored value', pattern: /\bstored\s*(\?\.)?\s*\.\s*trim\s*\(/, violation: 'stored.trim()' },
+    ];
+
+    it.each(widening)('CallbackScreen.tsx contains no $label', ({ pattern }) => {
+      expect(callbackSource).not.toMatch(pattern);
+    });
+
+    it('and each pattern finds its own violation when one is present', () => {
+      for (const { label, pattern, violation } of widening) {
+        expect(violation, label).toMatch(pattern);
+      }
+    });
+
+    it('reads the stored state through the published key, never a re-spelled literal', () => {
+      expect(callbackSource).toContain('AUTHORIZE_STORAGE_KEYS.state');
+      expect(callbackSource).not.toContain('themistra.auth.');
+    });
+
+    // The claim it replaces was false precisely because it named a task, so the replacement names none.
+    it('carries no task-number claim in the error-response comment (AC17)', () => {
+      const line = callbackSource
+        .split('\n')
+        .find((candidate) => candidate.includes('surfaces the error itself'));
+
+      expect(line).toBeDefined();
+      expect(callbackSource).not.toContain('Task 19 owns');
+    });
+
+    it('reads AUTHORIZE_STORAGE_KEYS only inside a function body, never at module scope', () => {
+      expect(callbackSource).toContain('AUTHORIZE_STORAGE_KEYS');
+
+      expect(moduleScopeUses(callbackSource, 'AUTHORIZE_STORAGE_KEYS')).toEqual([]);
     });
   });
 

@@ -2,19 +2,22 @@ import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router';
 import { SIGN_IN_PATH } from '../app/routes';
+import { AUTHORIZE_STORAGE_KEYS } from './authorizeRequest';
 import { exchangeAuthorizationCode } from './codeExchange';
 import { setSignInNotice } from './signInNotice';
 
 /**
  * Where the browser returns from the Spring Authorization Server flow.
  *
- * T17 owns one half of R8: a callback that arrives with no `state` is discarded, nothing is exchanged, and the
- * visitor is returned to the sign-in start with neutral copy. The other half - a `state` that is present but does
- * not match the stored one - is task 18, and the comparison belongs in the gap marked below.
+ * Both halves of R8 live here. A callback that arrives with no usable `state` is discarded (T17), and so is one
+ * whose `state` does not match the value stored when the request was built (T18). Neither is exchanged, and both
+ * return the visitor to the sign-in start with the same neutral copy - identical by requirement, since L4
+ * forbids copy that would tell a visitor which check failed.
  *
- * This screen reads nothing from storage and writes nothing to it. The three items T15 stored stay where they
- * are: task 23 owns deleting them, and a discarded attempt leaves a verifier whose challenge was never used,
- * which T15's next request overwrites.
+ * This screen reads exactly one stored item, the `state`, and only once the query has been found usable. It
+ * writes nothing and deletes nothing: the `nonce` is task 19's, the `code_verifier` is task 20's, and deleting
+ * all three is task 23's. A discarded attempt leaves a verifier whose challenge was never used, which T15's
+ * next request overwrites.
  */
 export function CallbackScreen() {
   const { t } = useTranslation();
@@ -39,8 +42,9 @@ export function CallbackScreen() {
     const code = params.get('code')?.trim() ?? null;
     // An authorization error response carries `error` in PLACE of `code` (RFC 6749 §4.1.2.1). A URL carrying
     // both is malformed - the server sends one or the other - so it is an injected or mangled link rather than
-    // anything this flow produced, and the safe reading is that no usable grant arrived. Task 19 owns telling
-    // the visitor anything about the error itself; T17's only outcome is the discard.
+    // anything this flow produced, and the safe reading is that no usable grant arrived. Nothing in the package
+    // surfaces the error itself: L4 forbids copy that distinguishes one failure from another, and task 28 maps
+    // even a SAS refusal onto the generic wrong-password copy. The discard is the whole outcome.
     const error = params.get('error')?.trim() ?? null;
 
     /** R8's consequent, and the only outcome T17 produces. Neutral by requirement: it names no cause (L4). */
@@ -64,7 +68,17 @@ export function CallbackScreen() {
       return;
     }
 
-    // TASK 18 goes here: compare `state` with the stored value and call discard() on mismatch.
+    // R8's other half. The stored state is the only evidence that this callback answers a request THIS tab
+    // made: without the comparison, anyone able to open /app/callback?code=...&state=... in the visitor's
+    // browser could have the exchange run on a code of their choosing.
+    const stored = globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state);
+    // Nothing stored is tested on its own, so no reader has to work out whether `null !== state` happened to be
+    // true for the right reason. The stored value is never trimmed or case-folded - T15 wrote it, so padding
+    // there would mean something is wrong - and anything that widens equality widens the injection surface.
+    if (stored === null || stored === '' || stored !== state) {
+      discard();
+      return;
+    }
 
     // The seam cannot reject while it is empty. It will once task 20 fills it with network I/O - offline, a 400
     // from the token endpoint, a clock skew - and a dropped rejection there would leave the visitor on this
