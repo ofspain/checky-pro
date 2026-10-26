@@ -215,3 +215,26 @@ server (OQ-3); whether anything beyond the discard happens on a failed exchange,
 ---
 
 ## Next — Phase 3 — design challenge. **Kimi 2.7.**
+
+---
+
+## Addendum — the blocker is closed by the owner (2026-10-26)
+
+**Exit 1 is chosen: a second contract file.** The owner closed the question above before Phase 3 opened, so the
+blocker is no longer open and Phase 3 should challenge the chosen shape rather than re-run the choice.
+
+What this settles, for Phase 4 to freeze as a numbered `T20-D` decision:
+
+- `/oauth2/token` is described in a **new contract file** under `contracts/api/`, separate from `auth.yaml`.
+  `auth.yaml`'s scope note (`auth.yaml:4-7`) stays exactly as written and is not edited, so `package.md` Q12(c)
+  is not contradicted.
+- The request is issued through a **generated client**, built from that file by the same `generate` pipeline that
+  builds the existing one (`libs/ts/api-client/package.json`). L6 is satisfied **as written** — `contracts/api/*.yaml`
+  is a glob — so there is **no ADR**, no second named exception to L6, and no lint suppression anywhere.
+- The form-encoded body is expressible through the generated client without hand-written transport, via
+  `openapi-fetch`'s `bodySerializer` (`openapi-fetch@0.17.0`, `dist/index.d.ts:13-14,115`), per-request rather
+  than globally so the JSON default for every other call is untouched.
+
+**Still for Phase 3 to settle** (none of them blocking): the new file's name and whether it carries only the token
+endpoint; whether the generated module is published from `libs/ts/api-client` as a second export or a second
+entry point; and the three non-blocking questions already listed above (OQ-2, OQ-3, OQ-4).
