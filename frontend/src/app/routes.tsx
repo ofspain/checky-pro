@@ -12,10 +12,13 @@ export const APP_BASENAME = '/app';
 /** Where a discarded callback returns the visitor (R8). Published so the callback does not repeat the literal. */
 export const SIGN_IN_PATH = 'sign-in';
 
+/** Where the authorization server returns the browser (R8), published for the same reason. */
+export const CALLBACK_PATH = 'callback';
+
 /** Routes reachable without a session (design.md §4c), relative to APP_BASENAME. T40 enforces the split. */
 export const PUBLIC_ROUTE_PATHS = [
-  'sign-in',
-  'callback',
+  SIGN_IN_PATH,
+  CALLBACK_PATH,
   'register',
   'register/sent',
   'verify',
@@ -48,7 +51,7 @@ export const appRoutes: RouteObject[] = [
     children: [
       ...PUBLIC_ROUTE_PATHS.map((path) => {
         if (path === SIGN_IN_PATH) return { path, element: <SignInScreen /> };
-        if (path === 'callback') return { path, element: <CallbackScreen /> };
+        if (path === CALLBACK_PATH) return { path, element: <CallbackScreen /> };
         return { path };
       }),
       ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),

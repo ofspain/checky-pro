@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { APP_BASENAME, appRoutes, PUBLIC_ROUTE_PATHS, SIGN_IN_PATH } from '../app/routes';
+import { APP_BASENAME, appRoutes, CALLBACK_PATH, PUBLIC_ROUTE_PATHS, SIGN_IN_PATH } from '../app/routes';
 import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
 import { AUTHORIZE_STORAGE_KEYS } from './authorizeRequest';
@@ -65,7 +65,7 @@ async function arriveAt(url: string, options: { strict?: boolean } = {}): Promis
 }
 
 /** Replaces the seam with a spy. Returns the spy and the freshly imported screen's route table. */
-async function spyOnExchange() {
+async function spyOnExchange(options: { rejects?: boolean } = {}) {
   const calls: unknown[] = [];
   vi.doMock('./codeExchange', async () => {
     const actual = await vi.importActual<typeof import('./codeExchange')>('./codeExchange');
@@ -73,6 +73,8 @@ async function spyOnExchange() {
       ...actual,
       exchangeAuthorizationCode: async (grant: unknown) => {
         calls.push(grant);
+        // What task 20's network call will do on a 400, a revoked verifier or an offline tab.
+        if (options.rejects === true) throw new Error('the token endpoint refused the grant');
       },
     };
   });
@@ -112,6 +114,8 @@ const DISCARD_SHAPES: readonly [string, string][] = [
   ['an empty state parameter', '/callback?code=abc&state='],
   ['no query string at all', '/callback'],
   ['a state but no code', '/callback?state=xyz'],
+  ['a state of nothing but whitespace', '/callback?code=abc&state=%20%20'],
+  ['a code of nothing but whitespace', '/callback?state=xyz&code=%09'],
 ];
 
 describe('callbackWithMismatchedStateIsDiscarded', () => {
@@ -196,6 +200,38 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       expect(calls[0]).toEqual(expect.objectContaining({ code: 'abc', state: 'xyz' }));
     });
 
+    // The seam cannot reject today, so this case is about the handler rather than about the seam: without the
+    // .catch the visitor would sit on the holding screen for good once task 20 fills the body with network I/O,
+    // and nothing in this suite would have noticed the regression landing there.
+    it('returns the visitor to the start when the exchange rejects (F1)', async () => {
+      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.codeVerifier, 'stored-verifier');
+      const { calls, routes } = await spyOnExchange({ rejects: true });
+      const { router, container } = await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
+      await turn();
+
+      expect(calls).toHaveLength(1);
+      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+      expect(container.textContent ?? '').toContain(en.signIn.discarded);
+      // A failed exchange is not task 23's deletion either.
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
+    });
+
+    // The effect's dependency list is empty on purpose. This pins the behaviour that makes that correct, so a
+    // later edit cannot reintroduce `params` as a dependency and quietly exchange a second grant.
+    it('handles one callback per mount, ignoring a second set of parameters (F2)', async () => {
+      const { calls, routes } = await spyOnExchange();
+      const { router } = await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
+      expect(calls).toHaveLength(1);
+
+      await act(async () => {
+        await router.navigate('/callback?code=second&state=second');
+      });
+      await turn();
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toEqual(expect.objectContaining({ code: 'abc', state: 'xyz' }));
+    });
+
     it('and the reached callback stays put rather than returning to sign-in', async () => {
       const { routes } = await spyOnExchange();
       const { router, container } = await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
@@ -223,8 +259,16 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       expect(router.state.location.pathname).not.toContain('/callback/');
     });
 
-    it('targets a path the route table actually declares (AC17)', () => {
-      expect([...PUBLIC_ROUTE_PATHS]).toContain(SIGN_IN_PATH);
+    // Against hard-coded literals, deliberately. PUBLIC_ROUTE_PATHS is now built FROM these two constants, so
+    // asserting the list contains them would compare each constant with itself - the defect this suite has
+    // caught seven times in other tasks. What is actually at stake is external: auth registers the SPA's
+    // redirect URI as /app/callback, measured against the live stack, so both spellings are a contract with
+    // another service and renaming either breaks the deployed flow.
+    it('keeps the two path spellings the authorization server has registered (AC17)', () => {
+      expect(SIGN_IN_PATH).toBe('sign-in');
+      expect(CALLBACK_PATH).toBe('callback');
+      expect([...PUBLIC_ROUTE_PATHS]).toContain('callback');
+      expect([...PUBLIC_ROUTE_PATHS]).toContain('sign-in');
     });
   });
 
@@ -288,6 +332,13 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       expect(calls).toHaveLength(1);
     });
 
+    it('does not reach the seam on the discard path under StrictMode either (F4)', async () => {
+      const { calls, routes } = await spyOnExchange();
+      await arriveAtMocked(routes, '/callback?code=abc', { strict: true });
+
+      expect(calls).toEqual([]);
+    });
+
     it('navigates once on the discard path under StrictMode too', async () => {
       const { router } = await arriveAt('/callback?code=abc', { strict: true });
 
@@ -344,37 +395,43 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
   });
 
   describe('the new files touch nothing they must not (AC15)', () => {
-    const forbidden: readonly [string, RegExp][] = [
-      ['localStorage', /\blocalStorage\b/],
-      ['history.state', /\bhistory\s*\.\s*state\b/],
-      ['a sessionStorage write', /sessionStorage\s*\.\s*setItem/],
-      ['an absolute address', /https?:\/\//],
-      ['the compile-time environment object', /import\.meta\s*\.\s*env/],
+    // Each pattern carries its own negative control, so inserting a row cannot misalign the two lists.
+    const forbidden: readonly { label: string; pattern: RegExp; violation: string }[] = [
+      { label: 'localStorage', pattern: /\blocalStorage\b/, violation: 'localStorage.setItem("k", "v");' },
+      { label: 'history.state', pattern: /\bhistory\s*\.\s*state\b/, violation: 'const s = history.state;' },
+      {
+        label: 'a sessionStorage write',
+        pattern: /sessionStorage\s*\.\s*setItem/,
+        violation: 'sessionStorage.setItem("k", "v");',
+      },
+      {
+        label: 'an absolute address',
+        pattern: /https?:\/\//,
+        violation: 'const docs = "https://example.test/docs";',
+      },
+      {
+        label: 'the compile-time environment object',
+        pattern: /import\.meta\s*\.\s*env/,
+        violation: 'const mode = import.meta.env.MODE;',
+      },
     ];
 
-    it.each(forbidden)('CallbackScreen.tsx contains no %s', (_label, pattern) => {
+    it.each(forbidden)('CallbackScreen.tsx contains no $label', ({ pattern }) => {
       expect(callbackSource).not.toMatch(pattern);
     });
 
-    it.each(forbidden)('signInNotice.ts contains no %s', (_label, pattern) => {
+    it.each(forbidden)('signInNotice.ts contains no $label', ({ pattern }) => {
       expect(noticeSource).not.toMatch(pattern);
     });
 
-    it.each(forbidden)('codeExchange.ts contains no %s', (_label, pattern) => {
+    it.each(forbidden)('codeExchange.ts contains no $label', ({ pattern }) => {
       expect(exchangeSource).not.toMatch(pattern);
     });
 
     // Without this the five patterns could all be broken and every row above would still pass.
     it('and each pattern finds its own violation when one is present (AC14)', () => {
-      const violations = [
-        'localStorage.setItem("k", "v");',
-        'const s = history.state;',
-        'sessionStorage.setItem("k", "v");',
-        'const docs = "https://example.test/docs";',
-        'const mode = import.meta.env.MODE;',
-      ];
-      for (const [index, [label, pattern]] of forbidden.entries()) {
-        expect(violations[index], label).toMatch(pattern);
+      for (const { label, pattern, violation } of forbidden) {
+        expect(violation, label).toMatch(pattern);
       }
     });
   });

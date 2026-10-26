@@ -24,29 +24,44 @@ export function CallbackScreen() {
   // sets module state - both things that must happen once.
   const handled = useRef(false);
 
+  // One mount handles one callback, which is why the dependency list is empty. The browser arrives here by a
+  // fresh navigation every time, so there is no second set of parameters to react to; a list naming `params`
+  // would claim otherwise while the latch above silently refused to act on it.
   useEffect(() => {
     if (handled.current) return;
     handled.current = true;
 
-    const state = params.get('state');
-    const code = params.get('code');
+    // Trimmed before the emptiness test. A value of nothing but whitespace is what a stripped or truncated query
+    // produces, exactly as an empty one is, and it carries no more proof that the callback belongs to a request
+    // this tab made. The trimmed values travel onward, so the exchange never receives padding the authorization
+    // server did not send.
+    const state = params.get('state')?.trim() ?? null;
+    const code = params.get('code')?.trim() ?? null;
 
-    // R8's antecedent, in T17's half. An empty value counts as missing: it is what a stripped or truncated query
-    // produces, and it carries no proof the callback belongs to a request this tab made. A missing `code` is
-    // discarded too - beyond R8's literal words, which speak only of `state`, but the alternative is handing the
-    // exchange a grant it cannot use and calling that someone else's problem.
-    if (state === null || state === '' || code === null || code === '') {
+    /** R8's consequent, and the only outcome T17 produces. Neutral by requirement: it names no cause (L4). */
+    const discard = () => {
       setSignInNotice('discarded');
       // The leading slash matters: measured, a relative target resolves against the current route and lands on
       // the catch-all, silently. `replace` so a discarded callback is not reachable with the back button.
       navigate(`/${SIGN_IN_PATH}`, { replace: true });
+    };
+
+    // R8's antecedent, in T17's half. A missing `code` is discarded too - beyond R8's literal words, which speak
+    // only of `state`, but the alternative is handing the exchange a grant it cannot use and calling that
+    // someone else's problem.
+    if (state === null || state === '' || code === null || code === '') {
+      discard();
       return;
     }
 
-    // TASK 18 goes here: compare `state` with the stored value and discard on mismatch, the same way.
+    // TASK 18 goes here: compare `state` with the stored value and call discard() on mismatch.
 
-    void exchangeAuthorizationCode({ code, state });
-  }, [params, navigate]);
+    // The seam cannot reject while it is empty. It will once task 20 fills it with network I/O - offline, a 400
+    // from the token endpoint, a clock skew - and a dropped rejection there would leave the visitor on this
+    // holding screen indefinitely. Handled here so the failure mode is defined by the task that introduced the
+    // seam rather than inherited by the one that fills it. Task 20 may route it somewhere more specific.
+    exchangeAuthorizationCode({ code, state }).catch(discard);
+  }, []);
 
   return (
     <main>
