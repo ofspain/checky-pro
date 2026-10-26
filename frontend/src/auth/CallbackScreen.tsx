@@ -75,6 +75,12 @@ export function CallbackScreen() {
     // Nothing stored is tested on its own, so no reader has to work out whether `null !== state` happened to be
     // true for the right reason. The stored value is never trimmed or case-folded - T15 wrote it, so padding
     // there would mean something is wrong - and anything that widens equality widens the injection surface.
+    //
+    // The first two tests are REDUNDANT TODAY and deliberately kept: neither `null` nor `''` can equal `state`,
+    // because the guard above has already returned for an empty one, so no test can tell them apart from the
+    // inequality alone. What they defend is that coupling. Were the empty-`state` guard above ever relaxed,
+    // `'' !== ''` is false and a callback carrying no state would match an empty stored value and be exchanged.
+    // Do not fold these into the inequality to tidy it.
     if (stored === null || stored === '' || stored !== state) {
       discard();
       return;

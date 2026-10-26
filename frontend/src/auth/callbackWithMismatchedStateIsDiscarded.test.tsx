@@ -685,6 +685,30 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     });
   });
 
+  describe('an empty state never exchanges, whichever guard catches it (AC3, defence in depth)', () => {
+    /**
+     * Found by measurement, not by review. Relaxing T17's empty-`state` guard AND folding away the explicit
+     * `stored === ''` test is caught by only two cases in this file, and by no assertion about the OUTCOME -
+     * because with nothing stored, `null !== ''` still discards. The uncovered pair is an empty state on BOTH
+     * sides: `'' !== ''` is false, so the comparison would pass and the seam would be reached.
+     *
+     * These assert the security property rather than the path, so they hold whichever guard fires and would
+     * survive a refactor that moved the responsibility between them.
+     */
+    it.each([
+      ['both sides empty', '', '/callback?code=abc&state='],
+      ['both sides whitespace', '   ', '/callback?code=abc&state=%20%20%20'],
+      ['stored empty, supplied whitespace', '', '/callback?code=abc&state=%09'],
+    ])('does not exchange when the state is empty: %s', async (_label, storedValue, url) => {
+      storeState(storedValue);
+      const { calls, routes } = await spyOnExchange();
+      const { router } = await arriveAtMocked(routes, url);
+
+      expect(calls).toEqual([]);
+      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+    });
+  });
+
   describe('the comparison is against the stored value, not a constant (AC5)', () => {
     /**
      * The case this task most needs. Two navigations carry the SAME url state and code; only the stored value
