@@ -329,6 +329,24 @@ describe('callbackValidatesNonce', () => {
       expect(idTokenNonceMatchesStoredValue(token)).toEqual({ ok: true });
     });
 
+    /**
+     * The case that actually exercises the decode, as a mutant proved.
+     *
+     * The first version of this block carried non-ASCII in a NEIGHBOURING claim and an ASCII nonce - and a
+     * mutant that dropped TextDecoder and read the bytes as latin-1 survived it. Mangling `name` changes
+     * nothing the comparison looks at: the payload still parses, and an ASCII nonce still matches. The
+     * non-ASCII has to be IN the nonce for the decode to be load-bearing.
+     */
+    it.each([
+      ['a greek nonce', 'Ωμέγα-nonce'],
+      ['a cjk nonce', '日本語のノンス'],
+      ['an accented nonce', 'nonce-avec-accents-éàü'],
+      ['an emoji nonce', 'nonce-🔐-value'],
+    ])('matches %s only when the payload is decoded as UTF-8', (_label, value) => {
+      storeNonce(value);
+      expect(idTokenNonceMatchesStoredValue(tokenWith({ nonce: value }))).toEqual({ ok: true });
+    });
+
     it('rejects a non-ASCII payload whose nonce does not match, so the case above is not passing on length', () => {
       storeNonce(STORED);
       expect(idTokenNonceMatchesStoredValue(tokenWith({ nonce: 'Ωther', name: 'Zoë' }))).toEqual({
@@ -484,6 +502,47 @@ describe('callbackValidatesNonce', () => {
       expect(read).not.toContain(AUTHORIZE_STORAGE_KEYS.codeVerifier);
     });
 
+    // The pure function leaves storage alone; this is the same property for the WIRING. A mutant that cleared
+    // sessionStorage on a failed check survived until this case existed, because nothing downstream of the
+    // screen was asserting survival. Deleting the three is task 23's.
+    it('leaves all three stored items in place when the nonce fails (AC12)', async () => {
+      seedAllThree('xyz', STORED);
+      const rendered = await arriveWithToken('/callback?code=abc&state=xyz', tokenWith({ nonce: 'wrong' }));
+
+      expect(rendered.router.state.location.pathname, 'the control: it really did reject').toBe('/app/sign-in');
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe('xyz');
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe(STORED);
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
+    });
+
+    /**
+     * The screen's one outcome runs once, even if it fails.
+     *
+     * The call site uses `.then(onFulfilled, discard)` rather than `.then(onFulfilled).catch(discard)`, so a
+     * failure INSIDE the fulfilment handler is not then handed to `discard` a second time. The two forms are
+     * indistinguishable until something in the discard path throws, which is why this case makes one: without
+     * it the defensive form is unfalsifiable, and a mutant reverting it survived.
+     */
+    it('runs the discard path once even when it fails (AC10)', async () => {
+      seedAllThree('xyz', STORED);
+      const notices: unknown[] = [];
+      vi.doMock('./signInNotice', async () => {
+        const actual = await vi.importActual<typeof import('./signInNotice')>('./signInNotice');
+        return {
+          ...actual,
+          setSignInNotice: (notice: unknown) => {
+            notices.push(notice);
+            throw new Error('the notice could not be set');
+          },
+        };
+      });
+
+      await arriveWithToken('/callback?code=abc&state=xyz', tokenWith({ nonce: 'wrong' }));
+
+      expect(notices, 'one failed arrival must attempt one discard, not two').toHaveLength(1);
+      vi.doUnmock('./signInNotice');
+    });
+
     // StrictMode double-invokes effects in development. One arrival must still produce one outcome.
     it('produces one outcome under StrictMode', async () => {
       seedAllThree('xyz', STORED);
@@ -528,7 +587,13 @@ describe('callbackValidatesNonce', () => {
         'nothing-stored',
         'mismatch',
       ];
-      for (const reason of reasons) expect(text).not.toContain(reason);
+      // Checked against the whole document and the tab title, not only this container: a mutant that wrote the
+      // reason into document.title survived a container-only scan, and a tab title is as visible as copy.
+      for (const reason of reasons) {
+        expect(text).not.toContain(reason);
+        expect(document.title).not.toContain(reason);
+        expect(document.body.textContent ?? '').not.toContain(reason);
+      }
       expect(text).not.toContain('nonce');
       expect(text).not.toContain('the nonce did not match');
       // The control: the screen really did render the neutral copy, so the absences above are about this screen
