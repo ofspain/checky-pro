@@ -10,7 +10,7 @@ import { APP_BASENAME, appRoutes, CALLBACK_PATH, PUBLIC_ROUTE_PATHS, SIGN_IN_PAT
 import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
 import { AUTHORIZE_STORAGE_KEYS } from './authorizeRequest';
-import { takeSignInNotice } from './signInNotice';
+import { setSignInNotice, takeSignInNotice } from './signInNotice';
 
 /**
  * T17 - a callback that arrives with no `state` is discarded, nothing is exchanged, and the visitor is returned
@@ -433,6 +433,80 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       for (const { label, pattern, violation } of forbidden) {
         expect(violation, label).toMatch(pattern);
       }
+    });
+  });
+
+  // T16 closed one cycle: routes -> SignInScreen -> authorizeRequest -> routes. T17 adds a SECOND strand,
+  // routes -> CallbackScreen -> routes, because the screen imports SIGN_IN_PATH to know where to send a
+  // discarded callback. routes.tsx imports CallbackScreen (line 6) BEFORE it declares SIGN_IN_PATH (line 13),
+  // so a module-scope read here would touch the binding inside its temporal dead zone. Measured in T16: Vite
+  // yields `undefined` rather than throwing, so the target would silently become '/undefined' and land on the
+  // catch-all. T16's guard covers authorizeRequest only; this covers the strand T17 introduced.
+  describe('the second strand of the circular import stays safe (AC12)', () => {
+    it('reads SIGN_IN_PATH only inside a function body, never at module scope', () => {
+      const uses = [...callbackSource.matchAll(/^(\s*).*\bSIGN_IN_PATH\b.*$/gm)]
+        .filter((match) => !match[0].trimStart().startsWith('*') && !match[0].trimStart().startsWith('//'))
+        .filter((match) => !match[0].startsWith('import'));
+
+      expect(uses.length).toBeGreaterThan(0);
+      // Every remaining use is indented, which at this file's top level means it sits inside a block.
+      for (const match of uses) expect(match[1], match[0].trim()).not.toBe('');
+    });
+
+    it('resolves under the order the application actually loads it in', async () => {
+      // routes.tsx is what the shell imports first, which is the order that puts CallbackScreen in the middle
+      // of the cycle. If the dead zone were ever touched this import would throw, or SIGN_IN_PATH would arrive
+      // undefined and the navigation target below would read '/undefined'.
+      const routes = await import('../app/routes');
+
+      expect(routes.SIGN_IN_PATH).toBe('sign-in');
+      expect(`/${routes.SIGN_IN_PATH}`).not.toContain('undefined');
+    });
+  });
+
+  describe('the notice drains exactly once, as a unit (AC16, D-3)', () => {
+    // The rendered cases above prove the screen consumes it. This proves the primitive itself, which is what
+    // D-3 asked for: a second take must not re-deliver a notice the first take already returned.
+    it('returns the notice once and null afterwards', () => {
+      setSignInNotice('discarded');
+
+      expect(takeSignInNotice()).toBe('discarded');
+      expect(takeSignInNotice()).toBeNull();
+      expect(takeSignInNotice()).toBeNull();
+    });
+
+    it('returns null when nothing set one', () => {
+      expect(takeSignInNotice()).toBeNull();
+    });
+  });
+
+  describe('the shapes a real authorization server can send (R8 boundaries)', () => {
+    // The documented OAuth failure response: the server returns `error` INSTEAD of `code`, keeping `state`.
+    // T17 discards it for want of a code, which is the right outcome, and this records that it is deliberate
+    // rather than a side effect - task 19 owns showing anything about the error itself.
+    it('discards an authorization error response, which carries a state but no code', async () => {
+      const { calls, routes } = await spyOnExchange();
+      const { router, container } = await arriveAtMocked(
+        routes,
+        '/callback?error=access_denied&error_description=user%20said%20no&state=xyz',
+      );
+
+      expect(calls).toEqual([]);
+      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+      expect(container.textContent ?? '').toContain(en.signIn.discarded);
+      // Neutral: the server's own error_description must not reach the visitor (L4).
+      expect(container.textContent ?? '').not.toContain('user said no');
+      expect(container.textContent ?? '').not.toContain('access_denied');
+    });
+
+    // A duplicated security parameter is a parameter-pollution shape. URLSearchParams.get returns the FIRST,
+    // so that is what the exchange receives and what task 18 will compare against the stored value.
+    it('uses the first state when the query carries two', async () => {
+      const { calls, routes } = await spyOnExchange();
+      await arriveAtMocked(routes, '/callback?code=abc&state=first&state=second');
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toEqual(expect.objectContaining({ state: 'first' }));
     });
   });
 
