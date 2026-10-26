@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { buildAuthorizeRequest } from './authorizeRequest';
+import { takeSignInNotice } from './signInNotice';
 
 /**
  * The sign-in screen: the first screen in the application, and the one that starts the OIDC authorization code
@@ -18,6 +19,9 @@ import { buildAuthorizeRequest } from './authorizeRequest';
 export function SignInScreen() {
   const { t } = useTranslation();
   const [status, setStatus] = useState<'idle' | 'starting' | 'failed'>('idle');
+  // An initialiser, so the notice is taken once per mount rather than on every render. A discarded callback sets
+  // it immediately before navigating here (R8).
+  const [notice] = useState(() => takeSignInNotice());
   // Synchronous, where `disabled` would not be: setStatus only schedules a re-render, so two clicks dispatched in
   // one task would both pass a state-based guard, build two requests, overwrite each other's stored verifier and
   // fire two navigations. A ref is set before anything awaits.
@@ -64,6 +68,9 @@ export function SignInScreen() {
           arriving with text already in it. Focus is not moved here: the button the visitor pressed is still there
           and still focused, and it is the control they need to retry. */}
       <div role="status" aria-live="polite">
+        {/* The notice yields to a fresh attempt: this attempt's status is more current than the last one's
+            epitaph. */}
+        {notice !== null && status === 'idle' ? t('signIn.discarded') : null}
         {status === 'starting' ? t('signIn.starting') : null}
         {status === 'failed' ? t('signIn.failed') : null}
       </div>

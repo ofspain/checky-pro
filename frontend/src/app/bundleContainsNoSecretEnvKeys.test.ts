@@ -62,6 +62,10 @@ const KNOWN_ABSOLUTE_URLS = [
   'http://www.w3.org/XML/1998/namespace',
   // Documentation links inside library warning and error messages.
   'https://bit.ly/wb-precache',
+  // Added 2026-10-26 by T17, justified as this list's comment requires. react-router names this polyfill in the
+  // error it throws when the runtime has no URLSearchParams. T17's callback screen reads the query through
+  // useSearchParams, which is what made that code path reachable. A documentation link in a thrown message.
+  'https://github.com/ungap/url-search-params.',
   'https://react.dev/errors/',
   // Added 2026-10-25 by T16, and justified as this list's own comment requires. react-i18next's useTranslation
   // puts this in the error it throws when no i18n instance can be found. The hook was already used by

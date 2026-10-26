@@ -13,5 +13,14 @@ export const en = {
     action: 'Continue to sign in',
     starting: 'Taking you to the sign-in page…',
     failed: 'Sign-in could not be started. Try again.',
+    // Shown after a callback is discarded (R8). Neutral by requirement: it names no cause, so a missing
+    // parameter, an expired attempt and a forged link are indistinguishable to the visitor (L4).
+    discarded: 'Your sign-in did not complete. Try again.',
+  },
+  // The callback is a transient screen. It says what is happening, never that sign-in has succeeded - the flow
+  // is not finished until the token exchange, which is task 20.
+  callback: {
+    heading: 'Finishing sign-in',
+    working: 'Checking your sign-in…',
   },
 } as const;
