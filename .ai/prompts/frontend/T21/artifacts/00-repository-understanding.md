@@ -60,7 +60,7 @@ not get to invent an interface; it has to satisfy one that three built modules a
 `token_type` are on the wire and typed in `contracts/api/oidc.yaml` but not returned, because T20 recorded that
 deciding what to do with expiry is T21's.
 
-`src/auth/CallbackScreen.tsx:116-129` is the only caller. It currently uses the response for one thing — the nonce
+`src/auth/CallbackScreen.tsx:122-135` is the only caller. It currently uses the response for one thing — the nonce
 check — and **drops it**:
 
 ```
