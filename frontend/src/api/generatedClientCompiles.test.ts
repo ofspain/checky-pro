@@ -66,7 +66,10 @@ describe('generatedClientCompiles', () => {
     };
     expect(pkg.name, `resolved client directory ${clientDir}`).toBe('@themistra/api-client');
     // The documented command, which CI's drift step runs, is exactly the invocation this case reproduces.
-    expect(pkg.scripts.generate).toBe('openapi-typescript ../../../contracts/api/auth.yaml -o src/generated/auth.ts');
+    expect(pkg.scripts.generate).toBe(
+      'openapi-typescript ../../../contracts/api/auth.yaml -o src/generated/auth.ts && ' +
+        'openapi-typescript ../../../contracts/api/oidc.yaml -o src/generated/oidc.ts',
+    );
 
     const outDir = await mkdtemp(join(tmpdir(), 'checky-api-client-'));
     try {

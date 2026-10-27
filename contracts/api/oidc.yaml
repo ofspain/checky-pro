@@ -1,0 +1,99 @@
+openapi: 3.0.3
+info:
+  title: SAS OIDC protocol surface (frontend-consumed subset)
+  description: >
+    The Spring Authorization Server protocol endpoints the SPA calls programmatically. It exists
+    because design.md L6 requires every backend call to go through a client generated from
+    contracts/api/*.yaml, and auth.yaml intentionally excludes the SAS protocol surface (see its
+    own description, R47/T33 scope). Two files rather than one is therefore deliberate: this one
+    is governed by SAS, not by auth-service's own controllers, and it is documented only as far as
+    a consumer needs.
+
+    Only endpoints a client calls programmatically belong here. /oauth2/authorize is a browser
+    navigation, not a request, and is not documented. Adding any further path is a decision of its
+    own, not a drive-by.
+  version: "1.0"
+servers:
+  - url: /
+
+paths:
+  /oauth2/token:
+    post:
+      summary: Exchange an authorization code for tokens
+      description: >
+        checky-spa is a public client registered with ClientAuthenticationMethod.NONE, so the
+        request carries no client credential of any kind and the PKCE code_verifier is the only
+        proof that the code is being redeemed by the tab that requested it.
+      operationId: exchangeToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '200':
+          description: The tokens for the redeemed code.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: >
+            The code was not redeemable - unknown, already redeemed, expired, or presented with a
+            verifier that does not match the challenge. SAS answers with an OAuth2 error object
+            carrying `error` and `error_description`, and this contract deliberately gives the
+            response no schema: design.md L4 forbids the visitor learning which check failed, so a
+            generated client that offers no typed way to read that detail is the enforcement
+            rather than a rule somebody has to remember.
+components:
+  schemas:
+    TokenRequest:
+      type: object
+      description: >
+        The form-encoded body. additionalProperties is false because the SPA controls this request
+        completely and every field it carries is a field it meant to send.
+      additionalProperties: false
+      required: [grant_type, code, redirect_uri, client_id, code_verifier]
+      properties:
+        grant_type:
+          type: string
+          enum: [authorization_code]
+        code:
+          type: string
+          description: The authorization code from the callback query.
+        redirect_uri:
+          type: string
+          description: >
+            Byte-identical to the one the authorize request sent; SAS matches it exactly against
+            the registered value.
+        client_id:
+          type: string
+        code_verifier:
+          type: string
+          description: The PKCE verifier stored when the authorize request was built.
+    TokenResponse:
+      type: object
+      description: >
+        Measured against the running auth service. There is no refresh_token field: checky-spa is
+        registered with the refresh-token grant, but a real exchange issues none, which is the
+        empirical basis for L3's silent re-authentication model. Its absence here is deliberate
+        and is one of the ways that model is pinned.
+
+        additionalProperties is left open, unlike the request: SAS owns what it sends, and closing
+        this schema would assert something this repository does not control.
+      required: [access_token, id_token, token_type, expires_in, scope]
+      properties:
+        access_token:
+          type: string
+        id_token:
+          type: string
+          description: Signed JWT. Its nonce claim is validated against the stored value (R7, T19).
+        token_type:
+          type: string
+        expires_in:
+          type: integer
+          format: int32
+        scope:
+          type: string

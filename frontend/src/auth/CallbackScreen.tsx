@@ -109,10 +109,11 @@ export function CallbackScreen() {
       return;
     }
 
-    // The seam cannot reject while it is empty. It will once task 20 fills it with network I/O - offline, a 400
-    // from the token endpoint, a clock skew - and a dropped rejection there would leave the visitor on this
-    // holding screen indefinitely. Handled here so the failure mode is defined by the task that introduced the
-    // seam rather than inherited by the one that fills it. Task 20 may route it somewhere more specific.
+    // There is real network I/O behind this call now (task 20), and every way it can fail - offline, a 400 from
+    // the token endpoint, a body that will not parse, a response with no usable tokens - arrives here as one
+    // rejection carrying nothing. Nothing more specific happens to it: the discard IS the whole outcome, by L4,
+    // because a visitor who can tell a refused code from a dropped connection can enumerate. A dropped rejection
+    // would be the one real alternative, and it would leave the visitor on this holding screen for good.
     exchangeAuthorizationCode({ code, state }).then((response) => {
       // The nonce decides whether this token belongs to the request this tab made (R7, L1). The reason the check
       // failed is deliberately dropped here: it exists so the tests can tell the five rejection modes apart, and

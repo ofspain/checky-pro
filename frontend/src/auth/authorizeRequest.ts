@@ -56,7 +56,7 @@ export type AuthorizeRequest = {
  * The trailing slash is stripped first: APP_BASENAME is `/app` today, but a future `/app/` would otherwise produce
  * `/app//callback`, which an exact-match comparison rejects at sign-in with nothing failing here first.
  */
-function redirectUri(): string {
+export function redirectUri(): string {
   const base = APP_BASENAME.endsWith('/') ? APP_BASENAME.slice(0, -1) : APP_BASENAME;
   return `${globalThis.location.origin}${base}/callback`;
 }

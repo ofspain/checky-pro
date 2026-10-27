@@ -1090,9 +1090,15 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     });
   });
 
-  describe('the seam is honest about being unfinished (AC4)', () => {
-    it('names task 20 in its own source, so it is not mistaken for a finished exchange', () => {
-      expect(exchangeSource).toContain('task 20');
+  // Task 20 filled the seam, so the claim this block used to make - that the source names an unfinished task -
+  // is false by construction now, and there is no version of it left to split. What T18 actually needs from this
+  // file is the stronger opposite: every 'no exchange happened' assertion in this suite is worth exactly nothing
+  // while the exchange is a stub, so what is pinned here is that it is a real request.
+  describe('the exchange this suite watches is a real request (AC4)', () => {
+    it('goes through the generated client to the token endpoint, so a discarded callback is a request not made', () => {
+      expect(exchangeSource).toContain('createOidcClient');
+      expect(exchangeSource).toMatch(/POST\(\s*'\/oauth2\/token'/);
+      expect(exchangeSource).not.toContain('there is no transport behind this seam yet');
     });
 
     it('declares a grant carrying the code and state the callback read', () => {
