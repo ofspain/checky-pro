@@ -42,6 +42,11 @@ export function CallbackScreen() {
   // One mount handles one callback, which is why the dependency list is empty. The browser arrives here by a
   // fresh navigation every time, so there is no second set of parameters to react to; a list naming `params`
   // would claim otherwise while the latch above silently refused to act on it.
+  //
+  // The latch is set BEFORE the exchange is started, which matters more now that starting it means network I/O:
+  // it closes the whole window the request is in flight for, so nothing that re-runs this effect in that window
+  // can redeem the code a second time. A replayed code is refused anyway (measured: 400 invalid_grant), but the
+  // refusal would arrive as a discard on a sign-in that had already succeeded.
   useEffect(() => {
     if (handled.current) return;
     handled.current = true;
