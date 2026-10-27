@@ -784,6 +784,16 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       expect(source).toContain("headers: { 'Content-Type': FORM_CONTENT_TYPE }");
     });
 
+    it('derives the redirect URI from the one exported helper, not a second spelling (AC5, T20-D7)', () => {
+      const source = exchangeSource ?? '';
+      expect(source).toContain('redirect_uri: redirectUri()');
+      // This one has to be structural. A second derivation of the same value produces the same bytes until the
+      // day one of them changes, so no assertion about the request can tell the two apart - and the day it can
+      // tell them apart is the day sign-in is already broken against an exact-match registration.
+      expect(source).not.toContain('/callback');
+      expect(source).not.toContain('APP_BASENAME');
+    });
+
     it('goes through the generated client and hand-writes no request', () => {
       const source = exchangeSource ?? '';
       expect(source).toContain('createOidcClient');
