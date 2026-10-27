@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router';
 import { SIGN_IN_PATH } from '../app/routes';
+import { clearAccessToken, retainAccessToken } from './accessToken';
 import { AUTHORIZE_STORAGE_KEYS } from './authorizeRequest';
 import { exchangeAuthorizationCode } from './codeExchange';
 import { idTokenNonceMatchesStoredValue } from './idTokenNonce';
@@ -66,6 +67,11 @@ export function CallbackScreen() {
 
     /** R8's consequent, and the only outcome T17 produces. Neutral by requirement: it names no cause (L4). */
     const discard = () => {
+      // Clearing here rather than at the five call sites, which is why they share this closure at all. It also
+      // covers the case nothing else would: a tab that already signed in successfully is HOLDING a token, and a
+      // second attempt in that tab that is then discarded would otherwise leave the old one held - a
+      // half-authenticated tab, which R22 forbids. On paths that never reached an exchange this is a no-op.
+      clearAccessToken();
       setSignInNotice('discarded');
       // The leading slash matters: measured, a relative target resolves against the current route and lands on
       // the catch-all, silently. `replace` so a discarded callback is not reachable with the back button.
@@ -127,7 +133,20 @@ export function CallbackScreen() {
       // This runs INSIDE the exchange's fulfillment, after the state check admitted the callback, and it may not
       // be moved earlier. R8 requires a bad state to discard before any nonce work: hoisting this would read the
       // stored nonce for callbacks that were never this tab's to begin with.
-      if (!idTokenNonceMatchesStoredValue(response.idToken).ok) discard();
+      if (!idTokenNonceMatchesStoredValue(response.idToken).ok) {
+        discard();
+        return;
+      }
+
+      // R7's third clause, and task 21's whole deliverable: the access token is held in memory, in one
+      // module-scoped variable, and nowhere else (L3). L16's sessionStorage carve-out is exhaustive and names no
+      // token, so there is nowhere else it could legally go.
+      //
+      // ON THE FAR SIDE OF THE NONCE CHECK, and that is not a style choice. A token retained before the check
+      // would be a token this tab holds for a login it did not start - precisely the substitution T19 exists to
+      // stop, and invisible afterwards, since a held token looks the same whoever it was minted for. The early
+      // return above is what keeps the two from being reordered by accident.
+      retainAccessToken(response.accessToken);
       // Two arguments rather than a trailing .catch, so that a failure INSIDE this handler is not then handed to
       // `discard` a second time. Both calls would navigate to the same place, so nothing visible would differ -
       // but a screen whose whole design is a single-invocation latch should not carry a second way to run its
