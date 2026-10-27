@@ -52,27 +52,27 @@ Key: `T` = `frontend/src/auth/callbackValidatesNonceAndKeepsAccessTokenInMemory.
 |---|---|---|---|---|---|
 | **R7** · exchange the code at `/oauth2/token` with the PKCE verifier | Yes | `E:113` the call, `E:125` the verifier, `E:105` the refusal without one | `T:254`, `T:349`, `T:384` | No | No |
 | **R7** · validate `nonce` | Yes (T19), intact over a real transport | `CallbackScreen.tsx:124` | `T:713` | No | No |
-| **R7** · hold the access token in memory only | **Out of scope — task 21.** T20 returns it and stores nothing. | `E:133`, `E:30-35` | `T:635` (nothing written), `T:756` (nowhere visible) | No | No — `tasks.md` assigns it to 21 |
+| **R7** · hold the access token in memory only | **Out of scope — task 21.** T20 returns it and stores nothing. | `E:133`, `E:35` | `T:635` (nothing written), `T:756` (nowhere visible) | No | No — `tasks.md` assigns it to 21 |
 | **R8** · a bad `state` completes no exchange | Yes, and newly falsifiable | `CallbackScreen.tsx:107-110` | `T:658` ×4 + its control | No | No |
 | **L1** public client, PKCE, exact-match redirect | Yes | `E:123` one derivation | `T:424`, `T:459`, `T:884` | No | No |
-| **L3** tokens never stored; no refresh token | Yes | `E:30-35`, contract defines none | `T:620`, `T:635`, `T:756` | No | No |
+| **L3** tokens never stored; no refresh token | Yes | `E:35`, contract defines none | `T:620`, `T:635`, `T:756` | No | No |
 | **L4** the visitor learns nothing | Yes | `E:91` one fixed message, contract's 400 has no schema | `T:487` ×20, `T:724` | No | No |
-| **L6** generated client, no hand-written call | Yes | `oidc.yaml`, `index.ts:24`, `E:1` | `T:840`-block, `G:90`, `oxlint` 0 | No | No — satisfied as written (T20-D1) |
-| **L9** single origin, relative paths | Yes | `E:113` relative, `index.ts:24` no base URL | `T:349`, `G:110` | No | No |
+| **L6** generated client, no hand-written call | Yes | `oidc.yaml`, `index.ts:23`, `E:1` | `T:840`-block, `G:90`, `oxlint` 0 | No | No — satisfied as written (T20-D1) |
+| **L9** single origin, relative paths | Yes | `E:113` relative, `index.ts:23` no base URL | `T:349`, `G:110` | No | No |
 | **L10** no secret, no non-public env key | Yes | `E` names neither | `T:840`-block | No | No |
 | **L11** catalogue-only strings | Yes | no catalogue key added | `T:724` reuses `signIn.discarded` | No | No |
-| **L13** no new runtime dependency | Yes | `package.json` unchanged but for the `generate` script | `G:67` | No | No |
+| **L13** no new runtime dependency | Yes | `package.json` unchanged but for the `generate` script | `G:73` | No | No |
 | **L14** SPA routes under `/app` | Yes | `/oauth2/token` is a backend path, not a route | `T:349` | No | No |
 | **L16** the three items survive | Yes | `E` reads one, writes none | `T:635` ×2 | No | No |
 | **L17** API routes NetworkOnly | Yes, by construction | `apiRequestPolicy.ts:25,76-78` | `serviceWorkerNeverCachesApiResponses.test.ts:169-175` | No | No |
-| **L18** one renewal per tab; reusable exchange | Yes | `E:102` callable anywhere; `T20-D8` | `T:902` (no middleware), every direct case | No | No |
+| **L18** one renewal per tab; reusable exchange | Yes | `E:103` callable anywhere; `T20-D8` | `T:902` (no middleware), every direct case | No | No |
 
 ## 3 · Acceptance criteria
 
 | AC | Verdict | Evidence |
 |---|---|---|
 | AC1 stored verifier travels | **PASS** | `T:254` |
-| AC2 two unrelated values | **PASS** | `T:264` ×2 — mutant M1 killed |
+| AC2 two unrelated values | **PASS** | `T:265` ×2 — mutant M1 killed |
 | AC3 POST, relative path | **PASS** | `T:349` — M19, M20 killed |
 | AC4 form body, exactly five fields | **PASS** | `T:384`, `T:399`, `T:439` raw bytes — M7, M9, M24 killed |
 | AC5 `redirect_uri` identical, derived once | **PASS** | `T:424` against the real authorize request, `T:884` structural — M10 killed |
@@ -90,7 +90,7 @@ Key: `T` = `frontend/src/auth/callbackValidatesNonceAndKeepsAccessTokenInMemory.
 | AC17 exit code, not counts | **PASS** | below |
 | AC18 callable outside the screen | **PASS** | every direct case; T20-D8 |
 | AC19 `/oauth2/token` NetworkOnly | **PASS** | pre-existing case cited, no duplicate written |
-| AC20 no server detail escapes | **PASS** | `T:528`-ish block ×2 |
+| AC20 no server detail escapes | **PASS** | `T:561` and `T:576` |
 | AC21 guarded storage read | **PASS** | `T:303` — M5 killed, after surviving once |
 | AC22 the client form-encodes | **PASS** | `G:110`, and `G:138` proves the trap |
 | AC23 `oidc.ts` drift | **PASS** | `G:90`, `G:103` |
