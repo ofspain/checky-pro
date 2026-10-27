@@ -51,9 +51,13 @@ export const accessToken: LocalSession = {
    * Takes a token renewed by a sibling tab (L18). It replaces whatever is held, unconditionally: the last writer
    * wins, which is safe because `current()` is read when each request is built and never cached, so the token in
    * flight is always the newest one.
+   *
+   * Delegating rather than assigning, so there is exactly ONE place in this file where a non-null token is
+   * written. The two names are not redundant - `adopt` is the cross-tab contract's word, and the callback screen
+   * is not adopting anything from a sibling - but two assignments would have been.
    */
   adopt(token: string) {
-    held = token;
+    retainAccessToken(token);
   },
 
   renew() {
@@ -66,11 +70,13 @@ export const accessToken: LocalSession = {
 /**
  * Retains the token a completed exchange returned.
  *
- * The same write as `adopt`, under the name its caller means. The callback screen is not adopting a sibling's
- * token, and a reader following the sign-in path should not have to translate.
+ * **The only place a non-null token is assigned.** `adopt` delegates here, so a reader looking for where the
+ * token is set finds one answer, and the two exported names exist for their callers rather than for the write.
  *
- * Nothing validates the string here. The exchange already refused a response whose `access_token` was missing,
- * empty or not a string (`codeExchange.ts:74-81`), and re-checking at the holder would be a second opinion with
+ * Nothing validates the string, and both callers are what make that safe: the exchange already refused a response
+ * whose `access_token` was missing, empty or not a string (`codeExchange.ts:74-81`), and the cross-tab path checks
+ * `typeof message.token === 'string' && message.token !== ''` before adopting (`crossTabRenewal.ts:54`). Each
+ * validates in the module that knows what valid means there, so a third check here would be a second opinion with
  * no new information and a second place to get it wrong.
  */
 export function retainAccessToken(token: string): void {
