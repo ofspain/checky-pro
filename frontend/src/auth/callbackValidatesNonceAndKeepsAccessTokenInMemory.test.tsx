@@ -146,6 +146,23 @@ async function rejectionOf(promise: Promise<unknown>): Promise<Error> {
   throw new Error('the exchange resolved where this case required a rejection');
 }
 
+/**
+ * The one message every failure produces, taken from a fault that never reaches the network.
+ *
+ * Read out of the code rather than written down here on purpose: hard-coding it would pin the wording instead of
+ * the property, and the property is that there is only ONE message. Anything carrying a status, a server phrase or
+ * an exception's own name differs from this and fails, whatever the words.
+ */
+async function theOneMessage(): Promise<string> {
+  globalThis.sessionStorage.clear();
+  globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.state, STATE);
+  stubFetch(() => jsonResponse(tokensBody()));
+  const rejection = await rejectionOf(exchangeAuthorizationCode(GRANT));
+  vi.unstubAllGlobals();
+  globalThis.sessionStorage.clear();
+  return rejection.message;
+}
+
 type Rendered = {
   container: HTMLElement;
   router: ReturnType<typeof createMemoryRouter>;
@@ -268,7 +285,8 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       expect(spy).not.toHaveBeenCalled();
     });
 
-    it('rejects and makes no request when reading storage THROWS', async () => {
+    it('turns a storage read that THROWS into the ordinary rejection, and makes no request', async () => {
+      const expected = await theOneMessage();
       seedAllThree();
       const spy = stubFetch(() => jsonResponse(tokensBody()));
       // Touching sessionStorage raises where site data is blocked; it does not merely answer null. There is no
@@ -278,8 +296,14 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
         throw new DOMException('denied', 'SecurityError');
       });
 
-      await expect(exchangeAuthorizationCode(GRANT)).rejects.toThrow();
+      const rejection = await rejectionOf(exchangeAuthorizationCode(GRANT));
 
+      // Asserting only that it rejects cannot see the guard at all: the function is `async`, so an UNGUARDED read
+      // rejects too, with the DOMException. A mutation run proved exactly that - removing the try/catch survived
+      // every other assertion in this file. Only the message tells the two apart.
+      expect(rejection.message).toBe(expected);
+      expect(rejection.name).toBe('Error');
+      expect(rejection.message).not.toContain('denied');
       expect(spy).not.toHaveBeenCalled();
     });
 
@@ -429,23 +453,6 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       return lines.join('\n');
     }
 
-    /**
-     * The rejection from a fault that never reaches the network, used as the shape every other fault must equal.
-     *
-     * Taken from the code rather than written down here on purpose: hard-coding the message would pin the words
-     * instead of the property, and the property is that there is only ONE message. A rejection that carried any
-     * server detail at all would differ from this one and fail, whatever the wording.
-     */
-    async function oneMessage(): Promise<string> {
-      globalThis.sessionStorage.clear();
-      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.state, STATE);
-      stubFetch(() => jsonResponse(tokensBody()));
-      const rejection = await rejectionOf(exchangeAuthorizationCode(GRANT));
-      vi.unstubAllGlobals();
-      globalThis.sessionStorage.clear();
-      return rejection.message;
-    }
-
     const FAULTS: ReadonlyArray<{ label: string; answer: () => Response | Promise<Response> }> = [
       { label: 'a refused code (400 invalid_grant)', answer: refusal },
       { label: 'an unauthorized response (401)', answer: () => jsonResponse({ error: 'invalid_client' }, 401) },
@@ -482,7 +489,7 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
     ];
 
     it.each(FAULTS)('rejects with the one message for $label', async ({ answer }) => {
-      const expected = await oneMessage();
+      const expected = await theOneMessage();
       seedAllThree();
       stubFetch(answer);
 
