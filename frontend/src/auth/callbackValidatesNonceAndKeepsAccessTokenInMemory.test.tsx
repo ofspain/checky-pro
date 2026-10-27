@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
 import { createMemoryRouter, RouterProvider } from 'react-router';
@@ -171,7 +171,11 @@ type Rendered = {
 };
 
 /** Drives the real route table over the real exchange, with only the network stubbed. */
-async function arriveAt(url: string, answer: () => Response | Promise<Response>): Promise<Rendered> {
+async function arriveAt(
+  url: string,
+  answer: () => Response | Promise<Response>,
+  options: { strict?: boolean } = {},
+): Promise<Rendered> {
   const fetchSpy = stubFetch(answer);
   const routes = await import('../app/routes');
   const router = createMemoryRouter(routes.appRoutes, {
@@ -181,12 +185,13 @@ async function arriveAt(url: string, answer: () => Response | Promise<Response>)
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
+  const tree = (
+    <I18nextProvider i18n={createI18n()}>
+      <RouterProvider router={router} />
+    </I18nextProvider>
+  );
   await act(async () => {
-    root.render(
-      <I18nextProvider i18n={createI18n()}>
-        <RouterProvider router={router} />
-      </I18nextProvider>,
-    );
+    root.render(options.strict === true ? <StrictMode>{tree}</StrictMode> : tree);
   });
   await turn();
   mounted = { root, container, router };
@@ -201,6 +206,16 @@ async function arriveAt(url: string, answer: () => Response | Promise<Response>)
     },
   };
 }
+
+/**
+ * The sign-in notice is asserted through the RENDERED PAGE and never by calling `takeSignInNotice()` here.
+ *
+ * `arriveAt` imports the route graph dynamically and `vi.resetModules()` runs between cases, so the screens hold
+ * a DIFFERENT instance of `signInNotice.ts` from the one this file imports. A `takeSignInNotice()` assertion in a
+ * case would therefore read an always-empty module and pass whatever production did - which is this package's
+ * recurring defect exactly. Three such assertions were written and removed once a probe showed them inert. The
+ * import that remains is used only to clear state between cases, where being the wrong instance is harmless.
+ */
 
 /** Everything a visitor could tell one failure from another by. L4 requires these equal across causes. */
 function outcomeOf({ container, router }: Rendered) {
@@ -421,7 +436,27 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       expect((await sentFields(spy)).redirect_uri).toBe(redirectUri());
     });
 
-    it('carries no client credential of any kind (AC6)', async () => {
+    it('serializes the body to exactly these bytes, in this order (AC4)', async () => {
+      seedAllThree();
+      const spy = stubFetch(() => jsonResponse(tokensBody()));
+
+      await exchangeAuthorizationCode(GRANT);
+
+      // Stronger than the parsed comparison above, which cannot see field order or percent-encoding. What the
+      // authorization server reads is bytes, so this pins bytes - including that `redirect_uri` arrives encoded
+      // rather than raw, which is the difference between an exact match and a 400.
+      expect(await sentRequest(spy).clone().text()).toBe(
+        [
+          'grant_type=authorization_code',
+          `code=${GRANT.code}`,
+          `redirect_uri=${encodeURIComponent(redirectUri())}`,
+          `client_id=${CLIENT_ID}`,
+          `code_verifier=${STORED_VERIFIER}`,
+        ].join('&'),
+      );
+    });
+
+    it('carries no credential the SPA could have added (AC6)', async () => {
       seedAllThree();
       const spy = stubFetch(() => jsonResponse(tokensBody()));
 
@@ -437,6 +472,15 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       expect(fields.client_assertion).toBeUndefined();
       expect(fields.client_assertion_type).toBeUndefined();
       expect(JSON.stringify(fields).toLowerCase()).not.toContain('secret');
+      // No credentials smuggled into the URL's userinfo component either.
+      const parsed = new URL(sent.url);
+      expect(parsed.username).toBe('');
+      expect(parsed.password).toBe('');
+      // The name of this case is deliberately narrower than "no credential of any kind". `fetch` sends
+      // same-origin cookies by default, so the httpOnly SAS SESSION cookie travels with this request. That is a
+      // user session, not a client credential, it is outside the SPA's reach by design (the SPA cannot read it),
+      // and the authorization server already holds it. What T20 must not add is a credential of its OWN, and
+      // that is what is asserted here.
     });
   });
 
@@ -483,6 +527,10 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       { label: 'an id_token that is a number', answer: () => jsonResponse(tokensBody({ id_token: 1234 })) },
       { label: 'an access_token that is a number', answer: () => jsonResponse(tokensBody({ access_token: 1234 })) },
       { label: 'an id_token that is null', answer: () => jsonResponse(tokensBody({ id_token: null })) },
+      // The mirror of the row above. The guard treats every non-string alike today, so this passes without it -
+      // it is here because the matrix is AC12's durable pin, and a refactor that special-cased `null` on one
+      // token and not the other would otherwise find a gap to walk through.
+      { label: 'an access_token that is null', answer: () => jsonResponse(tokensBody({ access_token: null })) },
       { label: 'an id_token that is empty', answer: () => jsonResponse(tokensBody({ id_token: '' })) },
       { label: 'an access_token that is empty', answer: () => jsonResponse(tokensBody({ access_token: '' })) },
       { label: 'an id_token that is an object', answer: () => jsonResponse(tokensBody({ id_token: { jwt: ID_TOKEN } })) },
@@ -698,9 +746,11 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       expect(outcomes[1]).toEqual(outcomes[0]);
       expect(outcomes[2]).toEqual(outcomes[0]);
       expect(outcomes[3]).toEqual(outcomes[0]);
-      // The premise: these are discards, not four identical successes.
+      // The premise: these are discards, not four identical successes - and the neutral notice really did travel
+      // from the callback screen to the sign-in screen, rather than all four landing on a blank sign-in page.
       expect(outcomes[0]?.pathname).toBe('/app/sign-in');
       expect(outcomes[0]?.action).toBe('REPLACE');
+      expect(outcomes[0]?.text).toContain(en.signIn.discarded);
     });
 
     it('leaves no part of either token in storage, the DOM, the title or the URL (AC10)', async () => {
@@ -725,6 +775,20 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       expect(logged).not.toContain(ID_TOKEN);
     });
 
+    it('fires exactly one request under StrictMode (the latch, over a real transport)', async () => {
+      seedAllThree();
+
+      // The first place the latch can be watched against a real network stub: T18's and T19's StrictMode cases
+      // both replace `./codeExchange` wholesale, so a handler that fired twice would have been invisible to them.
+      const rendered = await arriveAt(`/callback?code=abc&state=${STATE}`, () => jsonResponse(tokensBody()), {
+        strict: true,
+      });
+
+      expect(rendered.fetchSpy).toHaveBeenCalledTimes(1);
+      expect(rendered.router.state.location.pathname).toBe('/app/callback');
+      expect(rendered.container.querySelectorAll('main')).toHaveLength(1);
+    });
+
     it('survives the screen unmounting while the exchange is still in flight', async () => {
       seedAllThree();
       let release: (() => void) | undefined;
@@ -742,8 +806,34 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       // A visitor who leaves the callback screen mid-exchange gets no navigation yanked out from under them, no
       // notice they did not earn, and no token anywhere.
       expect(rendered.router.state.location.pathname).toBe(before);
-      expect(takeSignInNotice()).toBeNull();
       expect(storageDump()).not.toContain(ACCESS_TOKEN);
+    });
+
+    it('survives the exchange REJECTING after the screen is gone', async () => {
+      seedAllThree();
+      let refuse: (() => void) | undefined;
+      const pending = new Promise<Response>((resolve) => {
+        refuse = () => resolve(refusal());
+      });
+
+      const rendered = await arriveAt(`/callback?code=abc&state=${STATE}`, () => pending);
+      rendered.unmount();
+      refuse?.();
+      await turn();
+
+      // This records what HAPPENS, not what would be tidy. The sibling case above releases a success after
+      // unmount and nothing moves, because a successful exchange has nowhere to go until task 24. A refusal is
+      // different: `discard` runs, and it navigates and sets module state even though the screen is gone, so a
+      // visitor who clicked away mid-exchange is pulled to the sign-in start when the exchange later fails.
+      //
+      // T20 did not introduce this. Before task 20 the seam rejected unconditionally, so this was the ONLY path
+      // through it. It is pinned here rather than changed because where a late failure should land a visitor is
+      // task 24's question - it owns the post-login return target - and the frozen brief gives T20 no AC for it.
+      // Reaching these assertions at all is the first half of the point: nothing throws, and no React or router
+      // error escapes a disposed tree.
+      expect(rendered.router.state.location.pathname).toBe('/app/sign-in');
+      expect(storageDump()).not.toContain(ACCESS_TOKEN);
+      expect(storageDump()).not.toContain(SERVER_DETAIL);
     });
   });
 
@@ -807,6 +897,22 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       // L6's whole point. The lint rule catches `fetch` and `XMLHttpRequest`; this catches the intent.
       expect(source).not.toMatch(/\bfetch\s*\(/);
       expect(source).not.toContain('XMLHttpRequest');
+    });
+
+    it('puts no middleware and no session boundary on the OIDC client (L18)', () => {
+      const source = exchangeSource ?? '';
+      // The boundary owns single-flight 401 renewal, and renewal IS silent re-authentication ending in a token
+      // exchange. A renewal hook on THIS client would make a failed exchange trigger a renewal that performs
+      // another exchange, and so on. Nothing about the loop is visible from a passing request, so the ban has to
+      // be structural - and task 21, which wires the boundary, is the task most likely to attach it to every
+      // client it finds.
+      expect(source).not.toMatch(/\.use\(/);
+      expect(source).not.toContain('middleware');
+      expect(source).not.toContain('sessionBoundary');
+      // And the auth-service client is not a substitute for the OIDC one: it is generated from a contract that
+      // does not describe this endpoint.
+      expect(source).not.toContain('createAuthClient');
+      expect(source).not.toContain('createAuthApi');
     });
   });
 });

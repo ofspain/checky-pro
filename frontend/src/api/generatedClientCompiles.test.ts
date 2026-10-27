@@ -135,6 +135,23 @@ describe('generatedClientCompiles', () => {
     expect(Object.fromEntries(new URLSearchParams(body))).toEqual(fields);
   });
 
+  it('falls back to JSON when the content type is not byte-identical (T20-D5, the trap)', async () => {
+    const fetchSpy = stubBrowserFetch();
+
+    await createOidcClient().POST('/oauth2/token', {
+      // One charset parameter away from the value the serializer looks for. It compares with `===`, so this is
+      // not a near miss - it is a miss, and the body silently becomes JSON that the token endpoint cannot read.
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: { grant_type: 'authorization_code' as const, code: 'c', redirect_uri: '/r', client_id: 'i', code_verifier: 'v' },
+    });
+
+    const body = await fetchSpy.mock.calls[0]![0].text();
+    // Demonstrated rather than described, so the constant in codeExchange.ts reads as load-bearing instead of
+    // stylistic to whoever next edits it.
+    expect(body.startsWith('{')).toBe(true);
+    expect(body).not.toContain('grant_type=');
+  });
+
   it('type-checks under the project compiler, TypeScript 7 strict, with zero errors', async () => {
     const tsc = projectTsc;
     const { stdout: version } = await run(process.execPath, [tsc, '--version']);
