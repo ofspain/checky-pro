@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { createAuthClient, type components, type paths } from '@themistra/api-client';
+import { createAuthClient, createOidcClient, type components, type paths } from '@themistra/api-client';
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 const run = promisify(execFile);
@@ -16,6 +16,10 @@ const repoRoot = dirname(dirname(dirname(dirname(expect.getState().testPath as s
 const clientDir = join(repoRoot, 'libs/ts/api-client');
 const contractPath = join(repoRoot, 'contracts/api/auth.yaml');
 const generatedPath = join(clientDir, 'src/generated/auth.ts');
+// The SAS protocol surface is a second contract, not an addition to auth.yaml, whose own description says the
+// protocol endpoints are intentionally absent (T20-D1, T20-D2).
+const oidcContractPath = join(repoRoot, 'contracts/api/oidc.yaml');
+const oidcGeneratedPath = join(clientDir, 'src/generated/oidc.ts');
 
 /** The project compiler, resolved the way Node resolves `typescript` from frontend/ (typescript exports no `bin/tsc`). */
 const projectTsc = join(
@@ -82,6 +86,54 @@ describe('generatedClientCompiles', () => {
       await rm(outDir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it('reproduces the committed OIDC client byte for byte from oidc.yaml (AC23, T20-D4)', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'checky-oidc-client-'));
+    try {
+      const regenerated = join(outDir, 'oidc.ts');
+      await run(join(clientDir, 'node_modules/.bin/openapi-typescript'), [oidcContractPath, '-o', regenerated], {
+        cwd: clientDir,
+      });
+      expect(await readFile(regenerated, 'utf8')).toBe(await readFile(oidcGeneratedPath, 'utf8'));
+    } finally {
+      await rm(outDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('keeps the two contracts apart: the SAS path is generated into oidc.ts and not into auth.ts (T20-D2)', async () => {
+    expect(await readFile(oidcGeneratedPath, 'utf8')).toContain('"/oauth2/token"');
+    // The guard above on auth.ts is what the SAS_PREFIXES case enforces; this states the other half, so neither
+    // file can quietly absorb the other's surface.
+    expect(await readFile(generatedPath, 'utf8')).not.toContain('/oauth2');
+  });
+
+  it('sends a form-encoded body through the OIDC client with the exact content type (AC22, T20-D5)', async () => {
+    const fetchSpy = stubBrowserFetch();
+    const fields = {
+      grant_type: 'authorization_code' as const,
+      code: 'the-authorization-code',
+      redirect_uri: `${window.location.origin}/app/callback`,
+      client_id: 'checky-spa',
+      code_verifier: 'the-stored-verifier',
+    };
+
+    await createOidcClient().POST('/oauth2/token', {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: fields,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const sent = fetchSpy.mock.calls[0]![0];
+    expect(sent.method).toBe('POST');
+    expect(sent.url).toBe(`${window.location.origin}/oauth2/token`);
+    // No custom serializer is involved: openapi-fetch's stock one form-encodes when it sees exactly this header,
+    // and an explicitly passed header overrides the JSON default it would otherwise apply. Proven here, in the
+    // client package, so a content-type regression is caught without any auth logic in the way.
+    expect(sent.headers.get('Content-Type')).toBe('application/x-www-form-urlencoded');
+    const body = await sent.text();
+    expect(body.startsWith('{')).toBe(false);
+    expect(Object.fromEntries(new URLSearchParams(body))).toEqual(fields);
+  });
 
   it('type-checks under the project compiler, TypeScript 7 strict, with zero errors', async () => {
     const tsc = projectTsc;

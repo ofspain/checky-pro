@@ -53,6 +53,11 @@ const ALLOWED: ReadonlyArray<{ form: string; source: string }> = [
     form: 'the generated client',
     source: 'import { createAuthClient } from "@themistra/api-client";\nvoid createAuthClient().GET("/accounts/me");',
   },
+  {
+    form: 'the generated OIDC client',
+    source:
+      'import { createOidcClient } from "@themistra/api-client";\nvoid createOidcClient().POST("/oauth2/token");',
+  },
   { form: "vi.spyOn(globalThis, 'fetch')", source: 'import { vi } from "vitest";\nvi.spyOn(globalThis, "fetch");' },
   // A type position makes no request; oxlint 1.87.0 doesn't report it, and test mocks may need it.
   { form: 'XMLHttpRequest as a type only', source: 'export const echo = (xhr: XMLHttpRequest) => xhr;' },
