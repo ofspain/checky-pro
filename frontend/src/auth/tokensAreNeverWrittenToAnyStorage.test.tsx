@@ -224,6 +224,28 @@ function piecesOf(token: string): string[] {
   return segments.length === 3 ? [token, ...segments] : [token];
 }
 
+/**
+ * The ID token's claim values, decoded.
+ *
+ * T22-D2 counts "any decoded claim value" as part of the token, and the segment search cannot see one: a surface
+ * holding the literal `the-subject` contains no part of the base64url text that encodes it. So a leak that
+ * decoded the payload and stored a claim would have passed every assertion in this file as first written.
+ *
+ * `nonce` is excluded, and not as a convenience: L16 permits the nonce in sessionStorage by name and the
+ * authorize step puts it there, so searching for it would contradict AC2 - which asserts it PRESENT - and turn a
+ * sanctioned value into a reported leak.
+ */
+function decodedClaimsOf(idToken: string): string[] {
+  const payload = idToken.split('.')[1];
+  if (payload === undefined) return [];
+  const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+  const claims = JSON.parse(json) as Record<string, unknown>;
+  return Object.entries(claims)
+    .filter(([name]) => name !== 'nonce')
+    .map(([, value]) => String(value))
+    .filter((value) => value.length > 3);
+}
+
 /* ─────────────────────────── the flow ─────────────────────────── */
 
 type Arrival = {
@@ -338,7 +360,20 @@ const STORAGE_ALLOWLIST: ReadonlyArray<{ file: string; methods: readonly string[
   },
 ];
 
-const STORAGE_METHODS = ['setItem', 'removeItem', 'clear'] as const;
+/**
+ * How each storage method is recognised in source.
+ *
+ * `setItem` and `removeItem` belong to `Storage` alone, so the bare name is unambiguous. `clear` is not - `Map`
+ * and `Set` have it too - so it is anchored to a receiver whose name says storage, which is what
+ * `authorizeRequest.ts`'s `const session = globalThis.sessionStorage` is. A receiver named something else would
+ * slip past this row and be caught by the runtime spy on `Storage.prototype.clear` instead: the second net
+ * misses what the primary instrument sees, which is why there are two (T22-D14).
+ */
+const STORAGE_METHODS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
+  { name: 'setItem', pattern: /\bsetItem\s*\(/ },
+  { name: 'removeItem', pattern: /\bremoveItem\s*\(/ },
+  { name: 'clear', pattern: /\b(?:\w*[sS]torage|session|store)\s*\.\s*clear\s*\(/ },
+];
 
 type ScanTarget = { path: string; code: string };
 
@@ -410,6 +445,19 @@ const FORBIDDEN: ReadonlyArray<{ label: string; pattern: RegExp; violation: stri
     pattern: /(?:window|globalThis|self)\.name\s*=/,
     violation: 'window.name = token;',
   },
+  {
+    label: 'a bracket write to window.name',
+    pattern: /\[['"]name['"]\]\s*=/,
+    violation: "globalThis['name'] = token;",
+  },
+  {
+    // Defence in depth, and honestly the weakest row here: a storage call inside a string literal is invisible
+    // to every pattern above, so the shapes that can execute one are what there is to forbid. The runtime spies
+    // remain the instrument that would actually catch it (T22-D14).
+    label: 'evaluated code',
+    pattern: /\beval\s*\(|new\s+Function\s*\(/,
+    violation: 'eval("localStorage.setItem(\'k\', token)");',
+  },
 ];
 
 describe('tokensAreNeverWrittenToAnyStorage', () => {
@@ -451,6 +499,11 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       const text = searchable(readSurfaces(arrival.router));
       for (const piece of piecesOf(body.access_token as string)) expect(text).not.toContain(piece);
       for (const piece of piecesOf(body.id_token as string)) expect(text).not.toContain(piece);
+      // The decoded claims too (T22-D2): a surface holding `the-subject` contains no part of the segment that
+      // encodes it, so the searches above cannot see a claim that was decoded and then stored.
+      const claims = decodedClaimsOf(body.id_token as string);
+      expect(claims).toContain('the-subject');
+      for (const claim of claims) expect(text).not.toContain(claim);
       expect(text).not.toContain(UNREADABLE);
       expect(loggedText(logs)).toBe('');
       expectThreeAuthorizeWrites(watch, started);
@@ -467,6 +520,26 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       const text = searchable(readSurfaces(arrival.router));
       for (const piece of piecesOf(OTHER_ACCESS_TOKEN)) expect(text).not.toContain(piece);
       for (const piece of piecesOf(body.id_token as string)) expect(text).not.toContain(piece);
+    });
+
+    it('sweeps a refresh token too, should the server ever send one (AC1, T22-D2)', async () => {
+      watchStorage();
+      const logs = watchConsole();
+      const started = await startSignIn();
+      // L3 records that no refresh_token is issued to `checky-spa`, measured against the running service. This
+      // case sends one anyway: the definition of "a token" includes it, and an instrument that has never been
+      // shown a refresh token cannot claim to keep one out.
+      const body = tokensFor(started.nonce, { refresh_token: 'REFRESH-TOKEN-8d2c45e09b71' });
+
+      const arrival = await arriveAt(`/callback?code=THE-CODE&state=${started.state}`, () => jsonResponse(body));
+
+      expect(arrival.holder.accessToken.current()).toBe(ACCESS_TOKEN);
+      const text = searchable(readSurfaces(arrival.router));
+      expect(text).not.toContain('REFRESH-TOKEN-8d2c45e09b71');
+      expect(loggedText(logs)).toBe('');
+      // And the exchange drops it rather than passing it anywhere: T20 pinned that the response type has no
+      // refresh token at all, so there is nothing holding one to leak.
+      expect(storeEntries(globalThis.sessionStorage).map(([key]) => key)).not.toContain('themistra.auth.refresh');
     });
 
     it("leaves session storage holding exactly L16's three items, with the values the authorize step generated (AC2)", async () => {
@@ -571,6 +644,7 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       const text = searchable(readSurfaces(arrival.router));
       for (const piece of piecesOf(body.access_token as string)) expect(text).not.toContain(piece);
       for (const piece of piecesOf(body.id_token as string)) expect(text).not.toContain(piece);
+      for (const claim of decodedClaimsOf(body.id_token as string)) expect(text).not.toContain(claim);
       // Not even the authorization server's own words, which the refusal row carries.
       expect(text).not.toContain('the code verifier did not match the challenge');
       expect(loggedText(logs)).toBe('');
@@ -580,6 +654,7 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
 
     it('leaves nothing from a FIRST sign-in behind when a second one runs in the same tab (AC1)', async () => {
       watchStorage();
+      const logs = watchConsole();
       const first = await startSignIn();
       const firstBody = tokensFor(first.nonce);
       const one = await arriveAt(`/callback?code=THE-CODE&state=${first.state}`, () => jsonResponse(firstBody));
@@ -598,13 +673,17 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       const text = searchable(readSurfaces(arrival.router));
       for (const piece of piecesOf(firstBody.access_token as string)) expect(text).not.toContain(piece);
       for (const piece of piecesOf(firstBody.id_token as string)) expect(text).not.toContain(piece);
+      for (const claim of decodedClaimsOf(firstBody.id_token as string)) expect(text).not.toContain(claim);
       expect(storeEntries(globalThis.sessionStorage).map(([, value]) => value).sort()).toEqual(
         [second.state, second.nonce, second.verifier].sort(),
       );
+      expect(storeEntries(globalThis.localStorage)).toEqual([]);
+      expect(loggedText(logs)).toBe('');
     });
 
     it('leaves no residue in any surface once the holder is cleared', async () => {
       watchStorage();
+      const logs = watchConsole();
       const started = await startSignIn();
       const body = tokensFor(started.nonce);
       const arrival = await arriveAt(`/callback?code=THE-CODE&state=${started.state}`, () => jsonResponse(body));
@@ -615,6 +694,14 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       expect(arrival.holder.accessToken.current()).toBeNull();
       const text = searchable(readSurfaces(arrival.router));
       for (const piece of piecesOf(body.access_token as string)) expect(text).not.toContain(piece);
+      for (const piece of piecesOf(body.id_token as string)) expect(text).not.toContain(piece);
+      expect(storeEntries(globalThis.localStorage)).toEqual([]);
+      expect(loggedText(logs)).toBe('');
+      // Clearing the token leaves L16's three items exactly where they were: the holder and the carve-out are
+      // separate, and consuming the three is task 23's.
+      expect(storeEntries(globalThis.sessionStorage).map(([, value]) => value).sort()).toEqual(
+        [started.state, started.nonce, started.verifier].sort(),
+      );
     });
   });
 
@@ -638,6 +725,17 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       // text scan is the second net.
       expect(searchable(readSurfaces())).toContain(ACCESS_TOKEN);
       expect(watch.setItem).toHaveBeenCalledWith('anything', ACCESS_TOKEN);
+    });
+
+    it('finds a DECODED claim value, which no segment search can see (AC10, T22-D2)', () => {
+      const idToken = tokenWith({ nonce: 'n', sub: 'the-subject', iss: 'http://localhost:5173' });
+      globalThis.sessionStorage.setItem('profile.cache', JSON.stringify({ sub: 'the-subject' }));
+
+      // The point of the pair: the decoded claim IS in a surface, and the encoded segment is not. A sweep with
+      // only `piecesOf` would have reported this store clean.
+      const text = searchable(readSurfaces());
+      for (const piece of piecesOf(idToken)) expect(text).not.toContain(piece);
+      expect(decodedClaimsOf(idToken).some((claim) => text.includes(claim))).toBe(true);
     });
 
     it('finds a token leaked as a bearer header value (AC15)', () => {
@@ -725,30 +823,42 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
     it('calls a storage method only where the allowlist permits it (AC9, T22-D11, T22-D15)', async () => {
       const targets = await productionSources();
 
-      const offences: string[] = [];
-      for (const { path, code } of targets) {
-        for (const method of STORAGE_METHODS) {
-          if (!new RegExp(`\\b${method}\\s*\\(`).test(code)) continue;
-          const entry = STORAGE_ALLOWLIST.find((row) => row.file === path);
-          if (entry === undefined || !entry.methods.includes(method)) {
-            offences.push(
-              `${path} calls ${method}(), which the storage allowlist does not permit. Add a row to ` +
-                'STORAGE_ALLOWLIST naming the file, the method and why it is sanctioned - or do not write to storage.',
-            );
+      const offend = (checked: readonly ScanTarget[]): string[] => {
+        const offences: string[] = [];
+        for (const { path, code } of checked) {
+          for (const { name, pattern } of STORAGE_METHODS) {
+            if (!pattern.test(code)) continue;
+            const entry = STORAGE_ALLOWLIST.find((row) => row.file === path);
+            if (entry === undefined || !entry.methods.includes(name)) {
+              offences.push(
+                `${path} calls ${name}(), which the storage allowlist does not permit. Add a row to ` +
+                  'STORAGE_ALLOWLIST naming the file, the method and why it is sanctioned - or do not write to storage.',
+              );
+            }
           }
         }
-      }
-      expect(offences).toEqual([]);
+        return offences;
+      };
+      expect(offend(targets)).toEqual([]);
+
+      // The same function on synthetic files, which is what makes the empty list above a result: a sanctioned
+      // call is still flagged outside its file, and the two shapes that merely LOOK like storage are not.
+      expect(offend([{ path: 'elsewhere.ts', code: "sessionStorage.setItem('t', token);" }])).toHaveLength(1);
+      expect(offend([{ path: 'elsewhere.ts', code: 'const session = store; session.clear();' }])).toHaveLength(1);
+      expect(offend([{ path: 'elsewhere.ts', code: 'clearTimeout(timer); clearInterval(poll);' }])).toEqual([]);
+      expect(offend([{ path: 'elsewhere.ts', code: 'pending.clear(); waiters.clear();' }])).toEqual([]);
 
       // Every allowlisted file exists and really makes the call it is permitted - a stale row would quietly
       // widen the permission for a file that no longer needs it. Task 23 is the expected next entrant.
       for (const row of STORAGE_ALLOWLIST) {
         const target = targets.find(({ path }) => path === row.file);
         expect(target, `${row.file} is on the allowlist but not in the tree`).toBeDefined();
-        for (const method of row.methods) expect(target!.code).toMatch(new RegExp(`\\b${method}\\s*\\(`));
+        for (const method of row.methods) {
+          const recognised = STORAGE_METHODS.find(({ name }) => name === method);
+          expect(recognised, `${method} is allowlisted but not recognised in source`).toBeDefined();
+          expect(target!.code).toMatch(recognised!.pattern);
+        }
       }
-      // And the same scan, over a synthetic file, does report an offence - so the empty list above is a result.
-      expect(new RegExp('\\bsetItem\\s*\\(').test("sessionStorage.setItem('t', token);")).toBe(true);
     });
 
     it('touches session storage in only the four files that read it (AC9)', async () => {
