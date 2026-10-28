@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vite
 import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
 import { AUTHORIZE_STORAGE_KEYS, buildAuthorizeRequest, CLIENT_ID, redirectUri } from './authorizeRequest';
+import { createAuthApi } from '../api/client';
+import { shareRenewalAcrossTabs } from '../api/crossTabRenewal';
+import { createSessionBoundary } from '../api/sessionBoundary';
+import { accessToken, clearAccessToken, retainAccessToken } from './accessToken';
 import { exchangeAuthorizationCode } from './codeExchange';
 import { takeSignInNotice } from './signInNotice';
 
@@ -168,6 +172,17 @@ type Rendered = {
   router: ReturnType<typeof createMemoryRouter>;
   fetchSpy: Mock;
   unmount: () => void;
+  /**
+   * The holder THE SCREEN USED, not the one this file imported at the top.
+   *
+   * `arriveAt` imports the route graph dynamically and `vi.resetModules()` runs between cases, so the screen gets
+   * a fresh instance of every module it reaches - `accessToken.ts` included. Asserting on the static import after
+   * driving the screen would read an untouched module and pass whatever production did. T20's Phase 11 lost three
+   * assertions to exactly this, on `signInNotice`, and only a probe showed they were inert. This import happens
+   * after the routes import, inside the same registry, so it is the same instance the screen wrote to - and the
+   * control case below proves it by requiring a token to be THERE.
+   */
+  holder: typeof import('./accessToken');
 };
 
 /** Drives the real route table over the real exchange, with only the network stubbed. */
@@ -178,6 +193,7 @@ async function arriveAt(
 ): Promise<Rendered> {
   const fetchSpy = stubFetch(answer);
   const routes = await import('../app/routes');
+  const holder = await import('./accessToken');
   const router = createMemoryRouter(routes.appRoutes, {
     basename: routes.APP_BASENAME,
     initialEntries: [`${routes.APP_BASENAME}${url}`],
@@ -198,6 +214,7 @@ async function arriveAt(
   return {
     container,
     router,
+    holder,
     fetchSpy,
     unmount: () => {
       act(() => root.unmount());
@@ -227,14 +244,25 @@ function outcomeOf({ container, router }: Rendered) {
   };
 }
 
+let callbackSource: string | undefined;
+
+/** The callback screen's own source, for the two claims that can only be made structurally. */
+function callbackSourceFor(): string {
+  return callbackSource ?? '';
+}
+
 describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
   beforeEach(async () => {
     globalThis.sessionStorage.clear();
     globalThis.localStorage.clear();
-    exchangeSource ??= await readFile(join(dirname(expect.getState().testPath as string), 'codeExchange.ts'), 'utf8');
+    clearAccessToken();
+    const here = dirname(expect.getState().testPath as string);
+    exchangeSource ??= await readFile(join(here, 'codeExchange.ts'), 'utf8');
+    callbackSource ??= await readFile(join(here, 'CallbackScreen.tsx'), 'utf8');
   });
 
   afterEach(() => {
+    clearAccessToken();
     if (mounted) {
       const { root, container, router } = mounted;
       act(() => root.unmount());
@@ -834,6 +862,329 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       expect(rendered.router.state.location.pathname).toBe('/app/sign-in');
       expect(storageDump()).not.toContain(ACCESS_TOKEN);
       expect(storageDump()).not.toContain(SERVER_DETAIL);
+    });
+  });
+
+
+  describe('the token is held in memory (AC1, AC2, AC3, AC4, AC10)', () => {
+    let holderSource: string | undefined;
+
+    beforeEach(async () => {
+      holderSource ??= await readFile(join(dirname(expect.getState().testPath as string), 'accessToken.ts'), 'utf8');
+    });
+
+    /**
+     * The holder's source with its comments taken out.
+     *
+     * A whole-file scan reads a file's own explanation as the defect it warns about: the header comment in
+     * `accessToken.ts` names `sessionStorage` in order to say the token never goes there, and `/sessionStorage/`
+     * cannot tell the rule from its violation. T20 hit the same thing with `charset` and fixed it by scanning one
+     * line; here the patterns are several, so the prose comes out instead and what is left is only code.
+     */
+    function holderCode(): string {
+      return (holderSource ?? '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    }
+
+    /** Every key in both stores, so a case can prove a value reached neither. */
+    function storageDump(): string {
+      const lines: string[] = [];
+      for (const store of [globalThis.sessionStorage, globalThis.localStorage]) {
+        for (let index = 0; index < store.length; index += 1) {
+          const key = store.key(index) ?? '';
+          lines.push(`${key}=${store.getItem(key) ?? ''}`);
+        }
+      }
+      return lines.join('\n');
+    }
+
+    // THE CONTROL FOR EVERY SCREEN-LAYER CASE IN THIS FILE. If `rendered.holder` were the wrong module instance -
+    // the mistake T20's Phase 11 made with `signInNotice` - this case fails, because it requires the token to be
+    // present rather than absent. Every "holds nothing" assertion below is only worth something because this one
+    // passes.
+    it('holds the access token after a callback that completes', async () => {
+      seedAllThree();
+
+      const rendered = await arriveAt(`/callback?code=abc&state=${STATE}`, () => jsonResponse(tokensBody()));
+
+      expect(rendered.holder.accessToken.current()).toBe(ACCESS_TOKEN);
+    });
+
+    it.each([
+      ['the first', 'ACCESS-TOKEN-ALPHA-4f91c2'],
+      ['the second', 'ACCESS-TOKEN-BRAVO-7b3e88'],
+    ])('holds %s token the server sent, so no constant can pass (AC2)', async (_which, token) => {
+      seedAllThree();
+
+      const rendered = await arriveAt(`/callback?code=abc&state=${STATE}`, () =>
+        jsonResponse(tokensBody({ access_token: token })),
+      );
+
+      expect(rendered.holder.accessToken.current()).toBe(token);
+    });
+
+    it('returns the same value on repeated reads (AC4)', () => {
+      retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
+
+      expect(accessToken.current()).toBe('ACCESS-TOKEN-ALPHA-4f91c2');
+      expect(accessToken.current()).toBe('ACCESS-TOKEN-ALPHA-4f91c2');
+      expect(accessToken.current()).toBe(accessToken.current());
+    });
+
+    it('holds nothing before any exchange (AC3)', () => {
+      expect(accessToken.current()).toBeNull();
+    });
+
+    it.each([
+      ['no state in the query', '/callback?code=abc', () => jsonResponse(tokensBody())],
+      ['a state that does not match', '/callback?code=abc&state=not-the-stored-state', () => jsonResponse(tokensBody())],
+      ['no code', `/callback?state=${STATE}`, () => jsonResponse(tokensBody())],
+      ['an authorization error', `/callback?error=access_denied&state=${STATE}`, () => jsonResponse(tokensBody())],
+      ['a refused code', `/callback?code=abc&state=${STATE}`, refusal],
+      ['a server fault', `/callback?code=abc&state=${STATE}`, () => new Response('', { status: 500 })],
+      [
+        'a dropped connection',
+        `/callback?code=abc&state=${STATE}`,
+        () => {
+          throw new TypeError('Failed to fetch');
+        },
+      ],
+      ['no usable tokens', `/callback?code=abc&state=${STATE}`, () => jsonResponse({})],
+      [
+        'a nonce that is not the stored one',
+        `/callback?code=abc&state=${STATE}`,
+        () => jsonResponse(tokensBody({ id_token: tokenWith({ nonce: 'a-different-nonce' }) })),
+      ],
+    ])('holds nothing after %s (AC3, AC10, R22)', async (_case, url, answer) => {
+      seedAllThree();
+
+      const rendered = await arriveAt(url, answer);
+
+      expect(rendered.holder.accessToken.current()).toBeNull();
+    });
+
+    it('CLEARS a token from an earlier sign-in when a later callback is discarded (AC3, AC10, R22)', async () => {
+      seedAllThree();
+      const first = await arriveAt(`/callback?code=abc&state=${STATE}`, () => jsonResponse(tokensBody()));
+      // The premise: this tab really is signed in before the second attempt.
+      expect(first.holder.accessToken.current()).toBe(ACCESS_TOKEN);
+
+      // A forged or stale callback arriving in that same tab. The holder is the SAME instance - no reset between
+      // these two arrivals - so a clear that did not happen would be visible.
+      first.unmount();
+      takeSignInNotice();
+      vi.unstubAllGlobals();
+      const second = await arriveAt('/callback?code=abc&state=not-the-stored-state', () =>
+        jsonResponse(tokensBody()),
+      );
+
+      // Failing closed: an attacker who can get a signed-in visitor to open a forged callback ends that tab's
+      // session rather than leaving it half-authenticated (R22). An annoyance, deliberately chosen over a stale
+      // credential, and pinned here so it is not later read as a regression.
+      expect(second.holder.accessToken.current()).toBeNull();
+      expect(second.router.state.location.pathname).toBe('/app/sign-in');
+    });
+
+    it('holds the token only AFTER the nonce check, never before it (AC14)', () => {
+      // Structural, because it has to be: a token retained before the check and discarded after would leave
+      // `current()` null at the end of the case, exactly as the correct order does. The two are distinguishable
+      // only in the source.
+      const screen = callbackSourceFor();
+      const nonceAt = screen.indexOf('idTokenNonceMatchesStoredValue(response.idToken)');
+      const retainAt = screen.indexOf('retainAccessToken(response.accessToken)');
+      expect(nonceAt).toBeGreaterThan(0);
+      expect(retainAt).toBeGreaterThan(nonceAt);
+      // And the early return between them, which is what stops the two being reordered by accident.
+      expect(screen.slice(nonceAt, retainAt)).toContain('return;');
+    });
+
+    describe('the holder satisfies what tasks 5 and 6 already consume (AC5, AC6, AC7, AC16)', () => {
+      it('puts the held token on the wire as a bearer, through the REAL boundary (AC5)', async () => {
+        retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
+        const spy = stubFetch(() => jsonResponse({}));
+
+        // The real createSessionBoundary and the real generated client. A type assertion here would only re-prove
+        // what the compiler already checked; this proves the token actually arrives.
+        await createAuthApi(createSessionBoundary(accessToken, () => undefined)).GET('/accounts/me');
+
+        expect(sentRequest(spy).headers.get('Authorization')).toBe('Bearer ACCESS-TOKEN-ALPHA-4f91c2');
+      });
+
+      it('sends no bearer at all when nothing is held (AC3, AC5)', async () => {
+        const spy = stubFetch(() => jsonResponse({}));
+
+        await createAuthApi(createSessionBoundary(accessToken, () => undefined)).GET('/accounts/me');
+
+        expect(sentRequest(spy).headers.get('Authorization')).toBeNull();
+      });
+
+      it('is accepted by the REAL cross-tab renewal, and adopt reaches it (AC6, AC7)', () => {
+        retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
+
+        const shared = shareRenewalAcrossTabs(accessToken);
+        try {
+          expect(shared.current()).toBe('ACCESS-TOKEN-ALPHA-4f91c2');
+          accessToken.adopt('ACCESS-TOKEN-BRAVO-7b3e88');
+          expect(shared.current()).toBe('ACCESS-TOKEN-BRAVO-7b3e88');
+        } finally {
+          shared.close();
+        }
+      });
+
+      it('adopts with nothing held (AC7)', () => {
+        expect(accessToken.current()).toBeNull();
+
+        accessToken.adopt('ACCESS-TOKEN-BRAVO-7b3e88');
+
+        expect(accessToken.current()).toBe('ACCESS-TOKEN-BRAVO-7b3e88');
+      });
+
+      it.each([
+        ['adopt runs last', 'ACCESS-TOKEN-BRAVO-7b3e88'],
+        ['retention runs last', 'ACCESS-TOKEN-ALPHA-4f91c2'],
+      ])('lets the last writer win when %s (AC7)', (order, expected) => {
+        if (order === 'adopt runs last') {
+          retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
+          accessToken.adopt('ACCESS-TOKEN-BRAVO-7b3e88');
+        } else {
+          accessToken.adopt('ACCESS-TOKEN-BRAVO-7b3e88');
+          retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
+        }
+
+        expect(accessToken.current()).toBe(expected);
+      });
+
+      it('rejects renewal with one fixed message carrying nothing (AC16)', async () => {
+        retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
+
+        const rejection = await rejectionOf(accessToken.renew());
+
+        expect(rejection.message).toBe('Silent re-authentication is not built; this tab cannot renew its session.');
+        expect(rejection.message).not.toContain('ACCESS-TOKEN');
+        expect(rejection.message).not.toMatch(/\d{3}/);
+        // The seam does not pretend to work, and does not destroy what is held either.
+        expect(accessToken.current()).toBe('ACCESS-TOKEN-ALPHA-4f91c2');
+      });
+
+      it('makes a 401 a defined outcome through the real boundary: one failure hook, original 401 (AC16)', async () => {
+        retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
+        stubFetch(() => new Response('{}', { status: 401, headers: { 'Content-Type': 'application/json' } }));
+        const onRenewalFailed = vi.fn();
+
+        const { response } = await createAuthApi(
+          createSessionBoundary(accessToken, onRenewalFailed),
+        ).GET('/accounts/me');
+        await turn();
+
+        // Not a crash and not a retry loop: the caller keeps its own 401 and the boundary reports the failure
+        // exactly once, which is the behaviour task 33 will route to clean re-auth.
+        expect(response.status).toBe(401);
+        expect(onRenewalFailed).toHaveBeenCalledTimes(1);
+        expect((onRenewalFailed.mock.calls[0]?.[0] as Error).message).toBe(
+          'Silent re-authentication is not built; this tab cannot renew its session.',
+        );
+      });
+    });
+
+    describe('one copy, and nowhere else (AC8, AC9 as T21-D8, AC11, AC13, AC17)', () => {
+      it('puts no part of the token in storage, the DOM, the title or the URL (AC8)', async () => {
+        seedAllThree();
+
+        const rendered = await arriveAt(`/callback?code=abc&state=${STATE}`, () => jsonResponse(tokensBody()));
+
+        // The premise first: it IS held, so this is a leak sweep rather than a sweep of nothing.
+        expect(rendered.holder.accessToken.current()).toBe(ACCESS_TOKEN);
+        const { pathname, search } = rendered.router.state.location;
+        const visible = [
+          storageDump(),
+          rendered.container.innerHTML,
+          document.title,
+          document.cookie,
+          pathname,
+          search,
+        ].join('\n');
+        expect(visible).not.toContain(ACCESS_TOKEN);
+        for (const segment of ACCESS_TOKEN.split('-')) {
+          if (segment.length >= 6) expect(visible).not.toContain(segment);
+        }
+      });
+
+      it('leaves the three L16 items exactly as task 15 wrote them (AC11)', async () => {
+        seedAllThree();
+
+        const rendered = await arriveAt(`/callback?code=abc&state=${STATE}`, () => jsonResponse(tokensBody()));
+
+        expect(rendered.holder.accessToken.current()).toBe(ACCESS_TOKEN);
+        expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe(STATE);
+        expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe(STORED_NONCE);
+        expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe(STORED_VERIFIER);
+      });
+
+      it('writes the token to no console channel (AC8)', async () => {
+        const channels = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) =>
+          vi.spyOn(console, method).mockImplementation(() => undefined),
+        );
+        seedAllThree();
+
+        const rendered = await arriveAt(`/callback?code=abc&state=${STATE}`, () => jsonResponse(tokensBody()));
+
+        expect(rendered.holder.accessToken.current()).toBe(ACCESS_TOKEN);
+        const logged = channels
+          .flatMap((channel) => channel.mock.calls.flat())
+          .map((argument) => String(argument))
+          .join('\n');
+        expect(logged).not.toContain(ACCESS_TOKEN);
+      });
+
+      it('hangs the token off no global property (AC9)', () => {
+        retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
+
+        const named = Object.getOwnPropertyNames(globalThis).filter((key) => {
+          try {
+            return (globalThis as unknown as Record<string, unknown>)[key] === 'ACCESS-TOKEN-ALPHA-4f91c2';
+          } catch {
+            return false;
+          }
+        });
+        expect(named).toEqual([]);
+      });
+
+      it('keeps exactly one mutable binding, and it is the token (AC9)', () => {
+        const source = holderCode();
+        const mutable = source.split('\n').filter((line) => /^(?:let|var) /.test(line));
+        expect(mutable).toEqual(['let held: string | null = null;']);
+        // One assignment of a non-null token, one clear - `adopt` delegates rather than writing again.
+        expect(source.split('held = ').length - 1).toBe(2);
+        expect(source).toContain('retainAccessToken(token);');
+      });
+
+      it.each([
+        { label: 'a storage API', pattern: /sessionStorage|localStorage|indexedDB|openDatabase|document\.cookie/, violation: "sessionStorage.setItem('t', held ?? '');" },
+        { label: 'a console call', pattern: /console\./, violation: 'console.warn(held);' },
+        { label: 'an environment key', pattern: /import\.meta\.env/, violation: 'const k = import.meta.env.VITE_TOKEN;' },
+        { label: 'an absolute address', pattern: /https?:\/\//, violation: "void fetch('https://example.com/' + held);" },
+        { label: 'a token in a thrown message', pattern: /new Error\([^)]*\$\{/, violation: 'throw new Error(`token ${held}`);' },
+      ])('names no $label (AC8, AC13)', ({ pattern, violation }) => {
+        const code = holderCode();
+        // The stripping proves itself too: comments out, the holder's own body is still there to be scanned, so
+        // a pass below is the absence of the pattern rather than the absence of a file.
+        expect(code).toContain('let held: string | null = null;');
+        expect(code).toContain('export function retainAccessToken(token: string): void {');
+        expect(code).not.toMatch(pattern);
+        // The scan proves itself: a pattern matching nothing would pass the assertion above against any file.
+        expect(violation).toMatch(pattern);
+      });
+
+      it('leaves the cross-tab interface untouched, rather than widening it (AC17)', async () => {
+        const crossTab = await readFile(
+          join(dirname(dirname(expect.getState().testPath as string)), 'api/crossTabRenewal.ts'),
+          'utf8',
+        );
+
+        // T21-D3 put the clear in the holder precisely so this line did not have to change. Widening `adopt` to
+        // `string | null` would have edited code tasks 5 and 6 are built on.
+        expect(crossTab).toContain('export interface LocalSession extends SessionTokens {\n  adopt(token: string): void;\n}');
+        expect(crossTab).not.toContain('adopt(token: string | null)');
+      });
     });
   });
 
