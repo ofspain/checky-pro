@@ -96,3 +96,34 @@ export async function buildAuthorizeRequest(): Promise<AuthorizeRequest> {
 
   return { url: `${globalThis.location.origin}${AUTHORIZE_ENDPOINT_PATH}?${parameters}`, state, nonce };
 }
+
+/**
+ * Removes the three single-use items the authorize step stored - what L16 calls "deleted at callback".
+ *
+ * Contract: removes exactly the three keys `AUTHORIZE_STORAGE_KEYS` names, is idempotent, never throws, never
+ * clears the store, and never touches another key. It is NOT a general cleanup helper. L16's fourth item, the
+ * post-login return target, does not exist yet and belongs to task 24; R29's mid-task form input is task 26's.
+ *
+ * Each removal is guarded on its own, because `removeItem` can throw rather than fail quietly - the same reason
+ * every read in this package is wrapped. The realistic failure is a store denied outright, which throws for all
+ * three and so leaves all three. `sessionStorage` has no transaction, so "all three or none" is a property of
+ * there being ONE call site, not of atomicity this function could provide, and saying otherwise would promise
+ * something the platform does not offer.
+ *
+ * Iterated from the constant rather than written as three named calls, so a fourth key added above cannot be
+ * left behind here - the writer is twenty lines up, and these two are the only places that know the set.
+ *
+ * Why not inside the readers: `codeExchange.ts` reads the verifier and `idTokenNonce.ts` reads the nonce, and
+ * both are pure functions that three existing tests assert take no action on storage. Why not three removals at
+ * the call site: the keys are spelled here, once, and a second spelling is what T22's scan forbids.
+ */
+export function consumeAuthorizeState(): void {
+  for (const key of Object.values(AUTHORIZE_STORAGE_KEYS)) {
+    try {
+      globalThis.sessionStorage.removeItem(key);
+    } catch {
+      // A cleanup that cannot run is not a failed sign-in (T23-D4). The visitor's outcome does not change, and
+      // the next authorize request overwrites all three anyway.
+    }
+  }
+}

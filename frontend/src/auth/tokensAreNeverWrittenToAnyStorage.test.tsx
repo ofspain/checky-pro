@@ -37,7 +37,7 @@
  * - A sentinel proves the sweep READS a surface. It cannot prove that a leak which does not exist would have
  *   reached that surface. That is the honest maximum and the cases say which of the two they are doing.
  *
- * NOT this task's, and asserted nowhere here: deleting the three L16 items at callback (task 23, which is also
+ * NOT this task's, and asserted here only where T22's own claims met it: deleting the three L16 items at callback (task 23, which is also
  * the expected next entrant in the storage allowlist below), the full L16 inventory and R29's TTL (task 26),
  * recovery codes (69), receipts and the Cache Storage runtime (116), and the authorization `code` SAS leaves in
  * the callback URL - which is a one-time credential rather than a token, was placed there by the authorization
@@ -330,7 +330,10 @@ function tokensFor(nonce: string, overrides: Record<string, unknown> = {}): Reco
   };
 }
 
-function expectThreeAuthorizeWrites(watch: StorageWatch, started: { state: string; nonce: string; verifier: string }): void {
+type Started = { state: string; nonce: string; verifier: string };
+
+/** The three writes the authorize step makes: the same keys, in order, carrying the values it generated. */
+function expectAuthorizeWrites(watch: StorageWatch, started: Started): void {
   const calls = watch.setItem.mock.calls as Array<[string, string]>;
   expect(calls.map(([key]) => key)).toEqual([
     AUTHORIZE_STORAGE_KEYS.state,
@@ -338,8 +341,30 @@ function expectThreeAuthorizeWrites(watch: StorageWatch, started: { state: strin
     AUTHORIZE_STORAGE_KEYS.codeVerifier,
   ]);
   expect(calls.map(([, value]) => value)).toEqual([started.state, started.nonce, started.verifier]);
-  expect(watch.removeItem).not.toHaveBeenCalled();
   expect(watch.clear).not.toHaveBeenCalled();
+}
+
+/** A flow that wrote the three items and did not consume them: every discard path (T23-D2). */
+function expectAuthorizeWritesOnly(watch: StorageWatch, started: Started): void {
+  expectAuthorizeWrites(watch, started);
+  expect(watch.removeItem).not.toHaveBeenCalled();
+}
+
+/**
+ * A flow that wrote the three items and then consumed them: the one path that does (T23-D1).
+ *
+ * T22 had a single helper asserting zero removals, which was true of every path until task 23 landed. The split
+ * keeps the discard claim exactly as strong as it was - a discard that deleted still fails `expectAuthorizeWrites-
+ * Only` - and makes the consumed path assert the deletion rather than merely tolerate it (T23-D10).
+ */
+function expectAuthorizeStateConsumed(watch: StorageWatch, started: Started): void {
+  expectAuthorizeWrites(watch, started);
+  // The same three keys the authorize step wrote, in that order, and no fourth removal.
+  expect((watch.removeItem.mock.calls as Array<[string]>).map(([key]) => key)).toEqual([
+    AUTHORIZE_STORAGE_KEYS.state,
+    AUTHORIZE_STORAGE_KEYS.nonce,
+    AUTHORIZE_STORAGE_KEYS.codeVerifier,
+  ]);
 }
 
 /* ─────────────────────────── the source scan ─────────────────────────── */
@@ -347,16 +372,18 @@ function expectThreeAuthorizeWrites(watch: StorageWatch, started: { state: strin
 /**
  * The storage allowlist (T22-D11, T22-D15): which production file may call which storage method, and why.
  *
- * A table rather than a regex, so a violation names the file and the method and says what to do. **Task 23 is
- * the expected next entrant**: L16 calls the three items single-use and deleted at callback, nothing deletes them
- * today, and `stateSurvivesRedirectAndIsConsumedOnce` is that task's. Whoever adds `removeItem` adds a row here
- * with a reason - that is the point of the table.
+ * A table rather than a regex, so a violation names the file and the method and says what to do. Task 23 was the
+ * expected next entrant and arrived as predicted: `removeItem` joined the same file's row rather than a new one,
+ * because `consumeAuthorizeState` deletes the keys the module that wrote them owns. The next file to call a
+ * storage method adds a row here with a reason - that is the point of the table.
  */
 const STORAGE_ALLOWLIST: ReadonlyArray<{ file: string; methods: readonly string[]; why: string }> = [
   {
     file: 'auth/authorizeRequest.ts',
-    methods: ['setItem'],
-    why: "L16's three items - state, nonce, code_verifier - written together once the PKCE challenge is in hand (task 15).",
+    methods: ['setItem', 'removeItem'],
+    why:
+      "L16's three items - state, nonce, code_verifier - written together once the PKCE challenge is in hand " +
+      '(task 15), and removed together by `consumeAuthorizeState` once a callback has used all three (task 23).',
   },
 ];
 
@@ -506,7 +533,7 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       for (const claim of claims) expect(text).not.toContain(claim);
       expect(text).not.toContain(UNREADABLE);
       expect(loggedText(logs)).toBe('');
-      expectThreeAuthorizeWrites(watch, started);
+      expectAuthorizeStateConsumed(watch, started);
     });
 
     it('sweeps a SECOND, unrelated token the same way, so no constant can pass (AC1)', async () => {
@@ -542,16 +569,33 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       expect(storeEntries(globalThis.sessionStorage).map(([key]) => key)).not.toContain('themistra.auth.refresh');
     });
 
-    it("leaves session storage holding exactly L16's three items, with the values the authorize step generated (AC2)", async () => {
+    it('leaves session storage EMPTY once the callback has been consumed (AC2, T23)', async () => {
       watchStorage();
       const started = await startSignIn();
       const body = tokensFor(started.nonce);
+      // The vacuity control: `startSignIn` asserted each item is truthy, and this asserts the store holds
+      // exactly those three, so the emptiness below is a deletion rather than a flow that wrote nothing.
+      expect(storeEntries(globalThis.sessionStorage)).toHaveLength(3);
 
       await arriveAt(`/callback?code=THE-CODE&state=${started.state}`, () => jsonResponse(body));
 
-      // Set equality by construction: the whole store is compared, so a fourth item fails here. The three
-      // values are asserted PRESENT - L16 names them, so absence would be the defect (task 23 owns deleting
-      // them, and this assertion is what that task will have to change).
+      // Set equality by construction: the whole store is compared, so a fourth item fails here - and so does a
+      // surviving L16 item. T22 asserted the three were PRESENT, because deleting them was task 23's by name;
+      // task 23 landed, and a consumed callback leaves nothing of the attempt behind.
+      expect(storeEntries(globalThis.sessionStorage)).toEqual([]);
+      expect(storeEntries(globalThis.localStorage)).toEqual([]);
+    });
+
+    it('leaves all three in place when the callback is discarded instead (AC2, T23-D2)', async () => {
+      watchStorage();
+      const started = await startSignIn();
+
+      // The counterpart, and the reason the case above is about consumption rather than cleanup: the callback
+      // route is public, so a discard that deleted would let any arrival end a stranger's pending sign-in.
+      await arriveAt('/callback?code=THE-CODE&state=not-the-stored-state', () =>
+        jsonResponse(tokensFor(started.nonce)),
+      );
+
       expect(storeEntries(globalThis.sessionStorage).sort()).toEqual(
         [
           [AUTHORIZE_STORAGE_KEYS.state, started.state],
@@ -648,8 +692,8 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       // Not even the authorization server's own words, which the refusal row carries.
       expect(text).not.toContain('the code verifier did not match the challenge');
       expect(loggedText(logs)).toBe('');
-      // A failure writes nothing and deletes nothing: the three items are task 23's to consume.
-      expectThreeAuthorizeWrites(watch, started);
+      // A discard writes nothing and deletes nothing: only the path that used the three removes them (T23-D2).
+      expectAuthorizeWritesOnly(watch, started);
     });
 
     it('leaves nothing from a FIRST sign-in behind when a second one runs in the same tab (AC1)', async () => {
@@ -662,8 +706,12 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       one.unmount();
       vi.unstubAllGlobals();
 
-      // A second sign-in in the same tab OVERWRITES the three items - which is the one path where a value from
-      // the first attempt could survive into the second - and this one is then discarded.
+      // The first sign-in was consumed, so the three items are already gone and the values asserted below are
+      // the second attempt's by construction rather than by overwriting (T23).
+      expect(storeEntries(globalThis.sessionStorage)).toEqual([]);
+
+      // A second sign-in in the same tab, which is then discarded: the path where a value from the first
+      // attempt could have survived into the second.
       const second = await startSignIn();
       expect(second.state).not.toBe(first.state);
       const arrival = await arriveAt('/callback?code=THE-CODE&state=not-the-stored-state', () =>
@@ -697,11 +745,9 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       for (const piece of piecesOf(body.id_token as string)) expect(text).not.toContain(piece);
       expect(storeEntries(globalThis.localStorage)).toEqual([]);
       expect(loggedText(logs)).toBe('');
-      // Clearing the token leaves L16's three items exactly where they were: the holder and the carve-out are
-      // separate, and consuming the three is task 23's.
-      expect(storeEntries(globalThis.sessionStorage).map(([, value]) => value).sort()).toEqual(
-        [started.state, started.nonce, started.verifier].sort(),
-      );
+      // Nothing is left in session storage either: the consumed callback removed L16's three items before the
+      // holder was cleared, so a cleared tab holds no token and carries no pending sign-in (T23-D1).
+      expect(storeEntries(globalThis.sessionStorage)).toEqual([]);
     });
   });
 

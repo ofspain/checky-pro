@@ -443,6 +443,14 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
           },
         };
       });
+      // The reset belongs HERE, not only in `afterEach`: `./SignInScreen` is imported statically at the top of
+      // this file, so the dynamic import below returns the CACHED module - bound to the real `authorizeRequest` -
+      // unless the registry has been cleared since. Every case in this file happens to run after an `afterEach`
+      // that clears it, which is why this worked; it made the mock's effect depend on test order rather than on
+      // this helper. Found in T23 as one intermittent failure of this file's first case in a full-suite run
+      // (`expect(assign).not.toHaveBeenCalled()` - the real request had run and redirected), not reproducible in
+      // isolation. Stating the precondition locally is the fix; nothing about what the case asserts changes.
+      vi.resetModules();
       const { SignInScreen: Screen } = await import('./SignInScreen');
       const container = document.createElement('div');
       document.body.append(container);
@@ -515,6 +523,8 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
           },
         };
       });
+      // Same precondition as the helper above: clear the registry so the dynamic import sees the mock (T23).
+      vi.resetModules();
       const { SignInScreen: Screen } = await import('./SignInScreen');
       const container = document.createElement('div');
       document.body.append(container);

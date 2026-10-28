@@ -684,7 +684,8 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe(STATE);
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe(STORED_NONCE);
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe(STORED_VERIFIER);
-      // Deleting the three is task 23's, and a task that deleted them here would strand silent renewal.
+      // Still true after task 23: the exchange stays pure, and `consumeAuthorizeState` is called by the screen
+      // after the nonce check - a deletion here would have run before `idTokenNonce` read the nonce (T23-D1).
       expect(setItem).not.toHaveBeenCalled();
       expect(removeItem).not.toHaveBeenCalled();
       expect(clear).not.toHaveBeenCalled();
@@ -1208,15 +1209,19 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
         }
       });
 
-      it('leaves the three L16 items exactly as task 15 wrote them (AC11)', async () => {
+      it('consumes the three L16 items once the token is held (AC11, T23)', async () => {
         seedAllThree();
+        expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe(STATE);
 
         const rendered = await arriveAt(`/callback?code=abc&state=${STATE}`, () => jsonResponse(tokensBody()));
 
+        // T21 asserted all three SURVIVED, because deleting them was task 23's by name. Task 23 landed: the
+        // consumed path removes all three once the holder has the token. What T21 was measuring here is
+        // untouched by that - the token is in memory, and none of the three ever held it.
         expect(rendered.holder.accessToken.current()).toBe(ACCESS_TOKEN);
-        expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe(STATE);
-        expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe(STORED_NONCE);
-        expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe(STORED_VERIFIER);
+        expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBeNull();
+        expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBeNull();
+        expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBeNull();
       });
 
       it('writes the token to no console channel (AC8)', async () => {

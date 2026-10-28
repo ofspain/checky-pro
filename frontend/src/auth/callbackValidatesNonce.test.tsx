@@ -568,8 +568,9 @@ describe('callbackValidatesNonce', () => {
       expect(setItem).not.toHaveBeenCalled();
       expect(removeItem).not.toHaveBeenCalled();
       expect(clear).not.toHaveBeenCalled();
-      // Survival, not just restraint. Deleting the three is task 23's, and task 18 left a case that fails by
-      // design the moment task 23 lands.
+      // Survival, not just restraint, and it survived task 23 unchanged: the PURE CHECK still touches no
+      // storage. Deletion is the screen's, called after this function has read the nonce (T23-D1) - which is
+      // what keeps the two readers testable without a store and why this case did not have to change.
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe('stored-state');
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe(STORED);
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
@@ -682,7 +683,7 @@ describe('callbackValidatesNonce', () => {
 
     // The pure function leaves storage alone; this is the same property for the WIRING. A mutant that cleared
     // sessionStorage on a failed check survived until this case existed, because nothing downstream of the
-    // screen was asserting survival. Deleting the three is task 23's.
+    // screen was asserting survival. Deletion is task 23's, and task 23 runs it only on the consumed path.
     it('leaves all three stored items in place when the nonce fails (AC12)', async () => {
       seedAllThree('xyz', STORED);
       const rendered = await arriveWithToken('/callback?code=abc&state=xyz', tokenWith({ nonce: 'wrong' }));

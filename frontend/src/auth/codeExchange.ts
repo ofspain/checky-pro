@@ -98,7 +98,8 @@ function fail(): never {
  * The client is built per call rather than held in a module variable: this runs once per sign-in, a module-level
  * value would be state task 21 has to reason about when it decides where the access token lives, and there is
  * nothing to amortize. Nothing is written, deleted or cleared here - the three stored items survive both outcomes,
- * and deleting them is task 23's.
+ * and deleting them is task 23's, which `CallbackScreen` does after the nonce check so that this function still
+ * finds the verifier where task 15 left it.
  */
 export async function exchangeAuthorizationCode(grant: AuthorizationCodeGrant): Promise<TokenResponse> {
   const codeVerifier = storedCodeVerifier();

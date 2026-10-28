@@ -317,7 +317,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       expect(calls).toHaveLength(1);
       expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
       expect(container.textContent ?? '').toContain(en.signIn.discarded);
-      // A failed exchange is not task 23's deletion either.
+      // A failed exchange consumed nothing, so task 23's deletion does not run for it either.
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
     });
 
@@ -402,8 +402,9 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
 
       await arriveAt('/callback?code=abc');
 
-      // Deleting them is task 23's, by name. Pinned here so task 23 inherits a stated position rather than a
-      // surprise, and so a discarded callback is distinguishable from one that arrived with no attempt at all.
+      // Still true after task 23: it deletes the three only on the path that USED all three (T23-D2). The
+      // callback route is public, so a discard that deleted would let any arrival end a stranger's pending
+      // sign-in - and a discarded callback stays distinguishable from one that arrived with no attempt at all.
       expect(Object.keys(globalThis.sessionStorage).sort()).toEqual(before);
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
     });
@@ -679,7 +680,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       const read = getItem.mock.calls.map(([key]) => key);
       for (const key of Object.values(AUTHORIZE_STORAGE_KEYS)) expect(read, key).not.toContain(key);
       expect(setItem).not.toHaveBeenCalled();
-      // Survival, not just restraint: nothing here may pre-empt task 23's deletion either.
+      // Survival, not just restraint: task 23 deletes on the consumed path only, and this is a discard.
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe('stored-state');
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe('stored-nonce');
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
@@ -712,7 +713,7 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
 
     // A match now reads the nonce too, because task 19 validates the ID token against it. The verifier is still
     // never read: that is task 20's, and this is the assertion that will fail if task 20 is written here by
-    // mistake. Nothing is written on either path - deleting all three is task 23's.
+    // mistake. Nothing is written on either path, and neither one consumed the three, so neither deletes.
     it('reads the state and the nonce, and never the verifier, when the comparison matches', async () => {
       seedNonceAndVerifier();
       storeState(MATCHING_STATE);
@@ -874,17 +875,19 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     });
   });
 
-  describe('OQ-2: the stored state is compared but not consumed (task 23 will change this)', () => {
+  describe('OQ-2: the stored state is compared AND consumed (task 23 closed this)', () => {
     /**
-     * A TRIPWIRE, deliberately, in the shape T17 used for the storage boundary. L16 calls the four items
-     * "single-use and deleted at callback", but D-7 placed deletion with task 23 by name, so until then the
-     * same callback URL compares equal every time it arrives.
+     * A TRIPWIRE T18 left deliberately, in the shape T17 used for the storage boundary: L16 calls the four items
+     * "single-use and deleted at callback", D-7 placed deletion with task 23 by name, and until task 23 landed
+     * the same callback URL compared equal every time it arrived. T18 pinned the gap so task 23 would inherit a
+     * stated position rather than a surprise, and said in as many words that task 23 would invert this case.
      *
-     * Largely defused by the backend - an authorization code is single-use at the token endpoint, and until
-     * task 20 the exchange does nothing at all - but it is real, and this pins it so task 23 inherits a stated
-     * position and a failing test rather than a surprise. **Task 23 is expected to invert this case.**
+     * This is that inversion, and the assertion is the same measurement read the other way: the first arrival
+     * exchanges, the three items are gone afterwards, and the identical URL arriving a second time reaches no
+     * exchange at all. The backend's own single-use code (T20 measured `400 invalid_grant` on a replay) is still
+     * the outer defence; this is the SPA no longer depending on it.
      */
-    it('lets the same callback match twice, because deletion is task 23\'s', async () => {
+    it('refuses the same callback a second time, because the first consumed the state', async () => {
       const url = arrivalWith(MATCHING_STATE);
 
       seedNonceAndVerifier();
@@ -895,13 +898,14 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
 
       resetBetweenArrivals();
 
-      // Nothing re-seeds storage here: the point is that the first arrival left it intact.
-      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe(MATCHING_STATE);
-      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe('stored-nonce');
-      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBe('stored-verifier');
+      // Nothing re-seeds storage here: the point is what the first arrival left behind, which is nothing.
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBeNull();
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBeNull();
+      expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.codeVerifier)).toBeNull();
       const second = await spyOnExchange();
-      await arriveAtMocked(second.routes, url);
-      expect(second.calls, 'task 23 will make this an empty array').toHaveLength(1);
+      const replay = await arriveAtMocked(second.routes, url);
+      expect(second.calls, 'the replayed callback matched nothing, so nothing was exchanged').toHaveLength(0);
+      expect(replay.router.state.location.pathname).toBe('/app/sign-in');
     });
   });
 
@@ -1004,7 +1008,8 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
 
       await arriveAt(`/callback?code=abc&state=${MATCHING_STATE}`);
 
-      // Deleting them is task 23's by name (D-7), and a failed comparison is not a reason to pre-empt it.
+      // Still true after task 23: a failed comparison means the three were not used, and T23-D2 deletes only
+      // what a callback consumed - otherwise a stranger's arrival could end this tab's pending sign-in.
       expect(Object.keys(globalThis.sessionStorage).sort()).toEqual(before);
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.state)).toBe('stored-state');
       expect(globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce)).toBe('stored-nonce');

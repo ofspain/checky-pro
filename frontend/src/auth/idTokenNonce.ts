@@ -17,8 +17,9 @@ import { AUTHORIZE_STORAGE_KEYS } from './authorizeRequest';
  * read, and no claim but `nonce` is looked at - an `iss` or `exp` check would be a different task's, and `iss`
  * would need a configured issuer that the bundle may not carry (L10).
  *
- * This module writes nothing and deletes nothing. The three stored items survive a pass and a failure alike:
- * deleting them is task 23's, and task 18 left a test that fails by design the moment task 23 lands.
+ * This module writes nothing and deletes nothing, and task 23 did not change that. The three stored items
+ * survive a pass and a failure alike: `CallbackScreen` calls `consumeAuthorizeState` after this check returns,
+ * so the nonce is still here to be read, and this function stays testable without a store (T23-D1).
  */
 
 /**

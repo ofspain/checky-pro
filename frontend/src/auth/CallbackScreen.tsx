@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router';
 import { SIGN_IN_PATH } from '../app/routes';
 import { clearAccessToken, retainAccessToken } from './accessToken';
-import { AUTHORIZE_STORAGE_KEYS } from './authorizeRequest';
+import { AUTHORIZE_STORAGE_KEYS, consumeAuthorizeState } from './authorizeRequest';
 import { exchangeAuthorizationCode } from './codeExchange';
 import { idTokenNonceMatchesStoredValue } from './idTokenNonce';
 import { setSignInNotice } from './signInNotice';
@@ -23,9 +23,13 @@ import { setSignInNotice } from './signInNotice';
  *
  * This screen reads two stored items, and neither before the query has been found usable: the `state` here, and
  * the `nonce` inside `idTokenNonce.ts`. Both reads are guarded - if storage is denied the value is treated as
- * absent, which discards safely and preserves L4. It writes nothing and deletes nothing: the `code_verifier` is
- * task 20's, and deleting all three is task 23's. A discarded attempt leaves a verifier whose challenge was
- * never used, which T15's next request overwrites.
+ * absent, which discards safely and preserves L4.
+ *
+ * It writes nothing, and it deletes the three stored items on exactly one path: the one where all three were
+ * used (task 23, R8's "single-use", L16's "deleted at callback"). A DISCARDED attempt leaves them, which is a
+ * decision rather than an omission - this route is public, so a discard that deleted would make it a way to end
+ * a stranger's pending sign-in. A discarded attempt therefore leaves a verifier whose challenge was never used,
+ * which T15's next request overwrites.
  *
  * Every failure on this screen ends the same way, by requirement. A missing `state`, a mismatched `state`, a
  * refused exchange and a bad `nonce` are four different faults and one single outcome: the same neutral notice,
@@ -147,6 +151,18 @@ export function CallbackScreen() {
       // stop, and invisible afterwards, since a held token looks the same whoever it was minted for. The early
       // return above is what keeps the two from being reordered by accident.
       retainAccessToken(response.accessToken);
+      // R8's "single-use", and the last thing this flow does with storage.
+      //
+      // Here and nowhere earlier. The verifier is read INSIDE the exchange (`codeExchange.ts:59`) and the nonce
+      // after it resolves, so a deletion any sooner strands a consumer with a null it cannot recover from - and
+      // the discard that followed would be indistinguishable from a real failure, which is the worst shape a
+      // bug can take on this screen.
+      //
+      // And only on this path. Every failure above leaves all three in place: the callback route is public, so a
+      // discard that deleted would let anyone who gets a signed-in visitor to open /app/callback?state=x end
+      // that tab's pending sign-in. Keeping them costs nothing, because the code behind a failed exchange is
+      // already spent server-side - a replay returns 400 invalid_grant, measured in T20.
+      consumeAuthorizeState();
       // Two arguments rather than a trailing .catch, so that a failure INSIDE this handler is not then handed to
       // `discard` a second time. Both calls would navigate to the same place, so nothing visible would differ -
       // but a screen whose whole design is a single-invocation latch should not carry a second way to run its
