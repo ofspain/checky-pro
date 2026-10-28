@@ -10,7 +10,7 @@ import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
 import { AUTHORIZE_STORAGE_KEYS, buildAuthorizeRequest, CLIENT_ID, redirectUri } from './authorizeRequest';
 import { createAuthApi } from '../api/client';
-import { shareRenewalAcrossTabs } from '../api/crossTabRenewal';
+import { shareRenewalAcrossTabs, type TabLocks } from '../api/crossTabRenewal';
 import { createSessionBoundary } from '../api/sessionBoundary';
 import { accessToken, clearAccessToken, retainAccessToken } from './accessToken';
 import { exchangeAuthorizationCode } from './codeExchange';
@@ -26,8 +26,13 @@ import { takeSignInNotice } from './signInNotice';
  * from the real thing - which is why the first block below proves the value travels, over two unrelated stored
  * values, rather than merely proving that some verifier field is present.
  *
- * This file shares its name with task 21, which adds the in-memory half. T20 owns the verifier, the request
- * shape, the single failure outcome and the absence of a refresh token.
+ * T21 - the token that comes back is held in MEMORY, in one module-scoped variable, and nowhere else (R7, L3).
+ *
+ * The two halves are one file because they are one requirement: R7's sentence runs from the verifier through the
+ * nonce to where the token lives, and the thing worth proving is that a token only ever reaches the holder when
+ * both checks ahead of it passed. T20 owns the verifier, the request shape, the single failure outcome and the
+ * absence of a refresh token; T21 owns retention, absence after every failure path, the real boundary and
+ * cross-tab consumers, and the fact that there is exactly one copy.
  *
  * Two layers, as in T19. The exchange is driven DIRECTLY for the wire and the failure matrix, where a component
  * harness would hide which input produced which outcome; and THROUGH the real screen for the outcome and the
@@ -49,6 +54,9 @@ const STORED_VERIFIER = 'Vq7xV3nBu2mK9pLdR4sTaYwZcE6hJ1gN8oF5iU0bX2';
 const OTHER_VERIFIER = 'Zm4kP8wQ1yT6rC3vB7nL5sD9fH2jG0xA4eI6uO8aK1';
 const ACCESS_TOKEN = 'ACCESS-TOKEN-7f3a9c2e5b1d';
 /** The authorization server's own words about a failure. L4 forbids every one of them reaching the SPA. */
+/** The seam's one message (T21-D1). Named once here so a case cannot be satisfied by the string it asserts. */
+const RENEWAL_NOT_BUILT = 'Silent re-authentication is not built; this tab cannot renew its session.';
+
 const SERVER_DETAIL = 'the code verifier did not match the challenge';
 
 /** One macrotask turn inside act: the exchange is async, and act alone does not drain the microtask queue. */
@@ -835,6 +843,9 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       // notice they did not earn, and no token anywhere.
       expect(rendered.router.state.location.pathname).toBe(before);
       expect(storageDump()).not.toContain(ACCESS_TOKEN);
+      // The token IS held, and that is the point of holding it in module scope rather than component state: the
+      // exchange the visitor started completes even though the screen that started it is gone (T21, AC1).
+      expect(rendered.holder.accessToken.current()).toBe(ACCESS_TOKEN);
     });
 
     it('survives the exchange REJECTING after the screen is gone', async () => {
@@ -862,6 +873,9 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       expect(rendered.router.state.location.pathname).toBe('/app/sign-in');
       expect(storageDump()).not.toContain(ACCESS_TOKEN);
       expect(storageDump()).not.toContain(SERVER_DETAIL);
+      // The mirror of the sibling case above: a late SUCCESS is held, a late failure holds nothing, and the
+      // difference is `discard` running after the screen is gone (T21, AC3).
+      expect(rendered.holder.accessToken.current()).toBeNull();
     });
   });
 
@@ -928,6 +942,18 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       expect(accessToken.current()).toBe('ACCESS-TOKEN-ALPHA-4f91c2');
       expect(accessToken.current()).toBe('ACCESS-TOKEN-ALPHA-4f91c2');
       expect(accessToken.current()).toBe(accessToken.current());
+    });
+
+    it('drops what is held when it is cleared, and clearing twice is still nothing (AC3, AC10)', () => {
+      retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
+
+      clearAccessToken();
+
+      expect(accessToken.current()).toBeNull();
+      // Idempotent by requirement, not by accident: the screen's discard clears on failures that never reached an
+      // exchange - a callback with no `state` among them - so it runs with nothing held on most of its paths.
+      clearAccessToken();
+      expect(accessToken.current()).toBeNull();
     });
 
     it('holds nothing before any exchange (AC3)', () => {
@@ -1030,6 +1056,76 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
         }
       });
 
+      it("takes a sibling's renewed token through the REAL channel listener (AC6, AC7)", () => {
+        // Why this case injects the two seams: called with no options, `shareRenewalAcrossTabs` looks for
+        // `navigator.locks`, which jsdom does not provide, and returns the degraded per-tab passthrough
+        // (`crossTabRenewal.ts:79-86`). The case above therefore proves `current()` delegates, but NOT that a
+        // broadcast token reaches `adopt` - the production listener never ran. Supplying a channel and a lock
+        // manager is the only way to run it here, and AC6 asks for the broadcast, not the delegation.
+        const listeners: Array<(event: MessageEvent) => void> = [];
+        const channel = {
+          addEventListener: (_type: string, listener: (event: MessageEvent) => void) => listeners.push(listener),
+          removeEventListener: () => undefined,
+          postMessage: () => undefined,
+          close: () => undefined,
+        } as unknown as BroadcastChannel;
+        const locks = {
+          request: () => Promise.reject(new Error('this case does not renew')),
+        } as unknown as TabLocks;
+
+        const shared = shareRenewalAcrossTabs(accessToken, { channel, locks });
+        try {
+          // The control: one listener means the real path was taken. Zero would mean the degraded branch, where
+          // every assertion below would be about nothing.
+          expect(listeners).toHaveLength(1);
+
+          listeners[0]?.({
+            data: { type: 'renewal:succeeded', token: 'ACCESS-TOKEN-SIBLING-2c84fa' },
+          } as MessageEvent);
+
+          expect(accessToken.current()).toBe('ACCESS-TOKEN-SIBLING-2c84fa');
+          expect(shared.current()).toBe('ACCESS-TOKEN-SIBLING-2c84fa');
+
+          // And the holder is not a dumping ground for whatever is posted: a message with no token, and one that
+          // is not an outcome at all, both leave what is held alone.
+          listeners[0]?.({ data: { type: 'renewal:succeeded' } } as MessageEvent);
+          listeners[0]?.({ data: 'ACCESS-TOKEN-INTRUDER-9d1e07' } as MessageEvent);
+          expect(accessToken.current()).toBe('ACCESS-TOKEN-SIBLING-2c84fa');
+        } finally {
+          shared.close();
+        }
+      });
+
+      it('leads a renewal that cannot happen: siblings are told, what is held survives (AC6, AC16)', async () => {
+        retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
+        const posted: unknown[] = [];
+        const channel = {
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+          postMessage: (message: unknown) => posted.push(message),
+          close: () => undefined,
+        } as unknown as BroadcastChannel;
+        // A lock granted without waiting makes this tab the leader, which is the branch that calls the seam.
+        const locks = {
+          request: (_name: string, _options: unknown, callback: (lock: unknown) => Promise<unknown>) =>
+            callback({}),
+        } as unknown as TabLocks;
+
+        const shared = shareRenewalAcrossTabs(accessToken, { channel, locks });
+        try {
+          const rejection = await rejectionOf(shared.renew());
+
+          expect(rejection.message).toBe(RENEWAL_NOT_BUILT);
+          // What crosses tabs is that renewal failed, and nothing about why (L3, L4 in spirit: the siblings are
+          // not the visitor, but a reason here would be a reason in two places instead of none).
+          expect(posted).toEqual([{ type: 'renewal:failed' }]);
+          // And a renewal that never happened destroys nothing: the tab is no worse off than before it tried.
+          expect(accessToken.current()).toBe('ACCESS-TOKEN-ALPHA-4f91c2');
+        } finally {
+          shared.close();
+        }
+      });
+
       it('adopts with nothing held (AC7)', () => {
         expect(accessToken.current()).toBeNull();
 
@@ -1056,9 +1152,15 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       it('rejects renewal with one fixed message carrying nothing (AC16)', async () => {
         retainAccessToken('ACCESS-TOKEN-ALPHA-4f91c2');
 
-        const rejection = await rejectionOf(accessToken.renew());
+        // Asserted on the RETURNED VALUE before it is awaited, because the shape is behavioural and not
+        // stylistic: the boundary's `attempt.catch(...)` (`sessionBoundary.ts:59`) sees a rejected promise and
+        // would not see a synchronous throw, which escapes past it instead.
+        const attempt = accessToken.renew();
+        expect(attempt).toBeInstanceOf(Promise);
 
-        expect(rejection.message).toBe('Silent re-authentication is not built; this tab cannot renew its session.');
+        const rejection = await rejectionOf(attempt);
+
+        expect(rejection.message).toBe(RENEWAL_NOT_BUILT);
         expect(rejection.message).not.toContain('ACCESS-TOKEN');
         expect(rejection.message).not.toMatch(/\d{3}/);
         // The seam does not pretend to work, and does not destroy what is held either.
@@ -1079,9 +1181,7 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
         // exactly once, which is the behaviour task 33 will route to clean re-auth.
         expect(response.status).toBe(401);
         expect(onRenewalFailed).toHaveBeenCalledTimes(1);
-        expect((onRenewalFailed.mock.calls[0]?.[0] as Error).message).toBe(
-          'Silent re-authentication is not built; this tab cannot renew its session.',
-        );
+        expect((onRenewalFailed.mock.calls[0]?.[0] as Error).message).toBe(RENEWAL_NOT_BUILT);
       });
     });
 
@@ -1163,6 +1263,7 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
         { label: 'an environment key', pattern: /import\.meta\.env/, violation: 'const k = import.meta.env.VITE_TOKEN;' },
         { label: 'an absolute address', pattern: /https?:\/\//, violation: "void fetch('https://example.com/' + held);" },
         { label: 'a token in a thrown message', pattern: /new Error\([^)]*\$\{/, violation: 'throw new Error(`token ${held}`);' },
+        { label: 'a token concatenated into a message', pattern: /new Error\([^)]*\+/, violation: "throw new Error('token ' + held);" },
       ])('names no $label (AC8, AC13)', ({ pattern, violation }) => {
         const code = holderCode();
         // The stripping proves itself too: comments out, the holder's own body is still there to be scanned, so
