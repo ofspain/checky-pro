@@ -67,6 +67,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import { RENEWAL_CHANNEL, RENEWAL_LOCK } from '../api/crossTabRenewal';
 import { createI18n } from '../i18n/i18n';
 import { AUTHORIZE_STORAGE_KEYS, buildAuthorizeRequest } from './authorizeRequest';
 import { rememberReturnTarget, RETURN_TARGET_KEY } from './returnTarget';
@@ -634,6 +635,75 @@ const FORBIDDEN_SURFACES: ReadonlyArray<{ name: string; pattern: RegExp }> = [
   { name: 'webkitRequestFileSystem', pattern: /\bwebkitRequestFileSystem\b/ },
 ];
 
+/* ─────────────────────────── the namespace scan: the third instrument ─────────────────────────── */
+
+/**
+ * THE INSTRUMENT MEASUREMENT ASKED FOR, and the one the other two cannot be.
+ *
+ * A mutant written to escape (MA22 in this task's harness) put a fifth key in the store with a COMPUTED method
+ * name - `const method = 'set' + 'Item'` - behind a condition no test produces. The runtime watch never saw it,
+ * because the branch never ran. The method scan never saw it, because no pattern can match a name that is not
+ * in the text. The only thing that survived in source was the KEY'S OWN NAME, and T23 caught the mutant for
+ * exactly that reason, by counting key spellings in the file that writes them.
+ *
+ * So this scan keys on the name of the thing stored rather than on the call that stores it. Every
+ * `themistra`-namespace literal in production source must be an inventory key, or one of the allowlisted names
+ * below that is not a store at all. That makes the next `themistra.*` identifier an explicit decision: its
+ * author has to say which it is.
+ *
+ * It is deliberately the WHOLE namespace and not the inventory's prefix. A prefix scan asks "is this key spelled
+ * right"; this asks "is this name a store key at all", which is the question L16's exhaustiveness poses. It also
+ * catches the shapes a prefix misses - a sibling with no dot (`…auth_state`) and a sibling namespace
+ * (`…authx.foo`) - each of which has a control below.
+ */
+function namespaceRoot(): string {
+  // Derived, not spelled, and read inside a function for the same reason the inventory is: the first segment the
+  // four inventory keys share.
+  const roots = new Set(inventoryKeys().map((key) => key.split('.')[0]));
+  expect(roots.size, 'the four inventory keys share one namespace root').toBe(1);
+  return [...roots][0]!;
+}
+
+/**
+ * Every namespace literal in a body of code.
+ *
+ * The lookbehind drops `@themistra/api-client`, which is the npm package scope in an import path and not a name
+ * in any store - measured: three production files carry it (`api/client.ts`, `api/sessionBoundary.ts`,
+ * `auth/codeExchange.ts`) and nothing else about them is relevant here.
+ */
+function namespaceMatches(code: string): string[] {
+  const pattern = new RegExp(`(?<!@)\\b${namespaceRoot()}(?:[.\\w-]+)?`, 'g');
+  return [...code.matchAll(pattern)].map((match) => match[0]);
+}
+
+/**
+ * Namespace names that are not stores, each with the reason it is not one.
+ *
+ * Imported rather than spelled, so a rename moves this allowlist with it. Both are `crossTabRenewal.ts`'s, and
+ * both are L18 rather than L16: a BroadcastChannel name and a Web Locks name. Neither persists anything - a
+ * channel delivers to live tabs and a lock exists while it is held - so neither is client-side storage in L16's
+ * sense, and the carve-out has nothing to say about them.
+ */
+function nonStorageNamespaceNames(): Array<{ name: string; file: string; why: string }> {
+  return [
+    {
+      name: RENEWAL_CHANNEL,
+      file: 'api/crossTabRenewal.ts',
+      why: 'a BroadcastChannel name (L18, R21/R22). A channel delivers to live tabs and persists nothing.',
+    },
+    {
+      name: RENEWAL_LOCK,
+      file: 'api/crossTabRenewal.ts',
+      why: 'a Web Locks name (L18). A lock exists while it is held and persists nothing.',
+    },
+  ];
+}
+
+const NAMESPACE_MESSAGE =
+  'A name in this namespace is either one of L16\'s four items or it is not a store at all. If it is a store ' +
+  'key, L16 is exhaustive and it needs a design decision, not an inventory entry. If it is not - a channel, a ' +
+  'lock, a package scope - add it to nonStorageNamespaceNames() with the reason it persists nothing.';
+
 let ownSource: string | undefined;
 
 /* ─────────────────────────── the cases ─────────────────────────── */
@@ -780,6 +850,10 @@ describe('sessionStorageHoldsOnlyTheL16Items', () => {
         await arriveAt(discard.url(triple.state), () => discard.answer(triple.nonce));
 
         expectOnlyInventory(sweepSession(), `after a discard (${discard.label})`);
+        // The exact set, not merely "no stranger" (Kimi I4). A discard deletes nothing (T23-D2) and does not
+        // consume the target (T24-D14), so all four are known to be there - and a subset assertion would pass
+        // for a mutant that DELETED one on a discard path.
+        expect(keysIn(sweepSession()), 'all four, because a discard consumes nothing').toEqual(inventoryKeys());
         expectNoKeyOutsideInventory(watch, `during a discard (${discard.label})`);
         expect(keysIn(sweepLocal()), 'and nothing went to localStorage either').toEqual([]);
       });
@@ -914,12 +988,130 @@ describe('sessionStorageHoldsOnlyTheL16Items', () => {
       }
     });
 
-    it('finds no production module that writes to localStorage at all', async () => {
+    /**
+     * `localStorage` IS PERMITTED, for one thing, and the guard has to say which.
+     *
+     * `design.md:193` allows public preferences there - theme and locale - so a scan that forbids naming
+     * `localStorage` at all would fail the day a theme toggle lands, with a message stating the rule that change
+     * complies with. A guard that cannot tell "a preference arrived" from "a token leaked" gets deleted by
+     * whoever hits it first (Kimi I2).
+     *
+     * So the enforced claim is the one L16 and L3 actually make: whatever uses `localStorage` may not put an L16
+     * item or a namespace name in it. Measured today: no production module names `localStorage` at all, which is
+     * why the behavioural cases above find it empty - that is a fact about now, not the rule.
+     */
+    it('permits localStorage for public preferences, and forbids an L16 item or namespace name in it', async () => {
       const targets = await productionSources();
+      const users = targets.filter((target) => /\blocalStorage\b/.test(target.code));
 
-      expect(hits(targets, /\blocalStorage\b/), 'localStorage holds public preferences only (design.md §5)').toEqual(
+      for (const user of users) {
+        const names = namespaceMatches(user.code);
+        expect(
+          names,
+          `${user.path} names localStorage and a name in L16's namespace. design.md:193 permits public ` +
+            'preferences (theme, locale) in localStorage; an L16 item is not a preference, and L3 forbids a ' +
+            'token anywhere near it.',
+        ).toEqual([]);
+      }
+    });
+
+    it('reports a module that would write an L16 item to localStorage, which is the violation that matters', () => {
+      const offender: ScanTarget[] = [
+        {
+          path: 'synthetic/mirrors-to-local.ts',
+          code: strip(`globalThis.localStorage.setItem('${inventoryKeys()[0]}', value);`),
+        },
+      ];
+      const preference: ScanTarget[] = [
+        { path: 'synthetic/theme.ts', code: strip("globalThis.localStorage.setItem('theme', 'dark');") },
+      ];
+
+      expect(namespaceMatches(offender[0]!.code)).toEqual([inventoryKeys()[0]]);
+      expect(namespaceMatches(preference[0]!.code), 'a preference is permitted and must not be flagged').toEqual(
         [],
       );
+    });
+  });
+
+  describe('every name in the namespace is a store key or declared not to be (AC3, AC4, AC9)', () => {
+    it('finds no namespace literal in production source outside the inventory and the non-store allowlist', async () => {
+      const targets = await productionSources();
+      const permitted = new Set([...inventoryKeys(), ...nonStorageNamespaceNames().map((entry) => entry.name)]);
+
+      const strangers = targets.flatMap((target) =>
+        namespaceMatches(target.code)
+          .filter((name) => !permitted.has(name))
+          .map((name) => `${target.path}: ${name}`),
+      );
+
+      expect(strangers, NAMESPACE_MESSAGE).toEqual([]);
+    });
+
+    it('is reading something: the four inventory keys and the two non-store names are all found', async () => {
+      const targets = await productionSources();
+
+      const found = new Set(targets.flatMap((target) => namespaceMatches(target.code)));
+
+      for (const key of inventoryKeys()) {
+        expect(found, `${key} is written in production source, so the scan must see it`).toContain(key);
+      }
+      for (const entry of nonStorageNamespaceNames()) {
+        expect(found, `${entry.name} is in ${entry.file}: ${entry.why}`).toContain(entry.name);
+      }
+    });
+
+    /**
+     * The three shapes a prefix scan misses, each a control.
+     *
+     * A sibling with no dot and a sibling namespace are the two Kimi's I5 named; its proposed pattern would have
+     * matched neither, which is why this scans the whole namespace instead of a prefix of it.
+     */
+    const siblings = ['.evil', '_state', 'x.foo'];
+    for (const suffix of siblings) {
+      it(`flags a namespace sibling: <root>${suffix}`, () => {
+        const name = `${namespaceRoot()}${suffix}`;
+        const synthetic: ScanTarget[] = [{ path: 'synthetic/sibling.ts', code: strip(`const k = '${name}';`) }];
+        const permitted = new Set([...inventoryKeys(), ...nonStorageNamespaceNames().map((entry) => entry.name)]);
+
+        const strangers = namespaceMatches(synthetic[0]!.code).filter((found) => !permitted.has(found));
+
+        expect(strangers, `${name} must be reported`).toEqual([name]);
+      });
+    }
+
+    it('does not flag the npm package scope, which is an import path and not a name in any store', () => {
+      const scope: ScanTarget[] = [
+        { path: 'synthetic/imports.ts', code: strip(`import { c } from '@${namespaceRoot()}/api-client';`) },
+      ];
+
+      expect(namespaceMatches(scope[0]!.code)).toEqual([]);
+    });
+
+    /**
+     * MA22 itself, as a case rather than as a harness result.
+     *
+     * The dormant write with a computed method name: the method scan finds nothing, because the literal is not
+     * in the text, and the namespace scan finds the key, because the key's name is. This is the measurement that
+     * justified a third instrument, kept where a reader will see it.
+     */
+    it('catches the dormant write with a computed method name that both other instruments miss', () => {
+      const dormant = strip(
+        `const method = 'set' + 'Item';\n` +
+          `if (globalThis.navigator.userAgent.includes('ZZZ-NEVER-MATCHES')) {\n` +
+          `  (session as unknown as Record<string, (k: string, v: string) => void>)[method]('${namespaceRoot()}.auth.dormant', state);\n` +
+          `}`,
+      );
+      const target: ScanTarget[] = [{ path: 'synthetic/dormant.ts', code: dormant }];
+
+      for (const method of WRITE_METHODS) {
+        for (const pattern of method.patterns) {
+          expect(hits(target, pattern), `${method.name}: a computed name is not in the text`).toEqual([]);
+        }
+      }
+      const permitted = new Set([...inventoryKeys(), ...nonStorageNamespaceNames().map((entry) => entry.name)]);
+      expect(namespaceMatches(dormant).filter((name) => !permitted.has(name))).toEqual([
+        `${namespaceRoot()}.auth.dormant`,
+      ]);
     });
   });
 
@@ -962,6 +1154,18 @@ describe('sessionStorageHoldsOnlyTheL16Items', () => {
   });
 
   describe('nothing R29 forbids is in the store, as a key or as a value (AC5, AC11)', () => {
+    /**
+     * WHICH NEEDLES ARE LIVE, said here rather than left to be counted.
+     *
+     * Live in this flow: the access token, the ID token whole and by segment, its decoded claims, and the
+     * authorization code. Those four this file really creates, so their absence is a measurement.
+     *
+     * Forward-looking: the password, the recovery code, the API key, the email address and the account UUID. No
+     * flow here produces one - passwords are SAS-hosted (L2) and no screen in the package collects the others
+     * yet - so their absence proves only that the sweep read the surface. They stay in the list because R29
+     * names them and a sweep that drops a needle today will not notice when tomorrow's screens can produce it.
+     * The two sentinel cases below are what make the search credible in the meantime.
+     */
     it('finds no token, code or secret among the four values at their fullest', async () => {
       remember(A_REAL_TARGET);
       const triple = await startSignIn();
@@ -1144,8 +1348,11 @@ describe('sessionStorageHoldsOnlyTheL16Items', () => {
   describe('repetition and resumption add no fifth key (AC1, AC2, AC8)', () => {
     it('holds only inventory keys across two sign-ins in one tab', async () => {
       const watch = watchStorage();
-      await completeSignIn();
-      mounted = undefined;
+      const first = await completeSignIn();
+      // Unmounted, not merely forgotten (Kimi I3). `arriveAt` overwrites `mounted` without unmounting, so
+      // dropping the reference would leave a live CallbackScreen running its effects while the next flow's store
+      // assertions are taken - and a write from the orphan would be attributed to the flow under test.
+      first.arrival.unmount();
 
       await completeSignIn();
 
@@ -1166,12 +1373,12 @@ describe('sessionStorageHoldsOnlyTheL16Items', () => {
       remember(A_REAL_TARGET);
       const first = await startSignIn();
 
-      await arriveAt(`/callback?code=${AUTHORIZATION_CODE}&state=not-the-stored-state`, () =>
+      const discarded = await arriveAt(`/callback?code=${AUTHORIZATION_CODE}&state=not-the-stored-state`, () =>
         jsonResponse(tokensFor(first.nonce)),
       );
       expectOnlyInventory(sweepSession(), 'after the discard');
       expect(keysIn(sweepSession()), 'the discard deleted nothing').toEqual(inventoryKeys());
-      mounted = undefined;
+      discarded.unmount();
 
       const second = await startSignIn();
       expectOnlyInventory(sweepSession(), 'after the fresh sign-in');
@@ -1189,8 +1396,8 @@ describe('sessionStorageHoldsOnlyTheL16Items', () => {
 
     it('holds only inventory keys when a callback is replayed after it succeeded', async () => {
       const watch = watchStorage();
-      const { triple } = await completeSignIn();
-      mounted = undefined;
+      const { triple, arrival } = await completeSignIn();
+      arrival.unmount();
 
       await arriveAt(`/callback?code=${AUTHORIZATION_CODE}&state=${triple.state}`, () =>
         jsonResponse(tokensFor(triple.nonce)),
