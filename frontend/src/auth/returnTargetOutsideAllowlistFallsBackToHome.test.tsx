@@ -352,6 +352,12 @@ function visibleOutcome(arrival: Arrival): {
  * happened, which is also what a broken test asserts. Measuring the harm first turns "it landed on home" into
  * "it landed on home INSTEAD OF somewhere real". Every answer it gives is react-router 8.4.0's, and if a future
  * version answers differently these cases fail loudly rather than leaving the rows quietly meaningless.
+ *
+ * **It measures the BARE ROUTER, not the screen** (Kimi I4). `CallbackScreen` navigates through `useNavigate()`,
+ * which additionally resolves a relative path against the current route - which is why `home` and `./home` behave
+ * differently from `/home` there. Every shape in the table below carries a leading slash except the external ones,
+ * which throw either way, so the distinction cannot change any answer here; the claim is nonetheless the narrower
+ * one, because an instrument should be described as what it is.
  */
 async function routerOutcomeFor(
   target: string,
@@ -383,6 +389,12 @@ async function routerOutcomeFor(
  * lands on home proves nothing in a harness that could not have gone anywhere else. A baseline captured once in
  * another case would be cheaper and is forbidden: T23 lost a day to order-dependent state between cases, so each
  * row stands on its own.
+ *
+ * **`clearedDuringRefusal` exists because a mutant escaped without it** (Kimi I2, self-review S2). The rows assert
+ * the store is EMPTY after a refusal - and an empty store is also what `sessionStorage.clear()` produces, so a
+ * `takeReturnTarget` that wiped everything passed all 57 of them and was caught only by two of T24's cases. The
+ * count is a DELTA measured across each `signInAndLand`, not a total, because this helper clears the store itself
+ * between runs and a raw total would be its own footprint rather than production's.
  */
 async function threeFlows(shape: string): Promise<{
   refused: ReturnType<typeof visibleOutcome>;
@@ -390,17 +402,21 @@ async function threeFlows(shape: string): Promise<{
   honoured: ReturnType<typeof visibleOutcome>;
   heldAfterRefusal: string | null;
   storeAfterRefusal: string[];
+  clearedDuringRefusal: number;
 }> {
+  const watch = watchStorage();
   const run = async (prepare: () => void) => {
     globalThis.sessionStorage.clear();
     vi.resetModules();
     prepare();
+    const clearsBefore = watch.clear.mock.calls.length;
     const arrival = await signInAndLand();
     const outcome = visibleOutcome(arrival);
     const held = arrival.holder.accessToken.current();
     const store = storedKeys();
+    const cleared = watch.clear.mock.calls.length - clearsBefore;
     arrival.unmount();
-    return { outcome, held, store };
+    return { outcome, held, store, cleared };
   };
 
   const refusedRun = await run(() => seedRaw(shape));
@@ -413,6 +429,7 @@ async function threeFlows(shape: string): Promise<{
     honoured: honouredRun.outcome,
     heldAfterRefusal: refusedRun.held,
     storeAfterRefusal: refusedRun.store,
+    clearedDuringRefusal: refusedRun.cleared,
   };
 }
 
@@ -1307,6 +1324,10 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         expect(flows.heldAfterRefusal).toBe(ACCESS_TOKEN);
         // AC5/L16: a refused target is used up, not left for the next sign-in. AC7: and nothing else is there.
         expect(flows.storeAfterRefusal).toEqual([]);
+        // AC21: used up by a REMOVAL, not by wiping the store. An empty store satisfies the line above either way,
+        // and `clear()` would take R29's mid-task form input with it - the other half of L16's carve-out, which
+        // this module has no business touching (Kimi I2).
+        expect(flows.clearedDuringRefusal, 'the whole store is never cleared').toBe(0);
         // AC2: refused by the real exported predicate, not by a list rebuilt beside it (T24 F6).
         expect(isAllowlistedTarget(shape)).toBe(false);
       });
