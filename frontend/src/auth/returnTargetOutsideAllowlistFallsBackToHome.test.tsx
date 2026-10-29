@@ -1274,6 +1274,24 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         routerWould: { kind: 'miss' },
       },
       {
+        // NO LEADING SLASH, which is the family a mutation harness found missing: a membership rule that stripped
+        // a leading slash from both sides survived the whole table, because nothing in it had a target without
+        // one. T18 measured what the router then does - a relative target resolves against the CURRENT route, so
+        // `home` from the callback becomes `/app/callback/home` and lands on the catch-all **silently**. That
+        // silence is the reason T24-D8 fixed the stored form as a path WITH a leading slash, and this row is what
+        // holds the two halves of that decision together.
+        label: 'an allowlisted path with no leading slash (T24-D8)',
+        shape: HOME_PATH,
+        routerWould: { kind: 'miss' },
+      },
+      {
+        // Two segments, same property. A one-segment witness would be satisfied by a rule that only mishandled
+        // single-segment paths.
+        label: 'a two-segment allowlisted path with no leading slash (T24-D8)',
+        shape: A_REAL_TARGET.slice(1),
+        routerWould: { kind: 'miss' },
+      },
+      {
         // Leading whitespace, which no `useLocation().pathname` produces and a hand-edited store can. The router
         // resolves it RELATIVE to the current route, so it lands on the catch-all - and that is the whole harm of
         // a trim: trimmed, it becomes an absolute path the router honours. T24 found that a padded HOME value
@@ -1328,7 +1346,7 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
 
         expect(kinds.filter((kind) => kind === 'refuse')).toHaveLength(7);
         expect(kinds.filter((kind) => kind === 'reach')).toHaveLength(9);
-        expect(kinds.filter((kind) => kind === 'miss')).toHaveLength(5);
+        expect(kinds.filter((kind) => kind === 'miss')).toHaveLength(7);
       });
     });
 
@@ -1422,6 +1440,8 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         { refused: `${A_REAL_TARGET}/`, honoured: A_REAL_TARGET, differsBy: 'one trailing slash, two segments' },
         { refused: '/HOME', honoured: `/${HOME_PATH}`, differsBy: 'case' },
         { refused: `  ${A_REAL_TARGET}`, honoured: A_REAL_TARGET, differsBy: 'two leading spaces' },
+        { refused: HOME_PATH, honoured: `/${HOME_PATH}`, differsBy: 'one leading slash' },
+        { refused: A_REAL_TARGET.slice(1), honoured: A_REAL_TARGET, differsBy: 'one leading slash, two segments' },
       ])('refuses $refused and honours $honoured, differing by $differsBy', ({ refused, honoured }) => {
         expect(isAllowlistedTarget(refused)).toBe(false);
         expect(isAllowlistedTarget(honoured), 'the control: the near miss really is near').toBe(true);
@@ -1541,8 +1561,8 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
       // If this fails because a family was ADDED, raise the number and add the label above. If it fails because
       // one was REMOVED, put it back. The count is the pin, and a count that adjusted itself would pin nothing
       // (Kimi I9).
-      expect(labels).toHaveLength(21);
-      expect(new Set(labels).size, 'and no label is duplicated').toBe(21);
+      expect(labels).toHaveLength(23);
+      expect(new Set(labels).size, 'and no label is duplicated').toBe(23);
     });
   });
 });
