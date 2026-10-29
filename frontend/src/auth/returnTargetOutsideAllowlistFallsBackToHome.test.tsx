@@ -745,23 +745,26 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
       expect((escaped as Error).message).toBe('thrown from the fulfilment handler');
     });
 
-    /** A corrupted value is just a non-member: there is nothing to decode and nothing to repair (AC15). */
-    it.each(['{}', '[object Object]', '', 'null', 'undefined', '/home\u0000', '🙂'])(
-      'returns home for the stored value %j without throwing',
+    /**
+     * A corrupted value is just a non-member: there is nothing to decode and nothing to repair (AC15). Each row
+     * asserts the RETURN VALUE and not merely the absence of a throw, because "it did not throw" is satisfied by
+     * a function that returns the empty string - and the empty string is a member of every prefix-flavoured
+     * allowlist anyone might refactor this into.
+     */
+    it.each(['{}', '[object Object]', '', ' ', 'null', 'undefined', '/home\u0000', '/HOME', '🙂'])(
+      'returns the home path for the stored value %j without throwing',
       (value) => {
         seedRaw(value);
 
-        expect(() => takeReturnTarget()).not.toThrow();
+        let returned: string | undefined;
+        expect(() => {
+          returned = takeReturnTarget();
+        }).not.toThrow();
+
+        expect(returned).toBe(`/${HOME_PATH}`);
         expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY), 'and consumes it').toBeNull();
       },
     );
-
-    /** The same claim, phrased as the return value, so a change to home's spelling cannot pass unnoticed. */
-    it('returns the home path for a corrupted value', () => {
-      seedRaw('{}');
-
-      expect(takeReturnTarget()).toBe(`/${HOME_PATH}`);
-    });
 
     /** A store whose every access throws - blocked site data, some private modes - is treated as no target. */
     it('never throws when the store itself is unreachable', () => {
