@@ -187,9 +187,12 @@ export function CallbackScreen() {
       // `replace` for the same reason `discard` uses it: a completed callback should not be reachable with the
       // back button, which is also what keeps a replayed callback from being a route the visitor can walk back to.
       //
-      // Skipped when the visitor has left (T24-D7). Everything above it still ran: the token is held and the
-      // three items are consumed, because those are module-level facts. Only the navigation is theirs to refuse.
-      if (onScreen.current) navigate(takeReturnTarget(), { replace: true });
+      // Taken before the guard, deliberately. A visitor who has left is not moved (T24-D7), but the target is
+      // still CONSUMED: this callback completed - the token is held, the three items are gone - and L16 calls the
+      // fourth item single-use and deleted at callback. Guarding the take as well would leave it behind, and the
+      // next sign-in in this tab would be sent somewhere the visitor was going in a journey they abandoned.
+      const target = takeReturnTarget();
+      if (onScreen.current) navigate(target, { replace: true });
       // Two arguments rather than a trailing .catch, so that a failure INSIDE this handler is not then handed to
       // `discard` a second time. Both calls would navigate to the same place, so nothing visible would differ -
       // but a screen whose whole design is a single-invocation latch should not carry a second way to run its

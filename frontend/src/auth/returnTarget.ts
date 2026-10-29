@@ -49,8 +49,12 @@ export const RETURN_TARGET_KEY = 'themistra.auth.return_to';
  * honoured again. A test scans this file for a module-scope use for that reason.
  */
 function allowlistedTargets(): Set<string> {
+  // A parameterised route is one whose SEGMENT begins with a colon, which is react-router's own grammar for a
+  // dynamic segment - not any path containing a colon anywhere (T24-D5, Kimi I4). `invoices/:id` is excluded;
+  // a literal `time/12:30` would be a static path and would stay legal, because in that grammar it is one.
+  const parameterised = (path: string) => path.split('/').some((segment) => segment.startsWith(':'));
   return new Set(
-    AUTHENTICATED_ROUTE_PATHS.filter((path) => !path.includes(':')).map((path) => `/${path}`),
+    AUTHENTICATED_ROUTE_PATHS.filter((path) => !parameterised(path)).map((path) => `/${path}`),
   );
 }
 
@@ -72,10 +76,17 @@ export function isAllowlistedTarget(target: string): boolean {
  *
  * Nothing in production calls this yet: R28's redirect (task 41) is its caller, and this exists so that task is a
  * one-line call rather than a design (T24-D2). The input is typed `string` so a non-string caller is a compile
- * error, and it is stored as given - the decision about whether it may be honoured belongs to the read, which is
- * the trust boundary, and making it twice would be two code paths for one rule.
+ * error.
+ *
+ * **A target that could not be honoured is not stored at all, and this silently ignores it.** Authority still
+ * belongs to the read - the route table can change between the write and the read, so the read is the only place
+ * the decision can be final - but authority and filtering are not the same thing, and L3 and L16 are about what
+ * may SIT in storage, not only about what may be acted on. Without this, a caller could park
+ * `/app/invoices/123?token=...` here and it would wait in the store until the callback rejected it. The same
+ * predicate decides both ends, so there is still one rule, checked twice (T24-D15).
  */
 export function rememberReturnTarget(target: string): void {
+  if (!isAllowlistedTarget(target)) return;
   try {
     globalThis.sessionStorage.setItem(RETURN_TARGET_KEY, target);
   } catch {
