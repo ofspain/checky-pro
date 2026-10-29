@@ -1181,6 +1181,13 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
       | { kind: 'reach'; pathname: string; route: string }
       | { kind: 'miss' };
 
+    /**
+     * `routerWould` is the BARE router's answer, not the screen's (Kimi I4, Gap 5). `CallbackScreen` navigates
+     * through `useNavigate()`, which additionally resolves a relative path against the current route - which is
+     * why the `./home` and no-leading-slash rows below are `miss` rather than anything else. The two instruments
+     * are guaranteed to agree only for absolute router paths; every shape here is one, or throws either way.
+     */
+
     const FAMILIES: ReadonlyArray<{ label: string; shape: string; routerWould: RouterWould }> = [
       {
         label: 'an absolute URL on another origin',
@@ -1292,6 +1299,13 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         routerWould: { kind: 'miss' },
       },
       {
+        // The other way a caller writes a relative path, and the router treats it the same: resolved against the
+        // current route, so it lands on the catch-all (Kimi Gap 4).
+        label: 'an explicitly relative allowlisted path (T24-D8)',
+        shape: `./${HOME_PATH}`,
+        routerWould: { kind: 'miss' },
+      },
+      {
         // Leading whitespace, which no `useLocation().pathname` produces and a hand-edited store can. The router
         // resolves it RELATIVE to the current route, so it lands on the catch-all - and that is the whole harm of
         // a trim: trimmed, it becomes an absolute path the router honours. T24 found that a padded HOME value
@@ -1318,7 +1332,7 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
       },
     ];
 
-    describe('what the router would have done, measured first (AC16, T25-D1)', () => {
+    describe('what the BARE ROUTER would have done, measured first (AC16, T25-D1)', () => {
       it.each(FAMILIES)('$label', async ({ shape, routerWould }) => {
         const outcome = await routerOutcomeFor(shape);
 
@@ -1340,13 +1354,34 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         }
       });
 
+      /**
+       * The instrument's own positive control (Kimi Gap 2's alternative).
+       *
+       * Every other use of `routerOutcomeFor` expects a throw, a catch-all, or a real route the allowlist then
+       * refuses - so nothing above proves it can report a SUCCESSFUL honoured navigation. An instrument that
+       * silently reported nothing would make all 24 counterfactuals read as refusals, and every one of them would
+       * still pass. (Kimi also asked for a compile-time guard on the dynamic import; that was declined at the
+       * Phase 9 gate with a measurement - `await import()` is typed, and renaming `appRoutes` gives TS2339 here
+       * and in T24's `arriveAt`. This case is the part of that finding worth having.)
+       */
+      it('reports a real navigation too, so a broken instrument cannot read as a refusal', async () => {
+        expect(await routerOutcomeFor(`/${HOME_PATH}`)).toEqual({
+          pathname: HOME_ROUTE,
+          matched: ['/', HOME_PATH],
+        });
+        expect(await routerOutcomeFor(A_REAL_TARGET)).toEqual({
+          pathname: A_REAL_TARGET_ROUTE,
+          matched: ['/', 'account/sessions'],
+        });
+      });
+
       /** The split itself, so a row cannot be quietly reclassified to make a weaker assertion pass. */
       it('is three kinds of risk, and the sole-defence kind is the larger half', () => {
         const kinds = FAMILIES.map((family) => family.routerWould.kind);
 
         expect(kinds.filter((kind) => kind === 'refuse')).toHaveLength(7);
         expect(kinds.filter((kind) => kind === 'reach')).toHaveLength(9);
-        expect(kinds.filter((kind) => kind === 'miss')).toHaveLength(7);
+        expect(kinds.filter((kind) => kind === 'miss')).toHaveLength(8);
       });
     });
 
@@ -1425,6 +1460,25 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
     });
 
     /**
+     * T24-D8's contract, stated as a round trip rather than inferred from the table (Kimi Gap 6).
+     *
+     * The stored form is a router-relative path WITH a leading slash. The `is not even storable` rows already
+     * cover both no-leading-slash shapes, but they cover them as two of twenty-four refusals; this says the
+     * contract itself, in one case, in the direction a caller reads it.
+     */
+    it('stores a path with a leading slash and refuses the same path without one (T24-D8)', () => {
+      rememberReturnTarget(HOME_PATH);
+      expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY), 'no leading slash, not stored').toBeNull();
+
+      rememberReturnTarget(`/${HOME_PATH}`);
+
+      expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY), 'the same path, with one').toBe(
+        `/${HOME_PATH}`,
+      );
+      expect(takeReturnTarget()).toBe(`/${HOME_PATH}`);
+    });
+
+    /**
      * The near misses, as pairs, from one harness.
      *
      * This is what makes "membership, not a prefix test" OBSERVABLE rather than stated. Each pair differs by the
@@ -1454,13 +1508,18 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
        * implementation from a correct one - the trimmed value is the fallback either way - so this shape is the
        * witness that can.
        */
-      it('sends a whitespace-padded target home, where a trim would have honoured it', async () => {
-        const flows = await threeFlows(`  ${A_REAL_TARGET}`);
+      it.each([`  ${A_REAL_TARGET}`, `  /${HOME_PATH}`, `/${HOME_PATH}  `])(
+        'sends %j home, where a trim would have honoured it',
+        async (padded) => {
+          const flows = await threeFlows(padded);
 
-        expect(flows.refused.pathname).toBe(HOME_ROUTE);
-        expect(flows.honoured.pathname, 'the control: trimmed, this is a legal target').toBe(A_REAL_TARGET_ROUTE);
-        expect(flows.refused).toEqual(flows.absent);
-      });
+          expect(flows.refused.pathname).toBe(HOME_ROUTE);
+          expect(flows.honoured.pathname, 'the control: an honoured target still works here').toBe(
+            A_REAL_TARGET_ROUTE,
+          );
+          expect(flows.refused).toEqual(flows.absent);
+        },
+      );
     });
 
     /**
@@ -1561,8 +1620,18 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
       // If this fails because a family was ADDED, raise the number and add the label above. If it fails because
       // one was REMOVED, put it back. The count is the pin, and a count that adjusted itself would pin nothing
       // (Kimi I9).
-      expect(labels).toHaveLength(23);
-      expect(new Set(labels).size, 'and no label is duplicated').toBe(23);
+      //
+      // The ten beyond the fourteen the todo list named, and where each came from (Kimi Gap 7):
+      //   a trailing slash, one segment and two     - Kimi F4, upgraded at the Phase 4 gate on measurement
+      //   the wrong case                            - T25-D4, same measurement
+      //   an encoded separator                      - Kimi F4
+      //   leading whitespace                        - the shape that gives a trim a demonstrable harm
+      //   no leading slash, one segment and two     - the family mutant M8 found missing
+      //   an explicitly relative path               - Kimi Gap 4
+      //   query and fragment together               - Kimi I7, a combination inside the `reach` class
+      //   more than one of the above in one string  - Kimi F7
+      expect(labels).toHaveLength(24);
+      expect(new Set(labels).size, 'and no label is duplicated').toBe(24);
     });
   });
 });
