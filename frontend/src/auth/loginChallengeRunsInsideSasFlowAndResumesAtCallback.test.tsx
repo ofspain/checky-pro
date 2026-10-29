@@ -1254,6 +1254,10 @@ describe('a refused sign-in is indistinguishable from any other failure (AC6, R1
     const rendered = [...document.body.querySelectorAll('h1, p, button, [role=status]')]
       .map((node) => node.textContent?.trim() ?? '')
       .filter((text) => text.length > 0);
+    // The selector must have FOUND something, or this case passes having read nothing - the vacuity shape
+    // this file's header warns about, found here in this file's own first draft. The sign-in screen renders
+    // a heading, an explanation, a button and a status region, so four is the floor.
+    expect(rendered.length).toBeGreaterThanOrEqual(4);
     expect(rendered.filter((text) => !known.has(text))).toEqual([]);
     arrival.unmount();
   });
