@@ -22,6 +22,7 @@ kinds, one per clause, plus the structural ones:
   MC08-MC11  the TIMING diverges - a delay before the sentence              (AC5)
   MC12-MC14  a gate, a timer in auth/, a leak of the description   (AC9, AC6, AC3)
   MC15       written to escape: a delay for a state no test drives          (AC5)
+  MC17       the description, percent-encoded into a store                   (AC3)
 
 MC08-MC11 ARE THIS TASK'S REASON TO EXIST. No earlier file in the package asserts
 anything about WHEN the sentence appears, so every one of these four passes T16-T28
@@ -37,10 +38,14 @@ Unlike T28's MB20, however, this one is NOT caught by a source scan either - a
 `setTimeout` inside `CallbackScreen` is caught by AC6's timer scan, which is exactly
 why that scan covers the whole tree rather than an "identity path" file list (Kimi F5).
 
-MC03 IS THE ENCODING MUTANT, and it is here because the instrument it tests was very
-nearly blind. It writes `error_description` into the sign-in URL, where
-`URLSearchParams` encodes each space as `+`. The leak sweep's first draft compared raw
-text to a raw needle and would have reported CLEAN; `encodings()` is what catches it.
+MC03 AND MC17 ARE THE ENCODING PAIR, and the distinction cost a self-review finding.
+MC03 writes `error_description` into the SIGN-IN URL, where `URLSearchParams` encodes
+each space as `+`. It is killed - but NOT by the encoding normalisation: the URL now
+carries a query string, so AC1's absolute `search === ''` kills it on its own, and
+MC03 therefore says nothing about whether `encodings()` works. MC17 is the mutant that
+isolates it: the description is percent-encoded into SESSION STORAGE, a surface with no
+absolute assertion on it, so the only thing that can see it is the sweep searching the
+decoded form. Measured: with `encodings()` removed, MC17 SURVIVES all 46 cases.
 
 HOW TO READ THE OUTPUT. Each line reports the verdict and, separately, whether T29's
 OWN file caught the mutant or only an inherited case did. Those are different claims
@@ -93,6 +98,10 @@ MUTANTS = [
      "        {notice !== null && status === 'idle'\n"
      "          ? t('signIn.discarded') + ' Your account may be locked.'\n"
      "          : null}"),
+
+    ("MC17 ISOLATES THE ENCODING: the description is percent-encoded into session storage", CALLBACK, NOTICE,
+     NOTICE + "\n      globalThis.sessionStorage.setItem('themistra.auth.why',"
+     " encodeURIComponent(params.get('error_description') ?? ''));"),
 
     # --- MC05-MC06: the REDIRECT diverges (AC1, AC2) -----------------------------------------------------
     ("MC05 one state lands somewhere else", CALLBACK, ERROR_BRANCH,
