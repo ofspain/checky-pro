@@ -169,7 +169,21 @@ const FORBIDDEN_PACKAGES = [
  * `code_challenge` is a legitimate and frequent name, and folding it in here would make the permitted table
  * longer than the finding it protects.
  */
-const MFA_IDENTIFIER_SOURCE = 'mfa|totp|recovery|authenticator|one[-_ ]?time|otp|2fa|webauthn|passkey';
+const MFA_IDENTIFIER_SOURCE =
+  'mfa|totp|recovery|authenticator|one[-_ ]?time|otp|2fa|tfa|multi[-_ ]?factor|security[-_ ]?key'
+  + '|backup[-_ ]?code|webauthn|passkey|fido';
+
+/**
+ * `verification code` is DELIBERATELY NOT in that list, which is the one judgement call in it.
+ *
+ * It belongs to two domains at once. It is an MFA term, and it is also what R3-R5's email-verification flow
+ * would call its own artefact — and that flow is legitimate, specified, and owned by tasks 48-51. A scan that
+ * fired on it would block a permitted feature while reporting an L2 breach, which is T26's lesson in its exact
+ * form: a guard must not forbid what the spec permits. Measured: `verification code` has no hit in production
+ * source today, but `verif` has forty, every one of them PKCE's `codeVerifier`/`isValidCodeVerifier` or the
+ * email-verification route and client names. The narrower terms above were each measured to zero hits before
+ * being added, so none of them fires on anything that exists.
+ */
 
 /**
  * A FRESH regex per use, never one shared constant, and that is not fussiness.
@@ -239,6 +253,9 @@ const CREDENTIAL_SOURCE_PATTERNS: ReadonlyArray<{ pattern: RegExp; what: string 
   { pattern: /type\s*=\s*["'{]?\s*password/gi, what: 'a password input' },
   { pattern: /one-time-code/gi, what: "an `autoComplete=\"one-time-code\"` input" },
   { pattern: /current-password|new-password/gi, what: 'a password autofill hint' },
+  // Broad ON PURPOSE, and it will fire on a future search or preferences form (Kimi Gap 5). That is the
+  // intended friction: L2 puts ALL credential collection on the server, so a production form is a thing
+  // somebody should have to justify in this table rather than add quietly.
   { pattern: /<\s*form\b/gi, what: 'a form element' },
 ];
 
@@ -376,7 +393,10 @@ function forbiddenPackagesIn(dependencies: Record<string, string>): string[] {
 /** Every bare import specifier a module declares, so a forbidden package is caught at its use too. */
 function importedSpecifiers(targets: ScanTarget[]): Hit[] {
   const found: Hit[] = [];
-  const pattern = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g;
+  // `require` as well as `from`/`import(...)`: a guard whose subject is structural absence should not assume
+  // the module system (Kimi Gap 1). No production file uses `require` today and ESM is the project's style,
+  // which is exactly why the omission would have gone unnoticed until the one file that did.
+  const pattern = /(?:from|import|require)\s*\(?\s*['"]([^'"]+)['"]/g;
   for (const target of targets) {
     for (const match of target.code.matchAll(pattern)) {
       const specifier = match[1] ?? '';
@@ -392,7 +412,13 @@ function importedSpecifiers(targets: ScanTarget[]): Hit[] {
 // Instrument 4 — the catalogue scan
 // ---------------------------------------------------------------------------------------------------------
 
-/** Every user-facing string in the SPA, flattened out of the catalogue with its key path. */
+/**
+ * Every user-facing string in the SPA, flattened out of the catalogue with its key path.
+ *
+ * ENGLISH ONLY, because `catalogue.ts` exports exactly one locale today (O3: English at launch, a missing key
+ * falls back to English rather than to a raw key). **A second locale must be added here**, or a translated
+ * MFA string would pass a scan that never looked at it (Kimi Gap 4).
+ */
 function catalogueStrings(): Array<{ key: string; value: string }> {
   const flat: Array<{ key: string; value: string }> = [];
   const visit = (node: unknown, path: string[]): void => {
@@ -891,6 +917,37 @@ describe('no credential input and no second-factor logic ship in the SPA (AC2, A
 
   it('CONTROL: the manifest check fails on a synthetic dependency', () => {
     expect(forbiddenPackagesIn({ react: '19.3.1', otpauth: '9.0.0' })).toEqual(['otpauth']);
+  });
+
+  it('CONTROL: the import scan catches a CommonJS require as well as an import', () => {
+    // Kimi Gap 1. Measured before the fix: the old pattern matched `react` out of this file and missed
+    // `otpauth` entirely, because it only looked for `from` and `import`.
+    const synthetic: ScanTarget[] = [{
+      path: 'auth/legacy.ts',
+      code: strip("const otp = require('otpauth');\nimport React from 'react';"),
+    }];
+    const specifiers = importedSpecifiers(synthetic).map((row) => row.hit);
+    expect(specifiers).toContain('otpauth');
+    expect(specifiers).toContain('react');
+  });
+
+  it('CONTROL: the identifier scan catches the second-factor synonyms, and not the email-verification one', () => {
+    const synthetic: ScanTarget[] = [{
+      path: 'account/Factors.tsx',
+      code: strip('const label = "Security key"; const other = "backup code"; const f = "FIDO2";'),
+    }];
+    const hits = unexplainedHits(hitsOf(synthetic, mfaIdentifiers())).join(' ');
+    expect(hits).toContain('security key');
+    expect(hits).toContain('backup code');
+    expect(hits).toContain('fido');
+
+    // And the deliberate omission, held to a case so it cannot be "fixed" without reading why: R3-R5's
+    // email-verification flow is permitted and is tasks 48-51's, so this must NOT fire.
+    const permitted: ScanTarget[] = [{
+      path: 'auth/VerifyEmail.tsx',
+      code: strip('const copy = "Enter the verification code we emailed you.";'),
+    }];
+    expect(unexplainedHits(hitsOf(permitted, mfaIdentifiers()))).toEqual([]);
   });
 
   it('CONTROL: the scan refuses an empty tree rather than reporting clean', () => {
@@ -1452,6 +1509,35 @@ describe('the resumption announces its status, and its focus obligation is unmet
     expect(document.activeElement).toBe(button);
     expect(button.getAttribute('aria-disabled')).toBe('true');
   });
+
+  it('the sign-in control stays keyboard-operable while it is busy (structural, see why)', async () => {
+    watchHandover();
+    const container = await renderSignIn();
+    const button = signInButton(container);
+
+    // Kimi Gap 7, implemented STRUCTURALLY rather than as the suggested key event, because measurement said
+    // the suggested form would be inert: jsdom implements no default activation behaviour for a button, so a
+    // dispatched Enter or Space `keydown` fires ZERO click events (measured, 0 of 2). A case asserting that
+    // pressing Enter hands over would pass against a button that nothing could activate.
+    //
+    // What IS verifiable here is the property that makes keyboard activation possible, and it is the exact
+    // property at risk: `SignInScreen.tsx:54-56` uses `aria-disabled` rather than `disabled` BECAUSE a
+    // focused element that becomes disabled drops a keyboard user to <body>, and this is the only control on
+    // the screen. A regression to `disabled` would break that silently, and these three assertions catch it.
+    expect(button.disabled).toBe(false);
+    expect(button.tabIndex).toBeGreaterThanOrEqual(0);
+    expect(button.type).toBe('button');
+
+    await act(async () => {
+      button.click();
+    });
+    await turn();
+
+    // Still operable AFTER the hand-over starts: aria-disabled marks it busy without removing it from the
+    // tab order. Real activation across the full-page navigation is `oidcRoundTripEndToEnd`'s, unowned.
+    expect(button.disabled).toBe(false);
+    expect(button.tabIndex).toBeGreaterThanOrEqual(0);
+  });
 });
 
 // =========================================================================================================
@@ -1515,6 +1601,14 @@ describe('the authorize request negotiates no factor (AC10, R9, L2)', () => {
 // =========================================================================================================
 
 describe('every instrument in this file has been proven able to report DIRTY (AC11, T22-D14)', () => {
+  /**
+   * A SIGNPOST, NOT EVIDENCE — said here as plainly as possible (self-review S4, Kimi Gap 6).
+   *
+   * This case cannot fail for the right reason. It fails only if somebody deletes a row without updating the
+   * count, which is precisely what it is for. The real proof of every instrument is the control case beside
+   * it, and those are the eleven entries this table names. Do not read a green run here as evidence that the
+   * instruments work; read the controls.
+   */
   it('names each instrument and the case that proves it fires', () => {
     // Not decoration. A reader who deletes a control has to delete a row from this table too, and the table
     // says what the control was for - which is the only thing that has ever stopped a control being tidied
