@@ -12,11 +12,18 @@ Run it from the repository root; it locates `frontend/` relative to its own path
 
 WHY THE LIST LOOKS LIKE THIS. T26 guards an EXHAUSTIVE claim, so a mutant is not a wrong
 answer - it is an extra item. The families are the ways something gets into a store it should
-not be in: a fifth key (MA1-MA4), a third writing module (MA5-MA6), the three indirect call
-forms a text scan misses (MA7-MA9), a wrong store or a wipe (MA10-MA12), a forbidden surface
-(MA13-MA15), a secret hidden under a legitimate key (MA16-MA18), and the transient write that
-leaves a clean store behind it (MA19-MA20). MA12 is the `clear()` mutant that escaped T25's
-own rejection rows; it is here because this file is the one that should catch it.
+not be in: a fifth key (MA1-MA4), a third writing module or a reader that starts writing
+(MA5-MA6), the three indirect call forms a text scan misses (MA7-MA9), a wrong store or a wipe
+(MA10-MA13), a forbidden surface named (MA14-MA16), a secret hidden under a legitimate key
+(MA17-MA18), the transient write that leaves a clean store behind it (MA19-MA20), and two
+written to ESCAPE (MA21-MA22). MA12 is the `clear()` mutant that escaped T25's own rejection
+rows; it is here because this file is the one that should catch it. MA22 is the dormant write
+with a computed method name: it was killed only by a NEIGHBOUR until the namespace scan landed,
+and that one column change is why the third instrument exists.
+
+THE BASELINE TO EXPECT, so a run can be read without the artifacts: auth suite 726 passed / 0
+failed, T26's own file 50 / 0, every mutant KILLED and every one of them `own`. A SURVIVED or an
+INHERITED-ONLY line is a finding.
 
 HOW TO READ THE OUTPUT. Two columns, two different claims. The verdict says the mutant was
 caught by SOMETHING in the auth suite; `own` says T26's own file caught it, and

@@ -667,12 +667,16 @@ function namespaceRoot(): string {
 /**
  * Every namespace literal in a body of code.
  *
- * The lookbehind drops `@themistra/api-client`, which is the npm package scope in an import path and not a name
- * in any store - measured: three production files carry it (`api/client.ts`, `api/sessionBoundary.ts`,
- * `auth/codeExchange.ts`) and nothing else about them is relevant here.
+ * The lookbehind drops two shapes that are not names in any store. `@` drops the npm package scope
+ * `@<root>/api-client` - measured: three production files carry it (`api/client.ts`, `api/sessionBoundary.ts`,
+ * `auth/codeExchange.ts`). `/` drops a URL hostname, because `https://<root>.example.com/api` would otherwise be
+ * reported with a message about L16's four items, which would be simply wrong (Kimi Gap 2). That shape cannot
+ * reach production source anyway - `bundleContainsNoSecretEnvKeys` forbids a scheme-qualified address there
+ * under L9, L10 and R58 - so this is about the message a failure would carry, not about a hole. Both have a
+ * control below.
  */
 function namespaceMatches(code: string): string[] {
-  const pattern = new RegExp(`(?<!@)\\b${namespaceRoot()}(?:[.\\w-]+)?`, 'g');
+  const pattern = new RegExp(`(?<![@/])\\b${namespaceRoot()}(?:[.\\w-]+)?`, 'g');
   return [...code.matchAll(pattern)].map((match) => match[0]);
 }
 
@@ -1015,6 +1019,32 @@ describe('sessionStorageHoldsOnlyTheL16Items', () => {
       }
     });
 
+    /**
+     * The structural half of Kimi Gap 1 (its Gap 5), and the honest boundary beside it.
+     *
+     * A third module writing a token to `localStorage` under a key outside the namespace is caught - not by the
+     * namespace scan, which sees no name, but by the method scan, because `setItem` from a file that is not one
+     * of the two permitted writers is a violation whatever store it addresses. What is NOT caught is that write
+     * made from INSIDE a permitted writer, under a non-namespace key, on a path no flow drives: the namespace
+     * scan sees nothing, the method scan permits the file, and the runtime watch never runs. Gap 1's value sweep
+     * covers it the moment the path is driven, and the limitation is stated rather than left to be discovered.
+     */
+    it('reports a third module that writes a secret to localStorage, whatever key it uses', () => {
+      const offender: ScanTarget[] = [
+        {
+          path: 'synthetic/debug-dump.ts',
+          code: strip(`globalThis.localStorage.setItem('debug', '${SENTINEL_VALUE}');`),
+        },
+      ];
+      const setItem = WRITE_METHODS.find((method) => method.name === 'setItem')!;
+
+      expect(namespaceMatches(offender[0]!.code), 'the namespace scan sees no name here').toEqual([]);
+      expect(
+        setItem.patterns.some((pattern) => hits(offender, pattern).length === 1),
+        'the method scan sees the call, which is why a file that is not a permitted writer fails',
+      ).toBe(true);
+    });
+
     it('reports a module that would write an L16 item to localStorage, which is the violation that matters', () => {
       const offender: ScanTarget[] = [
         {
@@ -1085,6 +1115,32 @@ describe('sessionStorageHoldsOnlyTheL16Items', () => {
       ];
 
       expect(namespaceMatches(scope[0]!.code)).toEqual([]);
+    });
+
+    /**
+     * Nor a URL hostname (Kimi Gap 2).
+     *
+     * This is about the message, not a hole: a scheme-qualified address cannot reach production source at all,
+     * because `bundleContainsNoSecretEnvKeys` forbids one there under L9, L10 and R58. But an instrument that
+     * reports a hostname with a sentence about L16's four items is an instrument whose failures cannot be
+     * trusted, and that is worth one lookbehind and one case.
+     */
+    it('does not flag a URL hostname that happens to carry the namespace', () => {
+      const url: ScanTarget[] = [
+        { path: 'synthetic/url.ts', code: strip(`const where = 'https://${namespaceRoot()}.example.test/api';`) },
+      ];
+
+      expect(namespaceMatches(url[0]!.code)).toEqual([]);
+    });
+
+    /** A template literal is text like any other, and the scan is text (Kimi Gap 3). */
+    it('flags a namespace name written inside a template literal', () => {
+      const templated = strip(`const k = \`${namespaceRoot()}.auth.evil\`;`);
+      const permitted = new Set([...inventoryKeys(), ...nonStorageNamespaceNames().map((entry) => entry.name)]);
+
+      expect(namespaceMatches(templated).filter((name) => !permitted.has(name))).toEqual([
+        `${namespaceRoot()}.auth.evil`,
+      ]);
     });
 
     /**
@@ -1176,6 +1232,11 @@ describe('sessionStorageHoldsOnlyTheL16Items', () => {
       expect(keysIn(sweep), 'the control: four values were really there to search').toHaveLength(4);
       expectNoSecretIn(valuesIn(sweep), secretsOf(body), 'in a stored value');
       expectNoSecretIn(keysIn(sweep), secretsOf(body), 'in a stored key');
+      // AC5 says "any stored value", and localStorage is a store (Kimi Gap 1). The assertion is trivially true
+      // over an empty store today; its value is the failure MESSAGE it will carry the day it is not - "a value
+      // R29 forbids was found in localStorage" rather than "expected [] to equal ['debug']".
+      expectNoSecretIn(valuesIn(sweepLocal()), secretsOf(body), 'in localStorage');
+      expectNoSecretIn(keysIn(sweepLocal()), secretsOf(body), 'in a localStorage key');
     });
 
     it('writes no token, code or secret at any point in a successful sign-in', async () => {
@@ -1186,6 +1247,7 @@ describe('sessionStorageHoldsOnlyTheL16Items', () => {
       const written = writtenPairs(watch).flat();
       expect(written.length, 'the control: writes really happened').toBeGreaterThan(0);
       expectNoSecretIn(written, secrets, 'on the write path');
+      expectNoSecretIn(valuesIn(sweepLocal()), secrets, 'in localStorage after a sign-in');
     });
 
     /**
