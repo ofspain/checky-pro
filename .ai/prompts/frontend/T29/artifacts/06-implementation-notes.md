@@ -8,7 +8,7 @@
 | **Consumes** | `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` |
 
-One file, `frontend/src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx` — 1133 lines,
+One file, `frontend/src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx` — 1477 lines,
 **46 cases**, 29 of them controls, twelve `describe` blocks. **No production code changed**, confirmed by
 `git diff --name-only`.
 
