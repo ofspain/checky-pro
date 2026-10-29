@@ -4,11 +4,11 @@ Complete 14-phase prompt workflow for **Task 42** of the `frontend` spec package
 Run the phases in order; each consumes the previous phase's artifact and writes exactly one of its own.
 
 **Task (verbatim, `spec/frontend/tasks.md` task 42):**
-> **Authenticated shell.** A session renders the shell and the authenticated routes. Verifies `unauthenticatedRoutesRedirectToSignIn`. Cites R28.
+> **Authenticated shell.** A session renders the shell and the authenticated routes. Verifies `unauthenticatedRoutesRedirectToSignIn`. Cites R28. Blocked on 173, 174.
 
 **Spec section:** Phase 1 — Auth & account: routes
 
-**Scoped IDs** — requirements: `R28` · locked: derive in Phase 1 · tests: `unauthenticatedRoutesRedirectToSignIn`, `publicRouteSetIsExactlyTheDeclaredSet`
+**Scoped IDs** — requirements: `R28` · locked: derive in Phase 1 · tests: `unauthenticatedRoutesRedirectToSignIn`, `publicRouteSetIsExactlyTheDeclaredSet`, `homeRouteRendersLandingScreenAndManagesFocus`
 
 ## Phases
 

@@ -8,7 +8,7 @@ Run the phases in order; each consumes the previous phase's artifact and writes 
 
 **Spec section:** Phase 1 — Release gate
 
-**Scoped IDs** — requirements: derive in Phase 1 · locked: `L11` · tests: `phase1ScreensPassAccessibilityChecks`
+**Scoped IDs** — requirements: derive in Phase 1 · locked: `L11` · tests: `screensRenderThroughDesignSystemPrimitivesOnly`, `homeRouteRendersLandingScreenAndManagesFocus`, `phase1ScreensPassAccessibilityChecks`
 
 ## Phases
 

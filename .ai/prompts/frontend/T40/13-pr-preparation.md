@@ -18,8 +18,8 @@
 
 - **Scoped requirement IDs:** `R28`
 - **Scoped LOCKED decisions:** `L14`
-- **Named tests (`package.md` §8):** `unauthenticatedRoutesRedirectToSignIn`, `publicRouteSetIsExactlyTheDeclaredSet`, `routesResolveUnderAppPrefixOnly`
-- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/token-claims.md`
+- **Named tests (`package.md` §8):** `unauthenticatedRoutesRedirectToSignIn`, `publicRouteSetIsExactlyTheDeclaredSet`, `homeRouteRendersLandingScreenAndManagesFocus`, `routesResolveUnderAppPrefixOnly`
+- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/payments.yaml`, `contracts/api/token-claims.md`
 - **Standing rules:** `spec/frontend/agents.md` is authoritative — never restate or violate it.
 
 ---

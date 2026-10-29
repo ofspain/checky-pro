@@ -4,7 +4,7 @@ Complete 14-phase prompt workflow for **Task 43** of the `frontend` spec package
 Run the phases in order; each consumes the previous phase's artifact and writes exactly one of its own.
 
 **Task (verbatim, `spec/frontend/tasks.md` task 43):**
-> **Registration accepts 12 characters.** A 12-character password is accepted client-side as advisory. Verifies `registrationAcceptsTwelveAndOneTwentyEightCodePoints`. Cites R1.
+> **Registration accepts 12 characters.** A 12-character password is accepted client-side as advisory. Verifies `registrationAcceptsTwelveAndOneTwentyEightCodePoints`. Cites R1. Blocked on 173.
 
 **Spec section:** Phase 1 — Auth & account: registration and reset
 

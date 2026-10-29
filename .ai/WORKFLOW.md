@@ -11,12 +11,12 @@ framework turns each `tasks.md` task into merged, spec-verified code with a full
 |---|---|---|---|
 | `auth-service` | `auth` | 40 | `.ai/prompts/auth/` |
 | `crypto-service` | `crypto` | 30 | `.ai/prompts/crypto/` |
-| `frontend` | `frontend` | 172 | `.ai/prompts/frontend/` |
+| `frontend` | `frontend` | 174 | `.ai/prompts/frontend/` |
 | `intelligence-service` | `intelligence` | 30 | `.ai/prompts/intelligence/` |
 | `notification-service` | `notification` | 20 | `.ai/prompts/notification/` |
 | `payment-service` | `payment` | 29 | `.ai/prompts/payment/` |
 
-**Total: 321 tasks × 14 phase prompts.** Regenerate with `python3 .ai/generate.py`.
+**Total: 323 tasks × 14 phase prompts.** Regenerate with `python3 .ai/generate.py`.
 
 ## The pipeline
 

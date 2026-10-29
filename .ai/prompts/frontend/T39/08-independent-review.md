@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** `R22`
 - **Scoped LOCKED decisions:** `L18`
 - **Named tests (`package.md` §8):** `failedRenewalTriggersCleanReauthWithoutHalfSession`, `signOutPropagatesToAllTabs`, `reusedRefreshOrFailedRenewalTriggersCleanReauth`
-- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/token-claims.md`
+- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/payments.yaml`, `contracts/api/token-claims.md`
 - **Standing rules:** `spec/frontend/agents.md` is authoritative — never restate or violate it.
 
 ---

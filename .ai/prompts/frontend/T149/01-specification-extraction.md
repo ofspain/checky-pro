@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** `R44`
 - **Scoped LOCKED decisions:** none cited inline — derive them in Phase 1 from `design.md` §4a
 - **Named tests (`package.md` §8):** `claimShowsItsEvidence`, `claimantStatementSeparatedFromFacts`, `claimStatusShownForEachClaim`
-- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/token-claims.md`
+- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/payments.yaml`, `contracts/api/token-claims.md`
 - **Standing rules:** `spec/frontend/agents.md` is authoritative — never restate or violate it.
 
 ---

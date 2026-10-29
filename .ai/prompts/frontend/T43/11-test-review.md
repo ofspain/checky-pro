@@ -12,14 +12,14 @@
 | **Produces** | `artifacts/11-test-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 43):**
-> **Registration accepts 12 characters.** A 12-character password is accepted client-side as advisory. Verifies `registrationAcceptsTwelveAndOneTwentyEightCodePoints`. Cites R1.
+> **Registration accepts 12 characters.** A 12-character password is accepted client-side as advisory. Verifies `registrationAcceptsTwelveAndOneTwentyEightCodePoints`. Cites R1. Blocked on 173.
 
 **Spec package:** `spec/frontend/` → `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
 - **Scoped requirement IDs:** `R1`
 - **Scoped LOCKED decisions:** none cited inline — derive them in Phase 1 from `design.md` §4a
 - **Named tests (`package.md` §8):** `registrationRejectsPasswordsOutsideTwelveToOneTwentyEightCodePoints`, `registrationAcceptsTwelveAndOneTwentyEightCodePoints`, `passwordLengthCountsCodePoints`
-- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/token-claims.md`
+- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/payments.yaml`, `contracts/api/token-claims.md`
 - **Standing rules:** `spec/frontend/agents.md` is authoritative — never restate or violate it.
 
 ---

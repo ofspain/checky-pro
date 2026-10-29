@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** none cited inline — derive them in Phase 1 from `requirements.md`
 - **Scoped LOCKED decisions:** `L14`
 - **Named tests (`package.md` §8):** `routesResolveUnderAppPrefixOnly`
-- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/token-claims.md`
+- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/payments.yaml`, `contracts/api/token-claims.md`
 - **Standing rules:** `spec/frontend/agents.md` is authoritative — never restate or violate it.
 
 ---

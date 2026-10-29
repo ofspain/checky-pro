@@ -12,14 +12,14 @@
 | **Produces** | `artifacts/12-specification-verification.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 42):**
-> **Authenticated shell.** A session renders the shell and the authenticated routes. Verifies `unauthenticatedRoutesRedirectToSignIn`. Cites R28.
+> **Authenticated shell.** A session renders the shell and the authenticated routes. Verifies `unauthenticatedRoutesRedirectToSignIn`. Cites R28. Blocked on 173, 174.
 
 **Spec package:** `spec/frontend/` → `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
 - **Scoped requirement IDs:** `R28`
 - **Scoped LOCKED decisions:** none cited inline — derive them in Phase 1 from `design.md` §4a
-- **Named tests (`package.md` §8):** `unauthenticatedRoutesRedirectToSignIn`, `publicRouteSetIsExactlyTheDeclaredSet`
-- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/token-claims.md`
+- **Named tests (`package.md` §8):** `unauthenticatedRoutesRedirectToSignIn`, `publicRouteSetIsExactlyTheDeclaredSet`, `homeRouteRendersLandingScreenAndManagesFocus`
+- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/payments.yaml`, `contracts/api/token-claims.md`
 - **Standing rules:** `spec/frontend/agents.md` is authoritative — never restate or violate it.
 
 ---

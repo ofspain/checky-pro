@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** `R12`
 - **Scoped LOCKED decisions:** none cited inline — derive them in Phase 1 from `design.md` §4a
 - **Named tests (`package.md` §8):** `disableMfaRequiresPasswordAndCode`
-- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/token-claims.md`
+- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/payments.yaml`, `contracts/api/token-claims.md`
 - **Standing rules:** `spec/frontend/agents.md` is authoritative — never restate or violate it.
 
 ---
