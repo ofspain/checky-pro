@@ -339,8 +339,15 @@ function moduleScopeUsesOfTheRouteTable(source: string): string[] {
   const found: string[] = [];
   let depth = 0;
   for (const line of strip(source).split('\n')) {
-    const isImport = line.trimStart().startsWith('import');
-    if (depth === 0 && !isImport && /\b(?:AUTHENTICATED_ROUTE_PATHS|HOME_PATH)\b/.test(line)) {
+    const trimmed = line.trimStart();
+    // An import and a RE-EXPORT both name the binding without reading it: `export { X } from './y'` and
+    // `export { X }` are wired up by the module graph and never evaluated, so neither can touch the temporal
+    // dead zone this scan exists to keep out of. `export const EAGER = X` IS a read, and is reported. Kimi's
+    // Gap 6 asked for the opposite - that a re-export be reported too - and it is declined: a guard that fires
+    // on something harmless is a guard the next person in a hurry loosens.
+    const namesWithoutReading =
+      trimmed.startsWith('import') || /^export\s*\{[^}]*\}\s*(?:from\s*'[^']*')?;?$/.test(trimmed);
+    if (depth === 0 && !namesWithoutReading && /\b(?:AUTHENTICATED_ROUTE_PATHS|HOME_PATH)\b/.test(line)) {
       found.push(line.trim());
     }
     // Brace depth, not indentation. The first version of this scan tested indentation and MISSED the mutant that
@@ -469,6 +476,10 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         pathname: absent.router.state.location.pathname,
         search: absent.router.state.location.search,
         text: (absent.container.textContent ?? '').trim(),
+        // `historyAction` is in the comparison because `replace` is part of the outcome, not a detail of the
+        // honoured path: a fallback that PUSHED would leave a consumed callback reachable with the back button,
+        // and pathname, search and text would all still agree (Kimi Gap 1).
+        historyAction: absent.router.state.historyAction,
       };
       absent.unmount();
       vi.resetModules();
@@ -481,8 +492,10 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         pathname: rejected.router.state.location.pathname,
         search: rejected.router.state.location.search,
         text: (rejected.container.textContent ?? '').trim(),
+        historyAction: rejected.router.state.historyAction,
       }).toEqual(withoutATarget);
       expect(withoutATarget.pathname, 'the control: home was where both went').toBe(HOME_ROUTE);
+      expect(withoutATarget.historyAction, 'and both replaced the callback entry').toBe('REPLACE');
     });
 
     /**
@@ -630,6 +643,23 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
     });
 
     /**
+     * The absent-target path on the DISCARD side, which the seven rows above cannot reach because they all
+     * remember one first (Kimi Gap 3). A discard that reached for the target when there was none - a removal for
+     * a key that was never written, or worse a write - would be invisible to every other case in this file.
+     */
+    it('leaves the store untouched when a discard had no target to begin with', async () => {
+      const watch = watchStorage();
+      const started = await startSignIn();
+
+      const arrival = await arriveAt(`/callback?code=THE-CODE&state=${started.state}`, () => refusal());
+
+      expect(arrival.router.state.location.pathname, 'the control: it really was discarded').toBe(SIGN_IN_ROUTE);
+      expect(storedKeys(), 'the target was never written').not.toContain(RETURN_TARGET_KEY);
+      expect(writtenKeys(watch)).not.toContain(RETURN_TARGET_KEY);
+      expect(removedKeys(watch)).not.toContain(RETURN_TARGET_KEY);
+    });
+
+    /**
      * T24-D14 stated as the thing it is for. "Single-use" and "survives a failed attempt" are only in tension
      * until the use is named: the use is the ARRIVAL, not the attempt. So a visitor whose first callback was
      * refused retries and still gets where they were going - which is the entire reason to remember it.
@@ -747,6 +777,21 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         ),
         'the control: a use inside a function is the correct shape',
       ).toEqual([]);
+
+      // A re-export names the binding and never evaluates it, so it is not a module-scope READ (Kimi Gap 6,
+      // declined as proposed). The pair below is what keeps that distinction from drifting: `export { X } from`
+      // passes, and a module-scope `export const` does not - which is the shape that would actually fail
+      // closed and silently.
+      expect(
+        moduleScopeUsesOfTheRouteTable(
+          "export { AUTHENTICATED_ROUTE_PATHS } from '../app/routes';\nexport { HOME_PATH };\n",
+        ),
+        'a re-export reads nothing',
+      ).toEqual([]);
+      expect(
+        moduleScopeUsesOfTheRouteTable('export const EAGER = new Set(AUTHENTICATED_ROUTE_PATHS);\n'),
+        'but an exported module-scope read is still a read',
+      ).toEqual(['export const EAGER = new Set(AUTHENTICATED_ROUTE_PATHS);']);
     });
   });
 
@@ -780,7 +825,22 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
      * a function that returns the empty string - and the empty string is a member of every prefix-flavoured
      * allowlist anyone might refactor this into.
      */
-    it.each(['{}', '[object Object]', '', ' ', 'null', 'undefined', '/home\u0000', '/HOME', '🙂'])(
+    it.each([
+      '{}',
+      '[object Object]',
+      '',
+      ' ',
+      'null',
+      'undefined',
+      '/home\u0000',
+      '/HOME',
+      '🙂',
+      // Leading and trailing space, which no `useLocation().pathname` produces and a hand-edited store can
+      // (Kimi Gap 5). Nothing trims them, and nothing should: a trim is a normalisation, and the one thing the
+      // membership rule buys is that there is no normalisation to get wrong.
+      ' /home',
+      '/home ',
+    ])(
       'returns the home path for the stored value %j without throwing',
       (value) => {
         seedRaw(value);
@@ -923,6 +983,40 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
       expect(writtenKeys(watch), 'the store was never asked').not.toContain(RETURN_TARGET_KEY);
       rememberReturnTarget(A_REAL_TARGET);
       expect(writtenKeys(watch), 'the control: a legal one does get written').toContain(RETURN_TARGET_KEY);
+    });
+
+    /**
+     * A write that throws leaves NOTHING, which is a stronger claim than "it did not throw" (Kimi Gap 2). The
+     * guard exists so a storage quirk cannot end a journey before it starts; it must not also become a way for a
+     * half-written value to sit in the store, because the read would then be deciding about a value no caller
+     * ever chose.
+     */
+    it('leaves nothing behind when the write itself throws', () => {
+      const denied = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('the store is not available', 'SecurityError');
+      });
+
+      expect(() => rememberReturnTarget(A_REAL_TARGET)).not.toThrow();
+
+      expect(denied, 'the control: the write really was attempted').toHaveBeenCalledWith(
+        RETURN_TARGET_KEY,
+        A_REAL_TARGET,
+      );
+      denied.mockRestore();
+      expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY)).toBeNull();
+    });
+
+    /**
+     * The second call wins (Kimi Gap 4). `setItem` overwrites by definition, so this is not a test of the
+     * platform - it is the contract T41 depends on when a visitor abandons one journey and begins another in the
+     * same tab, and the reason the retry case above cannot pass by accident for using the same target twice.
+     */
+    it('replaces an earlier target rather than keeping or appending to it', () => {
+      rememberReturnTarget('/account');
+      rememberReturnTarget('/api-keys');
+
+      expect(takeReturnTarget()).toBe('/api-keys');
+      expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY), 'and only one was ever stored').toBeNull();
     });
 
     /** The round trip, through both real functions, which is the contract T41 will call. */
