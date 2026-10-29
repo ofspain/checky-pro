@@ -35,8 +35,8 @@
  * every consumed-path and replay case asserts all three are PRESENT immediately before the deletion point, and
  * `startSignIn` refuses to return a triple it did not find in the store.
  */
-import { readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readdir, readFile } from 'node:fs/promises';
+import { dirname, join, relative } from 'node:path';
 import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
@@ -300,6 +300,38 @@ function outcomeOf({ container, router }: Arrival) {
 let authorizeSource: string | undefined;
 let callbackSource: string | undefined;
 
+/** A production file's code with its comments removed, because a file explains the rules it obeys (T22's trap). */
+function strip(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+}
+
+/**
+ * Every production module under `src/`, comments stripped. Refuses an empty tree: a scan over nothing satisfies
+ * every prohibition at once, which is the one way a source scan lies.
+ */
+async function productionSources(): Promise<Array<{ path: string; code: string }>> {
+  const srcRoot = dirname(dirname(expect.getState().testPath as string));
+  async function walk(dir: string): Promise<string[]> {
+    const found: string[] = [];
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) found.push(...(await walk(full)));
+      else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) found.push(full);
+    }
+    return found;
+  }
+  const files = (await walk(srcRoot)).sort();
+  if (files.length === 0) throw new Error('scan refused: no production sources found');
+  const targets: Array<{ path: string; code: string }> = [];
+  for (const file of files) {
+    targets.push({
+      path: relative(srcRoot, file).split(/[\\/]/).join('/'),
+      code: strip(await readFile(file, 'utf8')),
+    });
+  }
+  return targets;
+}
+
 describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
@@ -442,6 +474,19 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
 
       expect(replay.fetchSpy, 'the replay reached no token endpoint').not.toHaveBeenCalled();
       expect(replay.router.state.location.pathname).toBe(SIGN_IN_ROUTE);
+      replay.unmount();
+
+      // THE CAUSE, not just the outcome. Re-seed the three with the values the first attempt had, and the very
+      // same URL reaches the network again - so "no network call" above is the deleted state doing the work, not
+      // something else about a second arrival. This is also exactly what the pre-T23 replay did: it exchanged,
+      // and the token endpoint refused the spent code (`400 invalid_grant`, measured in T20).
+      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.state, started.state);
+      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.nonce, started.nonce);
+      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.codeVerifier, started.verifier);
+      const reseeded = await arriveAt(url, () => refusal());
+
+      expect(reseeded.fetchSpy, 'with the state back, the same URL is exchanged again').toHaveBeenCalledTimes(1);
+      expect(reseeded.router.state.location.pathname).toBe(SIGN_IN_ROUTE);
       // And the tab is left holding nothing: a replayed callback is a discard, and a discard clears the holder
       // (R22 - no half-authenticated tab). Task 24 navigating away from this route is what makes it unreachable
       // (T23-D16); until then this is the honest consequence, stated rather than discovered.
@@ -491,6 +536,7 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
     const FAULTS: ReadonlyArray<{
       label: string;
       url: (state: string) => string;
+      // `never` is a valid Response here: a row whose answer only throws is a `fetch` that never resolved.
       answer: (nonce: string) => Response;
     }> = [
       { label: 'no state in the query', url: () => '/callback?code=THE-CODE', answer: (n) => jsonResponse(tokensFor(n)) },
@@ -498,6 +544,15 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
       { label: 'no code', url: (s) => `/callback?state=${s}`, answer: (n) => jsonResponse(tokensFor(n)) },
       { label: 'an authorization error', url: (s) => `/callback?error=access_denied&state=${s}`, answer: (n) => jsonResponse(tokensFor(n)) },
       { label: 'a refused exchange', url: (s) => `/callback?code=THE-CODE&state=${s}`, answer: () => refusal() },
+      {
+        // A different fault from the refusal above with the same outcome, and listed rather than subsumed: the
+        // brief names five shapes, and a reader counting rows should find the dropped connection among them.
+        label: 'a dropped connection',
+        url: (s) => `/callback?code=THE-CODE&state=${s}`,
+        answer: () => {
+          throw new TypeError('Failed to fetch');
+        },
+      },
       {
         label: 'a nonce that is not the stored one',
         url: (s) => `/callback?code=THE-CODE&state=${s}`,
@@ -621,6 +676,17 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
   });
 
   describe('the order is not a coincidence (AC6, F6)', () => {
+    /*
+     * WHAT THIS BLOCK DOES NOT ASSERT, and why, so that nobody adds it later: the order between
+     * `retainAccessToken` and `consumeAuthorizeState` is deliberately not pinned. Nothing between those two
+     * statements reads the three items, so both positions satisfy AC6 and the mutation harness measured no
+     * observable difference either way (M16, 439 tests, 0 failed, exit 0 in both orders). Pinning it would be a
+     * structural assertion about statement order, which is what AC6 was corrected AWAY from in the frozen brief.
+     *
+     * The boundaries that are real, and that the two cases below guard, are the exchange - which reads the
+     * verifier inside the request - and the nonce check, which reads the nonce after it resolves. Moving the
+     * deletion above either of those kills 43 and 36 cases respectively.
+     */
     /**
      * AC6 is BEHAVIOURAL, and the Phase 2 brief's hedge that it "may have to be structural" was wrong: a
      * deletion one line earlier does not produce the same end state, it produces a failed sign-in. The verifier
@@ -701,6 +767,51 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
 
       expect(denied).toHaveBeenCalledTimes(3);
       expect(presentItems()).toEqual([...THREE_KEYS]);
+    });
+
+    /**
+     * A partially populated store, which is neither of the two cases above. A regression that iterated its own
+     * array of three names, or that read a key before removing it, would pass both a full store and an empty one
+     * and fail here - and `removeItem` on an absent key is a no-op by specification, which is what makes the
+     * loop safe to run over a store that has already lost one.
+     */
+    it('removes what is there when only some of the three are', () => {
+      const watch = watchStorage();
+      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.state, 'the-state');
+      globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.nonce, 'the-nonce');
+      globalThis.sessionStorage.setItem('ui.theme', 'dark');
+
+      expect(() => consumeAuthorizeState()).not.toThrow();
+
+      expect(storedKeys()).toEqual(['ui.theme']);
+      // All three were attempted, including the one that was not there: the function does not look first.
+      expect(removedKeys(watch)).toEqual([...THREE_KEYS]);
+    });
+
+    /**
+     * The "one call site" claim over the whole package, rather than over the one file expected to hold it.
+     *
+     * The case below it reads `CallbackScreen.tsx` and counts one call - which is true and insufficient: a
+     * second caller would most likely be a NEW file, and T23-D2's whole argument depends on no discard path
+     * anywhere calling this. So the net is the package, with the definition and the single call named, and a
+     * synthetic file proving the scan can report.
+     */
+    it('is called from exactly one place in the package (AC5, T23-D2)', async () => {
+      const targets = await productionSources();
+      expect(targets.length).toBeGreaterThan(20);
+
+      const callers = targets
+        .filter(({ code }) => code.includes('consumeAuthorizeState'))
+        .map(({ path }) => path)
+        .sort();
+
+      expect(callers).toEqual(['auth/CallbackScreen.tsx', 'auth/authorizeRequest.ts']);
+      // And the scan really reports: the same filter over a synthetic module finds it.
+      expect(
+        [{ path: 'api/somewhere.ts', code: 'consumeAuthorizeState();' }]
+          .filter(({ code }) => code.includes('consumeAuthorizeState'))
+          .map(({ path }) => path),
+      ).toEqual(['api/somewhere.ts']);
     });
 
     /**
