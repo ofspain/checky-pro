@@ -101,7 +101,7 @@ believed.
 
 - `tsc --noEmit` clean.
 - This file: **53 passed**.
-- Whole suite: **1246 passed / 1 failed**, exit 1 — the pre-existing environmental
+- Whole suite: **1245 passed / 1 failed** (1246 collected), exit 1 — the pre-existing environmental
   `lintRejectsHandWrittenBackendFetch.test.ts:118`.
 - Mutation: **22 of 22 killed, no survivors, none inherited-only**, re-run after the edits with tests committed
   first. MA22 remains `own`, at two failures.
