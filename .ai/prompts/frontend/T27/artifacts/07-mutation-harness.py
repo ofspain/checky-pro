@@ -82,8 +82,12 @@ MUTANTS = [
      '      <input autoComplete="one-time-code" name="code" inputMode="numeric" />\n' + BUTTON),
     ("MA02 a password input is rendered", SIGN_IN, BUTTON,
      '      <input type="password" autoComplete="current-password" name="password" />\n' + BUTTON),
+    # Closed properly: the first draft of this mutant left the <form> unclosed, which is a JSX syntax
+    # error rather than a plausible addition, and the harness correctly scored it BROKEN rather than
+    # KILLED. A mutant has to COMPILE to be evidence of anything.
     ("MA03 the screen grows a form", SIGN_IN, BUTTON,
-     "      <form onSubmit={(e) => e.preventDefault()}>\n" + BUTTON),
+     "      <form onSubmit={(event) => event.preventDefault()}>\n" + BUTTON
+     + "\n      </form>"),
     ("MA04 a recovery-code textarea is rendered", SIGN_IN, BUTTON,
      '      <textarea name="recoveryCode" aria-label="Recovery code" />\n' + BUTTON),
 
