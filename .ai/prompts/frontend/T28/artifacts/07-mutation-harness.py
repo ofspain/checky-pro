@@ -55,10 +55,13 @@ and only the second column is T28's. A mutant that makes a run unparseable is sc
 BROKEN, not KILLED: a mutant has to COMPILE to be evidence of anything (T27 scored one
 BROKEN twice before its anchor was right). Read a BROKEN line by hand.
 
-EXPECTED BASELINE on this host: the whole suite runs 1334 passed / 1 failed - the one
-is the pre-existing `src/api/lintRejectsHandWrittenBackendFetch.test.ts:118`, an
-oxlint summary-line difference unrelated to this task - and T28's own file runs 39/39
-with exit 0.
+EXPECTED BASELINE on this host after the Phase 9 fixes: the whole suite runs 1338
+passed / 1 failed - the one is the pre-existing
+`src/api/lintRejectsHandWrittenBackendFetch.test.ts:118`, an oxlint summary-line
+difference unrelated to this task - and T28's own file runs 43/43 with exit 0.
+
+SCORE: 23 of 23 KILLED, 21 by T28's own file. MB04 survived until the Phase 9 fix
+widened the document surface to the title and the head.
 """
 
 import re
@@ -167,7 +170,7 @@ MUTANTS = [
     # --- MB23: the ordering pair's other half (EXPECTED SURVIVOR - see header) --------------------------
     # TWO edits in one file - a move is a deletion plus an insertion, and either alone is a different
     # mutant. `old` may therefore be a list of (old, new) pairs applied in order.
-    ("MB23 the error branch is MOVED below the state check (EXPECTED SURVIVOR - see header)", CALLBACK,
+    ("MB23 the error branch is MOVED below the state check (INHERITED-ONLY BY DESIGN - see header)", CALLBACK,
      [(ERROR_BRANCH + "\n\n", ""), (STATE_CHECK, STATE_CHECK + "\n\n" + ERROR_BRANCH)], None),
 
     # --- MB19: the denylist (AC10, R57) ------------------------------------------------------------------
