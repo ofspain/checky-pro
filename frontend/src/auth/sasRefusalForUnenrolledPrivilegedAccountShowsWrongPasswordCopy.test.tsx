@@ -1450,10 +1450,10 @@ describe('AC11: every instrument has been shown to report dirty', () => {
   const INSTRUMENTS = [
     { instrument: 'content scan', dirtiedBy: "Kimi's own two-factor sentence (AC5)" },
     { instrument: 'path scan', dirtiedBy: 'auth/EnrollMfaScreen.tsx with an innocent body (AC6)' },
-    { instrument: 'gating scan', dirtiedBy: 'a role gate and five account-state gates (AC7)' },
+    { instrument: 'gating scan', dirtiedBy: 'a role gate, five account-state gates, two membership gates (AC7)' },
     { instrument: 'catalogue scan', dirtiedBy: 'a value and two keys (AC8)' },
     { instrument: 'key-set pin', dirtiedBy: 'a seventh signIn key (AC8)' },
-    { instrument: 'leak sweep', dirtiedBy: 'a sentinel on each of five surfaces (AC4)' },
+    { instrument: 'leak sweep', dirtiedBy: 'a sentinel on each of five surfaces, and on the two that outlive one (AC4)' },
     { instrument: 'console watcher', dirtiedBy: 'a sentinel on each of six channels (AC4)' },
     { instrument: 'outcome struct', dirtiedBy: 'a successful callback (AC2)' },
   ];
