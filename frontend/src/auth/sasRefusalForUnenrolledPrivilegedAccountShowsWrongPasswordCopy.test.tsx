@@ -123,8 +123,12 @@ import { AUTHORIZE_STORAGE_KEYS } from './authorizeRequest';
  * message nobody will find.
  */
 const ENROLLMENT_SOURCE =
-  'enroll|enrolment|two[-_ ]?factor|second[-_ ]?factor|set\\s+up\\s+two|register\\s+your\\s+authenticator'
-  + '|activate\\s+mfa|pending[-_ ]?enrollment';
+  'enroll|enrolment|two[-_ ]?factor|second[-_ ]?factor|multi[-_ ]?factor|set\\s+up\\s+two'
+  + '|register\\s+your\\s+authenticator|activate\\s+mfa|pending[-_ ]?enrollment';
+// `multi[-_ ]?factor` is Kimi Gap 1, and it closes the exact hole MB17 opened from the other side: T27's
+// pattern has `multi-factor` and no `two-factor`, this one had `two-factor` and no `multi-factor`, so each
+// file's instrument was blind to the phrasing the other caught. The optional separator covers `multifactor`
+// too, so no second alternative is needed.
 
 /**
  * A FRESH regex per use. A `g`-flagged constant carries `lastIndex` between calls, so a shared one answers
@@ -149,7 +153,11 @@ function namesEnrollment(text: string): boolean {
 const ACCOUNT_STATE_SOURCE =
   'accountState|account_state|\\.mfaEnrolled|mfa_enrolled|requiresMfa|requires_mfa|enrollmentState'
   + '|enrollment_state|mfaRequired|mfa_required|PENDING_ENROLLMENT'
-  + "|role\\s*[=!]==|\\.role\\s*[=!]==|=== *'(?:MERCHANT|ADMIN)'|=== *\"(?:MERCHANT|ADMIN)\"";
+  + "|role\\s*[=!]==|\\.role\\s*[=!]==|=== *'(?:MERCHANT|ADMIN)'|=== *\"(?:MERCHANT|ADMIN)\""
+  // Kimi Gap 4, accepted IN PART. `roles.includes('MERCHANT')` was a real hole: it is a role gate that names
+  // no `role ===`. The other half of the finding - `account.type === 'MERCHANT'` - was already caught, by the
+  // `=== 'MERCHANT'` alternatives above; the case below measures that rather than taking the claim.
+  + "|\\.includes\\s*\\( *['\"](?:MERCHANT|ADMIN)";
 
 function accountStateGates(): RegExp {
   return new RegExp(ACCOUNT_STATE_SOURCE, 'g');
@@ -362,7 +370,15 @@ function synthetic(path: string, code: string): ScanTarget {
 // Instrument 3 — the catalogue scan
 // ---------------------------------------------------------------------------------------------------------
 
-function catalogueStrings(): Array<{ key: string; value: string }> {
+/**
+ * Every string in the catalogue, flattened to `a.b.c` keys.
+ *
+ * The `root` parameter exists for ONE reason: Kimi Gap 6 claimed an array-valued entry would be skipped, and
+ * the claim is wrong - `typeof [] === 'object'`, so `Object.entries` walks it and yields index keys. Rather
+ * than argue it in a comment, the control below passes a synthetic root containing an array and measures what
+ * comes back. A rejected finding that leaves a case behind is worth more than one that leaves a sentence.
+ */
+function catalogueStrings(root: unknown = en): Array<{ key: string; value: string }> {
   const flat: Array<{ key: string; value: string }> = [];
   const visit = (node: unknown, path: string[]): void => {
     if (typeof node === 'string') {
@@ -373,7 +389,7 @@ function catalogueStrings(): Array<{ key: string; value: string }> {
       for (const [key, value] of Object.entries(node)) visit(value, [...path, key]);
     }
   };
-  visit(en, []);
+  visit(root, []);
   // Same reason `productionFiles` refuses: an empty catalogue satisfies every claim below.
   return refuseEmpty(flat, NO_STRINGS);
 }
@@ -640,19 +656,37 @@ function answerFor(kind: FailureKind): () => Response | Promise<Response> {
  * pending notice from the previous arrival would be read as this one's. Everything stateful is reset through
  * the SAME generation the arrival used.
  */
+/**
+ * Everything one arrival leaves behind, cleared in ONE place.
+ *
+ * Kimi Gap 2. Phase 10 added `document.title` and `window.name` to the sweep and reset them in `afterEach`,
+ * which is too late for the contamination that matters: AC2 measures four arrivals INSIDE a single case, so
+ * the first arrival's globals were still set when the second was measured. The deeper defect was that two
+ * call sites each cleared their own list and the lists had drifted - the exchange-count loop never cleared
+ * `localStorage` either, which Kimi did not catch. There is now one list and no second place to get it wrong.
+ *
+ * Deliberately NOT called from `afterEach`: the dynamic imports would make it async, and `afterEach` already
+ * has `vi.resetModules()`, after which the module state these two functions touch is discarded wholesale.
+ */
+async function clearArrivalSurfaces(): Promise<void> {
+  const { clearAccessToken } = await import('./accessToken');
+  const { takeSignInNotice } = await import('./signInNotice');
+  clearAccessToken();
+  takeSignInNotice();
+  document.body.innerHTML = '';
+  document.title = '';
+  window.name = '';
+  globalThis.sessionStorage.clear();
+  globalThis.localStorage.clear();
+}
+
 async function measure(query: string, answer: () => Response | Promise<Response>): Promise<Outcome> {
   seedPkceItems();
   const arrival = await arriveAt(query, answer);
   await turn();
   const outcome = await outcomeOf(arrival);
   arrival.unmount();
-  const { clearAccessToken } = await import('./accessToken');
-  const { takeSignInNotice } = await import('./signInNotice');
-  clearAccessToken();
-  takeSignInNotice();
-  document.body.innerHTML = '';
-  globalThis.sessionStorage.clear();
-  globalThis.localStorage.clear();
+  await clearArrivalSurfaces();
   return outcome;
 }
 
@@ -724,6 +758,11 @@ describe('AC1: a SAS refusal ends in the one discard closure', () => {
     expect(outcome.historyAction).toBe('REPLACE');
     expect(outcome.liveText).toEqual([en.signIn.discarded]);
     expect(outcome.tokenHeld).toBe(false);
+    // Kimi Gap 5. `search` and `hash` are in the struct, so AC2 would catch a DIVERGENCE - but four kinds that
+    // all kept their query string would compare equal and pass. Asserted absolutely here, on the one kind
+    // whose arrival URL carried the error code, the description and the URI.
+    expect(outcome.search).toBe('');
+    expect(outcome.hash).toBe('');
   });
 
   it('never exchanges the code, because an error response carries none (RFC 6749 §4.1.2.1)', async () => {
@@ -831,28 +870,38 @@ describe('AC2: four failure kinds, one outcome', () => {
      * Kimi identified is real all the same: a retry on one kind and not another would be a uniformity breach,
      * and nothing before this case would have seen it.
      */
-    const EXPECTED: ReadonlyArray<{ kind: FailureKind; exchanges: number }> = [
-      { kind: 'error-response', exchanges: 0 },
-      { kind: 'mismatched-state', exchanges: 0 },
-      { kind: 'refused-exchange', exchanges: 1 },
-      { kind: 'bad-nonce', exchanges: 1 },
+    const EXPECTED: ReadonlyArray<{
+      label: string;
+      query: string;
+      answer: () => Response | Promise<Response>;
+      exchanges: number;
+    }> = [
+      { label: 'error-response', query: queryFor('error-response'), answer: answerFor('error-response'), exchanges: 0 },
+      { label: 'mismatched-state', query: queryFor('mismatched-state'), answer: answerFor('mismatched-state'), exchanges: 0 },
+      { label: 'refused-exchange', query: queryFor('refused-exchange'), answer: answerFor('refused-exchange'), exchanges: 1 },
+      { label: 'bad-nonce', query: queryFor('bad-nonce'), answer: answerFor('bad-nonce'), exchanges: 1 },
+      // Kimi Gap 3. The block above drives three `state` shapes under an error; this table reached only the
+      // one with a matching `state`. None of the three can exchange - an error response carries no `code`
+      // (RFC 6749 §4.1.2.1) - but "cannot" was asserted for one of them and assumed for two.
+      { label: 'error with no state at all', query: '?error=access_denied', answer: tokenEndpointAnswers(), exchanges: 0 },
+      {
+        label: 'error with a state this tab never stored',
+        query: '?error=access_denied&state=not-the-stored-one',
+        answer: tokenEndpointAnswers(),
+        exchanges: 0,
+      },
     ];
-    const counted: Array<{ kind: FailureKind; exchanges: number }> = [];
-    for (const { kind } of FAILURE_KINDS) {
+    const counted: Array<{ label: string; exchanges: number }> = [];
+    for (const row of EXPECTED) {
       seedPkceItems();
-      const arrival = await arriveAt(queryFor(kind), answerFor(kind));
+      const arrival = await arriveAt(row.query, row.answer);
       await turn();
-      counted.push({ kind, exchanges: arrival.fetchSpy.mock.calls.length });
+      counted.push({ label: row.label, exchanges: arrival.fetchSpy.mock.calls.length });
       arrival.unmount();
-      const { clearAccessToken } = await import('./accessToken');
-      const { takeSignInNotice } = await import('./signInNotice');
-      clearAccessToken();
-      takeSignInNotice();
-      document.body.innerHTML = '';
-      globalThis.sessionStorage.clear();
+      await clearArrivalSurfaces();
     }
-    expect(counted).toHaveLength(4);
-    expect(counted).toEqual(EXPECTED);
+    expect(counted).toHaveLength(6);
+    expect(counted).toEqual(EXPECTED.map((row) => ({ label: row.label, exchanges: row.exchanges })));
   });
 
   it('CONTROL: the struct is not a shell of empty fields', async () => {
@@ -990,6 +1039,18 @@ describe('AC4: the code, description and URI do not survive the discard', () => 
     expect(leaks(swept, ['/app/sign-in'])).toEqual(['router location//app/sign-in']);
   });
 
+  it('CONTROL: a measured arrival leaves the two GLOBAL surfaces clean for the next one', async () => {
+    // Kimi Gap 2. `document.title` and `window.name` outlive a document reset, and AC2 measures four arrivals
+    // inside one case - so if `measure` did not clear them, the second arrival would be swept with the first
+    // arrival's values still present and a leak could be read as pre-existing noise. Sentinels planted BEFORE
+    // the arrival, so this case fails if the clearing is removed from either surface.
+    document.title = 'TITLE-SENTINEL-FROM-A-PREVIOUS-ARRIVAL';
+    window.name = 'NAME-SENTINEL-FROM-A-PREVIOUS-ARRIVAL';
+    await measureFailure('error-response');
+    expect(document.title).toBe('');
+    expect(window.name).toBe('');
+  });
+
   it('CONTROL: every console channel is watched, not only the ones the flow happens to use', async () => {
     const watch = watchConsole();
     for (const channel of watch.channels) {
@@ -1048,6 +1109,9 @@ describe('AC5: no production module names enrollment', () => {
       'two-factor authentication',
       'two factor setup',
       'a second factor is needed',
+      'multi-factor authentication',
+      'multifactor setup',
+      'multi factor is required for your role',
       'set up two steps',
       'register your authenticator app',
       'activate MFA now',
@@ -1173,6 +1237,31 @@ describe('AC7: nothing gates a failed sign-in on an account state or a role', ()
     expect(unflagged.map((target) => target.path)).toEqual([]);
   });
 
+  it('CONTROL: the scan flags a role gate written as a membership test, and already flagged a type gate', () => {
+    // Kimi Gap 4, both halves, measured rather than assumed.
+    //
+    // The membership test is the half that was a real hole: it gates on a role and contains no `role ===`.
+    // The type comparison is the half that was NOT - `=== 'MERCHANT'` was already an alternative - and it is
+    // asserted here against the pattern AS IT WAS, so a future tidy-up that drops those alternatives in
+    // favour of the new one fails this case instead of silently narrowing the scan.
+    const offenders = [
+      synthetic('auth/F.tsx', "if (roles.includes('MERCHANT')) showEnrollmentHint();"),
+      synthetic('auth/G.tsx', "if (session.roles.includes('ADMIN')) return null;"),
+      synthetic('auth/H.tsx', "if (account.type === 'MERCHANT') discard();"),
+    ];
+    const unflagged = offenders.filter((target) => hitsOf([target], accountStateGates()).length === 0);
+    expect(unflagged.map((target) => target.path)).toEqual([]);
+  });
+
+  it('CONTROL: the membership alternative does not fire on the ordinary includes() calls in production', async () => {
+    // The risk the new alternative carries. `.includes(` is common; the alternative is narrow because it
+    // requires one of the two role literals immediately inside the call.
+    const targets = await productionSources();
+    const anyIncludes = targets.filter((target) => /\.includes\s*\(/.test(target.code));
+    expect(anyIncludes.length).toBeGreaterThan(0);
+    expect(hitsOf(targets, accountStateGates())).toEqual([]);
+  });
+
   it("CONTROL: the scan stays SILENT on CallbackScreen's own OAuth state comparisons", async () => {
     // Kimi F6's suggested pattern - `state === 'PENDING_ENROLLMENT'` generalised to a bare `state ===` - was
     // measured to have THREE legitimate hits: the two comparisons R8 requires, and Workbox's
@@ -1270,6 +1359,19 @@ describe('AC8: no user-facing string mentions enrollment, a factor, a code or a 
       .toEqual(['signIn.postcode (value)']);
   });
 
+  it('CONTROL: an array-valued entry IS flattened, which is why Kimi Gap 6 was rejected', () => {
+    // Gap 6 said an array of strings would be skipped by `catalogueStrings`. It is not: an array is an object,
+    // so `Object.entries` yields its indices and every element is visited. The keys read `help.0`, which is
+    // ugly and harmless - the scan matches on the value, and `FORBIDDEN_KEY_SOURCE` cares about words, not
+    // digits. Measured here so the rejection is evidence rather than an opinion in a comment.
+    const strings = catalogueStrings({ help: ['Please enroll in MFA', 'Innocent sentence'] });
+    expect(strings).toEqual([
+      { key: 'help.0', value: 'Please enroll in MFA' },
+      { key: 'help.1', value: 'Innocent sentence' },
+    ]);
+    expect(forbiddenCopyEntries(strings)).toEqual(['help.0 (value)']);
+  });
+
   it('CONTROL: an empty catalogue is refused rather than reported clean', () => {
     expect(forbiddenCopyEntries([])).toEqual([]);
     expect(() => refuseEmpty([], NO_STRINGS)).toThrow(NO_STRINGS);
@@ -1337,6 +1439,13 @@ describe('AC11: every instrument has been shown to report dirty', () => {
    * equivalent as proof (Gap 6). This table cannot fail for the right reason - it fails only if a row is
    * deleted without updating the count. The real proof is the CONTROL cases named in each row, which fail if
    * their instrument stops working.
+   *
+   * Kimi Gap 7 - the harness, repeated here rather than only in the header, because this is the block a reader
+   * arrives at when they want to know what the instruments were tested against:
+   *
+   *   python3 .ai/prompts/frontend/T28/artifacts/07-mutation-harness.py
+   *
+   * 23 mutants, 23 killed. It reverts with `git checkout -- src/`, so commit before running it.
    */
   const INSTRUMENTS = [
     { instrument: 'content scan', dirtiedBy: "Kimi's own two-factor sentence (AC5)" },
