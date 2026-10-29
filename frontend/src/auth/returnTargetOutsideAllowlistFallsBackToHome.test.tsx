@@ -1262,8 +1262,24 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         routerWould: { kind: 'reach', pathname: '/app/HOME', route: HOME_PATH },
       },
       {
+        // The multi-segment witness of the same property as `/home/`. One segment is not enough: a fix written
+        // as "strip a trailing slash from a single-segment path" would pass that row and fail here (Kimi I5).
+        label: 'a trailing slash on a two-segment allowlisted path (Kimi I5)',
+        shape: `${A_REAL_TARGET}/`,
+        routerWould: { kind: 'reach', pathname: `${A_REAL_TARGET_ROUTE}/`, route: 'account/sessions' },
+      },
+      {
         label: 'an encoded separator inside an allowlisted path (Kimi F4)',
         shape: '/account%2Fsessions',
+        routerWould: { kind: 'miss' },
+      },
+      {
+        // Leading whitespace, which no `useLocation().pathname` produces and a hand-edited store can. The router
+        // resolves it RELATIVE to the current route, so it lands on the catch-all - and that is the whole harm of
+        // a trim: trimmed, it becomes an absolute path the router honours. T24 found that a padded HOME value
+        // cannot distinguish a trimming implementation, because the trimmed value IS the fallback; this one can.
+        label: 'leading whitespace before an allowlisted path',
+        shape: `  ${A_REAL_TARGET}`,
         routerWould: { kind: 'miss' },
       },
       {
@@ -1272,6 +1288,15 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         label: 'more than one of the above in one string (Kimi F7)',
         shape: 'https://evil.example/../admin?x=1#fragment',
         routerWould: { kind: 'refuse' },
+      },
+      {
+        // A combination inside the `reach` category, which is the harder one (Kimi I7). The row above is
+        // dominated by the external URL - react-router throws before anything else is considered - so it proves
+        // little about interaction. Here both halves are shapes the router WOULD honour, and the question is
+        // whether query and fragment handling can combine into a match. They cannot: there is no handling.
+        label: 'a query string and a fragment together on an allowlisted path (Kimi I7)',
+        shape: '/home?x=1#fragment',
+        routerWould: { kind: 'reach', pathname: HOME_ROUTE, route: HOME_PATH },
       },
     ];
 
@@ -1302,8 +1327,8 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         const kinds = FAMILIES.map((family) => family.routerWould.kind);
 
         expect(kinds.filter((kind) => kind === 'refuse')).toHaveLength(7);
-        expect(kinds.filter((kind) => kind === 'reach')).toHaveLength(7);
-        expect(kinds.filter((kind) => kind === 'miss')).toHaveLength(4);
+        expect(kinds.filter((kind) => kind === 'reach')).toHaveLength(9);
+        expect(kinds.filter((kind) => kind === 'miss')).toHaveLength(5);
       });
     });
 
@@ -1356,8 +1381,17 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
      * cannot matter - and this is what pins that, because "the discard path does not inspect it" is exactly the
      * kind of property a future change could break without any other case noticing.
      */
-    it('leaves a refused target where it is when the callback is discarded (AC20)', async () => {
-      const refused = seedRaw('https://evil.example/app/home');
+    it.each([
+      // A `refuse` shape was the only witness here first, and it was the WEAKEST one available (Kimi I6):
+      // react-router rejects it anyway, so a future change that inspected or normalised the target before
+      // discarding would go unnoticed. The three `reach` shapes beside it are the ones that would actually be
+      // honoured if anything on this path ever looked at the value.
+      'https://evil.example/app/home',
+      '/home/../admin',
+      '/invoices/123',
+      '/HOME',
+    ])('leaves %j where it is when the callback is discarded (AC20)', async (shape) => {
+      const refused = seedRaw(shape);
       const watch = watchStorage();
       const started = await startSignIn();
 
@@ -1369,6 +1403,111 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         refused,
       );
       expect(removedKeys(watch)).not.toContain(RETURN_TARGET_KEY);
+      expect(watch.clear).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The near misses, as pairs, from one harness.
+     *
+     * This is what makes "membership, not a prefix test" OBSERVABLE rather than stated. Each pair differs by the
+     * smallest edit the rule is supposed to notice - one trailing slash, one letter's case, four missing
+     * characters, two leading spaces - and the pair is asserted together so that neither half can be satisfied by
+     * a predicate that answers the same way to everything.
+     */
+    describe('the near misses, where membership is the only thing between them (AC19)', () => {
+      it.each([
+        { refused: '/homeward', honoured: `/${HOME_PATH}`, differsBy: 'four characters appended' },
+        { refused: '/accou', honoured: '/account', differsBy: 'two characters removed' },
+        { refused: `/${HOME_PATH}/`, honoured: `/${HOME_PATH}`, differsBy: 'one trailing slash' },
+        { refused: `${A_REAL_TARGET}/`, honoured: A_REAL_TARGET, differsBy: 'one trailing slash, two segments' },
+        { refused: '/HOME', honoured: `/${HOME_PATH}`, differsBy: 'case' },
+        { refused: `  ${A_REAL_TARGET}`, honoured: A_REAL_TARGET, differsBy: 'two leading spaces' },
+      ])('refuses $refused and honours $honoured, differing by $differsBy', ({ refused, honoured }) => {
+        expect(isAllowlistedTarget(refused)).toBe(false);
+        expect(isAllowlistedTarget(honoured), 'the control: the near miss really is near').toBe(true);
+      });
+
+      /**
+       * And the pair that would survive a trim, end to end, because this is the one the router makes dangerous.
+       * `'  /account/sessions'` resolves RELATIVE to the current route and lands on the catch-all; trimmed, it is
+       * an absolute path the router honours. T24 measured that a padded HOME value cannot tell a trimming
+       * implementation from a correct one - the trimmed value is the fallback either way - so this shape is the
+       * witness that can.
+       */
+      it('sends a whitespace-padded target home, where a trim would have honoured it', async () => {
+        const flows = await threeFlows(`  ${A_REAL_TARGET}`);
+
+        expect(flows.refused.pathname).toBe(HOME_ROUTE);
+        expect(flows.honoured.pathname, 'the control: trimmed, this is a legal target').toBe(A_REAL_TARGET_ROUTE);
+        expect(flows.refused).toEqual(flows.absent);
+      });
+    });
+
+    /**
+     * The refused branch when the store will not cooperate (R-I1, AC15).
+     *
+     * `takeReturnTarget` is total (T24-D10) because a synchronous throw from it reaches
+     * `.then(onFulfilled, discard)`'s FIRST argument, where the second cannot catch it, and blanks the page after
+     * the visitor has already authenticated. T24 proved totality on the honoured path. The refused path is a
+     * DIFFERENT branch - it returns `homeTarget()` rather than `stored` - and it is the branch most likely to meet
+     * a store that answers the read and then refuses the removal. Phase 2 required these rows, Phase 4 kept them,
+     * and Phase 5's split of the authoring named them in neither phase; they are here because Kimi I1 and the
+     * self-review both caught that.
+     */
+    describe('a refused target when the store will not cooperate (R-I1, AC15)', () => {
+      it('still reaches home when the removal throws, and the refused value stays (T24-D9)', async () => {
+        const refused = seedRaw('/home/../admin');
+        const denied = denyRemovalOf(RETURN_TARGET_KEY);
+        const started = await startSignIn();
+
+        const arrival = await arriveAt(`/callback?code=THE-CODE&state=${started.state}`, () =>
+          jsonResponse(tokensFor(started.nonce)),
+        );
+
+        expect(denied, 'the control: the removal really was attempted').toHaveBeenCalledWith(RETURN_TARGET_KEY);
+        expect(arrival.router.state.location.pathname).toBe(HOME_ROUTE);
+        expect(arrival.holder.accessToken.current(), 'and the sign-in was not harmed').toBe(ACCESS_TOKEN);
+        // T24-D9: it survives, which L16 would rather it did not. The next `rememberReturnTarget` overwrites it,
+        // and - the part that matters for a REFUSED value - it could never have been honoured anyway.
+        expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY)).toBe(refused);
+      });
+
+      it('treats a refused target it cannot read as no target at all', async () => {
+        seedRaw('/home/../admin');
+        const denied = denyReadOf(RETURN_TARGET_KEY);
+        const started = await startSignIn();
+
+        const arrival = await arriveAt(`/callback?code=THE-CODE&state=${started.state}`, () =>
+          jsonResponse(tokensFor(started.nonce)),
+        );
+
+        expect(denied, 'the control: the read really was attempted').toHaveBeenCalledWith(RETURN_TARGET_KEY);
+        expect(arrival.router.state.location.pathname).toBe(HOME_ROUTE);
+        expect(arrival.holder.accessToken.current()).toBe(ACCESS_TOKEN);
+      });
+
+      /** Direct, over every family, because totality is a property of the function and not of one flow. */
+      it.each(FAMILIES)('never throws for $label, even with the store unreachable', ({ shape }) => {
+        seedRaw(shape);
+        vi.stubGlobal(
+          'sessionStorage',
+          new Proxy(
+            {},
+            {
+              get() {
+                throw new DOMException('the store is not available', 'SecurityError');
+              },
+            },
+          ),
+        );
+
+        let returned: string | undefined;
+        expect(() => {
+          returned = takeReturnTarget();
+        }).not.toThrow();
+
+        expect(returned).toBe(`/${HOME_PATH}`);
+      });
     });
 
     /**
@@ -1399,8 +1538,11 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
       ]) {
         expect(labels, `the todo list named ${named}`).toContain(named);
       }
-      expect(labels).toHaveLength(18);
-      expect(new Set(labels).size, 'and no label is duplicated').toBe(18);
+      // If this fails because a family was ADDED, raise the number and add the label above. If it fails because
+      // one was REMOVED, put it back. The count is the pin, and a count that adjusted itself would pin nothing
+      // (Kimi I9).
+      expect(labels).toHaveLength(21);
+      expect(new Set(labels).size, 'and no label is duplicated').toBe(21);
     });
   });
 });
