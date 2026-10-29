@@ -67,6 +67,10 @@ BUTTON = """      <button
         onClick={() => void startSignIn()}
       >"""
 ASSIGN = "      globalThis.location.assign(url);"
+# The whole button ELEMENT, for the mutant that wraps it. `BUTTON` above is only the opening tag.
+BUTTON_ELEMENT = BUTTON + """
+        {t('signIn.action')}
+      </button>"""
 START_BODY = "  async function startSignIn() {\n    if (inFlight.current) return;"
 PARAMETERS = "  const parameters = new URLSearchParams({\n    response_type: 'code',"
 HEADING = "    heading: 'Sign in',"
@@ -82,11 +86,12 @@ MUTANTS = [
      '      <input autoComplete="one-time-code" name="code" inputMode="numeric" />\n' + BUTTON),
     ("MA02 a password input is rendered", SIGN_IN, BUTTON,
      '      <input type="password" autoComplete="current-password" name="password" />\n' + BUTTON),
-    # Closed properly: the first draft of this mutant left the <form> unclosed, which is a JSX syntax
-    # error rather than a plausible addition, and the harness correctly scored it BROKEN rather than
-    # KILLED. A mutant has to COMPILE to be evidence of anything.
-    ("MA03 the screen grows a form", SIGN_IN, BUTTON,
-     "      <form onSubmit={(event) => event.preventDefault()}>\n" + BUTTON
+    # Anchored on the WHOLE button element, not on `BUTTON` (its opening tag alone), because a <form>
+    # closed straight after the opening tag nests `</form>` inside the button and is a JSX syntax error.
+    # Two drafts of this mutant scored BROKEN for that reason, and BROKEN is not KILLED: a mutant has to
+    # compile to be evidence of anything.
+    ("MA03 the screen grows a form", SIGN_IN, BUTTON_ELEMENT,
+     "      <form onSubmit={(event) => event.preventDefault()}>\n" + BUTTON_ELEMENT
      + "\n      </form>"),
     ("MA04 a recovery-code textarea is rendered", SIGN_IN, BUTTON,
      '      <textarea name="recoveryCode" aria-label="Recovery code" />\n' + BUTTON),
