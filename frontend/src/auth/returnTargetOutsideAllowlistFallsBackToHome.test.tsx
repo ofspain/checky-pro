@@ -838,6 +838,14 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
       // Leading and trailing space, which no `useLocation().pathname` produces and a hand-edited store can
       // (Kimi Gap 5). Nothing trims them, and nothing should: a trim is a normalisation, and the one thing the
       // membership rule buys is that there is no normalisation to get wrong.
+      //
+      // The padded value is deliberately NOT the home path. A mutation harness found the first version of these
+      // rows to be inert: `' /home'` trimmed is `/home`, which is the fallback, so an implementation that
+      // trimmed before validating returned exactly what the row asserted. A padded `/account/sessions` can
+      // only be returned by an implementation that normalises, and only the home path by one that does not.
+      ' /account/sessions',
+      '/account/sessions ',
+      '\t/account/sessions',
       ' /home',
       '/home ',
     ])(
@@ -991,9 +999,19 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
      * half-written value to sit in the store, because the read would then be deciding about a value no caller
      * ever chose.
      */
-    it('leaves nothing behind when the write itself throws', () => {
-      const denied = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-        throw new DOMException('the store is not available', 'SecurityError');
+    it('leaves the store exactly as it was when the write itself throws', () => {
+      // Only THIS key is refused, and that is what gives the case teeth. A stub that refused every write made
+      // the claim unfalsifiable - nothing could land in the store under any implementation - and a mutation
+      // harness found the first version inert for exactly that reason. Refusing one key means a retry under a
+      // sibling name, or a fall back to `localStorage`, is observable instead of impossible.
+      const realSet = Storage.prototype.setItem;
+      const denied = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+        this: Storage,
+        key: string,
+        value: string,
+      ) {
+        if (key === RETURN_TARGET_KEY) throw new DOMException('the store is not available', 'SecurityError');
+        realSet.call(this, key, value);
       });
 
       expect(() => rememberReturnTarget(A_REAL_TARGET)).not.toThrow();
@@ -1002,8 +1020,8 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         RETURN_TARGET_KEY,
         A_REAL_TARGET,
       );
-      denied.mockRestore();
-      expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY)).toBeNull();
+      expect(storedKeys(), 'and no consolation prize landed under another name').toEqual([]);
+      expect(Object.keys(globalThis.localStorage), 'nor in the other store').toEqual([]);
     });
 
     /**
