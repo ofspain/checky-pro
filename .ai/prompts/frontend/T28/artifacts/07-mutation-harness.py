@@ -38,14 +38,16 @@ an error code no test drives, writing under a computed key. Runtime instruments 
 see dormant code; only the source scan can. If MB20 survives, the structural half of
 AC5/AC7 has been weakened into a behavioural one.
 
-MB12 IS EXPECTED TO SURVIVE, and it is in the list to record WHY rather than to score.
-It moves the `error=` branch BELOW the state check. Measured: every arrival still
-discards identically, because a URL carrying `error=` carries no `code`, so the guard
-below catches what the branch above would have. The reordering is behaviourally
-invisible TODAY. What the AC2 ordering case actually forecloses is a FUTURE divergence
-between the three state shapes - it pins them identical now, so anything that later
-told them apart fails. A harness that scored MB12 as a hole would be asking this file
-to detect something no observation can distinguish.
+MB12 AND MB23 ARE THE ORDERING PAIR, and the distinction cost a wrong prediction. MB12
+DELETES the error branch; MB23 MOVES it below the state check. The first draft of this
+header claimed MB12 was a reordering and predicted it would survive. It was neither:
+it is a deletion, and it is KILLED - an inherited case asserts the error path. MB23 is
+the reordering, and THAT is the one expected to survive, because a URL carrying
+`error=` carries no `code`, so the guard below catches what the branch above would
+have. The reordering is behaviourally invisible TODAY. What the AC2 ordering case
+forecloses is a FUTURE divergence between the three state shapes - it pins them
+identical now, so anything that later told them apart fails. Asking this file to
+detect MB23 would be asking it to distinguish two things no observation separates.
 
 HOW TO READ THE OUTPUT. Each line reports the verdict and, separately, whether T28's
 OWN file caught the mutant or only an inherited case did. Those are different claims
@@ -133,8 +135,7 @@ MUTANTS = [
       discard();
       return;
     }"""),
-    ("MB12 the error branch is moved below the state check (EXPECTED SURVIVOR - see header)",
-     CALLBACK, ERROR_BRANCH, ""),
+    ("MB12 the error branch is deleted outright", CALLBACK, ERROR_BRANCH, ""),
 
     # --- MB13-MB15: a gate on an account state or a role (AC7, Kimi F6) ----------------------------------
     ("MB13 a PENDING_ENROLLMENT account-state gate", CALLBACK, ERROR_READ,
@@ -162,6 +163,12 @@ MUTANTS = [
      "export function EnrollMfaScreen() {\n"
      "  return <p>Follow the steps on the next page.</p>;\n"
      "}\n"),
+
+    # --- MB23: the ordering pair's other half (EXPECTED SURVIVOR - see header) --------------------------
+    # TWO edits in one file - a move is a deletion plus an insertion, and either alone is a different
+    # mutant. `old` may therefore be a list of (old, new) pairs applied in order.
+    ("MB23 the error branch is MOVED below the state check (EXPECTED SURVIVOR - see header)", CALLBACK,
+     [(ERROR_BRANCH + "\n\n", ""), (STATE_CHECK, STATE_CHECK + "\n\n" + ERROR_BRANCH)], None),
 
     # --- MB19: the denylist (AC10, R57) ------------------------------------------------------------------
     ("MB19 /login stops being denylisted", DENYLIST, LOGIN_DENY, ""),
@@ -225,12 +232,17 @@ for name, path, old, new in selected:
             continue
         target.write_text(new)
     else:
+        # One pair, or several applied in order - a MOVE is a deletion plus an insertion and needs both.
+        edits = old if isinstance(old, list) else [(old, new)]
         source = target.read_text()
-        if old not in source:
+        missing = [pair[0] for pair in edits if pair[0] not in source]
+        if missing:
             print(f"  !! {name}: pattern not found in {path}")
             survivors.append(f"{name} (NOT APPLIED)")
             continue
-        target.write_text(source.replace(old, new, 1))
+        for before, after in edits:
+            source = source.replace(before, after, 1)
+        target.write_text(source)
     failed, total, code = run(FILES)
     own_failed, own_total, own_code = run(T28_ONLY)
     revert()
