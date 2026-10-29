@@ -85,7 +85,14 @@
  *   - It cannot see a divergence introduced in a screen that does not exist yet. Only two routes have
  *     elements; the scans cover the tree, so a new screen is scanned, but no struct comparison reaches it.
  *   - It performs no navigation (T23-D5). `document.cookie` is empty and there is no `indexedDB` in jsdom, so
- *     those two surfaces are declared out of reach rather than swept and reported clean.
+ *     those two surfaces are declared out of reach rather than swept and reported clean. `window.name` IS
+ *     swept, at Kimi's I4 request.
+ *
+ * THE MUTATION HARNESS THAT SCORED THIS FILE is `.ai/prompts/frontend/T28/artifacts/07-mutation-harness.py`
+ * (Kimi I7), run as `python3 -I .ai/prompts/frontend/T28/artifacts/07-mutation-harness.py [filter]` from
+ * anywhere in the repository. It EDITS PRODUCTION SOURCE and reverts with `git checkout -- src/` plus
+ * `git clean`, so everything under `frontend/src/` must be committed before it runs. 23 mutants; the one that
+ * ever survived was MB04, which wrote `error_description` into `document.title` - see `surfacesAfter`.
  */
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
@@ -161,21 +168,72 @@ function enrollmentShapedPath(): RegExp {
 }
 
 /**
- * What a user-facing string may never mention.
+ * What NO user-facing string may ever mention, on any screen.
  *
- * Broader than the source pattern, and it can afford to be: a catalogue has ten values, every one of them is
- * read by a visitor, and `code`, `locked` and `merchant` in copy are all ways of telling someone something
- * about their account that the backend refused to tell them. Measured: zero hits against all ten values
- * today, so this pattern forbids nothing that exists.
+ * The second factor, in every spelling. There is no screen in this application where this vocabulary is
+ * permitted today: R11's voluntary enrollment wizard is tasks 56-60's and does not exist yet, and when it does
+ * its copy will need a row in `PERMITTED_COPY` below with a reason - which is the friction that table is for.
  */
-const FORBIDDEN_COPY_SOURCE =
+const ALWAYS_FORBIDDEN_COPY =
   ENROLLMENT_SOURCE
   + '|\\bmfa\\b|authenticator|\\botp\\b|\\btotp\\b|one[-_ ]?time|recovery|backup\\s+code|security\\s+key'
-  + '|passkey|webauthn|\\bcode\\b|locked|lockout|suspended|not\\s+enrolled|\\brole\\b|merchant|administrator';
+  + '|passkey|webauthn|not\\s+enrolled';
 
-function forbiddenCopy(): RegExp {
-  return new RegExp(FORBIDDEN_COPY_SOURCE, 'gi');
+/**
+ * What a FAILED SIGN-IN may never mention, which is a different and narrower claim - and getting this wrong
+ * was the most serious defect either review of this file found (Kimi I5, enlarged at the Phase 9 gate).
+ *
+ * The first draft put all of this in one global pattern. Measured against `spec/frontend/tasks.md`, SIX of
+ * these terms forbid copy a later task is SPECIFIED to write:
+ *
+ *     \brole\b       tasks 88-89, `getEffectiveRoles` and `assignRole`
+ *     merchant       tasks 28 and 73 name MERCHANT; the admin area lists merchants
+ *     administrator  tasks 81-89, the whole admin area
+ *     suspended      task 85, `adminSuspendAccount`
+ *     locked         task 87, `adminUnlockAccount`
+ *     \bcode\b       Kimi's own instance: a postal, reference or country code
+ *
+ * So the global version would have been discovered by task 81 failing a test in `src/auth/` - the worst place
+ * to find out that a guard forbids a specified feature. It is the error class the other half of Kimi's F3 was
+ * REJECTED for at the Phase 4 gate ("a guard must not forbid what the spec permits", T26's lesson), committed
+ * here in a worse form.
+ *
+ * Scoped to the keys a failed sign-in can show, this is a BETTER statement of R10, not a weaker one. R10 says
+ * a failed sign-in discloses nothing about the account. It does not say the application may never use the
+ * word "role".
+ */
+const SIGN_IN_FORBIDDEN_COPY =
+  '\\bcode\\b|locked|lockout|suspended|\\brole\\b|merchant|administrator|disabled|deactivated';
+
+/** The key prefixes a failed sign-in can render. Everything else is another screen's copy. */
+const SIGN_IN_SCOPED_PREFIXES = ['signIn.', 'callback.'] as const;
+
+/**
+ * Copy permitted despite matching, with the reason. EMPTY TODAY - measured, zero hits across all ten values.
+ * A future "Postal code" on a sign-in screen belongs here with a reason rather than in a narrowed pattern.
+ */
+const PERMITTED_COPY: ReadonlyArray<{ key: string; why: string }> = [];
+
+function forbiddenCopy(scoped: boolean): RegExp {
+  const source = scoped ? `${ALWAYS_FORBIDDEN_COPY}|${SIGN_IN_FORBIDDEN_COPY}` : ALWAYS_FORBIDDEN_COPY;
+  return new RegExp(source, 'gi');
 }
+
+/**
+ * The key grammar, written out rather than derived.
+ *
+ * T27 used two explicit constants and this file's first draft computed the second from the first with
+ * `ALWAYS_FORBIDDEN_COPY.replace(/\\b/g, '')` (Kimi I2). That worked, and both controls proved it, but it
+ * coupled the two grammars through a textual rewrite: an alternative whose meaning depended on a `\b` would
+ * have been silently changed rather than reported. Written out, the difference between the two is readable.
+ *
+ * WHY THE KEY GRAMMAR HAS NO WORD BOUNDARIES. A key is an identifier, so `signIn.mfaRequired` has no boundary
+ * before `mfa` and `signIn.enterTotp` none before `totp`. T27's first draft missed `signIn.enterTotp` for
+ * exactly that reason.
+ */
+const FORBIDDEN_KEY_SOURCE =
+  'enroll|enrolment|two[-_]?factor|second[-_]?factor|mfa|authenticator|otp|totp|one[-_ ]?time'
+  + '|recovery|backup|security[-_ ]?key|passkey|webauthn|lockout|locked|suspended';
 
 /**
  * The `signIn.*` keys that exist, pinned as an exact set (Kimi F7, reformulated).
@@ -321,19 +379,20 @@ function catalogueStrings(): Array<{ key: string; value: string }> {
 }
 
 /**
- * Two grammars, which T27 learned the hard way.
+ * Two grammars and two scopes.
  *
- * A VALUE is prose, so a word-bounded regex is right for it. A KEY is an identifier, so `signIn.mfaRequired`
- * has no word boundary before `mfa` and a prose pattern misses it - T27's first draft failed to flag
- * `signIn.enterTotp` for exactly that reason. Keys are matched unbounded; values are matched as prose.
+ * A VALUE is prose, matched word-bounded. A KEY is an identifier, matched unbounded (see
+ * `FORBIDDEN_KEY_SOURCE`). The second-factor vocabulary applies to every entry; the account-state vocabulary
+ * applies only to the keys a failed sign-in can render, which is Kimi I5 as enlarged at the Phase 9 gate.
  */
 function forbiddenCopyEntries(entries: Array<{ key: string; value: string }>): string[] {
+  const permitted = new Set(PERMITTED_COPY.map((row) => row.key));
   const flagged: string[] = [];
   for (const entry of entries) {
-    if (forbiddenCopy().test(entry.value)) flagged.push(`${entry.key} (value)`);
-    else if (new RegExp(FORBIDDEN_COPY_SOURCE.replace(/\\b/g, ''), 'i').test(entry.key)) {
-      flagged.push(`${entry.key} (key)`);
-    }
+    if (permitted.has(entry.key)) continue;
+    const scoped = SIGN_IN_SCOPED_PREFIXES.some((prefix) => entry.key.startsWith(prefix));
+    if (forbiddenCopy(scoped).test(entry.value)) flagged.push(`${entry.key} (value)`);
+    else if (new RegExp(FORBIDDEN_KEY_SOURCE, 'i').test(entry.key)) flagged.push(`${entry.key} (key)`);
   }
   return flagged;
 }
@@ -414,6 +473,10 @@ afterEach(() => {
     mounted = undefined;
   }
   document.body.innerHTML = '';
+  // The two surfaces added for Kimi I1 and I4 are GLOBAL and survive a document reset, so one case's sentinel
+  // would be the next case's leak. Found while adding them.
+  document.title = '';
+  window.name = '';
   globalThis.sessionStorage.clear();
   globalThis.localStorage.clear();
   vi.unstubAllGlobals();
@@ -606,13 +669,32 @@ type Surface = { name: string; text: string };
 /**
  * Every surface a value could survive on, after the discard.
  *
+ * THE DOCUMENT SURFACE REACHES THE TITLE AND THE HEAD, and that is the one hole the mutation harness found.
+ * The first draft read `document.body` alone, and MB04 - `document.title = params.get('error_description')`
+ * in the discard closure - SURVIVED all 1335 tests. The tab title is read by the visitor, announced by screen
+ * readers on navigation, and kept in browser history and session restore, so it outlives the discard in a way
+ * the DOM does not. AC4 says "the rendered document"; narrowing that to "body" without saying so is exactly
+ * the silent narrowing this package's rules forbid. (Self-review S1, Kimi I1, independently found.)
+ *
+ * `window.name` is here at Kimi's I4 request - beyond AC4's wording, which is the right direction for a leak
+ * sweep. It persists across navigations and jsdom supports it.
+ *
  * `document.cookie` and `indexedDB` are NOT here, and that is declared rather than quietly omitted: jsdom
  * gives an empty cookie jar and no `indexedDB`, so sweeping them would report clean for an environmental
  * reason and read as evidence. T22 owns the leak claim across the application; this sweep is R10's slice of it.
  */
 function surfacesAfter(arrival: Arrival, consoleWatch: ConsoleWatch): Surface[] {
   return [
-    { name: 'document', text: `${document.body.textContent ?? ''} ${document.body.innerHTML}` },
+    {
+      name: 'document',
+      text: [
+        document.body.textContent ?? '',
+        document.body.innerHTML,
+        document.title,
+        document.head.innerHTML,
+      ].join(' '),
+    },
+    { name: 'window.name', text: window.name },
     { name: 'sessionStorage', text: JSON.stringify({ ...globalThis.sessionStorage }) },
     { name: 'localStorage', text: JSON.stringify({ ...globalThis.localStorage }) },
     { name: 'router location', text: JSON.stringify(arrival.router.state.location) },
@@ -664,9 +746,20 @@ describe('AC1: a SAS refusal ends in the one discard closure', () => {
 // AC1/AC2 — the error branch precedes the state check (Kimi F1)
 // ---------------------------------------------------------------------------------------------------------
 
-describe('AC2: an error response is never a state oracle', () => {
+describe('AC2: the three state shapes are indistinguishable when an error is present', () => {
   /**
-   * Kimi F1, accepted - and it pins an ORDERING property rather than filling a gap.
+   * Kimi F1, accepted at the Phase 4 gate - and the mutation harness then showed the accept was REDUNDANT.
+   *
+   * THE ORDERING IS NOT THIS FILE'S CLAIM, and the block was renamed to say so (Kimi I6, self-review S2).
+   * `callbackWithMismatchedStateIsDiscarded.test.tsx` owns it, under the name "the error check still precedes
+   * the comparison (D-12 ordering)", and owns it PROPERLY: it spies on `getItem` and asserts the stored state
+   * is never READ on an error path, which observes the order even though the outcome does not change. Measured:
+   * MB12 (the branch deleted) and MB23 (the branch MOVED below the state check) are both killed by that case
+   * and by nothing in this file - because this file compares OUTCOMES, and the three shapes discard identically
+   * under either order.
+   *
+   * What the case below does prove is still worth having, and it is a different thing: the three shapes are
+   * INDISTINGUISHABLE. That forecloses a FUTURE divergence rather than today's order.
    *
    * `CallbackScreen.tsx:101-104` tests `error` BEFORE the state comparison at `:138`. If those were swapped, a
    * refusal carrying no `state` and a refusal carrying a matching one would still both discard, but they would
@@ -722,6 +815,44 @@ describe('AC2: four failure kinds, one outcome', () => {
     expect(success.liveRegions).toBe(0);
     expect(success.storedKeys).toEqual([]);
     expect(failure.storedKeys.length).toBeGreaterThan(0);
+  });
+
+  it('attempts exactly one exchange per failure kind, and none for the refusal', async () => {
+    /**
+     * Kimi I3, accepted in substance and MOVED out of the struct, which is where Kimi asked for it.
+     *
+     * A `fetchCount` field would make the equivalence `toEqual` fail BY CONSTRUCTION: the `error=` path
+     * exchanges nothing, the other three exchange once. Kimi's recommendation contradicts the case it was
+     * placed in.
+     *
+     * And the reason it belongs outside is the interesting part. An authorization error response carries no
+     * `code` to exchange (RFC 6749 §4.1.2.1, and `CallbackScreen.tsx:81-85` says so), so the difference is in
+     * the MECHANISM and not in anything the visitor can observe - which is what AC2's struct is about. The gap
+     * Kimi identified is real all the same: a retry on one kind and not another would be a uniformity breach,
+     * and nothing before this case would have seen it.
+     */
+    const EXPECTED: ReadonlyArray<{ kind: FailureKind; exchanges: number }> = [
+      { kind: 'error-response', exchanges: 0 },
+      { kind: 'mismatched-state', exchanges: 0 },
+      { kind: 'refused-exchange', exchanges: 1 },
+      { kind: 'bad-nonce', exchanges: 1 },
+    ];
+    const counted: Array<{ kind: FailureKind; exchanges: number }> = [];
+    for (const { kind } of FAILURE_KINDS) {
+      seedPkceItems();
+      const arrival = await arriveAt(queryFor(kind), answerFor(kind));
+      await turn();
+      counted.push({ kind, exchanges: arrival.fetchSpy.mock.calls.length });
+      arrival.unmount();
+      const { clearAccessToken } = await import('./accessToken');
+      const { takeSignInNotice } = await import('./signInNotice');
+      clearAccessToken();
+      takeSignInNotice();
+      document.body.innerHTML = '';
+      globalThis.sessionStorage.clear();
+    }
+    expect(counted).toHaveLength(4);
+    expect(counted).toEqual(EXPECTED);
   });
 
   it('CONTROL: the struct is not a shell of empty fields', async () => {
@@ -838,11 +969,19 @@ describe('AC4: the code, description and URI do not survive the discard', () => 
     // five, a surface in `surfacesAfter` is being collected and never searched - which is how a sweep passes
     // while reading four things and claiming five.
     document.body.append(Object.assign(document.createElement('p'), { textContent: 'SENTINEL-DOCUMENT' }));
+    // The title and the head are the surfaces MB04 escaped through, so each gets its own sentinel: a surface
+    // added to a sweep without one is a surface nobody has proved is read.
+    document.title = 'SENTINEL-TITLE';
+    document.head.append(Object.assign(document.createElement('meta'), { name: 'SENTINEL-HEAD' }));
+    window.name = 'SENTINEL-WINDOW-NAME';
     globalThis.sessionStorage.setItem('sentinel-session', 'SENTINEL-SESSION');
     globalThis.localStorage.setItem('sentinel-local', 'SENTINEL-LOCAL');
     console.warn('SENTINEL-CONSOLE');
     const swept = surfacesAfter(arrival, watch);
     expect(leaks(swept, ['SENTINEL-DOCUMENT'])).toEqual(['document/SENTINEL-DOCUMENT']);
+    expect(leaks(swept, ['SENTINEL-TITLE'])).toEqual(['document/SENTINEL-TITLE']);
+    expect(leaks(swept, ['SENTINEL-HEAD'])).toEqual(['document/SENTINEL-HEAD']);
+    expect(leaks(swept, ['SENTINEL-WINDOW-NAME'])).toEqual(['window.name/SENTINEL-WINDOW-NAME']);
     expect(leaks(swept, ['SENTINEL-SESSION'])).toEqual(['sessionStorage/SENTINEL-SESSION']);
     expect(leaks(swept, ['SENTINEL-LOCAL'])).toEqual(['localStorage/SENTINEL-LOCAL']);
     expect(leaks(swept, ['SENTINEL-CONSOLE'])).toEqual(['console/SENTINEL-CONSOLE']);
@@ -1078,6 +1217,57 @@ describe('AC8: no user-facing string mentions enrollment, a factor, a code or a 
     expect(forbiddenCopyEntries([{ key: 'signIn.enterTotp', value: 'Try again.' }])).toEqual([
       'signIn.enterTotp (key)',
     ]);
+  });
+
+  it('CONTROL: the account-state vocabulary is forbidden on a sign-in key and PERMITTED elsewhere', () => {
+    /**
+     * Kimi I5 as ENLARGED at the Phase 9 gate, and the case that stops the enlargement from being undone.
+     *
+     * `role`, `merchant`, `administrator`, `suspended`, `locked` and `code` are all words a LATER TASK IS
+     * SPECIFIED TO WRITE - tasks 81-89 build the admin area, with `assignRole`, `adminSuspendAccount` and
+     * `adminUnlockAccount`. The first draft of this file forbade them globally, so task 81 would have
+     * discovered the problem by failing a test in `src/auth/`.
+     */
+    for (const word of ['role', 'merchant', 'administrator', 'suspended', 'locked', 'code']) {
+      const sentence = `The ${word} is shown here.`;
+      // Forbidden on a failed sign-in, which is R10's actual claim...
+      expect(
+        forbiddenCopyEntries([{ key: 'signIn.hint', value: sentence }]),
+        `"${word}" should be forbidden in sign-in copy`,
+      ).toEqual(['signIn.hint (value)']);
+      // ...and permitted on the admin screens that need it.
+      expect(
+        forbiddenCopyEntries([{ key: 'admin.roles.heading', value: sentence }]),
+        `"${word}" should be permitted in admin copy`,
+      ).toEqual([]);
+    }
+  });
+
+  it('CONTROL: the second-factor vocabulary is forbidden EVERYWHERE, not only on a sign-in key', () => {
+    // The other half of the split. If this ever passes an admin key, the global group has been scoped by
+    // mistake and R10's structural claim has quietly become a sign-in-only one.
+    for (const key of ['signIn.hint', 'admin.roles.heading', 'invoices.empty', 'apiKeys.created']) {
+      expect(
+        forbiddenCopyEntries([{ key, value: 'Set up two-factor authentication to continue.' }]),
+        `enrollment copy should be forbidden under "${key}"`,
+      ).toEqual([`${key} (value)`]);
+    }
+  });
+
+  it('CONTROL: a permitted-copy row admits exactly the key it names', () => {
+    // `PERMITTED_COPY` is EMPTY today, so the accounting is never exercised by the real catalogue - the same
+    // hole the Phase 6 self-audit found in `PERMITTED_HITS`, and closed the same way.
+    const admitted = (rows: ReadonlyArray<{ key: string; why: string }>, key: string): string[] => {
+      const permitted = new Set(rows.map((row) => row.key));
+      if (permitted.has(key)) return [];
+      return forbiddenCopyEntries([{ key, value: 'Enter your postal code.' }]);
+    };
+    expect(admitted([], 'signIn.postcode')).toEqual(['signIn.postcode (value)']);
+    expect(admitted([{ key: 'signIn.postcode', why: 'a postal code, not a one-time code' }], 'signIn.postcode'))
+      .toEqual([]);
+    // A row for another key explains nothing.
+    expect(admitted([{ key: 'signIn.other', why: 'unrelated' }], 'signIn.postcode'))
+      .toEqual(['signIn.postcode (value)']);
   });
 
   it('CONTROL: an empty catalogue is refused rather than reported clean', () => {
