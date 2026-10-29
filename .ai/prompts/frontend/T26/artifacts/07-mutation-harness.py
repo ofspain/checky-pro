@@ -27,6 +27,7 @@ BROKEN, not KILLED: read it by hand before calling it detected.
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 # Derived from this script's own location: <repo>/.ai/prompts/frontend/T26/artifacts/ -> <repo>/frontend
@@ -103,6 +104,16 @@ MUTANTS = [
      WRITE_THREE + "\n  session.setItem('themistra.auth.transient', state);\n  session.removeItem('themistra.auth.transient');"),
     ("MA20 a module removes a key it does not own", R, TARGET_REMOVE,
      TARGET_REMOVE + "\n      globalThis.sessionStorage.removeItem('themistra.auth.nonce');"),
+    # --- the two written to ESCAPE, so the limitation is measured rather than assumed ----------
+    # MA21 hides the method name from the text scan by computing it. The scan's patterns need the
+    # literal `setItem`, so only the runtime watch can see this one - and it does, because the
+    # write sits on a path every flow drives. MA22 is the same write behind a condition no test
+    # produces: the scan cannot see the name and the watch never runs. If MA22 survives, that is
+    # the honest boundary of this file, and the self-review says so rather than discovering it later.
+    ("MA21 a fifth key via a COMPUTED method name, on a driven path", A, WRITE_THREE,
+     WRITE_THREE + "\n  const method = 'set' + 'Item';\n  (session as unknown as Record<string, (k: string, v: string) => void>)[method]('themistra.auth.computed', state);"),
+    ("MA22 the same write behind a condition no test produces", A, WRITE_THREE,
+     WRITE_THREE + "\n  const method = 'set' + 'Item';\n  if (globalThis.navigator.userAgent.includes('ZZZ-NEVER-MATCHES')) {\n    (session as unknown as Record<string, (k: string, v: string) => void>)[method]('themistra.auth.dormant', state);\n  }"),
 ]
 
 FILES = [
@@ -136,9 +147,14 @@ print(f"ROOT = {ROOT}\n")
 print(f"baseline all-auth: {base_failed} failed of {base_total}, exit {base_code}")
 print(f"baseline T26 file: {own_base_failed} failed of {own_base_total}, exit {own_base_code}\n")
 
+# An optional substring filter, so one family can be re-measured without paying for all of them.
+only = sys.argv[1] if len(sys.argv) > 1 else None
+
 survivors = []
 inherited_only = []
 for name, path, old, new in MUTANTS:
+    if only is not None and only not in name:
+        continue
     s = open(f"{ROOT}/{path}").read()
     if old not in s:
         print(f"  !! {name}: pattern not found")
