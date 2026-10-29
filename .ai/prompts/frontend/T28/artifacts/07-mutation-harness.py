@@ -22,6 +22,7 @@ fail differently, so the mutants come in two kinds:
   MB16-MB18  enrollment arrives structurally - in code, or in a FILE NAME (AC5, AC6)
   MB19       /login stops being denylisted                               (AC10, R57)
   MB20-MB22  written to escape, or to strip an instrument                (AC5, AC7, AC2)
+  MB24-MB28  the five instruments Phase 11 added or widened           (Kimi Gap 1-5)
 
 MB17 IS THE MUTANT THIS WHOLE TASK EXISTS FOR. It is Kimi F3's own example sentence,
 verbatim. T27's `MFA_IDENTIFIER_SOURCE` has `multi[-_ ]?factor` and NO
@@ -48,6 +49,22 @@ have. The reordering is behaviourally invisible TODAY. What the AC2 ordering cas
 forecloses is a FUTURE divergence between the three state shapes - it pins them
 identical now, so anything that later told them apart fails. Asking this file to
 detect MB23 would be asking it to distinguish two things no observation separates.
+
+MB24-MB28 ARE PHASE 11'S, one per gap Kimi found that changed an instrument. Each was
+written to be INVISIBLE to the file as it stood before the fix, which is the only way
+to show a new assertion is not decoration:
+
+  MB24, MB25  `multi-factor` in the catalogue and in a component. Both passed every
+              scan in the package until Gap 1 was closed - T27's pattern has
+              `multi-factor` and no `two-factor`, T28's had the reverse (cf. MB17).
+  MB26        a role gate written as `roles.includes('MERCHANT')`, which names no
+              `role ===` and so slipped past the gating scan.
+  MB27        the discard carries `location.search` onto the sign-in URL for EVERY
+              failure kind, so AC2's equivalence still passes - only Gap 5's absolute
+              `search === ''` sees it.
+  MB28        the exchange is attempted for an error response that carries no `state`.
+              The old exchange-count table drove the matching-state shape only, so
+              this was a retry on one shape and not another with nothing watching.
 
 HOW TO READ THE OUTPUT. Each line reports the verdict and, separately, whether T28's
 OWN file caught the mutant or only an inherited case did. Those are different claims
@@ -191,6 +208,25 @@ MUTANTS = [
       clearAccessToken();
       setSignInNotice('discarded');
       navigate('/signed-out', { replace: true });
+      return;
+    }"""),
+
+    # --- MB24-MB28: the instruments Phase 11 added or widened (Kimi Gap 1-5) ----------------------------
+    ("MB24 `multi-factor` in the catalogue - Gap 1, the mirror of MB17", CATALOGUE, DISCARDED_COPY,
+     "    discarded: 'Your sign-in did not complete. Multi-factor authentication may not be set up yet.',"),
+    ("MB25 `multi-factor` in a component - Gap 1, seen only by the source scan", SIGN_IN, NOTICE_RENDER,
+     "        {notice !== null && status === 'idle'\n"
+     "          ? t('signIn.discarded') + ' Multi factor setup may be outstanding.'\n"
+     "          : null}"),
+    ("MB26 a role gate written as a membership test - Gap 4", CALLBACK, ERROR_READ,
+     ERROR_READ + "\n    const roles = (params.get('roles') ?? '').split(',');"
+     "\n    if (roles.includes('MERCHANT')) { discard(); return; }"),
+    ("MB27 every failure carries the query string onto the sign-in URL - Gap 5", CALLBACK, NAVIGATE,
+     "      navigate(`/${SIGN_IN_PATH}${globalThis.location.search}`, { replace: true });"),
+    ("MB28 an error response with no state exchanges anyway - Gap 3", CALLBACK, ERROR_BRANCH,
+     """    if (error !== null && error !== '') {
+      if (state === null) void exchangeAuthorizationCode({ code: code ?? '', state: '' });
+      discard();
       return;
     }"""),
 ]
