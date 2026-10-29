@@ -4,7 +4,7 @@ One task folder per implementation task in [`spec/frontend/tasks.md`](../../../s
 
 **Spec package:** [`spec/frontend/`](../../../spec/frontend/) — `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
-**Tasks (172):**
+**Tasks (174):**
 
 | Task | Title | Section |
 |---|---|---|
@@ -21,6 +21,8 @@ One task folder per implementation task in [`spec/frontend/tasks.md`](../../../s
 | [T11](T11/) | API routes are NetworkOnly | Phase 1 — Foundation |
 | [T12](T12/) | Prompt-to-reload update policy | Phase 1 — Foundation |
 | [T13](T13/) | No secret in the bundle | Phase 1 — Foundation |
+| [T173](T173/) | Design system installed | Phase 1 — Foundation: presentation layer (added 2026-10-29) |
+| [T174](T174/) | Home screen | Phase 1 — Foundation: presentation layer (added 2026-10-29) |
 | [T14](T14/) | PKCE verifier | Phase 1 — Auth & account (gatekeeper): OIDC and session |
 | [T15](T15/) | Authorize request shape | Phase 1 — Auth & account (gatekeeper): OIDC and session |
 | [T16](T16/) | No password field | Phase 1 — Auth & account (gatekeeper): OIDC and session |

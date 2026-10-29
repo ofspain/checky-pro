@@ -8,7 +8,7 @@ Run the phases in order; each consumes the previous phase's artifact and writes 
 
 **Spec section:** Phase 1 — Auth & account: routes
 
-**Scoped IDs** — requirements: `R28` · locked: derive in Phase 1 · tests: `unauthenticatedRoutesRedirectToSignIn`, `publicRouteSetIsExactlyTheDeclaredSet`
+**Scoped IDs** — requirements: `R28` · locked: derive in Phase 1 · tests: `unauthenticatedRoutesRedirectToSignIn`, `publicRouteSetIsExactlyTheDeclaredSet`, `homeRouteRendersLandingScreenAndManagesFocus`
 
 ## Phases
 

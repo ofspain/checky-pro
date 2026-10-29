@@ -19,7 +19,7 @@
 - **Scoped requirement IDs:** `R10`
 - **Scoped LOCKED decisions:** `L5`
 - **Named tests (`package.md` §8):** `sasRefusalForUnenrolledPrivilegedAccountShowsWrongPasswordCopy`, `privilegedBootstrapPathEnrollsWithoutEnrollmentHint`
-- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/token-claims.md`
+- **Contracts:** `contracts/api/*.yaml`, `contracts/api/auth.yaml`, `contracts/api/notifications.yaml`, `contracts/api/payments.yaml`, `contracts/api/token-claims.md`
 - **Standing rules:** `spec/frontend/agents.md` is authoritative — never restate or violate it.
 
 ---
