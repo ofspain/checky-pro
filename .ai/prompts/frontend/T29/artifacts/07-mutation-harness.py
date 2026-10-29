@@ -22,7 +22,7 @@ kinds, one per clause, plus the structural ones:
   MC08-MC11  the TIMING diverges - a delay before the sentence              (AC5)
   MC12-MC14  a gate, a timer in auth/, a leak of the description   (AC9, AC6, AC3)
   MC15       written to escape: a delay for a state no test drives          (AC5)
-  MC17       the description, percent-encoded into a store                   (AC3)
+  MC17, MC18 the description, percent-encoded into a store and a global     (AC3)
 
 MC08-MC11 ARE THIS TASK'S REASON TO EXIST. No earlier file in the package asserts
 anything about WHEN the sentence appears, so every one of these four passes T16-T28
@@ -38,14 +38,25 @@ Unlike T28's MB20, however, this one is NOT caught by a source scan either - a
 `setTimeout` inside `CallbackScreen` is caught by AC6's timer scan, which is exactly
 why that scan covers the whole tree rather than an "identity path" file list (Kimi F5).
 
-MC03 AND MC17 ARE THE ENCODING PAIR, and the distinction cost a self-review finding.
-MC03 writes `error_description` into the SIGN-IN URL, where `URLSearchParams` encodes
-each space as `+`. It is killed - but NOT by the encoding normalisation: the URL now
-carries a query string, so AC1's absolute `search === ''` kills it on its own, and
-MC03 therefore says nothing about whether `encodings()` works. MC17 is the mutant that
-isolates it: the description is percent-encoded into SESSION STORAGE, a surface with no
-absolute assertion on it, so the only thing that can see it is the sweep searching the
-decoded form. Measured: with `encodings()` removed, MC17 SURVIVES all 46 cases.
+MC03, MC17 AND MC18 ARE THE ENCODING TRIO, and getting to MC18 took two wrong guesses
+that are worth recording, because both were about what a mutant actually proves.
+
+  MC03 writes `error_description` into the SIGN-IN URL, where `URLSearchParams` turns
+  each space into `+`. It is killed - but NOT by the encoding normalisation. The URL
+  now carries a query string, so AC1's absolute `search === ''` kills it unaided, and
+  MC03 says nothing about whether `encodings()` works.
+
+  MC17 percent-encodes the description into SESSION STORAGE, which has no absolute
+  assertion on it. Also killed, and also not by the normalisation: MEASURED, with
+  `encodings()` bypassed MC17 still fails three cases, because `encodeURIComponent`
+  leaves a single word untouched - `suspended` survives encoding intact, so the STATE
+  needle is found raw, and the struct's `storedKeys` grows a key besides.
+
+  MC18 is the one that isolates it. It leaks only the `unknown` fixture's description,
+  whose text - "No account exists for that email address" - is the one description in
+  the table that does NOT contain its own state word, and it leaks to `window.name`,
+  which is not a struct field. So nothing but a sweep of the DECODED form can see it.
+  MEASURED: with `encodings()` bypassed, MC18 SURVIVES all 46 cases.
 
 HOW TO READ THE OUTPUT. Each line reports the verdict and, separately, whether T29's
 OWN file caught the mutant or only an inherited case did. Those are different claims
@@ -102,6 +113,12 @@ MUTANTS = [
     ("MC17 ISOLATES THE ENCODING: the description is percent-encoded into session storage", CALLBACK, NOTICE,
      NOTICE + "\n      globalThis.sessionStorage.setItem('themistra.auth.why',"
      " encodeURIComponent(params.get('error_description') ?? ''));"),
+
+    # Only the `unknown` fixture, and only to `window.name`: the one leak no other assertion can reach.
+    ("MC18 ISOLATES THE ENCODING: one description, percent-encoded, to window.name", CALLBACK, NOTICE,
+     NOTICE + "\n      if ((params.get('error_description') ?? '').startsWith('No account')) {"
+     "\n        window.name = encodeURIComponent(params.get('error_description') ?? '');"
+     "\n      }"),
 
     # --- MC05-MC06: the REDIRECT diverges (AC1, AC2) -----------------------------------------------------
     ("MC05 one state lands somewhere else", CALLBACK, ERROR_BRANCH,
