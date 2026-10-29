@@ -1,0 +1,250 @@
+"""T28 mutation harness: every mutant is a way the SPA LEARNS ABOUT ENROLLMENT, or a
+way its failures stop being uniform.
+
+!!! THIS SCRIPT EDITS PRODUCTION SOURCE AND REVERTS WITH `git checkout -- src/`. !!!
+!!! COMMIT OR STASH EVERYTHING UNDER frontend/src/ BEFORE RUNNING IT.            !!!
+Uncommitted edits are destroyed silently. That has cost real work twice in this
+package (19 test cases in T14, 5 in T15), which is why the warning is this loud.
+
+    python3 -I .ai/prompts/frontend/T28/artifacts/07-mutation-harness.py [filter]
+
+Run it from anywhere; it locates `frontend/` relative to its own path. It needs `npx`,
+and takes several minutes - each mutant is two vitest runs of the whole suite. An
+optional substring argument runs one family, e.g. `MB07`.
+
+WHY THIS LIST LOOKS LIKE THIS. R10's obligation on the client has two halves and they
+fail differently, so the mutants come in two kinds:
+
+  MB01-MB05  the error code, description or URI SURVIVES the discard        (AC4, F8)
+  MB06-MB09  the copy names a cause, or a seventh sentence arrives     (AC8, AC9, L4)
+  MB10-MB12  the failures stop being uniform                           (AC2, R10, F4)
+  MB13-MB15  something GATES on an account state or a role                  (AC7, F6)
+  MB16-MB18  enrollment arrives structurally - in code, or in a FILE NAME (AC5, AC6)
+  MB19       /login stops being denylisted                               (AC10, R57)
+  MB20-MB22  written to escape, or to strip an instrument                (AC5, AC7, AC2)
+
+MB17 IS THE MUTANT THIS WHOLE TASK EXISTS FOR. It is Kimi F3's own example sentence,
+verbatim. T27's `MFA_IDENTIFIER_SOURCE` has `multi[-_ ]?factor` and NO
+`two[-_ ]?factor`, so this sentence passed every scan in the package before T28. If
+MB17 ever survives, the content pattern has been narrowed back and the hole is open.
+
+MB18 IS A FILE, NOT AN EDIT, which is why this harness can create one. A module named
+`EnrollMfaScreen.tsx` with an innocent body passes the content scan, passes T27's
+identifier scan, and passes T27's import scan until something imports it. Only AC6's
+path scan sees it. It is the one mutant no other instrument in this package can catch.
+
+MB20 IS WRITTEN TO ESCAPE, in T26's and T27's tradition: a branch that fires only for
+an error code no test drives, writing under a computed key. Runtime instruments cannot
+see dormant code; only the source scan can. If MB20 survives, the structural half of
+AC5/AC7 has been weakened into a behavioural one.
+
+MB12 IS EXPECTED TO SURVIVE, and it is in the list to record WHY rather than to score.
+It moves the `error=` branch BELOW the state check. Measured: every arrival still
+discards identically, because a URL carrying `error=` carries no `code`, so the guard
+below catches what the branch above would have. The reordering is behaviourally
+invisible TODAY. What the AC2 ordering case actually forecloses is a FUTURE divergence
+between the three state shapes - it pins them identical now, so anything that later
+told them apart fails. A harness that scored MB12 as a hole would be asking this file
+to detect something no observation can distinguish.
+
+HOW TO READ THE OUTPUT. Each line reports the verdict and, separately, whether T28's
+OWN file caught the mutant or only an inherited case did. Those are different claims
+and only the second column is T28's. A mutant that makes a run unparseable is scored
+BROKEN, not KILLED: a mutant has to COMPILE to be evidence of anything (T27 scored one
+BROKEN twice before its anchor was right). Read a BROKEN line by hand.
+
+EXPECTED BASELINE on this host: the whole suite runs 1334 passed / 1 failed - the one
+is the pre-existing `src/api/lintRejectsHandWrittenBackendFetch.test.ts:118`, an
+oxlint summary-line difference unrelated to this task - and T28's own file runs 39/39
+with exit 0.
+"""
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+# Derived from this script's own location: <repo>/.ai/prompts/frontend/T28/artifacts/ -> <repo>/frontend
+ROOT = Path(__file__).resolve().parents[5] / "frontend"
+
+CALLBACK = "src/auth/CallbackScreen.tsx"
+SIGN_IN = "src/auth/SignInScreen.tsx"
+CATALOGUE = "src/i18n/catalogue.ts"
+DENYLIST = "src/pwa/navigationDenylist.ts"
+
+T28_ONLY = ["src/auth/sasRefusalForUnenrolledPrivilegedAccountShowsWrongPasswordCopy.test.tsx"]
+FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
+
+# --- anchors, copied from the real source ----------------------------------------------------------------
+ERROR_READ = "    const error = params.get('error')?.trim() ?? null;"
+ERROR_BRANCH = """    if (error !== null && error !== '') {
+      discard();
+      return;
+    }"""
+NOTICE = "      setSignInNotice('discarded');"
+NAVIGATE = "      navigate(`/${SIGN_IN_PATH}`, { replace: true });"
+STATE_CHECK = """    if (stored === null || stored === '' || stored !== state) {
+      discard();
+      return;
+    }"""
+DISCARDED_COPY = "    discarded: 'Your sign-in did not complete. Try again.',"
+FAILED_COPY = "    failed: 'Sign-in could not be started. Try again.',"
+NOTICE_RENDER = "        {notice !== null && status === 'idle' ? t('signIn.discarded') : null}"
+SIGN_IN_LIVE_REGION = """      <div role="status" aria-live="polite">
+        {/* The notice yields to a fresh attempt"""
+LOGIN_DENY = "  '/login',"
+
+MUTANTS = [
+    # --- MB01-MB05: the error survives the discard (AC4, Kimi F8) ----------------------------------------
+    ("MB01 the error code is stored in session storage", CALLBACK, NOTICE,
+     NOTICE + "\n      globalThis.sessionStorage.setItem('themistra.auth.last_error', error ?? '');"),
+    ("MB02 the error_description is stored", CALLBACK, NOTICE,
+     NOTICE + "\n      globalThis.sessionStorage.setItem('themistra.auth.why',"
+     " params.get('error_description') ?? '');"),
+    ("MB03 the error_description is logged", CALLBACK, NOTICE,
+     NOTICE + "\n      console.error('sign-in refused:', params.get('error_description'));"),
+    ("MB04 the error_description is written to the document title", CALLBACK, NOTICE,
+     NOTICE + "\n      document.title = params.get('error_description') ?? document.title;"),
+    ("MB05 the error code is carried to the sign-in URL", CALLBACK, NAVIGATE,
+     "      navigate(`/${SIGN_IN_PATH}${error ? `?reason=${error}` : ''}`, { replace: true });"),
+
+    # --- MB06-MB09: the copy names a cause (AC8, AC9, L4) ------------------------------------------------
+    ("MB06 the discard sentence names two-factor enrollment", CATALOGUE, DISCARDED_COPY,
+     "    discarded: 'Your sign-in did not complete. You may need to set up two-factor"
+     " authentication.',"),
+    ("MB07 the discard sentence mentions an authenticator code", CATALOGUE, DISCARDED_COPY,
+     "    discarded: 'Your sign-in did not complete. Check your authenticator code and try again.',"),
+    ("MB08 a seventh signIn key arrives", CATALOGUE, DISCARDED_COPY,
+     DISCARDED_COPY + "\n    enrollmentNeeded: 'Set up your authenticator to continue.',"),
+    ("MB09 the failed and discarded sentences become the same", CATALOGUE, DISCARDED_COPY,
+     "    discarded: 'Sign-in could not be started. Try again.',"),
+
+    # --- MB10-MB12: the failures stop being uniform (AC2, Kimi F4) ---------------------------------------
+    ("MB10 the refusal pushes history instead of replacing it", CALLBACK, ERROR_BRANCH,
+     """    if (error !== null && error !== '') {
+      clearAccessToken();
+      setSignInNotice('discarded');
+      navigate(`/${SIGN_IN_PATH}`, { replace: false });
+      return;
+    }"""),
+    ("MB11 the refusal deletes the stored items and the other failures do not", CALLBACK, ERROR_BRANCH,
+     """    if (error !== null && error !== '') {
+      consumeAuthorizeState();
+      discard();
+      return;
+    }"""),
+    ("MB12 the error branch is moved below the state check (EXPECTED SURVIVOR - see header)",
+     CALLBACK, ERROR_BRANCH, ""),
+
+    # --- MB13-MB15: a gate on an account state or a role (AC7, Kimi F6) ----------------------------------
+    ("MB13 a PENDING_ENROLLMENT account-state gate", CALLBACK, ERROR_READ,
+     ERROR_READ + "\n    const accountState = params.get('account_state');"
+     "\n    if (accountState === 'PENDING_ENROLLMENT') { discard(); return; }"),
+    ("MB14 a requiresMfa gate", CALLBACK, ERROR_READ,
+     ERROR_READ + "\n    const requiresMfa = params.get('requires_mfa') === 'true';"
+     "\n    if (requiresMfa) { discard(); return; }"),
+    ("MB15 a role comparison decides what a failure shows", CALLBACK, ERROR_READ,
+     ERROR_READ + "\n    const role = params.get('role');"
+     "\n    if (role === 'MERCHANT' || role === 'ADMIN') { discard(); return; }"),
+
+    # --- MB16-MB18: enrollment arrives structurally (AC5, AC6, Kimi F3 and F5) ---------------------------
+    ("MB16 an enrollment string arrives in production code", SIGN_IN, NOTICE_RENDER,
+     "        {notice !== null && status === 'idle'\n"
+     "          ? t('signIn.discarded') + ' (you may need to enroll)'\n"
+     "          : null}"),
+    ("MB17 KIMI F3's OWN SENTENCE - two-factor, which T27's pattern misses", SIGN_IN, NOTICE_RENDER,
+     "        {/* eslint-disable-next-line */}\n"
+     "        {notice !== null && status === 'idle'\n"
+     "          ? 'Your account needs two-factor authentication set up before you can sign in'\n"
+     "          : null}"),
+    ("MB18 a module named for enrollment, with an innocent body (A FILE, NOT AN EDIT)",
+     "src/auth/EnrollMfaScreen.tsx", None,
+     "export function EnrollMfaScreen() {\n"
+     "  return <p>Follow the steps on the next page.</p>;\n"
+     "}\n"),
+
+    # --- MB19: the denylist (AC10, R57) ------------------------------------------------------------------
+    ("MB19 /login stops being denylisted", DENYLIST, LOGIN_DENY, ""),
+
+    # --- MB20-MB22: written to escape, or to strip an instrument -----------------------------------------
+    ("MB20 ESCAPE: a dormant branch for a code no test drives, under a computed key", CALLBACK, NOTICE,
+     NOTICE + "\n      const mfaRequired = error === 'enrollment_pending_vendor_specific';"
+     "\n      if (mfaRequired) {"
+     "\n        globalThis.sessionStorage.setItem(['themistra', 'mfa', 'state'].join('.'),"
+     " params.get('error_description') ?? '');"
+     "\n      }"),
+    ("MB21 the sign-in live region is removed, so nothing is announced", SIGN_IN, SIGN_IN_LIVE_REGION,
+     """      <div>
+        {/* The notice yields to a fresh attempt"""),
+    ("MB22 the refusal lands somewhere other than the sign-in start", CALLBACK, ERROR_BRANCH,
+     """    if (error !== null && error !== '') {
+      clearAccessToken();
+      setSignInNotice('discarded');
+      navigate('/signed-out', { replace: true });
+      return;
+    }"""),
+]
+
+
+def run(files):
+    proc = subprocess.run(
+        ["npx", "-y", "pnpm@12.14.0", "exec", "vitest", "run"] + files,
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    out = proc.stdout + proc.stderr
+    m = re.search(r"Tests\s+(?:(\d+) failed \| )?(\d+) passed(?: \| (\d+) todo)?\s+\((\d+)\)", out)
+    if not m:
+        return None, None, proc.returncode
+    return int(m.group(1) or 0), int(m.group(4)), proc.returncode
+
+
+def revert():
+    subprocess.run(["git", "checkout", "--", "src/"], cwd=ROOT, check=True)
+    # `git checkout` restores tracked files; a mutant that CREATES one has to be removed by hand.
+    subprocess.run(["git", "clean", "-fq", "--", "src/"], cwd=ROOT, check=True)
+
+
+wanted = sys.argv[1] if len(sys.argv) > 1 else ""
+selected = [m for m in MUTANTS if wanted in m[0]]
+
+revert()
+base_failed, base_total, base_code = run(FILES)
+own_base_failed, own_base_total, own_base_code = run(T28_ONLY)
+print(f"ROOT = {ROOT}\n")
+print(f"baseline whole suite: {base_failed} failed of {base_total}, exit {base_code}")
+print(f"baseline T28 file:    {own_base_failed} failed of {own_base_total}, exit {own_base_code}\n")
+
+survivors = []
+for name, path, old, new in selected:
+    target = ROOT / path
+    if old is None:
+        # A CREATED file (MB18). There is nothing to anchor on, and `git clean` removes it afterwards.
+        if target.exists():
+            print(f"  !! {name}: {path} already exists - refusing to overwrite")
+            survivors.append(f"{name} (NOT APPLIED)")
+            continue
+        target.write_text(new)
+    else:
+        source = target.read_text()
+        if old not in source:
+            print(f"  !! {name}: pattern not found in {path}")
+            survivors.append(f"{name} (NOT APPLIED)")
+            continue
+        target.write_text(source.replace(old, new, 1))
+    failed, total, code = run(FILES)
+    own_failed, own_total, own_code = run(T28_ONLY)
+    revert()
+    if failed is None or total is None:
+        verdict = "BROKEN"
+    elif failed > base_failed or total != base_total or code != base_code:
+        verdict = "KILLED"
+    else:
+        verdict = "SURVIVED"
+    alone = ("own" if (own_failed or 0) > (own_base_failed or 0) or own_code != own_base_code
+             else "INHERITED-ONLY")
+    if verdict != "KILLED":
+        survivors.append(f"{name} [{verdict}]")
+    print(f"  {verdict:9} {alone:14} {name}  ({failed} failed of {total}, exit {code})")
+
+print("\nsurvivors:", survivors or "none")
+revert()
