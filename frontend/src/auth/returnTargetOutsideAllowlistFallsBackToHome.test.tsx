@@ -336,11 +336,22 @@ function strip(source: string): string {
  * line is excluded; a declaration at module scope is unindented, and one inside a function is not.
  */
 function moduleScopeUsesOfTheRouteTable(source: string): string[] {
-  return strip(source)
-    .split('\n')
-    .filter((line) => /\b(?:AUTHENTICATED_ROUTE_PATHS|HOME_PATH)\b/.test(line))
-    .filter((line) => !line.trimStart().startsWith('import'))
-    .filter((line) => !/^\s/.test(line));
+  const found: string[] = [];
+  let depth = 0;
+  for (const line of strip(source).split('\n')) {
+    const isImport = line.trimStart().startsWith('import');
+    if (depth === 0 && !isImport && /\b(?:AUTHENTICATED_ROUTE_PATHS|HOME_PATH)\b/.test(line)) {
+      found.push(line.trim());
+    }
+    // Brace depth, not indentation. The first version of this scan tested indentation and MISSED the mutant that
+    // matters most - a module-scope `new Set(` whose continuation line is indented like a function body - so the
+    // multi-line control below is the one that found the hole, and it stays to keep it closed.
+    for (const character of line) {
+      if (character === '{') depth += 1;
+      else if (character === '}') depth -= 1;
+    }
+  }
+  return found;
 }
 
 /** The allowlist as the route table says it should be, computed here independently of the module under test. */
@@ -718,6 +729,24 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         ),
         'the control: the scan does catch one',
       ).toEqual(['const eager = new Set(AUTHENTICATED_ROUTE_PATHS);']);
+
+      // The control that earned its place. A module-scope use split over two lines is indented exactly like a
+      // function body, so an indentation-based scan reports nothing - which is what the first version of this
+      // test did, against a mutant that made the module graph fail to load at all.
+      expect(
+        moduleScopeUsesOfTheRouteTable(
+          'const eager = new Set(\n  AUTHENTICATED_ROUTE_PATHS.map((path) => `/${path}`),\n);\n',
+        ),
+        'the control: and one that hides behind an indent',
+      ).toEqual(['AUTHENTICATED_ROUTE_PATHS.map((path) => `/${path}`),']);
+
+      // And a function body, which must NOT be reported, or the scan is a prohibition on using the table at all.
+      expect(
+        moduleScopeUsesOfTheRouteTable(
+          'function allowed(): string[] {\n  return AUTHENTICATED_ROUTE_PATHS.map((path) => path);\n}\n',
+        ),
+        'the control: a use inside a function is the correct shape',
+      ).toEqual([]);
     });
   });
 
