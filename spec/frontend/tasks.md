@@ -1,7 +1,7 @@
 # 7. Tasks — ordered execution plan
 
 Execute in order. Each unit is one observable behaviour, proven by the named test in `package.md` §8 (the backtick name after
-"Verifies"). A unit that depends on an open blocker is marked "Blocked on Qn" and is not started until its blocker closes. Each unit is
+"Verifies"). A unit that depends on an open blocker is marked "Blocked on Qn" and is not started until its blocker closes; a unit that depends on another UNIT is marked "Blocked on <n>" the same way, and the number is a task number, not a question. Each unit is
 one physical line so the generator can read its cites. Phase 1a is decomposed to unit level. Phases 1b to 5 are still coarse and
 will be decomposed after this granularity is accepted.
 
@@ -70,11 +70,11 @@ now and expensive after task 42, which is the first unit to render a screen beyo
 
 40. **Public route set is exact.** Exactly the public routes in `design.md` §4c are reachable without a session. Verifies `publicRouteSetIsExactlyTheDeclaredSet`. Cites R28, L14.
 41. **Unauthenticated redirect.** An unauthenticated request for any other route redirects to sign-in. Verifies `unauthenticatedRoutesRedirectToSignIn`. Cites R28.
-42. **Authenticated shell.** A session renders the shell and the authenticated routes. Verifies `unauthenticatedRoutesRedirectToSignIn`. Cites R28.
+42. **Authenticated shell.** A session renders the shell and the authenticated routes. Verifies `unauthenticatedRoutesRedirectToSignIn`. Cites R28. Blocked on 173, 174.
 
 ## Phase 1 — Auth & account: registration and reset
 
-43. **Registration accepts 12 characters.** A 12-character password is accepted client-side as advisory. Verifies `registrationAcceptsTwelveAndOneTwentyEightCodePoints`. Cites R1.
+43. **Registration accepts 12 characters.** A 12-character password is accepted client-side as advisory. Verifies `registrationAcceptsTwelveAndOneTwentyEightCodePoints`. Cites R1. Blocked on 173.
 44. **Registration accepts 128 characters.** A 128-character password is accepted client-side as advisory. Verifies `registrationAcceptsTwelveAndOneTwentyEightCodePoints`. Cites R1.
 45. **Registration rejects out-of-range passwords.** A password of 11 or 129 code points shows the advisory guidance. Verifies `registrationRejectsPasswordsOutsideTwelveToOneTwentyEightCodePoints`. Cites R1.
 46. **Code points, not UTF-16.** Length is counted in Unicode code points. Verifies `passwordLengthCountsCodePoints`. Cites R1.
