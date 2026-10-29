@@ -221,8 +221,21 @@ MUTANTS = [
     ("MB26 a role gate written as a membership test - Gap 4", CALLBACK, ERROR_READ,
      ERROR_READ + "\n    const roles = (params.get('roles') ?? '').split(',');"
      "\n    if (roles.includes('MERCHANT')) { discard(); return; }"),
-    ("MB27 every failure carries the query string onto the sign-in URL - Gap 5", CALLBACK, NAVIGATE,
-     "      navigate(`/${SIGN_IN_PATH}${globalThis.location.search}`, { replace: true });"),
+    # MB27's FIRST DRAFT USED `globalThis.location.search` AND SURVIVED, and it was not an escape - it was
+    # INERT. The suite drives a `createMemoryRouter`, so the arrival's query lives on the router and the jsdom
+    # window's `location.search` is empty; the mutant appended nothing and changed no behaviour at all. A
+    # mutant that does not express its own defect proves nothing about the assertion meant to catch it. Read
+    # from `params`, which is what the screen itself reads.
+    ("MB27 every failure carries its own query string onto the sign-in URL - Gap 5", CALLBACK, NAVIGATE,
+     "      navigate(`/${SIGN_IN_PATH}?${params.toString()}`, { replace: true });"),
+    # AND THE ONE THAT ISOLATES GAP 5. MB27 is caught by the equivalence too, because each failure kind
+    # arrives with a different query and so leaves with a different one. A query that is the SAME for all four
+    # is invisible to AC2 by construction - uniform is exactly what AC2 checks for - and invisible to AC1's
+    # destination, which is a pathname. Only `expect(outcome.search).toBe('')` sees it. If MB29 ever survives,
+    # Gap 5's assertion has been deleted and the URL is no longer known to be clean.
+    ("MB29 the sign-in URL grows a uniform marker no other assertion can see - Gap 5, isolated",
+     CALLBACK, NAVIGATE,
+     "      navigate(`/${SIGN_IN_PATH}?from=callback`, { replace: true });"),
     ("MB28 an error response with no state exchanges anyway - Gap 3", CALLBACK, ERROR_BRANCH,
      """    if (error !== null && error !== '') {
       if (state === null) void exchangeAuthorizationCode({ code: code ?? '', state: '' });
