@@ -21,6 +21,22 @@ will be decomposed after this granularity is accepted.
 12. **Prompt-to-reload update policy.** The worker never calls `skipWaiting` or `clients.claim`, and a new build waits for a user reload. Verifies `serviceWorkerUpdateWaitsForReload`. Cites L17, `package.md` §10.
 13. **No secret in the bundle.** The production bundle contains no secret value and no non-public environment key. Verifies `bundleContainsNoSecretEnvKeys`. Cites R58, L10.
 
+## Phase 1 — Foundation: presentation layer (added 2026-10-29)
+
+**Numbered 173–174 although they execute here.** `tasks.md` numbering is append-only: a removed unit keeps its slot
+(see 34 and 60–65, struck through rather than deleted) and no unit is ever renumbered, because task numbers are cited
+by completed `.ai/` artifacts, by production source comments, and by declared deviations. Execution position is given
+by **document order**, which is what "Execute in order" means above; the numbers are identifiers, not a sequence.
+
+**Why these exist.** O2 resolved the design system on 2026-10-10 and no unit implemented it, so 27 completed units have
+shipped against an unstyled tree: no CSS file, no Tailwind or PostCSS configuration, no `className` in any production
+component. Separately, `/app/home` is registered with no element, so a visitor who completes a sign-in lands on a blank
+page with focus stranded on `<body>` — the subject of two declared deviations, T24-D11 and T27-D1. Both gaps are cheap
+now and expensive after task 42, which is the first unit to render a screen beyond sign-in and callback.
+
+173. **Design system installed.** The design system O2 resolved — Tailwind CSS with headless/unstyled accessible primitives — is installed, configured, and applied to every existing screen, which render through its primitives rather than bare elements. Verifies `screensRenderThroughDesignSystemPrimitivesOnly`. Cites L11, L13. Execute before 42.
+174. **Home screen.** `/app/home` renders a landing screen and moves focus to it on arrival, so a completed sign-in lands somewhere rather than on a blank document. Verifies `homeRouteRendersLandingScreenAndManagesFocus`. Cites R28, L11, L1. Execute before 42.
+
 ## Phase 1 — Auth & account (gatekeeper): OIDC and session
 
 14. **PKCE verifier.** The code verifier is 43–128 characters from the RFC 7636 unreserved set, and its S256 challenge is sent on authorize. Verifies `pkceVerifierMeetsRfc7636`. Cites R6, L1.

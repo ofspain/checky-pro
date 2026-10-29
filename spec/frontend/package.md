@@ -163,6 +163,10 @@ their own named tests.
 - `sasNavigationBypassesServiceWorker` → R57
 - `endSessionNavigationBypassesServiceWorker` → R57
 
+**Phase 1a — Presentation layer (added 2026-10-29)**
+- `screensRenderThroughDesignSystemPrimitivesOnly` → L11
+- `homeRouteRendersLandingScreenAndManagesFocus` → R28, L11
+
 **Phase 1a — Unit-level tests (added with the decomposition of `tasks.md`)**
 - `reusedRefreshOrFailedRenewalTriggersCleanReauth` → R22
 - `shellBuildsAndMounts` → L13
