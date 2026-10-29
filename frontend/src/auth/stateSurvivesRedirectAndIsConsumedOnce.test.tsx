@@ -61,8 +61,16 @@ const ACCESS_TOKEN = 'ACCESS-TOKEN-5c71b8a3f204';
 const SECOND_ACCESS_TOKEN = 'ACCESS-TOKEN-0e92d4176bca';
 /** The route a discard lands on, basename included, as the router reports it. */
 const SIGN_IN_ROUTE = '/app/sign-in';
-/** Where a consumed callback leaves the visitor today: task 24 owns moving them on (T23-D16). */
-const CALLBACK_ROUTE = '/app/callback';
+/**
+ * Where a consumed callback leaves the visitor.
+ *
+ * T23 left them on `/app/callback`, because the post-login destination was task 24's by name. Task 24 built it:
+ * a successful callback now navigates to the remembered return target if the allowlist admits it, and to the
+ * home route otherwise. Every case in this file signs in without remembering one, so they all land on home -
+ * and that is still the assertion T23 was making, which is "the callback ran to completion", read at its new
+ * end point.
+ */
+const POST_LOGIN_ROUTE = '/app/home';
 
 type Mounted = { root: Root; container: HTMLElement };
 let mounted: Mounted | undefined;
@@ -417,7 +425,7 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
       // The second control: the callback really was consumed. A discarded callback would also end with the token
       // absent, and then "the three are gone" would be measuring the wrong path entirely.
       expect(arrival.holder.accessToken.current()).toBe(ACCESS_TOKEN);
-      expect(arrival.router.state.location.pathname).toBe(CALLBACK_ROUTE);
+      expect(arrival.router.state.location.pathname).toBe(POST_LOGIN_ROUTE);
       expect(presentItems()).toEqual([]);
       expect(storedKeys()).toEqual([]);
       expect(watch.clear, 'the store is never cleared - other keys are not this task to delete').not.toHaveBeenCalled();
@@ -621,7 +629,7 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
       );
 
       expect(arrival.holder.accessToken.current(), 'the outcome is unchanged (T23-D4)').toBe(ACCESS_TOKEN);
-      expect(arrival.router.state.location.pathname).toBe(CALLBACK_ROUTE);
+      expect(arrival.router.state.location.pathname).toBe(POST_LOGIN_ROUTE);
       expect((denied.mock.calls as Array<[string]>).map(([key]) => key)).toEqual([...THREE_KEYS]);
       expect(denied.mock.results.every((result) => result.type === 'throw')).toBe(true);
       expect(presentItems()).toEqual([...THREE_KEYS]);
@@ -669,7 +677,7 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
 
       expect(arrival.fetchSpy, 'one handling').toHaveBeenCalledTimes(1);
       expect(removedKeys(watch), 'one deletion, not two passes of three').toEqual([...THREE_KEYS]);
-      expect(arrival.router.state.location.pathname, 'the second pass did not discard').toBe(CALLBACK_ROUTE);
+      expect(arrival.router.state.location.pathname, 'the second pass did not discard').toBe(POST_LOGIN_ROUTE);
       expect(arrival.holder.accessToken.current()).toBe(ACCESS_TOKEN);
       expect(presentItems()).toEqual([]);
     });
@@ -815,18 +823,21 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
     });
 
     /**
-     * The pin Kimi I1 asked for, and the message is the point of it. `consumeAuthorizeState` iterates the
-     * constant, which is deliberate - a fourth SINGLE-USE key cannot then be left behind - but L16's fourth item
-     * is the post-login return target, and task 24 is the obvious author of it. If task 24 adds its key to this
-     * constant, the deletion at callback starts taking it too. This case is where that decision gets made, out
-     * loud, instead of being inherited.
+     * The pin Kimi I1 asked for, and **task 24 answered it**. The question was what happens when L16's fourth
+     * item - the post-login return target - arrives: adding its key to this constant would enrol it in a
+     * deletion that runs before the navigation ever reads it.
+     *
+     * Task 24 put it in its own module with its own key and its own removal, and the reason generalises: these
+     * three are deleted for having been consumed by the EXCHANGE, and the return target for having been read by
+     * the NAVIGATION. Different consumers, different moments, so each belongs to the module that owns its
+     * reader (T24-D4). The pin therefore still reads three, and it now records an answer rather than a question.
      */
-    it('deletes the set this constant names, which is exactly three keys today (R-I1)', () => {
+    it('deletes the set this constant names, which is exactly three keys (R-I1, T24-D4)', () => {
       expect(
         Object.keys(AUTHORIZE_STORAGE_KEYS),
-        'consumeAuthorizeState() deletes every value of AUTHORIZE_STORAGE_KEYS. If you are adding a fourth ' +
-          'key (task 24s return target?), decide whether it is single-use at callback: if it is, add it here; ' +
-          'if it is not, keep it in its own constant so this deletion cannot reach it.',
+        'consumeAuthorizeState() deletes every value of AUTHORIZE_STORAGE_KEYS, and these three are the items ' +
+          'the code exchange consumes. A new single-use item belongs here only if the EXCHANGE is what uses it ' +
+          'up; one consumed by anything else belongs to that reader s module, as task 24 s return target does.',
       ).toEqual(['state', 'nonce', 'codeVerifier']);
     });
 

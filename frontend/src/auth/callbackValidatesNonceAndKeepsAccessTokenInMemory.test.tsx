@@ -743,8 +743,10 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       const rendered = await arriveAt(`/callback?code=abc&state=${STATE}`, () => jsonResponse(tokensBody()));
 
       expect(rendered.fetchSpy).toHaveBeenCalledTimes(1);
-      expect(rendered.router.state.location.pathname).toBe('/app/callback');
-      expect(rendered.container.textContent).toContain(en.callback.working);
+      // Task 24 navigates once the token is held, so a completed exchange no longer ends on the callback route.
+      // The non-vacuity this case exists for is unchanged: one request really went out, and the flow really
+      // finished - which is now visible as the post-login route rather than as the holding copy.
+      expect(rendered.router.state.location.pathname).toBe('/app/home');
     });
 
     it('still discards a token whose nonce is not the stored value, now over a real transport (AC14)', async () => {
@@ -822,8 +824,11 @@ describe('callbackValidatesNonceAndKeepsAccessTokenInMemory', () => {
       });
 
       expect(rendered.fetchSpy).toHaveBeenCalledTimes(1);
-      expect(rendered.router.state.location.pathname).toBe('/app/callback');
-      expect(rendered.container.querySelectorAll('main')).toHaveLength(1);
+      // One request under StrictMode, and ONE navigation: task 24's `onScreen` ref is set on every invocation
+      // of the effect rather than once, because StrictMode runs the cleanup between the two passes - and a flag
+      // left false there would mean a StrictMode sign-in never navigated at all, in development only, with
+      // every other assertion in this file still green.
+      expect(rendered.router.state.location.pathname).toBe('/app/home');
     });
 
     it('survives the screen unmounting while the exchange is still in flight', async () => {

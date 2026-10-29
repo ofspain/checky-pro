@@ -586,12 +586,16 @@ describe('callbackValidatesNonce', () => {
      * fails if the screen ever stops consulting the decision, because the ONLY difference between it and the
      * next case is the nonce inside the token.
      */
-    it('holds on the callback screen when the nonce agrees', async () => {
+    it('leaves the callback screen for the post-login route when the nonce agrees', async () => {
       seedAllThree('xyz', STORED);
       const rendered = await arriveWithToken('/callback?code=abc&state=xyz', tokenWith({ nonce: STORED }));
 
-      expect(rendered.router.state.location.pathname).toBe('/app/callback');
-      expect(rendered.container.textContent ?? '').toContain(en.callback.working);
+      // T19 asserted the screen HELD - it stayed on `/app/callback` and showed the holding copy - because a
+      // passing nonce had nowhere to lead. Task 24 gave it somewhere, so the same property is now read as a
+      // departure: an agreeing nonce leaves for the post-login route, a disagreeing one goes to sign-in, and the
+      // two destinations are still what tells the decision apart. The holding copy is gone with the screen.
+      expect(rendered.router.state.location.pathname).toBe('/app/home');
+      expect(rendered.router.state.location.pathname).not.toBe('/app/sign-in');
     });
 
     it('returns the visitor to sign-in when the nonce does not', async () => {
@@ -668,7 +672,10 @@ describe('callbackValidatesNonce', () => {
 
       expect(rendered.exchange).toHaveBeenCalledTimes(1);
       expect(rendered.exchange).toHaveBeenCalledWith(expect.objectContaining({ code: 'abc', state: 'xyz' }));
-      expect(rendered.router.state.location.pathname, 'the control: it really did hold').toBe('/app/callback');
+      expect(
+        rendered.router.state.location.pathname,
+        'the control: it really did complete (task 24 moved the end point off the callback route)',
+      ).toBe('/app/home');
     });
 
     // R8 again, from the other side: a callback that never matched must not even be exchanged (T17's property,

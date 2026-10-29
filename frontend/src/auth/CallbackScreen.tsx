@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import { SIGN_IN_PATH } from '../app/routes';
 import { clearAccessToken, retainAccessToken } from './accessToken';
 import { AUTHORIZE_STORAGE_KEYS, consumeAuthorizeState } from './authorizeRequest';
+import { takeReturnTarget } from './returnTarget';
 import { exchangeAuthorizationCode } from './codeExchange';
 import { idTokenNonceMatchesStoredValue } from './idTokenNonce';
 import { setSignInNotice } from './signInNotice';
@@ -43,6 +44,16 @@ export function CallbackScreen() {
   // Set before anything else runs. StrictMode invokes effects twice in development, and this effect navigates and
   // sets module state - both things that must happen once.
   const handled = useRef(false);
+  /**
+   * Whether this mount is still on screen (T24-D7).
+   *
+   * NOT the same guard as `handled`, which refuses a SECOND invocation. This one refuses to act on behalf of a
+   * visitor who has LEFT: the exchange keeps running after an unmount, because it is a promise and not a
+   * component, and the token it returns is still held - module state the visitor's absence does not change. A
+   * navigation is different in kind. Yanking someone onto another route after they have gone elsewhere is a
+   * visible, unasked-for move, and T21 pinned that intention in words before there was any navigation to break.
+   */
+  const onScreen = useRef(true);
 
   // One mount handles one callback, which is why the dependency list is empty. The browser arrives here by a
   // fresh navigation every time, so there is no second set of parameters to react to; a list naming `params`
@@ -53,6 +64,11 @@ export function CallbackScreen() {
   // can redeem the code a second time. A replayed code is refused anyway (measured: 400 invalid_grant), but the
   // refusal would arrive as a discard on a sign-in that had already succeeded.
   useEffect(() => {
+    // Set on EVERY invocation, before the latch, and that order is not cosmetic. StrictMode mounts, runs this
+    // effect, runs its cleanup, and runs it again on the same instance - so the cleanup below has already set
+    // this to false by the time the second invocation arrives. Leaving it false would mean a StrictMode sign-in
+    // never navigated at all, in development only, while every other assertion still passed.
+    onScreen.current = true;
     if (handled.current) return;
     handled.current = true;
 
@@ -163,11 +179,26 @@ export function CallbackScreen() {
       // that tab's pending sign-in. Keeping them costs nothing, because the code behind a failed exchange is
       // already spent server-side - a replay returns 400 invalid_grant, measured in T20.
       consumeAuthorizeState();
+      // R7's journey ends here, and L1's clause is this one line: an allowlisted return target is honoured and
+      // anything else becomes the home route. The decision is not taken here - `takeReturnTarget` returns a
+      // destination rather than an option, so there is no second place to get the fallback wrong, and this screen
+      // cannot accidentally navigate somewhere the allowlist would have refused.
+      //
+      // `replace` for the same reason `discard` uses it: a completed callback should not be reachable with the
+      // back button, which is also what keeps a replayed callback from being a route the visitor can walk back to.
+      //
+      // Skipped when the visitor has left (T24-D7). Everything above it still ran: the token is held and the
+      // three items are consumed, because those are module-level facts. Only the navigation is theirs to refuse.
+      if (onScreen.current) navigate(takeReturnTarget(), { replace: true });
       // Two arguments rather than a trailing .catch, so that a failure INSIDE this handler is not then handed to
       // `discard` a second time. Both calls would navigate to the same place, so nothing visible would differ -
       // but a screen whose whole design is a single-invocation latch should not carry a second way to run its
       // one outcome twice.
     }, discard);
+
+    return () => {
+      onScreen.current = false;
+    };
   }, []);
 
   return (

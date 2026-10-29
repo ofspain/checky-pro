@@ -15,6 +15,9 @@ export const SIGN_IN_PATH = 'sign-in';
 /** Where the authorization server returns the browser (R8), published for the same reason. */
 export const CALLBACK_PATH = 'callback';
 
+/** Where a completed sign-in lands when no allowlisted return target was remembered (L1, T24). One spelling. */
+export const HOME_PATH = 'home';
+
 /** Routes reachable without a session (design.md §4c), relative to APP_BASENAME. T40 enforces the split. */
 export const PUBLIC_ROUTE_PATHS = [
   SIGN_IN_PATH,
@@ -30,7 +33,7 @@ export const PUBLIC_ROUTE_PATHS = [
 
 /** Routes that need a session (design.md §4c), relative to APP_BASENAME. */
 export const AUTHENTICATED_ROUTE_PATHS = [
-  'home',
+  HOME_PATH,
   'account',
   'account/sessions',
   'account/mfa',

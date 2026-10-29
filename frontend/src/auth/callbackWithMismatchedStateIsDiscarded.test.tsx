@@ -342,14 +342,19 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
     // only a success if the ID token's nonce agrees too, and a real flow always has a stored nonce - task 15
     // writes all three together. Without this the case would assert the holding screen against a flow that
     // fails for a reason no browser ever produces.
-    it('and the reached callback stays put rather than returning to sign-in', async () => {
+    it('and the reached callback goes on to the post-login route, not back to sign-in', async () => {
       seedNonceAndVerifier();
       storeState(MATCHING_STATE);
       const { routes } = await spyOnExchange();
-      const { router, container } = await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
+      const { router } = await arriveAtMocked(routes, '/callback?code=abc&state=xyz');
 
-      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/callback`);
-      expect(container.textContent ?? '').toContain(en.callback.working);
+      // T17 asserted the callback STAYED PUT, because there was nowhere to go yet, and checked the holding copy
+      // was on screen. Task 24 gave it somewhere: an admitted callback now leaves for the remembered return
+      // target, or for home when none was remembered - which is this arrival. The claim is unchanged and the
+      // evidence is sharper: `/app/sign-in` is still the thing that must not happen, and the route is now
+      // different from the one the arrival started on, so the case can no longer pass by nothing happening.
+      expect(router.state.location.pathname).toBe(`${APP_BASENAME}/home`);
+      expect(router.state.location.pathname).not.toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
     });
   });
 
@@ -967,7 +972,9 @@ describe('callbackWithMismatchedStateIsDiscarded', () => {
       const second = await spyOnExchange();
       const matched = await arriveAtMocked(second.routes, url);
       expect(second.calls, 'the same url must exchange once the stored value agrees').toHaveLength(1);
-      expect(matched.router.state.location.pathname).toBe(`${APP_BASENAME}/callback`);
+      // Task 24: an admitted callback leaves for the post-login route. Still the same flip - a discard on one
+      // side, a completed sign-in on the other - read at its new end point.
+      expect(matched.router.state.location.pathname).toBe(`${APP_BASENAME}/home`);
     });
   });
 

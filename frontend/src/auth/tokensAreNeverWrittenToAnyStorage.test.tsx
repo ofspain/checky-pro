@@ -150,6 +150,26 @@ function loggedText(spies: Record<string, Mock>): string {
 }
 
 /**
+ * React Router's own complaint about a route that has no element yet.
+ *
+ * T24 is the first task that NAVIGATES into the authenticated route set, and that set has no screens attached -
+ * `/app/home` and the rest are registered paths with no element, and no task in the package builds one yet
+ * (T24-D11). So every successful sign-in now draws this warning. It is matched exactly rather than filtered by a
+ * loose pattern, and it is stripped rather than tolerated: `loggedUnexpected` below still asserts absolute
+ * silence for anything else, which is what keeps this file's "no token in any log" claim intact. It disappears
+ * on its own as screens land.
+ */
+const ROUTE_HAS_NO_ELEMENT = /^Matched leaf route at location "[^"]*" does not have an element or Component\..*$/;
+
+/** Everything logged except that one known warning. A new console call of any kind still fails a case. */
+function loggedUnexpected(spies: Record<string, Mock>): string {
+  return loggedText(spies)
+    .split('\n')
+    .filter((line) => line !== '' && !ROUTE_HAS_NO_ELEMENT.test(line))
+    .join('\n');
+}
+
+/**
  * Every key and value in a store, or `UNREADABLE` if touching it threw.
  *
  * The distinction is the point (AC11): `sessionStorage.getItem` can THROW rather than return null - blocked site
@@ -374,8 +394,11 @@ function expectAuthorizeStateConsumed(watch: StorageWatch, started: Started): vo
  *
  * A table rather than a regex, so a violation names the file and the method and says what to do. Task 23 was the
  * expected next entrant and arrived as predicted: `removeItem` joined the same file's row rather than a new one,
- * because `consumeAuthorizeState` deletes the keys the module that wrote them owns. The next file to call a
- * storage method adds a row here with a reason - that is the point of the table.
+ * because `consumeAuthorizeState` deletes the keys the module that wrote them owns. Task 24 is the second, and
+ * it is a NEW row rather than a fourth key in task 23's: L16's return target is written by a different caller
+ * (R28's redirect, when task 41 builds it) and consumed by a different reader (the navigation), so the module
+ * that owns that reader owns its deletion too (T24-D4). The next file to call a storage method adds a row here
+ * with a reason - that is the point of the table.
  */
 const STORAGE_ALLOWLIST: ReadonlyArray<{ file: string; methods: readonly string[]; why: string }> = [
   {
@@ -384,6 +407,13 @@ const STORAGE_ALLOWLIST: ReadonlyArray<{ file: string; methods: readonly string[
     why:
       "L16's three items - state, nonce, code_verifier - written together once the PKCE challenge is in hand " +
       '(task 15), and removed together by `consumeAuthorizeState` once a callback has used all three (task 23).',
+  },
+  {
+    file: 'auth/returnTarget.ts',
+    methods: ['setItem', 'removeItem'],
+    why:
+      "L16's fourth item - the post-login return target - remembered before a sign-in starts and consumed by " +
+      'the navigation at the end of a successful callback, honoured only if the allowlist admits it (task 24).',
   },
 ];
 
@@ -532,7 +562,7 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       expect(claims).toContain('the-subject');
       for (const claim of claims) expect(text).not.toContain(claim);
       expect(text).not.toContain(UNREADABLE);
-      expect(loggedText(logs)).toBe('');
+      expect(loggedUnexpected(logs)).toBe('');
       expectAuthorizeStateConsumed(watch, started);
     });
 
@@ -563,7 +593,7 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       expect(arrival.holder.accessToken.current()).toBe(ACCESS_TOKEN);
       const text = searchable(readSurfaces(arrival.router));
       expect(text).not.toContain('REFRESH-TOKEN-8d2c45e09b71');
-      expect(loggedText(logs)).toBe('');
+      expect(loggedUnexpected(logs)).toBe('');
       // And the exchange drops it rather than passing it anywhere: T20 pinned that the response type has no
       // refresh token at all, so there is nothing holding one to leak.
       expect(storeEntries(globalThis.sessionStorage).map(([key]) => key)).not.toContain('themistra.auth.refresh');
@@ -630,10 +660,16 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
 
       // The control that makes this a measurement. `createMemoryRouter` never writes `window.location`, so a
       // sweep of `location.href` reads an untouched document and passes against anything; the router's location
-      // is the surface that moves. Proving it carries the callback query is proving the sweep looks somewhere.
+      // is the surface that moves.
+      //
+      // T22 proved that by requiring the callback query to be IN this surface. Task 24 navigates away once the
+      // token is held, so the surface now shows the post-login route - which proves the same thing more
+      // strongly: it is not the initial entry this harness was given, so the sweep is reading something live,
+      // and the callback query that used to be here is gone because the SPA moved rather than because nothing
+      // was read.
       const swept = readSurfaces(arrival.router);
-      expect(swept.routerLocation).toContain('code=THE-CODE');
-      expect(swept.routerLocation).toContain(`state=${started.state}`);
+      expect(swept.routerLocation).toBe('/app/home');
+      expect(swept.routerLocation).not.toContain('code=THE-CODE');
 
       for (const piece of piecesOf(body.access_token as string)) expect(swept.routerLocation).not.toContain(piece);
       for (const piece of piecesOf(body.id_token as string)) expect(swept.routerLocation).not.toContain(piece);
@@ -691,7 +727,7 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       for (const claim of decodedClaimsOf(body.id_token as string)) expect(text).not.toContain(claim);
       // Not even the authorization server's own words, which the refusal row carries.
       expect(text).not.toContain('the code verifier did not match the challenge');
-      expect(loggedText(logs)).toBe('');
+      expect(loggedUnexpected(logs)).toBe('');
       // A discard writes nothing and deletes nothing: only the path that used the three removes them (T23-D2).
       expectAuthorizeWritesOnly(watch, started);
     });
@@ -726,7 +762,7 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
         [second.state, second.nonce, second.verifier].sort(),
       );
       expect(storeEntries(globalThis.localStorage)).toEqual([]);
-      expect(loggedText(logs)).toBe('');
+      expect(loggedUnexpected(logs)).toBe('');
     });
 
     it('leaves no residue in any surface once the holder is cleared', async () => {
@@ -744,7 +780,7 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       for (const piece of piecesOf(body.access_token as string)) expect(text).not.toContain(piece);
       for (const piece of piecesOf(body.id_token as string)) expect(text).not.toContain(piece);
       expect(storeEntries(globalThis.localStorage)).toEqual([]);
-      expect(loggedText(logs)).toBe('');
+      expect(loggedUnexpected(logs)).toBe('');
       // Nothing is left in session storage either: the consumed callback removed L16's three items before the
       // holder was cleared, so a cleared tab holds no token and carries no pending sign-in (T23-D1).
       expect(storeEntries(globalThis.sessionStorage)).toEqual([]);
@@ -907,18 +943,20 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       }
     });
 
-    it('touches session storage in only the four files that read it (AC9)', async () => {
+    it('touches session storage in only the five files that read it (AC9)', async () => {
       const targets = await productionSources();
 
       // Files, not `path:line`. Stripping a block comment removes its newlines, so a line number in the
       // stripped text is not the line number in the file - it would be a brittle assertion about a number no
-      // reader could look up. The file set is the claim worth making: four readers, one of them the writer.
+      // reader could look up. The file set is the claim worth making: five files, two of them writers, and each
+      // writer owning the deletion of what it wrote (task 24 added the fifth).
       const files = [...new Set(scanFor(targets, /sessionStorage/).map((hit) => hit.split(':')[0]))].sort();
       expect(files).toEqual([
         'auth/CallbackScreen.tsx',
         'auth/authorizeRequest.ts',
         'auth/codeExchange.ts',
         'auth/idTokenNonce.ts',
+        'auth/returnTarget.ts',
       ]);
     });
 
@@ -991,7 +1029,7 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
         expect(holder.accessToken.current()).toBe(OTHER_ACCESS_TOKEN);
         const text = searchable(readSurfaces());
         expect(text).not.toContain(OTHER_ACCESS_TOKEN);
-        expect(loggedText(logs)).toBe('');
+        expect(loggedUnexpected(logs)).toBe('');
         expect(watch.setItem).not.toHaveBeenCalled();
       } finally {
         shared.close();
