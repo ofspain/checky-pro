@@ -65,8 +65,10 @@ const ACCESS_TOKEN = 'ACCESS-TOKEN-91c4e7f20b3d';
 /** A second token, so a success asserted twice cannot be a constant that happened to match (T22-D13). */
 const SECOND_ACCESS_TOKEN = 'ACCESS-TOKEN-4b08da37f6e1';
 
-const CALLBACK_ROUTE = '/app/callback';
-const SIGN_IN_ROUTE = '/app/sign-in';
+const CALLBACK_PATH_SEGMENT = 'callback';
+const CALLBACK_ROUTE = `/app/${CALLBACK_PATH_SEGMENT}`;
+const SIGN_IN_PATH_SEGMENT = 'sign-in';
+const SIGN_IN_ROUTE = `/app/${SIGN_IN_PATH_SEGMENT}`;
 const HOME_ROUTE = `/app/${HOME_PATH}`;
 
 /** A member of the allowlist that is NOT home, so "honoured" and "fell back" can never be the same assertion. */
@@ -320,6 +322,100 @@ async function signInAndLand(options: { url?: (state: string) => string } = {}):
   return arriveAt(url(started.state), () => jsonResponse(tokensFor(started.nonce)));
 }
 
+/**
+ * Everything a visitor could tell one outcome from another by.
+ *
+ * Lifted out of the AC9 case so the T25 rejection rows and that case cannot drift apart - AC4 asks whether a
+ * refused target is indistinguishable from an absent one, and "indistinguishable" has to mean the same four
+ * fields everywhere or it means nothing. `historyAction` is one of them because `replace` is part of the
+ * outcome: a fallback that PUSHED would leave a consumed callback reachable with the back button while
+ * pathname, search and text all still agreed.
+ */
+function visibleOutcome(arrival: Arrival): {
+  pathname: string;
+  search: string;
+  text: string;
+  historyAction: string;
+} {
+  return {
+    pathname: arrival.router.state.location.pathname,
+    search: arrival.router.state.location.search,
+    text: (arrival.container.textContent ?? '').trim(),
+    historyAction: arrival.router.state.historyAction,
+  };
+}
+
+/**
+ * What a BARE router does with a shape - no screen, no allowlist, nothing between the string and react-router.
+ *
+ * This is T25-D1's instrument, and the reason it exists is that a rejection row otherwise asserts that nothing
+ * happened, which is also what a broken test asserts. Measuring the harm first turns "it landed on home" into
+ * "it landed on home INSTEAD OF somewhere real". Every answer it gives is react-router 8.4.0's, and if a future
+ * version answers differently these cases fail loudly rather than leaving the rows quietly meaningless.
+ */
+async function routerOutcomeFor(
+  target: string,
+): Promise<{ threw: string } | { pathname: string; matched: string[] }> {
+  const routes = await import('../app/routes');
+  const router = createMemoryRouter(routes.appRoutes, {
+    basename: routes.APP_BASENAME,
+    initialEntries: [`${routes.APP_BASENAME}/${CALLBACK_PATH_SEGMENT}`],
+  });
+  try {
+    await router.navigate(target, { replace: true });
+    return {
+      pathname: router.state.location.pathname,
+      matched: router.state.matches.map((match) => match.route.path ?? '(index)'),
+    };
+  } catch (error) {
+    return { threw: (error as Error).message };
+  } finally {
+    router.dispose();
+  }
+}
+
+/**
+ * One rejection row's three sign-ins, from one harness: the refused target, no target at all, and an honoured
+ * one (T25-D2).
+ *
+ * Three rather than one, because the destination alone is weak. The absent run is AC4's baseline - the thing a
+ * refused target must be indistinguishable from - and the honoured run is the vacuity control, since a row that
+ * lands on home proves nothing in a harness that could not have gone anywhere else. A baseline captured once in
+ * another case would be cheaper and is forbidden: T23 lost a day to order-dependent state between cases, so each
+ * row stands on its own.
+ */
+async function threeFlows(shape: string): Promise<{
+  refused: ReturnType<typeof visibleOutcome>;
+  absent: ReturnType<typeof visibleOutcome>;
+  honoured: ReturnType<typeof visibleOutcome>;
+  heldAfterRefusal: string | null;
+  storeAfterRefusal: string[];
+}> {
+  const run = async (prepare: () => void) => {
+    globalThis.sessionStorage.clear();
+    vi.resetModules();
+    prepare();
+    const arrival = await signInAndLand();
+    const outcome = visibleOutcome(arrival);
+    const held = arrival.holder.accessToken.current();
+    const store = storedKeys();
+    arrival.unmount();
+    return { outcome, held, store };
+  };
+
+  const refusedRun = await run(() => seedRaw(shape));
+  const absentRun = await run(() => undefined);
+  const honouredRun = await run(() => remember(A_REAL_TARGET));
+
+  return {
+    refused: refusedRun.outcome,
+    absent: absentRun.outcome,
+    honoured: honouredRun.outcome,
+    heldAfterRefusal: refusedRun.held,
+    storeAfterRefusal: refusedRun.store,
+  };
+}
+
 /** A production file's code with its comments removed, because a file explains the rules it obeys (T22's trap). */
 function strip(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
@@ -472,15 +568,7 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
      */
     it('is indistinguishable from a target the allowlist refused (AC9)', async () => {
       const absent = await signInAndLand();
-      const withoutATarget = {
-        pathname: absent.router.state.location.pathname,
-        search: absent.router.state.location.search,
-        text: (absent.container.textContent ?? '').trim(),
-        // `historyAction` is in the comparison because `replace` is part of the outcome, not a detail of the
-        // honoured path: a fallback that PUSHED would leave a consumed callback reachable with the back button,
-        // and pathname, search and text would all still agree (Kimi Gap 1).
-        historyAction: absent.router.state.historyAction,
-      };
+      const withoutATarget = visibleOutcome(absent);
       absent.unmount();
       vi.resetModules();
       globalThis.sessionStorage.clear();
@@ -488,12 +576,7 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
       seedRaw(A_TARGET_CARRYING_THE_BASENAME);
       const rejected = await signInAndLand();
 
-      expect({
-        pathname: rejected.router.state.location.pathname,
-        search: rejected.router.state.location.search,
-        text: (rejected.container.textContent ?? '').trim(),
-        historyAction: rejected.router.state.historyAction,
-      }).toEqual(withoutATarget);
+      expect(visibleOutcome(rejected)).toEqual(withoutATarget);
       expect(withoutATarget.pathname, 'the control: home was where both went').toBe(HOME_ROUTE);
       expect(withoutATarget.historyAction, 'and both replaced the callback entry').toBe('REPLACE');
     });
@@ -1046,27 +1129,257 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
   });
 
   /**
-   * T25's half (F7). The rejection families, one row each, deliberately left as `it.todo` so that the partition
-   * is visible in the source: T24 built the mechanism and proved the honoured path, T25 proves "never an
-   * arbitrary URL" family by family. Every row below is a target that must land on home, and none of them is
-   * special-cased in the implementation - set membership refuses them all for the same reason, which is what
-   * makes the table worth writing.
+   * T25's half: "never an arbitrary URL" (`agents.md:21`), family by family.
+   *
+   * THE FAMILIES ARE NOT ALL THE SAME KIND OF RISK, and the table records which is which, because measuring the
+   * bare router turned out to split them in three (T25-D1):
+   *
+   * - **`refuse`** - react-router throws `External navigation is not allowed` before it goes anywhere. Seven
+   *   shapes, including every absolute URL, the protocol-relative host, `javascript:`, `data:` and `/\`. Here the
+   *   allowlist is defence in depth: two independent refusals, either of which would do.
+   * - **`reach`** - the router would land on a **REAL route**. Seven shapes, and this is where the allowlist is
+   *   the **sole** defence: `/home/../admin` resolves to `/app/admin`; `/sign-in` is a real public route, so a
+   *   completed sign-in would be sent back to the sign-in screen; `/invoices/123` matches `invoices/:id`, the
+   *   route that works and that the allowlist cannot express (T24-D5's cost, made concrete); and `/home/`,
+   *   `/HOME`, `/home?x=1`, `/home#top` all match `home`, because react-router ignores a trailing slash and
+   *   matches case-insensitively.
+   * - **`miss`** - the router would land on the catch-all. Four shapes, harmless either way.
+   *
+   * The `reach` rows are the reason this task is not paperwork. A membership check that folded case, stripped a
+   * trailing slash, decoded, or trimmed would not merely admit a stray string: the router would honour the
+   * result, and the visitor would end a successful login somewhere they were never sent.
+   *
+   * EVERY ROW MEASURES THE HARM BEFORE CLAIMING THE DEFENCE. A rejection row otherwise asserts that nothing
+   * happened, which is also what a broken test asserts.
    */
   describe('a target outside the allowlist falls back to home (T25)', () => {
-    it.todo('an absolute URL on another origin');
-    it.todo('an absolute URL on this origin');
-    it.todo('a protocol-relative host');
-    it.todo('a javascript: target');
-    it.todo('a data: target');
-    it.todo('a backslash path');
-    it.todo('a traversal');
-    it.todo('an encoded traversal');
-    it.todo('a prefix match of an allowlisted path');
-    it.todo('a public route');
-    it.todo('a route that does not exist');
-    it.todo('a parameterised route with a real id substituted (T24-D5)');
-    it.todo('an allowlisted path carrying a query string (T24-D6)');
-    it.todo('an allowlisted path carrying a fragment (T24-D6)');
-    it.todo('and every row above leaves the visitor with the same copy as an honoured target (AC9)');
+    /**
+     * What a bare router does with the shape, with no screen and no allowlist between the string and
+     * react-router. Each answer is react-router 8.4.0's, and pinning it is the point: if a future version stops
+     * throwing on an external navigation, or stops matching `/HOME` to `home`, these cases fail loudly instead of
+     * leaving every row below quietly meaningless.
+     */
+    type RouterWould =
+      | { kind: 'refuse' }
+      | { kind: 'reach'; pathname: string; route: string }
+      | { kind: 'miss' };
+
+    const FAMILIES: ReadonlyArray<{ label: string; shape: string; routerWould: RouterWould }> = [
+      {
+        label: 'an absolute URL on another origin',
+        shape: 'https://evil.example/app/home',
+        routerWould: { kind: 'refuse' },
+      },
+      {
+        // This origin, not a stranger's, because "same origin" is not "same application": the edge serves the
+        // backend prefixes from here too (L9, L14), and an absolute URL is still not a router path.
+        label: 'an absolute URL on this origin',
+        shape: 'http://localhost:5173/app/home',
+        routerWould: { kind: 'refuse' },
+      },
+      {
+        label: 'a protocol-relative host',
+        shape: '//evil.example/app/home',
+        routerWould: { kind: 'refuse' },
+      },
+      { label: 'a javascript: target', shape: 'javascript:alert(1)', routerWould: { kind: 'refuse' } },
+      { label: 'a data: target', shape: 'data:text/html,x', routerWould: { kind: 'refuse' } },
+      {
+        // The browsers-treat-backslash-as-slash family. react-router reads `/\` as an external navigation, which
+        // is the right answer and is not the allowlist's reason for refusing it.
+        label: 'a backslash path',
+        shape: '/\\evil.example',
+        routerWould: { kind: 'refuse' },
+      },
+      {
+        // The one family whose harm is a real authenticated route rather than a thrown error.
+        label: 'a traversal',
+        shape: '/home/../admin',
+        routerWould: { kind: 'reach', pathname: '/app/admin', route: 'admin' },
+      },
+      {
+        // Encoded, the separator is not a separator, so the traversal never happens and the catch-all takes it.
+        label: 'an encoded traversal',
+        shape: '/home/%2e%2e/admin',
+        routerWould: { kind: 'miss' },
+      },
+      {
+        label: 'a prefix match of an allowlisted path',
+        shape: '/homeward',
+        routerWould: { kind: 'miss' },
+      },
+      {
+        // A real route, and the harm is a loop: a completed sign-in sent back to the sign-in screen.
+        label: 'a public route',
+        shape: `/${SIGN_IN_PATH_SEGMENT}`,
+        routerWould: { kind: 'reach', pathname: SIGN_IN_ROUTE, route: SIGN_IN_PATH_SEGMENT },
+      },
+      { label: 'a route that does not exist', shape: '/not-a-route', routerWould: { kind: 'miss' } },
+      {
+        // T24-D5's cost in one row: the route EXISTS and the router matches it. The allowlist is exact paths, so
+        // it cannot express a parameterised one, and these are the two routes notification emails link to.
+        label: 'a parameterised route with a real id substituted (T24-D5)',
+        shape: '/invoices/123',
+        routerWould: { kind: 'reach', pathname: '/app/invoices/123', route: 'invoices/:id' },
+      },
+      {
+        label: 'an allowlisted path carrying a query string (T24-D6)',
+        shape: '/home?x=1',
+        routerWould: { kind: 'reach', pathname: HOME_ROUTE, route: HOME_PATH },
+      },
+      {
+        label: 'an allowlisted path carrying a fragment (T24-D6)',
+        shape: '/home#top',
+        routerWould: { kind: 'reach', pathname: HOME_ROUTE, route: HOME_PATH },
+      },
+      {
+        // react-router ignores a trailing slash, so this IS the home route to it (Kimi F4, measured).
+        label: 'a trailing slash on an allowlisted path (Kimi F4)',
+        shape: '/home/',
+        routerWould: { kind: 'reach', pathname: '/app/home/', route: HOME_PATH },
+      },
+      {
+        // And it matches case-insensitively, so this is the home route too (T25-D4, measured).
+        label: 'an allowlisted path in the wrong case (T25-D4)',
+        shape: '/HOME',
+        routerWould: { kind: 'reach', pathname: '/app/HOME', route: HOME_PATH },
+      },
+      {
+        label: 'an encoded separator inside an allowlisted path (Kimi F4)',
+        shape: '/account%2Fsessions',
+        routerWould: { kind: 'miss' },
+      },
+      {
+        // Four reasons to refuse in one string, and one answer. No family is special-cased, so neither is a
+        // combination of them.
+        label: 'more than one of the above in one string (Kimi F7)',
+        shape: 'https://evil.example/../admin?x=1#fragment',
+        routerWould: { kind: 'refuse' },
+      },
+    ];
+
+    describe('what the router would have done, measured first (AC16, T25-D1)', () => {
+      it.each(FAMILIES)('$label', async ({ shape, routerWould }) => {
+        const outcome = await routerOutcomeFor(shape);
+
+        if (routerWould.kind === 'refuse') {
+          expect(outcome, 'react-router refuses an external navigation outright').toEqual({
+            threw: 'External navigation is not allowed',
+          });
+          return;
+        }
+        expect(outcome, 'it did not throw, so it went somewhere').not.toHaveProperty('threw');
+        const reached = outcome as { pathname: string; matched: string[] };
+        if (routerWould.kind === 'reach') {
+          // THE ALLOWLIST IS THE SOLE DEFENCE FOR THIS SHAPE. The router would land on a real route, so nothing
+          // but membership stands between the stored string and a navigation the visitor never asked for.
+          expect(reached.pathname).toBe(routerWould.pathname);
+          expect(reached.matched.at(-1)).toBe(routerWould.route);
+        } else {
+          expect(reached.matched.at(-1), 'the catch-all, so no route would have rendered').toBe('*');
+        }
+      });
+
+      /** The split itself, so a row cannot be quietly reclassified to make a weaker assertion pass. */
+      it('is three kinds of risk, and the sole-defence kind is the larger half', () => {
+        const kinds = FAMILIES.map((family) => family.routerWould.kind);
+
+        expect(kinds.filter((kind) => kind === 'refuse')).toHaveLength(7);
+        expect(kinds.filter((kind) => kind === 'reach')).toHaveLength(7);
+        expect(kinds.filter((kind) => kind === 'miss')).toHaveLength(4);
+      });
+    });
+
+    describe('and every one of them lands on home instead (AC1-AC12, AC17-AC19)', () => {
+      it.each(FAMILIES)('$label', async ({ shape }) => {
+        const flows = await threeFlows(shape);
+
+        // AC1: the destination. AC3: and the same harness really could have gone somewhere else.
+        expect(flows.refused.pathname).toBe(HOME_ROUTE);
+        expect(flows.honoured.pathname, 'the control: an honoured target still works here').toBe(
+          A_REAL_TARGET_ROUTE,
+        );
+        // AC17/AC4: indistinguishable from no target at all, over all four fields, per row rather than once.
+        expect(flows.refused).toEqual(flows.absent);
+        expect(flows.absent.historyAction, 'and the callback entry was replaced, not pushed').toBe('REPLACE');
+        // The sign-in COMPLETED. Without this the row would pass against a discard, which also ends up off the
+        // target and would be the wrong thing to be proving.
+        expect(flows.heldAfterRefusal).toBe(ACCESS_TOKEN);
+        // AC5/L16: a refused target is used up, not left for the next sign-in. AC7: and nothing else is there.
+        expect(flows.storeAfterRefusal).toEqual([]);
+        // AC2: refused by the real exported predicate, not by a list rebuilt beside it (T24 F6).
+        expect(isAllowlistedTarget(shape)).toBe(false);
+      });
+
+      /**
+       * AC18/T25-D3: the producer refuses it too, so no caller can park one of these in the store. Separate from
+       * the row above because it is a different claim about a different function, and because the control - that
+       * the same helper does store an allowlisted target - belongs beside it.
+       */
+      it.each(FAMILIES)('is not even storable: $label', ({ shape }) => {
+        const watch = watchStorage();
+
+        rememberReturnTarget(shape);
+
+        expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY)).toBeNull();
+        expect(writtenKeys(watch), 'the store was never asked').not.toContain(RETURN_TARGET_KEY);
+        rememberReturnTarget(A_REAL_TARGET);
+        expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY), 'the control: a legal one is stored').toBe(
+          A_REAL_TARGET,
+        );
+      });
+    });
+
+    /**
+     * AC20, the R8/T24-D14 counterpart for a rejection. A discard never reads the target, so the value's content
+     * cannot matter - and this is what pins that, because "the discard path does not inspect it" is exactly the
+     * kind of property a future change could break without any other case noticing.
+     */
+    it('leaves a refused target where it is when the callback is discarded (AC20)', async () => {
+      const refused = seedRaw('https://evil.example/app/home');
+      const watch = watchStorage();
+      const started = await startSignIn();
+
+      const arrival = await arriveAt(`/callback?code=THE-CODE&state=${started.state}`, () => refusal());
+
+      expect(arrival.router.state.location.pathname, 'the control: it really was discarded').toBe(SIGN_IN_ROUTE);
+      expect(arrival.holder.accessToken.current()).toBeNull();
+      expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY), 'untouched, exactly as an honoured one').toBe(
+        refused,
+      );
+      expect(removedKeys(watch)).not.toContain(RETURN_TARGET_KEY);
+    });
+
+    /**
+     * The completeness pin. T24 left fifteen `it.todo` rows; fourteen named a family and the fifteenth said
+     * "every row above leaves the visitor with the same copy as an honoured target". That fifteenth claim is now
+     * asserted INSIDE every row (T25-D2, Kimi F5) rather than once at the end, which is strictly stronger - a
+     * single sweep passes if the one family it samples happens to match. What is left to pin is that no family
+     * went missing in the rewrite.
+     */
+    it('covers every family the todo list named, and four more', () => {
+      const labels = FAMILIES.map((family) => family.label);
+
+      for (const named of [
+        'an absolute URL on another origin',
+        'an absolute URL on this origin',
+        'a protocol-relative host',
+        'a javascript: target',
+        'a data: target',
+        'a backslash path',
+        'a traversal',
+        'an encoded traversal',
+        'a prefix match of an allowlisted path',
+        'a public route',
+        'a route that does not exist',
+        'a parameterised route with a real id substituted (T24-D5)',
+        'an allowlisted path carrying a query string (T24-D6)',
+        'an allowlisted path carrying a fragment (T24-D6)',
+      ]) {
+        expect(labels, `the todo list named ${named}`).toContain(named);
+      }
+      expect(labels).toHaveLength(18);
+      expect(new Set(labels).size, 'and no label is duplicated').toBe(18);
+    });
   });
 });
