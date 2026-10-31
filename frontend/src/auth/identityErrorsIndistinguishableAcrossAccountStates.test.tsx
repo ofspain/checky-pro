@@ -189,7 +189,10 @@ function needlesFor(fixture: StateFixture): string[] {
  * later task asks for it. Those are two different tests and a word has to pass both to be here (Kimi F7).
  */
 const ALWAYS_FORBIDDEN_STATE =
-  'locked|lockout|suspended|deleted|deactivat|inactive|no\\s*such|banned|terminated|archived|dormant';
+  'locked|lockout|suspended|deleted|deactivat|inactive|no\\s*such|banned|terminated|archived|dormant'
+  // Kimi I4, the half with no commissioned future. Both measure zero comment-stripped hits and neither
+  // appears in any requirement, locked decision or later task.
+  + '|nonexistent|unrecogni[sz]ed';
 
 /**
  * Words that are forbidden ON A SIGN-IN SURFACE and permitted elsewhere, each because the spec commissions it.
@@ -203,7 +206,13 @@ const ALWAYS_FORBIDDEN_STATE =
  */
 const SIGN_IN_SCOPED_STATE =
   'expired|revoke|invalid|denied|forbidden|blocked|frozen|rejected'
-  + '|unknown\\s+account|account\\s+(?:not|does\\s+not)|wrong\\s+account';
+  + '|unknown\\s+account|account\\s+(?:not|does\\s+not)|wrong\\s+account'
+  // Kimi I4's other half, scoped rather than global for the same reason the first tier exists. `limited` is
+  // rate-limit copy (R23); `restricted` and `flagged` belong to the `HELD` compliance path (R56, L8);
+  // `compromised` and `breached` are password vocabulary that tasks 43-57 may need (R17 forbids the client
+  // doing the LOOKUP, not the server saying so). Word-bounded, so `unlimited` and `unrestricted` do not
+  // match - there is no word boundary inside either.
+  + '|compromised|breached|flagged|restricted|limited';
 
 /**
  * Catalogue keys the two tiers may legally contain, each with the reason. Empty today.
@@ -228,7 +237,13 @@ function forbiddenStateCopy(scoped: boolean): RegExp {
  * I2 pointed out that the two grammars were then coupled through a textual rewrite.
  */
 const FORBIDDEN_STATE_KEY =
-  'locked|lockout|suspended|deleted|deactivat|inactive|banned|terminated|archived|dormant';
+  'locked|lockout|suspended|deleted|deactivat|inactive|banned|terminated|archived|dormant'
+  // Kimi I5. A key that names the CONCEPT is a signal that state-specific copy exists or is coming, even
+  // when today's value is uniform - `signIn.accountState` with a neutral sentence is a slot waiting to be
+  // filled. Deliberately NOT a bare `status`, which would flag `invoice.status` and every other commissioned
+  // status key in the package.
+  + '|accountState|accountStatus|account_status|lockoutReason|lockedReason'
+  + '|suspensionReason|deletionReason';
 
 /** Timers, anywhere in the tree. The allowlist below is what keeps this from failing specified code. */
 function timerCalls(): RegExp {
@@ -286,7 +301,15 @@ const SIGN_IN_KEYS = ['action', 'discarded', 'explanation', 'failed', 'heading',
 const ACCOUNT_STATE_GATE =
   'accountState|account_state|\\.mfaEnrolled|mfa_enrolled|requiresMfa|requires_mfa|enrollmentState'
   + '|enrollment_state|mfaRequired|mfa_required|PENDING_ENROLLMENT|accountLocked|account_locked'
-  + '|isSuspended|is_suspended|isDeleted|is_deleted'
+  + '|isSuspended|is_suspended|isDeleted|is_deleted|isLocked|is_locked'
+  // Kimi I1, accepted in substance and NOT in the form it was recommended. Kimi asked for a bare
+  // `\.state\s*[=!]==` and `\.status\s*[=!]==`. MEASURED, both fire on legitimate code the spec
+  // commissions: `registerServiceWorker.ts` compares `installing.state === 'installed'` (Workbox's own
+  // lifecycle), and `rateLimitNotice.ts` and `sessionBoundary.ts` both compare `response.status` - an HTTP
+  // status, which R23 and R21 require them to read. So the alternatives key on the RECEIVER as well: it is
+  // the account's state that may not be branched on, not every object's.
+  + '|(?:account|user|session)\\.(?:state|status)\\s*[=!]=='
+  + '|(?:account|user|session)\\.locked\\b'
   + "|role\\s*[=!]==|\\.role\\s*[=!]==|=== *'(?:MERCHANT|ADMIN)'|=== *\"(?:MERCHANT|ADMIN)\""
   + "|\\.includes\\s*\\( *['\"](?:MERCHANT|ADMIN)";
 
@@ -305,8 +328,68 @@ function namesForbiddenState(text: string, scoped = true): boolean {
 type ScanTarget = { path: string; code: string };
 type Hit = { file: string; hit: string };
 
+/**
+ * Comments removed, STRING LITERALS KEPT.
+ *
+ * The naive two-regex version this replaced was an instrument defect, and Kimi I8 found it by reading rather
+ * than by running. `source.replace(/\/\/.*$/gm, '')` deletes from the first `//` to the end of the line -
+ * INCLUDING inside a string. Measured:
+ *
+ *     const help = "https://id.example/help/locked-account";
+ *       ->  const help = "https:
+ *
+ * The word `locked` is gone, and every scan built on the stripper reports clean. A help URL carrying a state
+ * word is the most likely shape for this leak to take, because a URL is the one place `//` appears in
+ * ordinary code - so the hole sat exactly where the data would be.
+ *
+ * This walks the source instead: comments outside strings are dropped, quotes and template literals are
+ * copied through with their escapes, and a backslash always consumes the character after it. Measured against
+ * all 24 production modules: byte-identical output to the old stripper today, so nothing about the current
+ * scan results changes - the fix is for the file that has not been written yet.
+ *
+ * Known limit, declared: a `//` in JSX TEXT (not in a string) is still read as a comment. No production
+ * module has one, and the old stripper had the same limit.
+ */
 function strip(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  let out = '';
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (char === '/' && next === '/') {
+      while (index < source.length && source[index] !== '\n') index += 1;
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      index += 2;
+      while (index < source.length && !(source[index] === '*' && source[index + 1] === '/')) index += 1;
+      index += 2;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      const quote = char;
+      out += char;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === '\\') {
+          out += source[index] + (source[index + 1] ?? '');
+          index += 2;
+          continue;
+        }
+        if (source[index] === quote) {
+          out += quote;
+          index += 1;
+          break;
+        }
+        out += source[index];
+        index += 1;
+      }
+      continue;
+    }
+    out += char;
+    index += 1;
+  }
+  return out;
 }
 
 /**
@@ -927,6 +1010,37 @@ describe('AC2: five account states, one outcome', () => {
     expect(failure.storedKeys.length).toBeGreaterThan(0);
   });
 
+  it('CONTROL: the struct comparison alone would MISS a query string kept by all five', () => {
+    /**
+     * Kimi I7. AC1 asserts `search` and `hash` are empty ABSOLUTELY, and the reason is easy to lose: the
+     * struct carries both fields, so a reader can conclude the equivalence check already covers them. It does
+     * not. Five states that all kept the same query string compare equal and pass, and the error description
+     * would be sitting in the URL of every one of them.
+     *
+     * Built here rather than mutated into production, because the point is about the COMPARISON and not about
+     * any code path. T28's MB29 is the production-side proof; this is the explanation beside it.
+     */
+    const kept = (state: string): Outcome => ({
+      destination: '/app/sign-in',
+      historyAction: 'REPLACE',
+      search: '?why=This+account+has+been+suspended',
+      hash: '',
+      text: en.signIn.discarded,
+      liveText: [en.signIn.discarded],
+      liveRegions: 1,
+      storedKeys: [],
+      tokenHeld: false,
+      state,
+    } as Outcome & { state: string });
+    const five = ['unknown', 'missing', 'locked', 'suspended', 'deleted'].map((name) => kept(name));
+    // The equivalence this file makes elsewhere - every field but the label - passes.
+    for (const outcome of five.slice(1)) {
+      expect({ ...outcome, state: undefined }).toEqual({ ...five[0], state: undefined });
+    }
+    // The absolute assertion is the only thing that fails.
+    expect(() => expect(five[0].search).toBe('')).toThrow();
+  });
+
   it('CONTROL: the struct is not a shell of empty fields', async () => {
     const outcome = await measureState(ACCOUNT_STATES[0]);
     expect(outcome.text.length).toBeGreaterThan(0);
@@ -1130,11 +1244,34 @@ describe("AC5: the sentence is rendered with the clock at zero, whatever the cau
     ]);
   });
 
-  it('lands on the sign-in start at clock zero as well, so the redirect is not deferred either', async () => {
-    const arrival = await arriveUnderFakeClock(queryForState(ACCOUNT_STATES[2]));
-    expect(arrival.router.state.location.pathname).toBe('/app/sign-in');
-    expect(arrival.router.state.historyAction).toBe('REPLACE');
-    arrival.unmount();
+  it('lands on the sign-in start at clock zero as well, for every state, so no redirect is deferred', async () => {
+    /**
+     * Kimi I2. The first draft checked one state - `locked` - and that was a real gap rather than a
+     * shortcut. `discard()` sets the notice and navigates in the same closure, so a `setTimeout(navigate, …)`
+     * keyed on the error code would leave the SENTENCE at zero and defer only the NAVIGATION, which the case
+     * above cannot see. And a delay applied uniformly to four of the five states would leave the real-clock
+     * struct comparison identical too, because every outcome would be measured before the navigation landed.
+     * Five states, both halves, at zero.
+     */
+    const landed: Array<{ state: string; pathname: string; historyAction: string }> = [];
+    for (const fixture of ACCOUNT_STATES) {
+      const arrival = await arriveUnderFakeClock(queryForState(fixture));
+      landed.push({
+        state: fixture.state,
+        pathname: arrival.router.state.location.pathname,
+        historyAction: arrival.router.state.historyAction,
+      });
+      arrival.unmount();
+      await clearArrivalSurfaces();
+    }
+    expect(landed).toHaveLength(5);
+    expect(landed).toEqual(
+      ['unknown', 'missing', 'locked', 'suspended', 'deleted'].map((state) => ({
+        state,
+        pathname: '/app/sign-in',
+        historyAction: 'REPLACE',
+      })),
+    );
   });
 });
 
@@ -1248,6 +1385,9 @@ describe('AC7: no production module names an account state', () => {
       'the account was terminated',
       'an archived account',
       'a dormant account',
+      'that account is nonexistent',
+      'an unrecognized account',
+      'an unrecognised account',
     ];
     const missed = phrasings.filter((phrasing) => !namesForbiddenState(phrasing, false));
     expect(missed).toEqual([]);
@@ -1272,6 +1412,29 @@ describe('AC7: no production module names an account state', () => {
     const targets = await productionSources();
     expect(hitsOf(targets, /unknown|missing|pending|closed/gi).length).toBeGreaterThan(10);
     expect(hitsOf(targets, new RegExp(ALWAYS_FORBIDDEN_STATE, 'gi'))).toEqual([]);
+  });
+
+  it('CONTROL: a state word inside a URL STRING survives stripping, which it did not before', () => {
+    /**
+     * Kimi I8's regression guard. The old stripper deleted from the first `//` to end of line regardless of
+     * context, so a help URL in a string literal lost everything after `https:` - and with it the state word
+     * the scan exists to find. This case is the one that would fail if anyone restores the two-regex version.
+     */
+    const withUrl = 'export const HELP = "https://id.example/help/locked-account";';
+    expect(strip(withUrl)).toContain('locked-account');
+    expect(hitsOf([synthetic('auth/help.ts', withUrl)], new RegExp(ALWAYS_FORBIDDEN_STATE, 'gi')))
+      .toEqual([{ file: 'auth/help.ts', hit: 'locked' }]);
+    // Template literals and single quotes too, and an escaped quote must not end the literal early.
+    expect(strip('const a = `see https://x/suspended-account`;')).toContain('suspended-account');
+    expect(strip("const b = 'it\\'s https://x/deleted-account';")).toContain('deleted-account');
+  });
+
+  it('CONTROL: comments are still removed, including ones that contain a quote', () => {
+    expect(strip('const a = 1; // this account was deleted\nconst b = 2;')).not.toContain('deleted');
+    expect(strip('/* suspended */ const c = 3;')).not.toContain('suspended');
+    // An apostrophe inside a comment must not open a string and swallow the rest of the file.
+    expect(strip("// don't say locked here\nconst d = 'kept';")).toContain("'kept'");
+    expect(strip("// don't say locked here\nconst d = 'kept';")).not.toContain('locked');
   });
 
   it('CONTROL: comment stripping is what makes this scan survivable at all', async () => {
@@ -1315,6 +1478,29 @@ describe('AC8: no user-facing string names an account state', () => {
     ).toEqual(['signIn.accountLocked (key)']);
   });
 
+  it('CONTROL: a key that names the CONCEPT is flagged even when its value is uniform', () => {
+    // Kimi I5. A slot waiting to be filled is worth catching before it is filled.
+    expect(
+      forbiddenStateEntries([
+        { key: 'signIn.accountState', value: 'Your sign-in did not complete. Try again.' },
+        { key: 'callback.accountStatus', value: 'Checking your sign-in…' },
+        { key: 'signIn.lockoutReason', value: 'Try again.' },
+      ]),
+    ).toEqual([
+      'signIn.accountState (key)',
+      'callback.accountStatus (key)',
+      'signIn.lockoutReason (key)',
+    ]);
+    // And a bare `status` key elsewhere is NOT flagged - `invoice.status` is commissioned, and a pattern
+    // wide enough to catch it would block every status key in the package.
+    expect(
+      forbiddenStateEntries([
+        { key: 'invoice.status', value: 'Open' },
+        { key: 'payment.status.label', value: 'Awaiting confirmation' },
+      ]),
+    ).toEqual([]);
+  });
+
   it('CONTROL: the sign-in-scoped vocabulary is forbidden on a sign-in key and PERMITTED elsewhere', () => {
     // Kimi F7's accepted-in-part half, held from the OVER-BROAD side. Every row below is copy the spec
     // commissions, and a global pattern would block it while reporting an R30 breach.
@@ -1332,6 +1518,10 @@ describe('AC8: no user-facing string names an account state', () => {
         { key: 'form.amount', value: 'Enter a valid amount' },
         { key: 'payment.held', value: 'This payment is blocked pending a compliance review' },
         { key: 'admin.roles', value: 'Access denied for this role' },
+        { key: 'rateLimit.notice', value: 'You have been rate limited. Try again shortly.' },
+        { key: 'payment.held', value: 'This payment was flagged for review' },
+        { key: 'account.password', value: 'This password has appeared in a known breach' },
+        { key: 'plan.quota', value: 'Your plan has unlimited transfers' },
       ]),
     ).toEqual([]);
   });
@@ -1397,6 +1587,68 @@ describe('AC9: nothing gates a failed sign-in on an account state or a role', ()
     expect(unflagged.map((target) => target.path)).toEqual([]);
   });
 
+  it('CONTROL: the scan flags the gate shapes Kimi I1 named', () => {
+    const offenders = [
+      synthetic('auth/A.tsx', "if (account.state === 'LOCKED') showCountdown();"),
+      synthetic('auth/B.tsx', "if (user.state !== 'ACTIVE') return null;"),
+      synthetic('auth/C.tsx', "if (account.status === 'SUSPENDED') discard();"),
+      synthetic('auth/D.tsx', 'if (user.isLocked) return null;'),
+      synthetic('auth/E.tsx', 'if (account.locked) discard();'),
+      synthetic('auth/F.tsx', "switch (accountState) { case 'LOCKED': break; }"),
+      synthetic('auth/G.tsx', 'if (accountState === AccountState.Locked) return null;'),
+    ];
+    const unflagged = offenders.filter((target) => hitsOf([target], accountStateGates()).length === 0);
+    expect(unflagged.map((target) => target.path)).toEqual([]);
+  });
+
+  it('CONTROL: the state and status alternatives key on the RECEIVER, not on the property alone', async () => {
+    /**
+     * Kimi I1 recommended a bare `\.state\s*[=!]==` and `\.status\s*[=!]==`. MEASURED, both fire on code
+     * the spec commissions: `registerServiceWorker.ts` reads Workbox's `installing.state === 'installed'`,
+     * and `rateLimitNotice.ts` and `sessionBoundary.ts` both compare `response.status`, which R23 and R21
+     * require. A scan that failed on those would be deleted rather than fixed - T26's lesson, and T28's.
+     */
+    const legitimate = [
+      synthetic('pwa/registerServiceWorker.ts', "if (installing.state === 'installed') prompt();"),
+      synthetic('api/rateLimitNotice.ts', 'if (response.status === 429) setShown(true);'),
+      synthetic('api/sessionBoundary.ts', 'if (response.status !== 401) return response;'),
+    ];
+    const wronglyFlagged = legitimate.filter((target) => hitsOf([target], accountStateGates()).length > 0);
+    expect(wronglyFlagged.map((target) => target.path)).toEqual([]);
+    // And the real tree agrees: those three comparisons are PRESENT and the scan is silent on all of them.
+    const targets = await productionSources();
+    expect(hitsOf(targets, /(?:\.state|\.status)\s*[=!]==/g).length).toBeGreaterThanOrEqual(3);
+    expect(hitsOf(targets, accountStateGates())).toEqual([]);
+  });
+
+  it('CONTROL: the role variants Kimi I6 listed were ALREADY caught, and the suggested fix was refused', () => {
+    /**
+     * Kimi I6, rejected on a measurement. Every variant it named is caught today, because the role
+     * alternatives key on the LITERAL being compared rather than on the receiver or the method:
+     * `=== 'MERCHANT'` matches inside an arrow body as happily as at the top of an `if`, and
+     * `.includes('MERCHANT')` does not care what the array is called.
+     *
+     * The suggested addition - a bare `\.some\s*\(|\.find\s*\(` - was refused for the reason this file
+     * refuses every over-broad pattern: those are ordinary array methods, and forbidding them would fail code
+     * the spec commissions while reporting an enumeration breach.
+     */
+    const alreadyCaught = [
+      synthetic('auth/H.tsx', "if (roles.some((r) => r === 'MERCHANT')) gate();"),
+      synthetic('auth/I.tsx', "if (roles.find((r) => r === 'ADMIN')) gate();"),
+      synthetic('auth/J.tsx', "if (account.roleName === 'MERCHANT') gate();"),
+      synthetic('auth/K.tsx', "if (user.permissions.includes('MERCHANT')) gate();"),
+      synthetic('auth/L.tsx', "if (account.type === 'MERCHANT') gate();"),
+    ];
+    const missed = alreadyCaught.filter((target) => hitsOf([target], accountStateGates()).length === 0);
+    expect(missed.map((target) => target.path)).toEqual([]);
+    // The refused half, held as a case so it cannot be re-accepted quietly: ordinary array use is silent.
+    const ordinary = [
+      synthetic('app/routes.tsx', 'const found = PUBLIC_ROUTE_PATHS.some((path) => path === target);'),
+      synthetic('api/client.ts', 'const row = rows.find((entry) => entry.id === id);'),
+    ];
+    expect(ordinary.filter((target) => hitsOf([target], accountStateGates()).length > 0)).toEqual([]);
+  });
+
   it("CONTROL: the scan stays SILENT on CallbackScreen's own OAuth state comparisons", async () => {
     // T28 measured a bare `state ===` to have three legitimate hits: the two comparisons R8 requires, and
     // Workbox's `installing.state === 'installed'`. The pattern keys on the name of the thing being asked
@@ -1457,14 +1709,15 @@ describe('AC11: every instrument has been shown to report dirty', () => {
     { instrument: 'style pin', dirtiedBy: 'a cause-keyed class and an inline style (AC4)' },
     { instrument: 'clock-at-zero', dirtiedBy: 'a sentence rendered inside setTimeout(100) (AC5)' },
     { instrument: 'timer scan', dirtiedBy: 'three timers in auth modules, and a fourth call in a permitted file (AC6)' },
-    { instrument: 'state source scan', dirtiedBy: 'eleven state phrasings, one per forbidden word (AC7)' },
+    { instrument: 'state source scan', dirtiedBy: 'fourteen state phrasings, one per forbidden word (AC7)' },
+    { instrument: 'comment stripper', dirtiedBy: 'a state word inside a URL string literal (AC7)' },
     { instrument: 'catalogue scan', dirtiedBy: 'a value, a key name, and an array element (AC8)' },
     { instrument: 'gating scan', dirtiedBy: 'six gates, one per state and two on roles (AC9)' },
     { instrument: 'key-set pin', dirtiedBy: 'a seventh signIn key (AC10)' },
   ];
 
   it('names one dirtying violation per instrument', () => {
-    expect(INSTRUMENTS).toHaveLength(12);
+    expect(INSTRUMENTS).toHaveLength(13);
     expect(INSTRUMENTS.filter((row) => row.dirtiedBy.length === 0)).toEqual([]);
   });
 
