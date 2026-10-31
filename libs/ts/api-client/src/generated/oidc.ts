@@ -24,6 +24,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/userinfo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The authenticated caller's OIDC profile claims
+         * @description Added 2026-10-31 for frontend T30, as a decision rather than a drive-by (see this file's own description): /userinfo is called programmatically, so it qualifies, and frontend R20 requires profile data to be read from here and never from the access token.
+         *     Authenticated, and so the first operation in this file that is: POST /oauth2/token is security: [] because checky-spa is a public client proving itself with a PKCE verifier, while this one carries the tab's bearer and renews on 401 like any protected call.
+         *     MEASURED against the running auth service on 2026-10-31, with a real interactive token from the full register-verify-TOTP-PKCE flow: this endpoint answers 200 with {"sub": "<uuid>"} and nothing else, although that token carries scope ["openid","profile","email"]. Spring Authorization Server returns only sub unless an OIDC user-info mapper is configured and auth-service configures none, which is recorded as spec/auth-service/design.md O6. Every claim but sub is therefore optional here - not as defensive schema-writing, but because a schema requiring more would make the live server's correct response a validation failure.
+         */
+        get: operations["getUserInfo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -52,6 +74,26 @@ export interface components {
             /** Format: int32 */
             expires_in: number;
             scope: string;
+        };
+        /**
+         * @description The OIDC standard claims this client asks for, with the scopes openid profile email.
+         *     sub is the only required property, and that is a measurement rather than caution: the running server returns exactly {"sub": "<uuid>"} today (O6). Any consumer must treat every other property as absent, and absence is not a failure.
+         *     additionalProperties is left open, as TokenResponse's is and for the same reason: SAS owns what it sends. No property here is ever read from a token instead - frontend R20 forbids it and T30 proves it.
+         */
+        UserInfoResponse: {
+            /**
+             * Format: uuid
+             * @description The account UUID. Also present in the access token, where R20 forbids reading it.
+             */
+            sub: string;
+            email?: string;
+            /** @description Whether the email is verified, as the profile endpoint reports it. NOT the access token's email_verified claim, which contracts/api/token-claims.md documents as reflecting scope authorization rather than verification state (frontend T32). */
+            email_verified?: boolean;
+            name?: string;
+            given_name?: string;
+            family_name?: string;
+            preferred_username?: string;
+            picture?: string;
         };
     };
     responses: never;
@@ -86,6 +128,40 @@ export interface operations {
             };
             /** @description The code was not redeemable - unknown, already redeemed, expired, or presented with a verifier that does not match the challenge. SAS answers with an OAuth2 error object carrying `error` and `error_description`, and this contract deliberately gives the response no schema: design.md L4 forbids the visitor learning which check failed, so a generated client that offers no typed way to read that detail is the enforcement rather than a rule somebody has to remember. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getUserInfo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's profile claims. Only sub is guaranteed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserInfoResponse"];
+                };
+            };
+            /** @description No bearer arrived. Documented deliberately, although it is not an error the SPA provokes, because leaving it out is what lets a reader assume 401 is the no-session answer - and it is not. MEASURED: a request with no Authorization header gets 302 with Location: /login and a Set-Cookie: JSESSIONID, so an unauthenticated read also starts a SAS session. fetch follows redirects by default, which turns this into 200 text/html carrying the login page, for a client that would then try to parse it as the schema above. The caller sends redirect: 'manual' and treats any 3xx as no session (T30 AC12). */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The bearer was present and unusable. The body is EMPTY and the detail is in a WWW-Authenticate header, which is why this response has no schema: MEASURED, that header reads error="invalid_token", error_description="An error occurred while attempting to decode the Jwt: Malformed token". L4 forbids the visitor learning which check failed, and a requirement written about response bodies would have missed this entirely. The caller surfaces none of it (T30 AC8). */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

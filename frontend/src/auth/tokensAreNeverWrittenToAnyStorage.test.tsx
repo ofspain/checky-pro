@@ -960,12 +960,17 @@ describe('tokensAreNeverWrittenToAnyStorage', () => {
       ]);
     });
 
-    it('leaves the three Error subclasses that name themselves alone (AC9)', async () => {
+    it('leaves the four Error subclasses that name themselves alone (AC9)', async () => {
       const targets = await productionSources();
 
       // The window.name pattern is anchored to the globals for this reason: `this.name = 'RenewalTimeoutError'`
-      // is three classes naming themselves, and a scan for `/\.name\s*=/` would have condemned all three.
-      expect(scanFor(targets, /this\.name\s*=/).length).toBe(3);
+      // is a class naming itself, and a scan for `/\.name\s*=/` would have condemned every one of them.
+      //
+      // FOUR since 2026-10-31, not three: task 30 added `ReadProfileError` in `profile/readProfile.ts`. The
+      // count is updated rather than loosened, because it is the pin working exactly as designed - a new
+      // `this.name =` has to be somebody's deliberate decision, and the alternative is a pattern that stops
+      // distinguishing a class naming itself from a write to `window.name`.
+      expect(scanFor(targets, /this\.name\s*=/).length).toBe(4);
       expect(scanFor(targets, /(?:window|globalThis|self)\.name\s*=/)).toEqual([]);
     });
 
