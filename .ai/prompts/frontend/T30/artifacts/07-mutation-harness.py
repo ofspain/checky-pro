@@ -16,6 +16,7 @@ WHAT THE FAMILIES PROBE
   MP18-MP19  the profile survives the read                          (AC6, AC7)
   MP20-MP21  the bearer and whose job the 401 is                    (AC4)
   MP22-MP23  the contract stops saying what it says                 (AC1)
+  MP24-MP28  the five instruments phase 8 added      (Kimi I1, I2, I3, I5, I4)
 
 MP01-MP05 ARE THIS TASK'S REASON TO EXIST. R20's third clause is the only one an
 implementation can break invisibly: reading `email` or `email_verified` off the access
@@ -50,10 +51,10 @@ mutants producing exactly 3 failures were reported as SURVIVORS. They were not. 
 that can drift silently turns a false negative into a published mutation score, so this
 harness refuses to run rather than report, and exits non-zero on any survivor.
 
-EXPECTED BASELINE on this host: the whole suite runs 1436 passed / 1 failed - the one is
+EXPECTED BASELINE on this host: the whole suite runs 1443 passed / 1 failed - the one is
 the pre-existing `src/api/lintRejectsHandWrittenBackendFetch.test.ts`, an oxlint
 summary-line quirk of this machine, unrelated to T30 and failing before and after it.
-T30's own file runs 38 / 38, exit 0.
+T30's own file runs 45 / 45, exit 0.
 """
 
 import subprocess
@@ -85,6 +86,11 @@ UNAVAILABLE = """  if (!response.ok || data === undefined || typeof data.sub !==
   }"""
 RETURN = "  return data;"
 PUBLIC_OPS = "export const OIDC_PUBLIC_OPERATIONS: ReadonlySet<string> = new Set(['POST /oauth2/token']);"
+TRANSPORT_CATCH = """  } catch {
+    // Discarded, not inspected: there is nothing in a transport failure a visitor should be told, and the
+    // reasons are indistinguishable from the client's side anyway.
+    throw new ReadProfileError('unavailable');
+  }"""
 
 MUTANTS = [
     # --- MP01-MP05: a token is read INSTEAD of /userinfo (AC5) -------------------------------------------
@@ -170,6 +176,31 @@ MUTANTS = [
      "  }"),
     ("MP21 a 403 is reported as unavailable, losing the unauthorized answer", READER, UNAUTHORIZED,
      "  if (response.status === 401) throw new ReadProfileError('unauthorized');"),
+
+    # --- MP24-MP27: the instruments phase 8 added (Kimi I1, I2, I3, I5) ---------------------------------
+    # MP24 is the defect I1 found, restored. Before the try/catch, a TypeError from the transport escaped
+    # with its message and stack - and no status check could see it, because no response existed.
+    ("MP24 the transport try/catch is removed, so a raw TypeError escapes", READER, TRANSPORT_CATCH,
+     """  } catch (caught) {
+    throw caught;
+  }"""),
+    ("MP25 a transport failure is reported WITH its message", READER, TRANSPORT_CATCH,
+     """  } catch (caught) {
+    throw new ReadProfileError(`unavailable ${String(caught)}` as 'unavailable');
+  }"""),
+    # MP26: I3's trap, made real - a message that IS catalogue copy invites a screen to render it.
+    ("MP26 a failure message is made to look like catalogue copy", READER,
+     "  'no-session': 'No session.',", "  'no-session': 'Sign in to continue.',"),
+    # MP27: I5's wiring, broken - the notice registered AFTER the boundary runs first, not last, and so
+    # never sees the final response.
+    ("MP27 the rate-limit notice is registered AFTER the boundary, so it sees the wrong response",
+     CLIENT,
+     """  const client = createOidcClient();
+  if (rateLimit) client.use(rateLimit.middleware);
+  client.use(boundary.middleware(OIDC_PUBLIC_OPERATIONS));""",
+     """  const client = createOidcClient();
+  client.use(boundary.middleware(OIDC_PUBLIC_OPERATIONS));
+  if (rateLimit) client.use(rateLimit.middleware);"""),
 ]
 
 # MP22-MP23 mutate the CONTRACT rather than source, so they are applied separately.
@@ -178,6 +209,10 @@ CONTRACT_MUTANTS = [
      "      security: []\n      operationId: getUserInfo"),
     ("MP23 UserInfoResponse requires email too, which the live server never sends",
      "      required: [sub]", "      required: [sub, email]"),
+    # MP28: the security requirement Kimi I4 asked for, removed again - which returns the contract to the
+    # state where "authenticated" was prose and nothing but prose.
+    ("MP28 the bearer requirement is dropped, so the contract stops requiring auth",
+     "      security:\n        - bearerAuth: []\n", ""),
 ]
 
 
