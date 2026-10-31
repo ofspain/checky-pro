@@ -23,6 +23,7 @@ kinds, one per clause, plus the structural ones:
   MC12-MC14  a gate, a timer in auth/, a leak of the description   (AC9, AC6, AC3)
   MC15       written to escape: a delay for a state no test drives          (AC5)
   MC17, MC18 the description, percent-encoded into a store and a global     (AC3)
+  MC19-MC22  the four instruments Phase 9 added or widened        (Kimi I1-I5, I8)
 
 MC08-MC11 ARE THIS TASK'S REASON TO EXIST. No earlier file in the package asserts
 anything about WHEN the sentence appears, so every one of these four passes T16-T28
@@ -119,6 +120,30 @@ MUTANTS = [
      NOTICE + "\n      if ((params.get('error_description') ?? '').startsWith('No account')) {"
      "\n        window.name = encodeURIComponent(params.get('error_description') ?? '');"
      "\n      }"),
+
+    # --- MC19-MC22: the instruments Phase 9 added or widened ---------------------------------------------
+    # MC19 is the one that matters. A state word inside a URL STRING LITERAL was invisible to the old
+    # stripper, which deleted from the first `//` to end of line regardless of context - so this mutant
+    # passed the state scan while sitting in plain sight. It is the regression guard for Kimi I8.
+    ("MC19 a state word hides inside a URL string literal (the old stripper ate it)", CALLBACK, ERROR_READ,
+     ERROR_READ + "\n    const HELP_LOCKED_ACCOUNT = 'https://id.example/help/locked-account';"
+     "\n    void HELP_LOCKED_ACCOUNT;"),
+    ("MC20 a gate on account.status, which the old pattern missed - Kimi I1", CALLBACK, ERROR_READ,
+     ERROR_READ + "\n    const account = { status: params.get('account_status') };"
+     "\n    if (account.status === 'LOCKED') { discard(); return; }"),
+    ("MC21 the navigation alone is deferred, for one state only - Kimi I2", CALLBACK, ERROR_BRANCH,
+     """    if (error !== null && error !== '') {
+      if ((params.get('error_description') ?? '').startsWith('No account')) {
+        clearAccessToken();
+        setSignInNotice('discarded');
+        setTimeout(() => navigate(`/${SIGN_IN_PATH}`, { replace: true }), 300);
+        return;
+      }
+      discard();
+      return;
+    }"""),
+    ("MC22 a catalogue key names the CONCEPT, with a uniform value - Kimi I5", CATALOGUE, DISCARDED_COPY,
+     DISCARDED_COPY + "\n    accountState: 'Your sign-in did not complete. Try again.',"),
 
     # --- MC05-MC06: the REDIRECT diverges (AC1, AC2) -----------------------------------------------------
     ("MC05 one state lands somewhere else", CALLBACK, ERROR_BRANCH,
