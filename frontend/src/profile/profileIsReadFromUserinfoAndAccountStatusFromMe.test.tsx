@@ -1527,6 +1527,33 @@ describe('T31: account status from GET /accounts/me', () => {
       expect(schema).toContain('enum: [PENDING_VERIFICATION, ACTIVE, LOCKED, SUSPENDED, DELETED]');
     });
 
+    it('names no transport of its own, and NAMES the path rather than assembling it', async () => {
+      /**
+       * Added after MQ06 SURVIVED the first mutation run, and the survival is the interesting part: the
+       * mutant replaced `api.GET('/accounts/me')` with `api.GET(`/accounts/${'me'}` as '/accounts/me')`,
+       * which produces the IDENTICAL runtime string. No runtime case can ever tell the two apart - so this
+       * property is held by a source scan or by nothing at all, exactly like AC5's.
+       *
+       * It is worth holding. `/accounts/me` DOES appear in this module and must: openapi-fetch takes the
+       * schema path as its first argument, and that is what makes the call typed and checkable against the
+       * contract. An ASSEMBLED path needs a cast to get past the type checker - the mutant's own
+       * `as '/accounts/me'` is the tell - and a cast is how a request reaches an endpoint the contract does
+       * not declare while still looking like a client call (L6).
+       *
+       * The frozen brief's AC1 asked for this in those words. It simply had no case, which is what a mutant
+       * is for.
+       */
+      const source = strip(await readFile(join(sourceRoot(), 'profile/readAccount.ts'), 'utf8'));
+      for (const banned of ['fetch(', 'XMLHttpRequest', 'new Request(', 'EventSource', 'sendBeacon']) {
+        expect(source, banned).not.toContain(banned);
+      }
+      expect(source.match(/\/accounts\/me/g)).toHaveLength(1);
+      expect(source).toContain("api.GET('/accounts/me')");
+      for (const built of ["'/accounts/me' +", "+ '/accounts/me", '`/accounts', 'new URL(']) {
+        expect(source, built).not.toContain(built);
+      }
+    });
+
     it('exposes the operation on the generated client, typed', async () => {
       const tab = authHarness([{ body: ACCOUNT }]);
       // A typed GET: if the path left the contract this line would not compile, which is the assertion.

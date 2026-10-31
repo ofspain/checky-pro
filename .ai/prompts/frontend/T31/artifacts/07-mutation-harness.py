@@ -49,7 +49,14 @@ harness refuses to start on either fault.
 EXPECTED BASELINE on this host: the whole suite runs 1501 passed / 1 failed - the one is
 the pre-existing `src/api/lintRejectsHandWrittenBackendFetch.test.ts`, an oxlint
 summary-line quirk of this machine, unrelated to T31 and failing before and after it.
-T31's own 49 cases run 49 / 49, exit 0.
+T31's own 50 cases run 50 / 50, exit 0.
+
+MQ06 SURVIVED the first run, and it was a REAL escape rather than an inert mutant - the
+distinction T28's MB27 and T30's MP09/MP26 each turned on. It assembles the path as
+`` `/accounts/${'me'}` as '/accounts/me' ``, which yields the identical runtime string, so
+no runtime case could ever tell the two apart. The frozen brief's AC1 asked for the path to
+be "a quoted literal argument and never assembled" in those words and simply had no case
+behind it. Held now by a source scan, because that is the only instrument that can see it.
 """
 
 import subprocess
