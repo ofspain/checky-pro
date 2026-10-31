@@ -615,6 +615,25 @@ describe('T30: AC4 the boundary supplies the bearer and owns the 401', () => {
     expect(tab.rateLimit.isShown()).toBe(true);
   });
 
+  it('shows the notice for a 429 on the RE-SEND, which is what the registration order is for', async () => {
+    /**
+     * Added because MP27 SURVIVED the first run with the stronger claim unproven.
+     *
+     * MP27 swaps the registration order so the notice runs FIRST instead of last. With a 429 on the very
+     * first call, both orders show the notice - nothing has intervened, so there is only one response to
+     * see, and the case above cannot tell them apart. `client.ts` says exactly which case can: "a 429 on the
+     * session boundary's re-send after a renewal".
+     *
+     * So: 401, then 429 on the re-send. openapi-fetch runs `onResponse` in reverse registration order, so a
+     * notice registered first runs LAST and sees the final 429. Registered after the boundary it runs first,
+     * sees only the original 401, and the visitor is rate-limited with no copy saying so.
+     */
+    const tab = harness([{ status: 401 }, { status: 429 }]);
+    await expect(readProfile(tab.api, tab.tokens)).rejects.toBeInstanceOf(ReadProfileError);
+    expect(tab.renewals).toBe(1);
+    expect(tab.rateLimit.isShown()).toBe(true);
+  });
+
   it('CONTROL: a 200 leaves the rate-limit notice alone, so the check is not always true', async () => {
     const tab = harness([{ body: FULL_PROFILE }]);
     await readProfile(tab.api, tab.tokens);
@@ -1153,7 +1172,7 @@ describe('T30: AC10 every instrument has been shown to report dirty', () => {
     { instrument: 'redirect handling', dirtiedBy: 'three 3xx shapes and one FOLLOWED 200 text/html (AC12)' },
     { instrument: 'throwing transport', dirtiedBy: 'a TypeError, a DOMException and a thrown string (AC8, Kimi I1)' },
     { instrument: 'internal message', dirtiedBy: 'inversion - none of the three is in the catalogue (AC8, Kimi I3)' },
-    { instrument: 'rate-limit wiring', dirtiedBy: 'a 429, beside a 200 that leaves the notice alone (AC4, Kimi I5)' },
+    { instrument: 'rate-limit wiring', dirtiedBy: 'a 429 on the RE-SEND after a 401, which is what the order is for (AC4, Kimi I5)' },
     { instrument: 'decode-pattern boundary', dirtiedBy: 'a dependency guard over seven JWT libraries (AC5, Kimi I7)' },
   ];
 

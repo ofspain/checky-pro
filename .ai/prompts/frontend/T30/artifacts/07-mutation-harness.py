@@ -188,9 +188,17 @@ MUTANTS = [
      """  } catch (caught) {
     throw new ReadProfileError(`unavailable ${String(caught)}` as 'unavailable');
   }"""),
-    # MP26: I3's trap, made real - a message that IS catalogue copy invites a screen to render it.
-    ("MP26 a failure message is made to look like catalogue copy", READER,
-     "  'no-session': 'No session.',", "  'no-session': 'Sign in to continue.',"),
+    # MP26, RE-AIMED after the first run. The original changed 'No session.' to 'Sign in to continue.' and
+    # SURVIVED - correctly, because it is not a defect: nothing requires an internal message to have
+    # particular words, and the inversion test asks whether a message IS catalogue copy, not whether it
+    # sounds like it. A mutant with no defect behind it proves nothing in either direction.
+    #
+    # The defect I3 actually names is a message INDISTINGUISHABLE from commissioned copy, because that is the
+    # state in which a screen rendering `error.message` looks correct and is wrong. So the mutant now uses an
+    # exact catalogue string, which is the one thing the inversion test is built to catch.
+    ("MP26 a failure message becomes an EXACT catalogue string", READER,
+     "  'no-session': 'No session.',",
+     "  'no-session': 'Your sign-in did not complete. Try again.',"),
     # MP27: I5's wiring, broken - the notice registered AFTER the boundary runs first, not last, and so
     # never sees the final response.
     ("MP27 the rate-limit notice is registered AFTER the boundary, so it sees the wrong response",
