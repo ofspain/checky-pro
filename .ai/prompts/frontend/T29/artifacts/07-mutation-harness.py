@@ -23,7 +23,7 @@ kinds, one per clause, plus the structural ones:
   MC12-MC14  a gate, a timer in auth/, a leak of the description   (AC9, AC6, AC3)
   MC15       written to escape: a delay for a state no test drives          (AC5)
   MC17, MC18 the description, percent-encoded into a store and a global     (AC3)
-  MC19-MC22  the four instruments Phase 9 added or widened        (Kimi I1-I5, I8)
+  MC19-MC22  the four instruments Phase 9 added or widened   (Kimi I3, I1, I2, I5)
 
 MC08-MC11 ARE THIS TASK'S REASON TO EXIST. No earlier file in the package asserts
 anything about WHEN the sentence appears, so every one of these four passes T16-T28
