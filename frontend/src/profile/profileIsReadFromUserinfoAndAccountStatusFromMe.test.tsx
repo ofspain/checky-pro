@@ -2,6 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OIDC_PUBLIC_OPERATIONS, createOidcApi } from '../api/client';
+import { createRateLimitNotice } from '../api/rateLimitNotice';
+import type { RateLimitNoticeState } from '../api/rateLimitNotice';
 import { createSessionBoundary } from '../api/sessionBoundary';
 import type { SessionTokens } from '../api/sessionBoundary';
 import { ReadProfileError, readProfile } from './readProfile';
@@ -354,6 +356,7 @@ type Harness = {
   api: ReturnType<typeof createOidcApi>;
   tokens: SessionTokens;
   renewals: number;
+  rateLimit: RateLimitNoticeState;
 };
 
 /**
@@ -363,7 +366,10 @@ type Harness = {
  * is handled by the boundary's single-flight renewal and not by the reader, and a stubbed boundary would make
  * that true by construction.
  */
-function harness(answers: Answer[], options: { token?: string | null } = {}): Harness {
+function harness(
+  answers: Answer[],
+  options: { token?: string | null; throws?: unknown; tokenSequence?: Array<string | null> } = {},
+): Harness {
   installBrowserRequest();
   const calls: Call[] = [];
   let index = 0;
@@ -376,6 +382,9 @@ function harness(answers: Answer[], options: { token?: string | null } = {}): Ha
     });
     const answer = answers[Math.min(index, answers.length - 1)];
     index += 1;
+    // Kimi's phase 8, I1: `openapi-fetch` resolves an HTTP error status but REJECTS when the transport
+    // itself throws, and nothing was driving that path.
+    if (options.throws !== undefined) throw options.throws;
     const status = answer.status ?? 200;
     const response = new Response(answer.body === undefined ? null : JSON.stringify(answer.body), {
       status: status >= 300 && status < 400 ? 200 : status,
@@ -396,8 +405,10 @@ function harness(answers: Answer[], options: { token?: string | null } = {}): Ha
 
   let current = options.token === undefined ? TOKEN : options.token;
   let renewals = 0;
+  // Kimi's phase 8, I6: a token that changes BETWEEN the reader's check and the boundary's read.
+  const sequence = options.tokenSequence ? [...options.tokenSequence] : null;
   const tokens: SessionTokens = {
-    current: () => current,
+    current: () => (sequence && sequence.length > 0 ? (sequence.shift() ?? null) : current),
     renew: async () => {
       renewals += 1;
       current = `${TOKEN}-renewed`;
@@ -405,10 +416,14 @@ function harness(answers: Answer[], options: { token?: string | null } = {}): Ha
     },
   };
   const boundary = createSessionBoundary(tokens, () => undefined);
+  const rateLimit = createRateLimitNotice();
   return {
     calls,
-    api: createOidcApi(boundary),
+    // The real notice, wired as production would wire it, so I5's 429 claim is about the factory rather
+    // than about a stub.
+    api: createOidcApi(boundary, rateLimit),
     tokens,
+    rateLimit,
     get renewals() {
       return renewals;
     },
@@ -444,11 +459,21 @@ describe('T30: AC1/AC2 the contract declares /userinfo and the generated client 
      * contract's own prose: the `/userinfo` description explains why it is NOT `security: []` and therefore
      * contains those characters. A substring search cannot tell a declaration from a sentence about one.
      */
-    const declares = (text: string): boolean =>
-      text.split('\n').some((line) => line.trim() === 'security: []');
-    expect(declares(token)).toBe(true);
-    // The whole asymmetry of OIDC_PUBLIC_OPERATIONS rests on this declaration being absent here.
-    expect(declares(userinfo)).toBe(false);
+    const lines = (text: string): string[] => text.split('\n').map((line) => line.trim());
+    expect(lines(token)).toContain('security: []');
+    expect(lines(userinfo)).not.toContain('security: []');
+    /**
+     * And a POSITIVE requirement, which is Kimi's phase 8 I4 and the half that actually carries meaning.
+     *
+     * The first version asserted only that `security: []` was ABSENT from `/userinfo`, and treated that as
+     * "authenticated". In OpenAPI 3 it is not: an operation with no `security` inherits the global one, this
+     * file declares no global one, and the result is no requirement at all - semantically identical to the
+     * `security: []` it was being contrasted with. The difference existed only in the text. So the contract
+     * now declares `bearerAuth`, `/userinfo` requires it, and this asserts the requirement rather than the
+     * absence of its opposite.
+     */
+    expect(lines(userinfo)).toContain('- bearerAuth: []');
+    expect(lines(contract)).toContain('securitySchemes:');
     expect(userinfo).toContain('operationId: getUserInfo');
   });
 
@@ -577,6 +602,25 @@ describe('T30: AC4 the boundary supplies the bearer and owns the 401', () => {
     await expect(readProfile(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'unauthorized' });
   });
 
+  it('preserves R23 for the first authenticated OIDC call: a 429 shows the notice', async () => {
+    /**
+     * Kimi's phase 8 I5. `createOidcApi` mirrors `createAuthApi` down to registering the rate-limit notice
+     * FIRST - openapi-fetch runs `onResponse` in reverse registration order, so the notice runs last and
+     * sees the final response, including a 429 on the boundary's re-send after a renewal. That ordering is
+     * load-bearing and nothing in this file was holding the new factory to it.
+     */
+    const tab = harness([{ status: 429 }, { status: 429 }]);
+    expect(tab.rateLimit.isShown()).toBe(false);
+    await expect(readProfile(tab.api, tab.tokens)).rejects.toBeInstanceOf(ReadProfileError);
+    expect(tab.rateLimit.isShown()).toBe(true);
+  });
+
+  it('CONTROL: a 200 leaves the rate-limit notice alone, so the check is not always true', async () => {
+    const tab = harness([{ body: FULL_PROFILE }]);
+    await readProfile(tab.api, tab.tokens);
+    expect(tab.rateLimit.isShown()).toBe(false);
+  });
+
   it('holds exactly POST /oauth2/token public, and not /userinfo', () => {
     // The asymmetry this task introduced. `POST /oauth2/token` carries no bearer because the PKCE verifier is
     // the client's only proof and renewing on its 401 would be circular - renewal IS an exchange. `GET
@@ -678,6 +722,51 @@ describe('T30: AC5 no production module reads PII or verification state from a t
       synthetic('app/T.ts', 'const raw = Uint8Array.from(buffer);'),
     ];
     expect(hitsOf(permitted, tokenDecodes())).toEqual([]);
+  });
+
+  it('RECORDS the decode pattern BOUNDARY, and guards it with the dependency list', async () => {
+    /**
+     * Kimi's phase 8 I7, accepted in substance with its recommended form REFUSED.
+     *
+     * I7 asks for a synthetic case using an alternate decode helper - `jwtVerify`, `decode` - asserting the
+     * scan FLAGS it. The scan does not flag it, so that assertion would simply fail; the recommendation is
+     * self-contradictory unless the pattern is widened first, and widening it to bare `decode` would hit
+     * `new TextDecoder().decode(...)` in commissioned code (Phase 6 §4 measured that class of failure).
+     *
+     * So the boundary is recorded as a NEGATIVE control - these are the shapes the scan does not see - and
+     * guarded by something that actually fires: **no JWT-decoding library is a dependency.** That is the
+     * event which would make the gap live, and it is checkable. The day `jose` or `jwt-decode` enters a
+     * package.json, this case fails and the pattern has to be widened before anything else can proceed.
+     */
+    const unseen = [
+      synthetic('profile/U.ts', "const claims = jwtVerify(token, key); return claims.email;"),
+      synthetic('profile/V.ts', "const claims = decode(token); return claims.email;"),
+      synthetic('profile/W.ts', "const payload = token.split('.').at(1);"),
+      synthetic('profile/X.ts', "const raw = Buffer.from(token.split('.')[1], 'base64');"),
+    ];
+    // Stated as a fact about the instrument, not as an endorsement. Three of these four would be caught by
+    // the forbidden-claim scan IF a decode had put them in scope; the decode scan is what fails to.
+    expect(hitsOf(unseen.slice(0, 2), tokenDecodes())).toEqual([]);
+
+    // `src` -> `frontend` -> the repository root, spelled out because the first version of this walked one
+    // level too far and read a path outside the repository.
+    const frontendDir = dirname(sourceRoot());
+    const repoRoot = dirname(frontendDir);
+    const manifests = [
+      join(frontendDir, 'package.json'),
+      join(repoRoot, 'libs/ts/api-client/package.json'),
+    ];
+    const JWT_LIBRARIES = ['jose', 'jwt-decode', 'jsonwebtoken', 'jws', 'jwa', 'fast-jwt', 'njwt'];
+    for (const manifest of manifests) {
+      const parsed = JSON.parse(await readFile(manifest, 'utf8')) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      const names = Object.keys({ ...parsed.dependencies, ...parsed.devDependencies });
+      for (const library of JWT_LIBRARIES) {
+        expect(names, `${manifest} / ${library}`).not.toContain(library);
+      }
+    }
   });
 
   it('CONTROL: a scan that reads nothing is refused, not reported clean', async () => {
@@ -807,6 +896,61 @@ describe('T30: AC8 a failed read surfaces no detail, not even from a header', ()
       expect(watch.lines, label).toEqual([]);
       vi.restoreAllMocks();
     }
+  });
+
+  it('converts a THROWING transport into a neutral error, keeping neither message nor stack', async () => {
+    /**
+     * Kimi's phase 8 I1, the one High-confidence finding in that review, and it deserved it. MEASURED before
+     * the fix: with `fetch` throwing
+     * `TypeError('Failed to fetch: net::ERR_NAME_NOT_RESOLVED at https://internal.example')`, that exact
+     * `TypeError` escaped `readProfile` with its message and its stack intact.
+     *
+     * No status check could have caught it, because no response existed - `openapi-fetch` resolves an HTTP
+     * error status but REJECTS when the transport throws. An internal hostname and a browser error code
+     * reaching a caller is exactly what AC8 forbids.
+     */
+    const watch = watchConsole();
+    const thrown = new TypeError('Failed to fetch: net::ERR_NAME_NOT_RESOLVED at https://internal.example');
+    const tab = harness([{ body: FULL_PROFILE }], { throws: thrown });
+    const error = await readProfile(tab.api, tab.tokens).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ReadProfileError);
+    expect((error as ReadProfileError).failure).toBe('unavailable');
+    const text = `${(error as Error).message}\n${(error as Error).stack ?? ''}`;
+    for (const detail of ['ERR_NAME_NOT_RESOLVED', 'internal.example', 'Failed to fetch']) {
+      expect(text, detail).not.toContain(detail);
+    }
+    expect(watch.lines).toEqual([]);
+  });
+
+  it('does the same for an abort and for a CORS-style failure', async () => {
+    for (const thrown of [
+      new DOMException('The operation was aborted.', 'AbortError'),
+      new TypeError('NetworkError when attempting to fetch resource.'),
+      'a string thrown by something that should have thrown an Error',
+    ]) {
+      const tab = harness([{ body: FULL_PROFILE }], { throws: thrown });
+      await expect(readProfile(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'unavailable' });
+    }
+  });
+
+  it('the error message is INTERNAL: none of the three strings is in the catalogue', async () => {
+    /**
+     * Kimi's phase 8 I3, taken as option (a). `ReadProfileError.message` is English and is not catalogue
+     * copy, so a screen rendering `error.message` would be rendering a string L11 says must live in the
+     * catalogue. The trap is real because `error.message` is the obvious thing for a first consumer to reach
+     * for.
+     *
+     * Asserted by INVERSION, which is the strongest form available here: the three strings appear nowhere in
+     * the catalogue, so rendering one cannot be mistaken for rendering commissioned copy. A screen maps
+     * `failure` - a closed set of three, for exactly this purpose - onto a key of its own.
+     */
+    const catalogue = await readFile(join(sourceRoot(), 'i18n/catalogue.ts'), 'utf8');
+    for (const failure of ['no-session', 'unauthorized', 'unavailable'] as const) {
+      const message = new ReadProfileError(failure).message;
+      expect(catalogue, message).not.toContain(message);
+    }
+    // And the closed set is what a consumer is meant to switch on.
+    expect(new ReadProfileError('no-session').failure).toBe('no-session');
   });
 
   it('CONTROL: an error carrying server detail WOULD be caught', () => {
@@ -940,6 +1084,33 @@ describe('T30: AC12 a missing session is not a 401, and a redirect is not a succ
     await expect(readProfile(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'no-session' });
   });
 
+  it('MEASURES the race Kimi I6 names: a token cleared after the check still ends in no-session', async () => {
+    /**
+     * Kimi's phase 8 I6, accepted as a MEASUREMENT rather than as a restructuring.
+     *
+     * The window is real: `readProfile` reads `tokens.current()` synchronously, and the boundary's
+     * `onRequest` reads it again when it attaches the bearer. Between the two, a cross-tab renewal failure,
+     * a sign-out or a `clearAccessToken()` can clear it - so the guard passes, the boundary sends a
+     * bearer-less request, and the 302 side-effect AC12 exists to prevent happens anyway.
+     *
+     * Kimi's own first option is the right one and this case is the evidence for it: the OUTCOME is safe,
+     * because `redirect: 'manual'` and the 3xx check turn that response into a no-session failure regardless.
+     * What remains is a narrow side-effect window, and closing it properly means moving the guard into the
+     * boundary's `onRequest` - which is `api/sessionBoundary.ts`, named in the frozen brief as not T30's to
+     * change, and shared by every other client. Recorded as T30-D6 rather than half-closed here.
+     *
+     * The sequence is: the reader's check sees a token, the boundary's read sees none.
+     */
+    const tab = harness(
+      [{ status: 302, headers: { location: '/login' } }, { status: 302, headers: { location: '/login' } }],
+      { tokenSequence: [TOKEN, null, null] },
+    );
+    await expect(readProfile(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'no-session' });
+    // A request WAS issued - that is the window, stated rather than hidden - and it carried no bearer.
+    expect(tab.calls).toHaveLength(1);
+    expect(tab.calls[0].auth).toBeNull();
+  });
+
   it('CONTROL: a 200 that is NOT a redirect still succeeds, so the check is not just rejecting everything', async () => {
     const tab = harness([{ status: 200, body: FULL_PROFILE }]);
     expect(await readProfile(tab.api, tab.tokens)).toEqual(FULL_PROFILE);
@@ -980,10 +1151,14 @@ describe('T30: AC10 every instrument has been shown to report dirty', () => {
     { instrument: 'sub-only success', dirtiedBy: 'four bodies with no usable sub, rejected (AC9)' },
     { instrument: 'no-session short-circuit', dirtiedBy: 'an empty call list, asserted (AC12)' },
     { instrument: 'redirect handling', dirtiedBy: 'three 3xx shapes and one FOLLOWED 200 text/html (AC12)' },
+    { instrument: 'throwing transport', dirtiedBy: 'a TypeError, a DOMException and a thrown string (AC8, Kimi I1)' },
+    { instrument: 'internal message', dirtiedBy: 'inversion - none of the three is in the catalogue (AC8, Kimi I3)' },
+    { instrument: 'rate-limit wiring', dirtiedBy: 'a 429, beside a 200 that leaves the notice alone (AC4, Kimi I5)' },
+    { instrument: 'decode-pattern boundary', dirtiedBy: 'a dependency guard over seven JWT libraries (AC5, Kimi I7)' },
   ];
 
   it('names one dirtying violation per instrument', () => {
-    expect(INSTRUMENTS).toHaveLength(16);
+    expect(INSTRUMENTS).toHaveLength(20);
     expect(INSTRUMENTS.filter((row) => row.dirtiedBy.length === 0)).toEqual([]);
   });
 

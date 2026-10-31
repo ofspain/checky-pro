@@ -153,7 +153,10 @@ export interface operations {
                     "application/json": components["schemas"]["UserInfoResponse"];
                 };
             };
-            /** @description No bearer arrived. Documented deliberately, although it is not an error the SPA provokes, because leaving it out is what lets a reader assume 401 is the no-session answer - and it is not. MEASURED: a request with no Authorization header gets 302 with Location: /login and a Set-Cookie: JSESSIONID, so an unauthenticated read also starts a SAS session. fetch follows redirects by default, which turns this into 200 text/html carrying the login page, for a client that would then try to parse it as the schema above. The caller sends redirect: 'manual' and treats any 3xx as no session (T30 AC12). */
+            /**
+             * @description No bearer arrived. Documented deliberately, although it is not an error the SPA provokes, because leaving it out is what lets a reader assume 401 is the no-session answer - and it is not. MEASURED: a request with no Authorization header gets 302 with Location: /login and a Set-Cookie: JSESSIONID, so an unauthenticated read also starts a SAS session. fetch follows redirects by default, which turns this into 200 text/html carrying the login page, for a client that would then try to parse it as the schema above. The caller sends redirect: 'manual' and treats any 3xx as no session (T30 AC12).
+             *     302 is the only status MEASURED. The client deliberately handles the whole 3xx range anyway, which Kimi's phase 8 noted as a mismatch between this document and that code - correctly, and it is resolved in this direction rather than by narrowing the client. A redirect away from a protected endpoint means the session is gone whichever code SAS picks, and a client that accepted 302 while parsing a 303 as a profile would be a strange thing to have built on purpose.
+             */
             302: {
                 headers: {
                     [name: string]: unknown;

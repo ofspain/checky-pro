@@ -1,3 +1,4 @@
+import type { oidcComponents } from '@themistra/api-client';
 import type { OidcApi } from '../api/client';
 import type { SessionTokens } from '../api/sessionBoundary';
 
@@ -17,18 +18,18 @@ import type { SessionTokens } from '../api/sessionBoundary';
  * reader is written against the shape the contract declares, so closing O6 needs no change here.
  */
 
-/** Exactly the contract's `UserInfoResponse`. Every property but `sub` is optional, because the live server
- * sends nothing else - absence is a normal answer here and never an error (T30 AC9). */
-export type Profile = {
-  sub: string;
-  email?: string;
-  email_verified?: boolean;
-  name?: string;
-  given_name?: string;
-  family_name?: string;
-  preferred_username?: string;
-  picture?: string;
-};
+/**
+ * The contract's `UserInfoResponse`, DERIVED rather than restated.
+ *
+ * It was hand-written first, and the hand-written version happened to match. Kimi's phase 8 is right that
+ * matching today is not the property worth having: a contract that gained `middle_name`, or changed `picture`
+ * to an object, would leave a hand-written copy compiling and silently wrong. Phase 4 froze this as F10 and
+ * the first draft quietly did not honour it.
+ *
+ * Every property but `sub` is optional in the schema, because the live server sends nothing else - absence is
+ * a normal answer here and never an error (AC9).
+ */
+export type Profile = oidcComponents['schemas']['UserInfoResponse'];
 
 /** Why a read did not produce a profile. Three cases, and none of them carries a cause the visitor can see. */
 export type ReadProfileFailure = 'no-session' | 'unauthorized' | 'unavailable';
@@ -39,6 +40,13 @@ export type ReadProfileFailure = 'no-session' | 'unauthorized' | 'unavailable';
  * detail in a `WWW-Authenticate` header reading `error_description="An error occurred while attempting to
  * decode the Jwt: Malformed token"`. A rule written about response bodies would have let that through. This
  * class cannot carry it: there is nowhere to put it.
+ *
+ * **`message` IS INTERNAL AND MUST NOT BE RENDERED.** It is English, it is not in the catalogue, and L11
+ * requires every user-facing string to be. A screen showing a failed profile read maps `failure` - the three
+ * values are a closed set for exactly this - onto a catalogue key of its own. Kimi's phase 8 raised this as a
+ * trap for the first consumer, and it is a fair one: `error.message` is the obvious thing to reach for. A
+ * case in T30's suite asserts these strings appear nowhere in the catalogue, so rendering one would be
+ * rendering copy the catalogue does not own.
  */
 export class ReadProfileError extends Error {
   readonly failure: ReadProfileFailure;
@@ -74,11 +82,36 @@ export async function readProfile(api: OidcApi, tokens: Pick<SessionTokens, 'cur
   // status. There is no 401 anywhere in that sequence for the boundary's renewal to act on.
   if (tokens.current() === null) throw new ReadProfileError('no-session');
 
-  const { data, response } = await api.GET('/userinfo', {
-    // The second half of the same measurement, and a security option rather than a preference: without it a
-    // redirect to the login page is followed and arrives as a successful response.
-    redirect: 'manual',
-  });
+  /**
+   * Wrapped, because `openapi-fetch` resolves an HTTP error status but REJECTS when the underlying `fetch`
+   * throws - a DNS failure, a dropped connection, a CORS refusal, an abort.
+   *
+   * MEASURED, after Kimi's phase 8 named it: with `fetch` throwing a `TypeError` whose message carried
+   * `net::ERR_NAME_NOT_RESOLVED` and an internal hostname, that exact `TypeError` escaped `readProfile` with
+   * its message and its stack intact. An internal hostname and a browser error code reaching a caller is
+   * precisely what AC8 forbids, and no status check could have caught it because no response existed. This
+   * was the one finding in that review with High confidence and it deserved it.
+   *
+   * The hostname is described rather than quoted here on purpose: `shellBuildsAndMounts` scans app source
+   * for `https?://` WITHOUT stripping comments (L9, L10, R58), so writing the measured URL out would fail
+   * that scan. Its conservatism is reasonable - a scanner cannot tell a comment from a constant - and
+   * rephrasing is the right answer rather than loosening another task's instrument.
+   */
+  let data: Profile | undefined;
+  let response: Response;
+  try {
+    const answer = await api.GET('/userinfo', {
+      // The second half of the same measurement, and a security option rather than a preference: without it a
+      // redirect to the login page is followed and arrives as a successful response.
+      redirect: 'manual',
+    });
+    data = answer.data;
+    response = answer.response;
+  } catch {
+    // Discarded, not inspected: there is nothing in a transport failure a visitor should be told, and the
+    // reasons are indistinguishable from the client's side anyway.
+    throw new ReadProfileError('unavailable');
+  }
 
   // Checked before `data`, and before the status, because a followed or opaque redirect can present as
   // success. A 3xx here means the session is gone, whatever the body looks like.

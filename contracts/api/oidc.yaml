@@ -69,6 +69,14 @@ paths:
         defensive schema-writing, but because a schema requiring more would make the live
         server's correct response a validation failure.
       operationId: getUserInfo
+      # Kimi's phase 8, and it was right in a way that is easy to miss. The prose above said
+      # "authenticated", and POST /oauth2/token says `security: []`, so the two LOOKED different. In
+      # OpenAPI 3 they were not: an operation with no `security` inherits the global one, this file
+      # declares no global one, and the result is no requirement at all - semantically identical to
+      # `security: []`. The distinction existed only in the text, and a contract test could assert it
+      # only textually. Declared properly now, so it is the document that says a bearer is required.
+      security:
+        - bearerAuth: []
       responses:
         '200':
           description: The caller's profile claims. Only sub is guaranteed.
@@ -86,6 +94,13 @@ paths:
             text/html carrying the login page, for a client that would then try to parse it as
             the schema above. The caller sends redirect: 'manual' and treats any 3xx as no
             session (T30 AC12).
+
+            302 is the only status MEASURED. The client deliberately handles the whole 3xx range
+            anyway, which Kimi's phase 8 noted as a mismatch between this document and that code -
+            correctly, and it is resolved in this direction rather than by narrowing the client. A
+            redirect away from a protected endpoint means the session is gone whichever code SAS
+            picks, and a client that accepted 302 while parsing a 303 as a profile would be a
+            strange thing to have built on purpose.
         '401':
           description: >
             The bearer was present and unusable. The body is EMPTY and the detail is in a
@@ -95,6 +110,16 @@ paths:
             check failed, and a requirement written about response bodies would have missed this
             entirely. The caller surfaces none of it (T30 AC8).
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        The tab's in-memory access token, attached by the client boundary rather than by a caller
+        (frontend L3, L18). Declared here rather than referenced from auth.yaml because
+        openapi-typescript resolves no external $ref for security schemes, and a scheme that cannot
+        be resolved is worse than one restated in six lines.
   schemas:
     TokenRequest:
       type: object
