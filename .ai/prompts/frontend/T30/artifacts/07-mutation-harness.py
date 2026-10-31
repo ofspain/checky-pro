@@ -51,10 +51,10 @@ mutants producing exactly 3 failures were reported as SURVIVORS. They were not. 
 that can drift silently turns a false negative into a published mutation score, so this
 harness refuses to run rather than report, and exits non-zero on any survivor.
 
-EXPECTED BASELINE on this host: the whole suite runs 1443 passed / 1 failed - the one is
+EXPECTED BASELINE on this host: the whole suite runs 1444 passed / 1 failed - the one is
 the pre-existing `src/api/lintRejectsHandWrittenBackendFetch.test.ts`, an oxlint
 summary-line quirk of this machine, unrelated to T30 and failing before and after it.
-T30's own file runs 45 / 45, exit 0.
+T30's own file runs 46 / 46, exit 0.
 """
 
 import subprocess
