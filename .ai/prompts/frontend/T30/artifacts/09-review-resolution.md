@@ -13,7 +13,18 @@ accepted as a measurement rather than a change. Every citation was checked again
 that turn on library or boundary behaviour were **measured** rather than reasoned about.
 
 **This was the strongest of Kimi's three reviews on this task, and I1 was a defect I had shipped.** The fixes
-are applied, committed and pushed; **46 cases, 28/28 mutants, no survivors.**
+are applied, committed and pushed; **46 cases, no survivors** — see the correction below for the score.
+
+> **CORRECTION, entered 2026-10-31 during phase 11.** The mutation score stated below is wrong, and it
+> was wrong when it was written. Checking every anchor against source showed that `GET_CALL` had been stale
+> since the I1 fix in this very phase rewrote the `api.GET` call, so **MP06 and MP07 printed
+> `BROKEN anchor missed` rather than `KILLED`.** A `BROKEN` mutant never reaches the survivors list, so the
+> run still ended `survivors: none` and was reported as 28 of 28. **It was 26 killed and 2 never applied.**
+> The kills were real; the denominator was not. Phase 11 refreshed the anchors, added a `preflight()` that
+> refuses to start until every anchor matches exactly once, and the corrected run is **34 of 34 killed, no
+> survivors, nothing BROKEN** — MP06 alone now fails 21 cases. This is T29's drifting-baseline lesson one
+> level up: a harness that scores an unapplied mutant as a non-survivor lies by omission.
+
 
 ---
 
@@ -147,7 +158,7 @@ coincidence.
 | `oxlint src` | clean |
 | The file alone | **46 / 46**, exit 0 |
 | Whole suite | **1444 passed / 1 failed (1445)** — the known `lintRejectsHandWrittenBackendFetch` environmental failure |
-| Mutation | **28 / 28 killed, no survivors**, all by T30's own file |
+| Mutation | **26 killed, 2 BROKEN (stale anchors), no survivors** — reported at the time as 28 / 28; corrected in phase 11 to **34 / 34** |
 | `generatedClientCompiles` | 10 / 10 |
 
 ## Deviations

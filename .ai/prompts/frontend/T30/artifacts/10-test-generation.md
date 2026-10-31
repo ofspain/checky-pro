@@ -12,7 +12,9 @@ T30 has production code — `profile/readProfile.ts`, 131 lines — so unlike T2
 task. But the tests were written alongside the reader in Phase 6 and hardened twice since, so this phase is
 still a **manifest**: every case below is already written, committed and green. What Phase 10 adds is the
 mapping — each of the **46 cases** to the acceptance criterion and requirement it discharges, and each of the
-**28 mutants** to the instrument that kills it.
+mutants to the instrument that kills it. **Phase 11 took the file to 53 cases, 25 instruments and 34
+mutants; the additions are mapped in the section at the end of this document, and the mutation score stated
+here is corrected there.**
 
 `frontend/src/profile/profileIsReadFromUserinfoAndAccountStatusFromMe.test.tsx` — **1201 lines, 46 cases,
 nine `describe` blocks, 12 of them controls, over 20 instruments.**
@@ -27,7 +29,7 @@ renamed export (Kimi F6, frozen in Phase 4).
 | `oxlint src` | exit 0, no output |
 | The file alone | **46 / 46**, exit 0 |
 | Whole suite | **1444 passed / 1 failed (1445)** — `src/api/lintRejectsHandWrittenBackendFetch.test.ts`, pre-existing and environmental on this host |
-| Mutation | **28 / 28 killed, no survivors**, all by this file |
+| Mutation | **26 killed, 2 BROKEN (stale anchors), no survivors** — reported at the time as 28 / 28; corrected in phase 11 to **34 / 34** |
 | `generatedClientCompiles` | 10 / 10 |
 
 ---
@@ -197,5 +199,35 @@ Also changed: `contracts/api/oidc.yaml` (**T30-D2**, owner-authorized), the rege
 
 ---
 
-**Phase 10 complete.** 46 cases mapped to 12 acceptance criteria, 20 instruments and 28 killed mutants.
-Phase 11 is Kimi's.
+## Correction and additions, entered 2026-10-31 after phase 11
+
+**The mutation score above was overstated when written.** `GET_CALL` had been stale since the I1 fix in phase
+8 rewrote the `api.GET` call, so MP06 and MP07 printed `BROKEN anchor missed` rather than `KILLED`. A `BROKEN`
+mutant is not a survivor, so the run ended `survivors: none` and was reported as 28 of 28. **It was 26 killed
+and 2 never applied.** The harness now refuses to start until every anchor matches its file exactly once.
+
+Kimi's phase 11 returned eight recommendations, all eight accepted, **two of them production defects**. The
+file is now **53 cases, 25 instruments, 34 / 34 mutants killed**, suite **1451 passed / 1 failed (1452)**.
+
+| # | Case | Discharges |
+|---|---|---|
+| 47 | puts the access token itself on no surface and in no console channel | AC6, L3. `tokensAreNeverWrittenToAnyStorage` owns this claim for the sign-in and callback flows but **never calls `readProfile`** — T30 introduced a flow holding the token that nothing swept. Killed MP33 |
+| 48 | collapses a malformed JSON body into unavailable, with no parse detail | AC8. **Measured already correct, and not by the arm Kimi names**: the parse happens inside the awaited `api.GET`, so the `SyntaxError` is caught by the I1 `try/catch`, not by `data === undefined` |
+| 49 | carries no cause on any failure path | AC8. `cause` is what a maintainer closing I1 differently would reach for, leaving `message` and `stack` clean while the original `TypeError` rode along. Five rejecting paths. Killed MP32 |
+| 50 | rejects a JSON null body as unavailable rather than throwing a raw TypeError | AC9, **a live defect**. Measured: `TypeError: Cannot read properties of null (reading 'sub')` escaped `readProfile` with its stack. Killed MP31 |
+| 51 | treats an OPAQUE redirect as no session, which is what a browser actually returns | AC12. `redirect: 'manual'` returns `type: 'opaqueredirect'`, `status: 0`, no body — so the status arm and the `redirected` arm are **both dead in a real browser** and the third was the only one working, undriven. Killed MP29 |
+| 52 | issues no request for an EMPTY token either | AC12. Killed MP30 |
+| 53 | rejects a FOLLOWED redirect even when it carries a perfectly valid profile | AC12. Makes the check **order** load-bearing: the existing case carried HTML, which a body-first order would also reject, for the wrong reason. Killed MP34 |
+
+| Family | Mutants | Killed by |
+|---|---|---|
+| Phase 11 instruments | MP29–MP34 | cases 47, 49–53. MP29 and MP31 are the two that matter: the arm a real browser reaches, and a defect that shipped |
+
+**Two production fixes** landed: `data === null` in the shape guard, and `''` alongside `null` in the token
+guard. **T30-D7, new:** `document.cookie` and `indexedDB` are declared unswept — jsdom gives an empty cookie
+jar and no `indexedDB`, so sweeping either reports clean for an environmental reason. T29 declared this at its
+own sweep; T30 had inherited the list without the caveat.
+
+---
+
+**Phase 10 complete.** 53 cases mapped to 12 acceptance criteria, 25 instruments and 34 killed mutants.
