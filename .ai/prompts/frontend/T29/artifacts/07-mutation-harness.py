@@ -24,6 +24,7 @@ kinds, one per clause, plus the structural ones:
   MC15       written to escape: a delay for a state no test drives          (AC5)
   MC17, MC18 the description, percent-encoded into a store and a global     (AC3)
   MC19-MC22  the four instruments Phase 9 added or widened   (Kimi I3, I1, I2, I5)
+  MC23-MC28  the six instruments Phase 11 added              (Kimi's phase 11)
 
 MC08-MC11 ARE THIS TASK'S REASON TO EXIST. No earlier file in the package asserts
 anything about WHEN the sentence appears, so every one of these four passes T16-T28
@@ -223,6 +224,46 @@ MUTANTS = [
     ("MC16 the sign-in live region is removed", SIGN_IN, SIGN_IN_LIVE_REGION,
      """      <div>
         {/* The notice yields to a fresh attempt"""),
+
+    # --- MC23-MC28: the instruments Phase 11 added (Kimi's live-region shape, focus, skeleton, --------------
+    # destructured gate, code-alongside-error, and the bare error response).
+    #
+    # MC23-MC25 ARE ALL UNIFORM, and that is the point rather than a weakness. The five states cannot
+    # diverge from one another at the sign-in screen: every one of them arrives through the single
+    # `discard()` closure, and the screen cannot see which state refused the visitor. A cause-keyed
+    # divergence is not expressible in one file. So the three new fields are pinned ABSOLUTELY, exactly as
+    # `search` and `hash` are, and these three mutants are what proves the pins are load-bearing - the
+    # struct equality alone would let all three through.
+    ("MC23 the announcement becomes assertive, for every state at once", SIGN_IN, SIGN_IN_LIVE_REGION,
+     """      <div role="alert" aria-live="assertive">
+        {/* The notice yields to a fresh attempt"""),
+    ("MC24 focus is yanked to the button, so the sentence is not what is heard first", SIGN_IN,
+     '        type="button"', '        type="button"\n        autoFocus'),
+    ("MC25 an extra wrapper arrives, carrying no class and no style", SIGN_IN,
+     "    <main>\n      <h1>{t('signIn.heading')}</h1>",
+     "    <main>\n      <section>\n      <h1>{t('signIn.heading')}</h1>\n      </section>"),
+    ("MC26 a gate that survives DESTRUCTURING, with no receiver left to key on", CALLBACK, ERROR_READ,
+     ERROR_READ + "\n    const { state: accountCondition } = { state: params.get('cond') };"
+     "\n    if (accountCondition === 'LOCKED') { discard(); return; }"),
+    # Not a rewrite of the branch into something that calls a helper that does not exist - the real exchange
+    # is inline further down the effect, so the honest mutant is the one that lets control REACH it. A refusal
+    # carrying a code stops being refused, and the code the server already said no to is sent.
+    ("MC27 a code handed over WITH the refusal falls through to the real exchange", CALLBACK, ERROR_BRANCH,
+     """    if (error !== null && error !== '' && (params.get('code')?.trim() ?? '') === '') {
+      discard();
+      return;
+    }"""),
+    ("MC28 a bare error with no description is passed along in the query instead", CALLBACK, ERROR_BRANCH,
+     """    if (error !== null && error !== '') {
+      if ((params.get('error_description') ?? '') === '') {
+        clearAccessToken();
+        setSignInNotice('discarded');
+        navigate(`/${SIGN_IN_PATH}?${new URLSearchParams({ why: error }).toString()}`, { replace: true });
+        return;
+      }
+      discard();
+      return;
+    }"""),
 ]
 
 

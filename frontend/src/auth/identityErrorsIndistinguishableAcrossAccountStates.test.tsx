@@ -784,6 +784,25 @@ function skeletonOf(root: Element): string {
  * one state's focus deferred by a timer, is exactly the kind of difference a screen-reader user hears and
  * no other field in this struct records.
  */
+/**
+ * The sign-in screen's element tree, pinned. Kimi's phase 11 asked for structural equivalence across the five
+ * states; this is the absolute half of that, and it is the half that matters, because the five cannot diverge
+ * from each other here - they all arrive through one closure - but they can all move together.
+ *
+ * Text is excluded by construction, so the sentence may change without touching this. What cannot change
+ * quietly is a new wrapper, a different heading level, a cause-specific <section>, or a live region that
+ * stops being a live region.
+ */
+const SIGN_IN_SKELETON = [
+  'body',
+  '  div',
+  '    main',
+  '      h1',
+  '      p',
+  '      button [aria-busy=false aria-describedby=sign-in-explanation aria-disabled=false]',
+  '      div [aria-live=polite role=status]',
+].join('\n');
+
 function focusOf(): string {
   const active = document.activeElement;
   if (active === null) return 'none';
@@ -1018,6 +1037,20 @@ describe('AC1: every account state ends in the one discard closure', () => {
       // compare equal and pass the equivalence below - T28's MB29 is the mutant that proved it.
       expect(outcome.search, state).toBe('');
       expect(outcome.hash, state).toBe('');
+      // The same reasoning, applied to the three fields Kimi's phase 11 added. Writing them into the struct
+      // catches a DIVERGENCE, and nothing else: all five announced through `role="alert"`, or all five with
+      // focus yanked to the heading, or all five wrapped in an extra <section>, compare equal and pass. The
+      // sign-in screen cannot see which state refused the visitor - every one arrives through the single
+      // `discard()` closure - so a cause-keyed divergence here is not even expressible in one file. What is
+      // expressible, and what these three pin, is a UNIFORM change to the announcement, the keyboard
+      // position or the element tree.
+      expect(outcome.liveShape, state).toEqual(['status/polite']);
+      // `body`, because `SignInScreen.tsx:68-69` declines to move focus and says why: the button the visitor
+      // pressed is still there and is the control they need. Pinned so that a `.focus()` added later is a
+      // decision somebody makes against this line, rather than a silent change in what a screen reader says
+      // first.
+      expect(outcome.focus, state).toBe('body');
+      expect(outcome.skeleton, state).toBe(SIGN_IN_SKELETON);
     }
   });
 
