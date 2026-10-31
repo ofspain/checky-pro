@@ -8,6 +8,13 @@ import { createSessionBoundary } from '../api/sessionBoundary';
 import type { SessionTokens } from '../api/sessionBoundary';
 import { ReadProfileError, readProfile } from './readProfile';
 import type { Profile } from './readProfile';
+// T31-D1: T30 owns this import block, and a test file cannot reference a module without importing it. These
+// four lines are purely ADDITIVE - nothing above is reordered, renamed or removed - so they cannot change the
+// meaning of any T30 case. Declared rather than absorbed, and rather than contorting T31 into a dynamic
+// import in twenty-odd cases to keep the letter of a rule whose purpose this does not touch.
+import { AUTH_PUBLIC_OPERATIONS, createAuthApi } from '../api/client';
+import { ACCOUNT_STATUSES, ReadAccountError, readAccount } from './readAccount';
+import type { Account } from './readAccount';
 
 /**
  * R20: profile data is read from `/userinfo`, account status from `GET /accounts/me`, and **neither PII nor
@@ -1375,5 +1382,729 @@ describe('T30: AC10 every instrument has been shown to report dirty', () => {
     // And a literal is KEPT, which the two-regex stripper this replaced would have eaten.
     const literal = synthetic('app/Y.ts', "const help = 'https://id.example/atob-explainer';");
     expect(hitsOf([literal], tokenDecodes()).map((hit) => hit.hit)).toEqual(['atob']);
+  });
+});
+
+// =========================================================================================================
+// T31 — account status from GET /accounts/me (R20(b), and R20(c) extended to this task's two fields)
+//
+// OWNERSHIP (G1). Everything T31 adds lives inside this one outer block: its fixtures, its harness, its claim
+// pattern and its instruments table. T30's helpers are CALLED and never modified, because calling a helper is
+// use, not modification - which is how T31 satisfies AC5 without amending the ownership rule T30 froze. The
+// only exception is the import block above, declared as T31-D1.
+//
+// WHAT THIS TASK IS FOR, measured 2026-10-31 and not inferred. Suspending an account through
+// `POST /admin/accounts/{uuid}/suspend` does NOT invalidate its access token: the same unchanged token then
+// answers `200` with `status: "SUSPENDED"`, and no 401 ever arrives. So a tab can hold a working session for a
+// suspended account for the token's fifteen minutes, and this read is the only thing that can say so.
+//
+// That also settles why a token-borne shortcut would be worse than wrong rather than merely cheaper: the
+// token was minted while the account was ACTIVE and goes on asserting that until it expires. It is a stale
+// answer that looks current - the same failure mode R20(c) prevents for `email_verified`.
+//
+// WHAT IS DELIBERATELY ABSENT. No `redirect: 'manual'`, no 3xx arms, no opaque-redirect arm. T30 needed all
+// three because a bearer-less `/userinfo` answers a redirect to the login page which `fetch` follows into a
+// success carrying HTML. Measured here: `/accounts/me` answers a real `401`. Copying T30's arms across would
+// have produced code no case could reach, and T30's phase 11 showed exactly what an unreachable arm is worth.
+// =========================================================================================================
+
+describe('T31: account status from GET /accounts/me', () => {
+  /** A complete account, every field the contract requires. */
+  const ACCOUNT: Account = {
+    accountUuid: 'f3a1c0d2-7b48-4e19-9c05-2d6e8a1b4f70',
+    email: 'glenda.account@example.test',
+    emailVerified: true,
+    status: 'ACTIVE',
+    createdAt: '2026-10-31T18:34:21.699390Z',
+  };
+
+  /**
+   * The same account suspended, used wherever a NEEDLE has to be distinctive.
+   *
+   * `ACTIVE` is a poor thing to sweep for - it is a short ordinary word, so its absence from a blank document
+   * proves nothing. `SUSPENDED` is distinctive, and it is also the status that actually matters: it is the one
+   * measured to be reachable while the token still works.
+   */
+  const SUSPENDED: Account = { ...ACCOUNT, status: 'SUSPENDED' };
+
+  /** Every value a leak could carry, including the status, which is the whole point of the task. */
+  const ACCOUNT_VALUES = [
+    SUSPENDED.accountUuid,
+    SUSPENDED.email,
+    SUSPENDED.createdAt,
+    SUSPENDED.status,
+  ];
+
+  type AuthAnswer = { status?: number; body?: unknown; rawBody?: string; headers?: Record<string, string> };
+  type AuthCall = { path: string; method: string; auth: string | null };
+
+  type AuthHarness = {
+    calls: AuthCall[];
+    api: ReturnType<typeof createAuthApi>;
+    tokens: SessionTokens;
+    rateLimit: RateLimitNoticeState;
+    renewals: number;
+  };
+
+  /**
+   * One tab against the AUTH client: a stubbed transport, a REAL session boundary, and the real
+   * `createAuthApi`.
+   *
+   * A sibling of T30's `harness` rather than a mode added to it (Kimi's F6, resolved the other way). Two small
+   * harnesses that can be read side by side are easier to trust than one with a `client: 'oidc' | 'auth'`
+   * switch, and it keeps T30's helper untouched. The duplication is deliberate and bounded.
+   *
+   * The boundary is REAL because that is the only way AC4 means anything: the claim is that a 401 is handled
+   * by the boundary's single-flight renewal and NOT by the reader, and a stubbed boundary would make that true
+   * by construction rather than by evidence.
+   */
+  function authHarness(
+    answers: AuthAnswer[],
+    options: { token?: string | null; throws?: unknown } = {},
+  ): AuthHarness {
+    installBrowserRequest();
+    const calls: AuthCall[] = [];
+    let index = 0;
+    const fetchStub = vi.fn(async (request: Request) => {
+      calls.push({
+        path: new URL(request.url).pathname,
+        method: request.method,
+        auth: request.headers.get('Authorization'),
+      });
+      const answer = answers[Math.min(index, answers.length - 1)];
+      index += 1;
+      if (options.throws !== undefined) throw options.throws;
+      const serialised = answer.rawBody ?? (answer.body === undefined ? null : JSON.stringify(answer.body));
+      return new Response(serialised, {
+        status: answer.status ?? 200,
+        headers: { 'content-type': 'application/json', ...answer.headers },
+      });
+    });
+    vi.stubGlobal('fetch', fetchStub);
+
+    let current = options.token === undefined ? TOKEN : options.token;
+    let renewals = 0;
+    const tokens: SessionTokens = {
+      current: () => current,
+      renew: async () => {
+        renewals += 1;
+        current = `${TOKEN}-renewed`;
+        return current;
+      },
+    };
+    const boundary = createSessionBoundary(tokens, () => undefined);
+    const rateLimit = createRateLimitNotice();
+    return {
+      calls,
+      api: createAuthApi(boundary, rateLimit),
+      tokens,
+      rateLimit,
+      get renewals() {
+        return renewals;
+      },
+    };
+  }
+
+  /** `contracts/api/auth.yaml`, reached the same way T30 reaches the OIDC one. */
+  function authContract(): Promise<string> {
+    return readFile(join(dirname(dirname(sourceRoot())), 'contracts/api/auth.yaml'), 'utf8');
+  }
+
+  // -------------------------------------------------------------------------------------------------------
+  // T31: AC1 / AC2 — the contract declares it, the generated client exposes it, and the runtime list is held
+  // -------------------------------------------------------------------------------------------------------
+
+  describe('T31: AC1/AC2 the contract declares /accounts/me and the client exposes it typed', () => {
+    it('declares the operation, and requires ALL FIVE fields - unlike UserInfoResponse', async () => {
+      const yaml = await authContract();
+      const path = stanza(yaml, '  /accounts/me:', '  /accounts/verify-email:');
+      expect(path).toContain('operationId: getOwnAccount');
+
+      const schema = stanza(yaml, '    AccountResponse:', '    SessionResponse:');
+      expect(schema).toContain('required: [accountUuid, email, emailVerified, status, createdAt]');
+      // The inversion of T30's AC1. `UserInfoResponse` requires only `sub`, so an absent claim there is the
+      // normal answer; here absence is a contract violation, and the two readers cannot share a rule.
+      expect(schema).toContain('enum: [PENDING_VERIFICATION, ACTIVE, LOCKED, SUSPENDED, DELETED]');
+    });
+
+    it('exposes the operation on the generated client, typed', async () => {
+      const tab = authHarness([{ body: ACCOUNT }]);
+      // A typed GET: if the path left the contract this line would not compile, which is the assertion.
+      const { data } = await tab.api.GET('/accounts/me');
+      expect(data).toEqual(ACCOUNT);
+    });
+
+    it('ACCOUNT_STATUSES is exactly the contract enum, in the contract order', async () => {
+      /**
+       * The one place T31 restates any part of the schema, so it is the one place that can drift.
+       *
+       * `readAccount.ts` holds it to the contract in BOTH directions at compile time - `satisfies` rejects a
+       * value that is not a status, and `NoUnlistedStatus` rejects a status that is not listed. Both were
+       * proven to fire before this case was written: removing `'DELETED'` from the list gives
+       * `TS2344: Type '"DELETED"' does not satisfy the constraint 'never'`, and adding `'ARCHIVED'` gives
+       * `TS2322`. This case is the third leg - it compares the list to the YAML itself, which a type cannot
+       * reach.
+       */
+      const yaml = await authContract();
+      const line = yaml
+        .split('\n')
+        .map((text) => text.trim())
+        .find((text) => text.startsWith('enum: [PENDING_VERIFICATION'));
+      expect(line).toBeDefined();
+      const declared = (line as string)
+        .replace('enum: [', '')
+        .replace(']', '')
+        .split(',')
+        .map((value) => value.trim());
+      expect([...ACCOUNT_STATUSES]).toEqual(declared);
+      expect(ACCOUNT_STATUSES).toHaveLength(5);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------------------
+  // T31: AC3 / AC4 / AC11 — the bearer, whose job the 401 is, and R23 through this client
+  // -------------------------------------------------------------------------------------------------------
+
+  describe('T31: AC3/AC4/AC11 the boundary supplies the bearer and owns the 401', () => {
+    it('sends the tab in-memory token as a bearer to /accounts/me', async () => {
+      const tab = authHarness([{ body: ACCOUNT }]);
+      await readAccount(tab.api, tab.tokens);
+      expect(tab.calls).toHaveLength(1);
+      expect(tab.calls[0].path).toBe('/accounts/me');
+      expect(tab.calls[0].method).toBe('GET');
+      expect(tab.calls[0].auth).toBe(`Bearer ${TOKEN}`);
+    });
+
+    it('lets the BOUNDARY renew on 401 and re-send, which the reader never sees', async () => {
+      const tab = authHarness([{ status: 401 }, { body: ACCOUNT }]);
+      const account = await readAccount(tab.api, tab.tokens);
+      expect(account).toEqual(ACCOUNT);
+      expect(tab.renewals).toBe(1);
+      expect(tab.calls).toHaveLength(2);
+      expect(tab.calls[1].auth).toBe(`Bearer ${TOKEN}-renewed`);
+    });
+
+    it('surfaces a FINAL 401 as unauthorized, after the boundary has already tried once', async () => {
+      const tab = authHarness([{ status: 401 }, { status: 401 }]);
+      await expect(readAccount(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'unauthorized' });
+      expect(tab.renewals).toBe(1);
+    });
+
+    it('surfaces a 403 as unauthorized too, and renews for neither reason twice', async () => {
+      const tab = authHarness([{ status: 403 }, { status: 403 }]);
+      await expect(readAccount(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'unauthorized' });
+      expect(tab.renewals).toBeLessThanOrEqual(1);
+    });
+
+    it('holds /accounts/me OUT of the public set, as an upper and a lower bound', async () => {
+      // The whole point: a public operation carries no bearer and never renews, so an entry here would
+      // silently disable both halves of AC3 and AC4.
+      expect(AUTH_PUBLIC_OPERATIONS.has('GET /accounts/me')).toBe(false);
+      // And the set is what it was - five POSTs, no more - so a later addition cannot pass unnoticed.
+      expect([...AUTH_PUBLIC_OPERATIONS].sort()).toEqual([
+        'POST /accounts',
+        'POST /accounts/password-reset',
+        'POST /accounts/password-reset-request',
+        'POST /accounts/resend-verification',
+        'POST /accounts/verify-email',
+      ]);
+    });
+
+    it('preserves R23: a 429 on this call shows the notice', async () => {
+      const tab = authHarness([{ status: 429 }]);
+      await expect(readAccount(tab.api, tab.tokens)).rejects.toBeInstanceOf(ReadAccountError);
+      expect(tab.rateLimit.isShown()).toBe(true);
+    });
+
+    it('shows the notice for a 429 on the RE-SEND, which is what the registration order is for', async () => {
+      /**
+       * The case that actually distinguishes the two middleware orders, and the reason it is written out:
+       * with a 429 on the FIRST call there is only one response to see, so a notice registered before OR
+       * after the boundary shows it either way. `client.ts` names the case that separates them - a 429 on the
+       * boundary's re-send after a renewal - and T30's MP27 survived a weaker version of this exact case.
+       */
+      const tab = authHarness([{ status: 401 }, { status: 429 }]);
+      await expect(readAccount(tab.api, tab.tokens)).rejects.toBeInstanceOf(ReadAccountError);
+      expect(tab.renewals).toBe(1);
+      expect(tab.rateLimit.isShown()).toBe(true);
+    });
+
+    it('CONTROL: a 200 leaves the rate-limit notice alone, so the check is not always true', async () => {
+      const tab = authHarness([{ body: ACCOUNT }]);
+      await readAccount(tab.api, tab.tokens);
+      expect(tab.rateLimit.isShown()).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------------------
+  // T31: AC5 — neither `status` nor `emailVerified` is read off a token
+  // -------------------------------------------------------------------------------------------------------
+
+  describe('T31: AC5 no module reads status or emailVerified from a token', () => {
+    /**
+     * T31's own claim pattern, declared here rather than added to T30's `FORBIDDEN_TOKEN_CLAIM` (Kimi's F1,
+     * resolved without amending the ownership rule).
+     *
+     * SCANNED ONLY OVER THE DECODING FILE SET, and that bound is not a convenience - it is the only thing
+     * that makes the claim checkable. `status` is read by commissioned code all over this package:
+     * `readProfile.ts` reads `response.status` three times, and `rateLimitNotice.ts` and `sessionBoundary.ts`
+     * are REQUIRED by R23 and R21 to read it. A tree-wide scan for `status` would fail on the code the spec
+     * mandates - which is Kimi's F9, and the example it gives is the strongest argument for its own fix.
+     */
+    const T31_FORBIDDEN_TOKEN_CLAIM = '\\bstatus\\b|\\bemailVerified\\b';
+
+    function t31ForbiddenClaims(): RegExp {
+      return new RegExp(T31_FORBIDDEN_TOKEN_CLAIM, 'g');
+    }
+
+    it('the decode scan still bounds the file set to exactly one, which AC5 depends on', async () => {
+      // Re-asserted by T31 rather than assumed from T30, because T31's claim scan is only as sound as this
+      // bound. If a second file started decoding tokens, T31's scan would silently stop covering the tree.
+      const sources = await productionSources();
+      const files = [...new Set(hitsOf(sources, tokenDecodes()).map((hit) => hit.file))];
+      expect(files).toEqual(['auth/idTokenNonce.ts']);
+    });
+
+    it('reads neither status nor emailVerified off a decoded token, in the one file that decodes', async () => {
+      const sources = await productionSources();
+      const decoding = new Set(hitsOf(sources, tokenDecodes()).map((hit) => hit.file));
+      const inDecodingFiles = sources.filter((target) => decoding.has(target.path));
+      expect(inDecodingFiles).toHaveLength(1);
+      expect(hitsOf(inDecodingFiles, t31ForbiddenClaims())).toEqual([]);
+    });
+
+    it('CONTROL: the scan flags both fields when a decoding file reads them', () => {
+      const violating = synthetic(
+        'auth/evil.ts',
+        "const claims = JSON.parse(atob(token.split('.')[1]));\n"
+        + 'const s = claims.status;\nconst v = claims.emailVerified;\n',
+      );
+      const hits = hitsOf([violating], t31ForbiddenClaims()).map((hit) => hit.hit);
+      expect(hits.sort()).toEqual(['emailVerified', 'status']);
+    });
+
+    it('CONTROL: the scan stays SILENT on the commissioned reads, which is why it is bounded', () => {
+      /**
+       * The false-positive half, and the half that gets a scan quietly loosened later if it is skipped.
+       * Every line below is code the spec REQUIRES to exist - R23's rate-limit notice reads an HTTP status,
+       * R21's boundary reads one, and T31's own reader reads the account's field off a RESPONSE BODY, not off
+       * a token.
+       */
+      const commissioned = [
+        synthetic('api/rateLimitNotice.ts', 'if (response.status === 429) show();'),
+        synthetic('api/sessionBoundary.ts', 'if (response.status === 401) await renew();'),
+        synthetic('profile/readAccount.ts', 'if (!isAccountStatus(account.status)) fail();'),
+        synthetic('profile/thing.ts', 'const ok = body.emailVerified === true;'),
+      ];
+      // Each of these DOES contain the words - that is the point. They are silent because no file here
+      // decodes a token, so none of them is in the scanned set at all.
+      const decoding = hitsOf(commissioned, tokenDecodes());
+      expect(decoding).toEqual([]);
+    });
+
+    it('CONTROL: a scan that reads nothing is refused, not reported clean', () => {
+      expect(() => refuseEmpty([], NO_SOURCES)).toThrow(NO_SOURCES);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------------------
+  // T31: AC6 — the status is reported exactly as the server sent it
+  // -------------------------------------------------------------------------------------------------------
+
+  describe('T31: AC6 the account is read faithfully, status included', () => {
+    it.each([...ACCOUNT_STATUSES])('returns %s unchanged, with nothing defaulted or inferred', async (status) => {
+      const tab = authHarness([{ body: { ...ACCOUNT, status } }]);
+      const account = await readAccount(tab.api, tab.tokens);
+      expect(account.status).toBe(status);
+      expect(account).toEqual({ ...ACCOUNT, status });
+    });
+
+    it('accepts emailVerified: false and returns it as false', async () => {
+      /**
+       * Kimi's F5, and a real trap in the brief's own wording: AC7 said each required field "missing or
+       * empty" is rejected, and `false` is neither missing nor meaningfully empty - it is an ANSWER. A single
+       * rule across five fields of three types would have rejected a contract-valid body.
+       *
+       * T30's `sub === ''` check is the analogue that is right, because an empty string genuinely is
+       * unusable. The difference is the type, not the strictness.
+       */
+      const tab = authHarness([{ body: { ...ACCOUNT, emailVerified: false } }]);
+      const account = await readAccount(tab.api, tab.tokens);
+      expect(account.emailVerified).toBe(false);
+      // And not coerced on the way out, which a `??` or a `!!` would do silently.
+      expect(Object.hasOwn(account, 'emailVerified')).toBe(true);
+    });
+
+    it('does not narrow status to a boolean or an is-active flag', async () => {
+      // The shortcut this task exists to forbid: a reader that returns `{ active: boolean }` is lossy, and a
+      // suspended account would be indistinguishable from a deleted one.
+      const tab = authHarness([{ body: SUSPENDED }]);
+      const account = await readAccount(tab.api, tab.tokens);
+      expect(account.status).toBe('SUSPENDED');
+      expect(typeof account.status).toBe('string');
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------------------
+  // T31: AC7 / AC8 — an incomplete or out-of-contract body is a failure, not a partial account
+  // -------------------------------------------------------------------------------------------------------
+
+  describe('T31: AC7/AC8 an incomplete or out-of-contract body fails', () => {
+    const REQUIRED_STRINGS = ['accountUuid', 'email', 'createdAt'] as const;
+
+    it.each(REQUIRED_STRINGS)('rejects a body whose %s is missing', async (field) => {
+      const body: Record<string, unknown> = { ...ACCOUNT };
+      delete body[field];
+      const tab = authHarness([{ body }]);
+      await expect(readAccount(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'unavailable' });
+    });
+
+    it.each(REQUIRED_STRINGS)('rejects a body whose %s is empty or null or wrong-typed', async (field) => {
+      for (const value of ['', null, 42, {}]) {
+        const tab = authHarness([{ body: { ...ACCOUNT, [field]: value } }]);
+        await expect(readAccount(tab.api, tab.tokens), `${field}=${String(value)}`)
+          .rejects.toMatchObject({ failure: 'unavailable' });
+      }
+    });
+
+    it('rejects a missing, null or non-boolean emailVerified - but never false', async () => {
+      for (const value of [undefined, null, 'true', 1]) {
+        const body: Record<string, unknown> = { ...ACCOUNT, emailVerified: value };
+        if (value === undefined) delete body.emailVerified;
+        const tab = authHarness([{ body }]);
+        await expect(readAccount(tab.api, tab.tokens), String(value))
+          .rejects.toMatchObject({ failure: 'unavailable' });
+      }
+      // The lower bound, held in the same case so the two cannot drift apart.
+      const ok = authHarness([{ body: { ...ACCOUNT, emailVerified: false } }]);
+      expect((await readAccount(ok.api, ok.tokens)).emailVerified).toBe(false);
+    });
+
+    it('rejects an UNRECOGNISED status rather than passing it through or calling it ACTIVE', async () => {
+      /**
+       * Kimi's F2, resolved by failing rather than by widening `status` to `string` (G2).
+       *
+       * The hazard that decides it: with a closed union, a consumer's exhaustive `switch (account.status)` is
+       * COMPILE-TIME complete and RUNTIME incomplete - TypeScript proves all five arms are handled while a
+       * sixth value walks through to the default, and the type system reassures the author while it happens.
+       * Widening would push arbitrary-string handling onto every consumer forever and make that sound switch
+       * impossible to write.
+       *
+       * So this fails CLOSED. On a field that gates access that is the only safe direction, and the cost is
+       * explicit: a sixth server-side status is a hard failure here until the contract is regenerated. Under
+       * L6 the generated client IS the contract, so that coupling is correct rather than unfortunate.
+       */
+      for (const status of ['ARCHIVED', 'active', 'ACTIVE ', '', 'PENDING']) {
+        const tab = authHarness([{ body: { ...ACCOUNT, status } }]);
+        await expect(readAccount(tab.api, tab.tokens), JSON.stringify(status))
+          .rejects.toMatchObject({ failure: 'unavailable' });
+      }
+    });
+
+    it('rejects a JSON null body without reaching a property access', async () => {
+      /**
+       * NOT hypothetical: this exact shape SHIPPED as a defect in T30 and was found in its phase 11.
+       * `data === undefined` is false for `null`, so a property access ran and threw
+       * `TypeError: Cannot read properties of null (reading 'sub')` out of the reader, past a `try/catch`
+       * that only wrapped the transport.
+       */
+      const tab = authHarness([{ rawBody: 'null' }]);
+      const error = await readAccount(tab.api, tab.tokens).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ReadAccountError);
+      expect(error).not.toBeInstanceOf(TypeError);
+      expect((error as ReadAccountError).failure).toBe('unavailable');
+    });
+
+    it('rejects a malformed JSON body, and a body that is an array', async () => {
+      for (const rawBody of ['{ not json', '[]', '"a string"', '7']) {
+        const tab = authHarness([{ rawBody }]);
+        await expect(readAccount(tab.api, tab.tokens), rawBody)
+          .rejects.toMatchObject({ failure: 'unavailable' });
+      }
+    });
+
+    it('CONTROL: the complete body succeeds, so the checks are not rejecting everything', async () => {
+      const tab = authHarness([{ body: ACCOUNT }]);
+      expect(await readAccount(tab.api, tab.tokens)).toEqual(ACCOUNT);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------------------
+  // T31: AC9 — a failed read carries no detail, not even from a header
+  // -------------------------------------------------------------------------------------------------------
+
+  describe('T31: AC9 a failed read surfaces no detail', () => {
+    /** The live header, verbatim from the measurement. */
+    const WWW_AUTHENTICATE =
+      'Bearer error="invalid_token", error_description="An error occurred while attempting to decode the Jwt:'
+      + ' Malformed token", error_uri="https://tools.ietf.org/html/rfc6750#section-3.1"';
+
+    it('carries nothing from WWW-Authenticate, which is where the live detail is', async () => {
+      /**
+       * MEASURED against `GET /accounts/me` on auth-service specifically, 2026-10-31 - not inherited from
+       * T30's `/userinfo` run, which is what Kimi's phase 3 suspected. A malformed bearer answers `401` with
+       * an EMPTY body (`Content-Length: 0`) and puts the whole explanation in this header. The three
+       * alternatives that finding raised - an RFC 9457 problem body, a Spring HTML error page, a different
+       * header format - are each measured absent on this path.
+       *
+       * So a no-leak rule written about response BODIES would pass over the only copy of the detail.
+       */
+      const watch = watchConsole();
+      const answer = { status: 401, headers: { 'www-authenticate': WWW_AUTHENTICATE } };
+      const tab = authHarness([answer, answer]);
+      const error = await readAccount(tab.api, tab.tokens).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ReadAccountError);
+      const text = `${(error as Error).message}\n${(error as Error).stack ?? ''}`;
+      for (const detail of ['invalid_token', 'Malformed token', 'attempting to decode', 'rfc6750']) {
+        expect(text, detail).not.toContain(detail);
+      }
+      expect(leaks(surfaces(), ['invalid_token', 'Malformed token'])).toEqual([]);
+      expect(watch.lines).toEqual([]);
+    });
+
+    it('names no cause on any failure path, which is the other place detail can hide', async () => {
+      /**
+       * `Error` has taken a `cause` since ES2022, and `new Error(msg, { cause })` is the idiomatic way to
+       * wrap a lower-level failure - so a maintainer is likely to reach for it by reflex, and every assertion
+       * about `message` and `stack` would still pass while the original error rode along on `error.cause`.
+       * Asserted as ABSENT, not merely undefined, so setting it to anything at all fails here.
+       */
+      const paths: Array<[string, () => Promise<unknown>]> = [
+        ['no token', () => readAccount(authHarness([{ body: ACCOUNT }], { token: null }).api, { current: () => null })],
+        ['final 401', () => {
+          const tab = authHarness([{ status: 401 }, { status: 401 }]);
+          return readAccount(tab.api, tab.tokens);
+        }],
+        ['unusable body', () => {
+          const tab = authHarness([{ body: { ...ACCOUNT, status: 'ARCHIVED' } }]);
+          return readAccount(tab.api, tab.tokens);
+        }],
+        ['throwing transport', () => {
+          const tab = authHarness([{ body: ACCOUNT }], { throws: new TypeError('net::ERR_FAILED') });
+          return readAccount(tab.api, tab.tokens);
+        }],
+      ];
+      for (const [label, run] of paths) {
+        const error = await run().catch((caught: unknown) => caught);
+        expect(error, label).toBeInstanceOf(ReadAccountError);
+        expect('cause' in (error as object), label).toBe(false);
+        expect((error as Error).cause, label).toBeUndefined();
+      }
+    });
+
+    it('converts a THROWING transport into a neutral error, keeping neither message nor stack', async () => {
+      // `openapi-fetch` resolves an HTTP error status but REJECTS when the transport throws, and T30 shipped
+      // a reader without this guard: a raw TypeError carrying an internal hostname and a browser error code
+      // escaped it, with no response for any status check to look at.
+      const thrown = new TypeError('Failed to fetch: net::ERR_NAME_NOT_RESOLVED at an internal host');
+      const tab = authHarness([{ body: ACCOUNT }], { throws: thrown });
+      const error = await readAccount(tab.api, tab.tokens).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ReadAccountError);
+      expect((error as ReadAccountError).failure).toBe('unavailable');
+      const text = `${(error as Error).message}\n${(error as Error).stack ?? ''}`;
+      for (const detail of ['ERR_NAME_NOT_RESOLVED', 'internal host', 'Failed to fetch']) {
+        expect(text, detail).not.toContain(detail);
+      }
+    });
+
+    it('does the same for an abort and for a thrown non-Error', async () => {
+      for (const thrown of [
+        new DOMException('The operation was aborted.', 'AbortError'),
+        'a string thrown by something that should have thrown an Error',
+      ]) {
+        const tab = authHarness([{ body: ACCOUNT }], { throws: thrown });
+        await expect(readAccount(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'unavailable' });
+      }
+    });
+
+    it('the three messages are INTERNAL: none of them is in the catalogue', async () => {
+      /**
+       * `ReadAccountError.message` is English and is not catalogue copy, so a screen rendering
+       * `error.message` would render a string L11 requires the catalogue to own. Asserted by INVERSION -
+       * none of the three appears anywhere in the copy - so rendering one cannot be mistaken for rendering
+       * commissioned copy. A consumer maps `failure`, a closed set of three, onto a key of its own.
+       */
+      const catalogue = await readFile(join(sourceRoot(), 'i18n/catalogue.ts'), 'utf8');
+      for (const failure of ['no-session', 'unauthorized', 'unavailable'] as const) {
+        const message = new ReadAccountError(failure).message;
+        expect(catalogue, message).not.toContain(message);
+      }
+      // And the closed set is what a consumer is meant to switch on instead.
+      expect(new ReadAccountError('unauthorized').failure).toBe('unauthorized');
+    });
+
+    it('CONTROL: an error carrying server detail WOULD be caught', () => {
+      const leaky = new Error(`Account read refused: ${WWW_AUTHENTICATE}`);
+      const text = `${leaky.message}\n${leaky.stack ?? ''}`;
+      expect(text).toContain('Malformed token');
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------------------
+  // T31: AC10 — the account never persists and is never logged
+  // -------------------------------------------------------------------------------------------------------
+
+  describe('T31: AC10 the account never persists and is never logged', () => {
+    it('leaves no field on any of the seven surfaces after a successful read', async () => {
+      const watch = watchConsole();
+      const tab = authHarness([{ body: SUSPENDED }]);
+      const account = await readAccount(tab.api, tab.tokens);
+      // The control that stops every absence below being vacuous: the flow really did carry the values.
+      expect(account).toEqual(SUSPENDED);
+      expect(leaks(surfaces(), ACCOUNT_VALUES)).toEqual([]);
+      expect(watch.lines).toEqual([]);
+    });
+
+    it('writes nothing to either store, even on the failure paths', async () => {
+      for (const answer of [{ status: 401 }, { status: 500 }, { rawBody: 'null' }]) {
+        const tab = authHarness([answer, answer]);
+        await readAccount(tab.api, tab.tokens).catch(() => undefined);
+        expect(Object.keys(globalThis.sessionStorage)).toEqual([]);
+        expect(Object.keys(globalThis.localStorage)).toEqual([]);
+      }
+    });
+
+    it('CONTROL: the sweep reads all seven surfaces, proven with a sentinel on each', () => {
+      const sentinel = 'T31-SENTINEL-f3a1c0d2';
+      // `leaks` reports `<surface>/<needle>`; the needle is the same every time here, so only the
+      // surface half carries information.
+      const onlySurface = (hit: string): string => hit.split('/')[0];
+      const found = surfaces().map((surface) => surface.name);
+      expect(found).toEqual([
+        'body',
+        'title',
+        'head',
+        'window.name',
+        'url',
+        'sessionStorage',
+        'localStorage',
+      ]);
+      // `document.cookie` and `indexedDB` are absent on purpose and declared as T30-D7: jsdom gives an empty
+      // cookie jar and no `indexedDB`, so sweeping either reports clean for an environmental reason. T31
+      // inherits the list WITH its caveat, which is the thing T30 had to be told to do.
+      document.body.innerHTML = `<p>${sentinel}</p>`;
+      expect(leaks(surfaces(), [sentinel]).map(onlySurface)).toEqual(['body']);
+      document.body.innerHTML = '';
+
+      // `title` and `head` BOTH report, and that is correct rather than a loose assertion: the `<title>`
+      // element lives in the head, so its text is genuinely on two surfaces. Asserting `['title']` here
+      // failed on the first run - a small thing, except that writing it the lazy way is how `head` ends up
+      // with no sentinel of its own at all.
+      document.title = sentinel;
+      expect(leaks(surfaces(), [sentinel]).map(onlySurface)).toEqual(['title', 'head']);
+      document.title = '';
+
+      // So `head` gets its own, through something the title cannot account for.
+      const meta = document.createElement('meta');
+      meta.setAttribute('name', 't31-control');
+      meta.setAttribute('content', sentinel);
+      document.head.append(meta);
+      expect(leaks(surfaces(), [sentinel]).map(onlySurface)).toEqual(['head']);
+      meta.remove();
+
+      window.name = sentinel;
+      expect(leaks(surfaces(), [sentinel]).map(onlySurface)).toEqual(['window.name']);
+      window.name = '';
+
+      // The URL too, which the five-sentinel version of this control quietly skipped.
+      const was = `${globalThis.location.pathname}${globalThis.location.search}`;
+      globalThis.history.replaceState({}, '', `?leaked=${sentinel}`);
+      expect(leaks(surfaces(), [sentinel]).map(onlySurface)).toEqual(['url']);
+      globalThis.history.replaceState({}, '', was);
+
+      globalThis.sessionStorage.setItem('k', sentinel);
+      expect(leaks(surfaces(), [sentinel]).map(onlySurface)).toEqual(['sessionStorage']);
+      globalThis.sessionStorage.clear();
+      globalThis.localStorage.setItem('k', sentinel);
+      expect(leaks(surfaces(), [sentinel]).map(onlySurface)).toEqual(['localStorage']);
+      globalThis.localStorage.clear();
+
+      // And clean at the end, so a later case cannot inherit a dirty surface from this one.
+      expect(leaks(surfaces(), [sentinel])).toEqual([]);
+    });
+
+    it('CONTROL: all six console channels are watched, not only the ones a read happens to use', () => {
+      const watch = watchConsole();
+      for (const channel of watch.channels) console[channel](`T31 ${channel}`);
+      expect(watch.lines).toHaveLength(6);
+      expect(watch.channels).toEqual(['log', 'info', 'warn', 'error', 'debug', 'trace']);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------------------
+  // T31: AC13 — no session means no request
+  // -------------------------------------------------------------------------------------------------------
+
+  describe('T31: AC13 no session means no request', () => {
+    it.each([
+      ['null', null],
+      ['an empty string', ''],
+    ])('issues NO request at all when the tab holds %s', async (_label, token) => {
+      /**
+       * The reason differs from T30's and is written out because of that. This endpoint answers a
+       * well-behaved `401`, so the boundary COULD handle a missing session on its own - but a bearer-less
+       * call was measured to answer that 401 with a `Set-Cookie: JSESSIONID`. An unauthenticated read has a
+       * server-side side effect, and it also provokes a renewal that cannot succeed.
+       *
+       * `''` is guarded alongside `null` because the boundary attaches the header with `if (token)`
+       * (`sessionBoundary.ts:89`): an empty string sends NO `Authorization` header at all, which is exactly
+       * the bearer-less request this guard exists to prevent. T30 paid a phase 11 finding for that gap.
+       */
+      const tab = authHarness([{ status: 401 }], { token });
+      await expect(readAccount(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'no-session' });
+      expect(tab.calls).toEqual([]);
+      expect(tab.renewals).toBe(0);
+    });
+
+    it('CONTROL: a tab holding a token DOES issue the request, so the guard is not always refusing', async () => {
+      const tab = authHarness([{ body: ACCOUNT }]);
+      await readAccount(tab.api, tab.tokens);
+      expect(tab.calls).toHaveLength(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------------------
+  // T31: AC12 — every instrument shown to report dirty
+  // -------------------------------------------------------------------------------------------------------
+
+  describe('T31: AC12 every T31 instrument has been shown to report dirty', () => {
+    /**
+     * T31's OWN table, not rows added to T30's (Kimi's F1). A SIGNPOST, NOT EVIDENCE - it cannot fail for the
+     * right reason, only if a row is deleted without updating the count. The proof is the CONTROL cases each
+     * row names.
+     */
+    const T31_INSTRUMENTS = [
+      { instrument: 'contract declaration', dirtiedBy: 'the required list and the enum, read from the YAML (AC1)' },
+      { instrument: 'generated client', dirtiedBy: 'a typed GET that would not compile if the path left the contract (AC2)' },
+      { instrument: 'ACCOUNT_STATUSES', dirtiedBy: 'two compile-time pins, both PROVEN to fire, plus a YAML comparison (AC2)' },
+      { instrument: 'bearer', dirtiedBy: 'a real boundary renewing once and re-sending with the new token (AC3)' },
+      { instrument: 'public-operations set', dirtiedBy: 'an upper AND lower bound on all five entries (AC3)' },
+      { instrument: 'rate-limit wiring', dirtiedBy: 'a 429 on the RE-SEND after a 401, plus a 200 that leaves it alone (AC11)' },
+      { instrument: 'decode bound', dirtiedBy: 're-asserting the file set is exactly one, which the claim scan rests on (AC5)' },
+      { instrument: 'T31 claim scan', dirtiedBy: 'a synthetic decoding file reading both fields (AC5)' },
+      { instrument: 'scan silence', dirtiedBy: 'four commissioned reads of status and emailVerified, none flagged (AC5)' },
+      { instrument: 'empty-tree guard', dirtiedBy: 'a refusal rather than a clean report (AC5)' },
+      { instrument: 'faithful status', dirtiedBy: 'all five statuses, each asserted to survive unchanged (AC6)' },
+      { instrument: 'boolean emailVerified', dirtiedBy: 'false accepted and returned as false, beside four rejections (AC6, AC7)' },
+      { instrument: 'required-field guard', dirtiedBy: 'three string fields missing, empty, null and wrong-typed in turn (AC7)' },
+      { instrument: 'unrecognised status', dirtiedBy: 'five out-of-contract strings, each rejected (AC8)' },
+      { instrument: 'null body', dirtiedBy: 'a JSON null body, the shape that shipped as a defect in T30 (AC7)' },
+      { instrument: 'header leak', dirtiedBy: 'the live WWW-Authenticate value, beside a leaky Error control (AC9)' },
+      { instrument: 'absent cause', dirtiedBy: 'four rejecting paths, each asserted to have no cause at all (AC9)' },
+      { instrument: 'internal message', dirtiedBy: 'inversion - none of the three is in the catalogue (AC9)' },
+      { instrument: 'leak sweep', dirtiedBy: 'a sentinel on each of the seven surfaces (AC10)' },
+      { instrument: 'console watcher', dirtiedBy: 'a sentinel on each of six channels (AC10)' },
+      { instrument: 'no-session guard', dirtiedBy: 'null and empty-string tokens, plus a control that a token DOES call (AC13)' },
+    ];
+
+    it('names one dirtying violation per instrument', () => {
+      expect(T31_INSTRUMENTS).toHaveLength(21);
+      expect(T31_INSTRUMENTS.filter((row) => row.dirtiedBy.length === 0)).toEqual([]);
+    });
+
+    it('refuses a scan that reads nothing, through the one guard every walker calls', () => {
+      expect(() => refuseEmpty([], NO_SOURCES)).toThrow(NO_SOURCES);
+      expect(refuseEmpty([1], NO_SOURCES)).toEqual([1]);
+    });
   });
 });

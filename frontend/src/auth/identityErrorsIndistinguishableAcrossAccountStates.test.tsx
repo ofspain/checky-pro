@@ -183,10 +183,24 @@ function needlesFor(fixture: StateFixture): string[] {
 // ---------------------------------------------------------------------------------------------------------
 
 /**
- * Account-state words with no commissioned future anywhere in the spec package.
+ * Account-state words with no commissioned future ON A SIGN-IN SURFACE.
  *
- * Every one measures ZERO comment-stripped hits in production today, AND no requirement, locked decision or
- * later task asks for it. Those are two different tests and a word has to pass both to be here (Kimi F7).
+ * Every one measures zero comment-stripped hits in production today, and none appears in copy any
+ * requirement, locked decision or later task asks for. Those are two different tests and a word has to pass
+ * both to be here (Kimi F7).
+ *
+ * **CORRECTED 2026-10-31 by T31, and the correction is to the PREMISE rather than to the pattern.** This
+ * comment used to claim no later task asks for any of these words. That was already untrue when it was
+ * written: task 31 was in `tasks.md`, **R20(b)** commissions reading the account's status from
+ * `GET /accounts/me`, and that contract's enum is literally
+ * `[PENDING_VERIFICATION, ACTIVE, LOCKED, SUSPENDED, DELETED]`. So `locked`, `suspended` and `deleted` have
+ * a commissioned future in production SOURCE - they just have none in sign-in COPY, which is what R30 and L4
+ * actually protect.
+ *
+ * The pattern is unchanged and still global over copy. What changed is that the SOURCE scan now reads
+ * `PERMITTED_STATE_SOURCE`, so a file may name a state for a stated reason and nothing else may. Widening the
+ * pattern's exceptions would have been the wrong repair; this file's own header names that error class twice
+ * (T26's localStorage scan, T28's Kimi I5), and the honest version is an allowlist with a reason and a bound.
  */
 const ALWAYS_FORBIDDEN_STATE =
   'locked|lockout|suspended|deleted|deactivat|inactive|no\\s*such|banned|terminated|archived|dormant'
@@ -221,6 +235,33 @@ const SIGN_IN_SCOPED_STATE =
  * accounting itself untested - T28 found exactly that hole in its own first draft.
  */
 const PERMITTED_STATE_COPY: ReadonlyArray<{ key: string; why: string }> = [];
+
+/**
+ * Production files permitted to NAME an account state, with the reason and the bound that makes it safe.
+ *
+ * Added by T31. An allowlist, not a hole: the row names the file, the exact words, and what the file is
+ * forbidden from doing with them. R30's concern is a screen that shows a visitor WHICH account state they hit;
+ * a module that validates a status against the contract's enum and returns it is the opposite of that, and
+ * `readAccount.ts` renders nothing and translates nothing - asserted, not asserted-about.
+ *
+ * An upper AND lower bound, as T29's timer allowlist and T30's decode allowlist are: a control removes the row
+ * and proves the scan reports the file it protects.
+ */
+const PERMITTED_STATE_SOURCE: ReadonlyArray<{ file: string; words: readonly string[]; why: string }> = [
+  {
+    file: 'profile/readAccount.ts',
+    words: ['locked', 'suspended', 'deleted'],
+    why: 'R20(b) and task 31: the account status is READ from GET /accounts/me and the contract enum names '
+      + 'these three, so a runtime list of them is the only way an out-of-contract status can be rejected. '
+      + 'The module validates and returns; it renders no copy and calls no translator.',
+  },
+];
+
+/** State-word hits in files no `PERMITTED_STATE_SOURCE` row covers. */
+function unpermittedState(hits: Hit[], rows = PERMITTED_STATE_SOURCE): Hit[] {
+  const allowed = new Map(rows.map((row) => [row.file, new Set(row.words)]));
+  return hits.filter((hit) => !allowed.get(hit.file)?.has(hit.hit.toLowerCase()));
+}
 
 const SIGN_IN_SCOPED_PREFIXES = ['signIn.', 'callback.'] as const;
 
@@ -1528,7 +1569,7 @@ describe('AC7: no production module names an account state', () => {
   it('finds no globally-forbidden state word in the comment-stripped tree', async () => {
     const targets = await productionSources();
     expect(targets.length).toBeGreaterThanOrEqual(20);
-    expect(hitsOf(targets, new RegExp(ALWAYS_FORBIDDEN_STATE, 'gi'))).toEqual([]);
+    expect(unpermittedState(hitsOf(targets, new RegExp(ALWAYS_FORBIDDEN_STATE, 'gi')))).toEqual([]);
   });
 
   it('CONTROL: the scan flags each forbidden state word on its own', () => {
@@ -1570,7 +1611,44 @@ describe('AC7: no production module names an account state', () => {
     // And the real tree agrees: the four excluded words are PRESENT in production and the scan is silent.
     const targets = await productionSources();
     expect(hitsOf(targets, /unknown|missing|pending|closed/gi).length).toBeGreaterThan(10);
-    expect(hitsOf(targets, new RegExp(ALWAYS_FORBIDDEN_STATE, 'gi'))).toEqual([]);
+    expect(unpermittedState(hitsOf(targets, new RegExp(ALWAYS_FORBIDDEN_STATE, 'gi')))).toEqual([]);
+  });
+
+  it('CONTROL: the state-source allowlist is an upper AND lower bound, and its row carries a bound', async () => {
+    /**
+     * Added by T31 with the allowlist, because an exception without a dirty-proof is how a scan rots. Three
+     * claims:
+     *
+     *   1. With the row REMOVED, the scan reports the file it protects - so the row is load-bearing.
+     *   2. The row is not stale: the file still names every word the row claims.
+     *   3. The row's BOUND holds - `readAccount.ts` renders nothing and translates nothing, so naming a
+     *      state there cannot become showing one. That is the whole reason the exception is safe, and it is
+     *      the part a future edit would break silently.
+     */
+    const targets = await productionSources();
+    const hits = hitsOf(targets, new RegExp(ALWAYS_FORBIDDEN_STATE, 'gi'));
+
+    expect(unpermittedState(hits, []).map((hit) => hit.file)).toEqual([
+      'profile/readAccount.ts',
+      'profile/readAccount.ts',
+      'profile/readAccount.ts',
+    ]);
+
+    for (const row of PERMITTED_STATE_SOURCE) {
+      const code = targets.find((target) => target.path === row.file);
+      expect(code, row.file).toBeDefined();
+      for (const word of row.words) {
+        expect(new RegExp(word, 'i').test((code as ScanTarget).code), `${row.file} still names ${word}`)
+          .toBe(true);
+      }
+      // The bound: the words cannot reach a visitor. No translator call, and - structurally, which is
+      // stronger than any regex - a `.ts` file, which cannot contain JSX at all under this toolchain. The
+      // first draft of this bound tested for `/<[A-Za-z]/` and failed on `Partial<Record<...>>`: a generic
+      // parameter is not a JSX element, and a pattern that cannot tell them apart would have forced the next
+      // reader to loosen it.
+      expect(row.file.endsWith('.ts'), `${row.file} is not a component`).toBe(true);
+      expect((code as ScanTarget).code, `${row.file} calls no translator`).not.toMatch(/\bt\(|useTranslation/);
+    }
   });
 
   it('CONTROL: a state word inside a URL STRING survives stripping, which it did not before', () => {

@@ -170,7 +170,11 @@ const FORBIDDEN_PACKAGES = [
  * longer than the finding it protects.
  */
 const MFA_IDENTIFIER_SOURCE =
-  'mfa|totp|recovery|authenticator|one[-_ ]?time|otp|2fa|tfa|multi[-_ ]?factor|security[-_ ]?key'
+  // `tfa` is LEFT-BOUNDED since 2026-10-31 (T31). Unbounded, it matched inside `ReadAccountFailure` -
+  // `...ntFailure` contains `tFa` - and would equally match `PaymentFailure` or any other
+  // `*tFailure`, which the payment tasks are specified to write. `\\btfa` still catches `tfa`,
+  // `tfaCode` and `tfa_method`; it no longer catches a word that merely ends in `t` before `Fa`.
+  'mfa|totp|recovery|authenticator|one[-_ ]?time|otp|2fa|\\btfa|multi[-_ ]?factor|security[-_ ]?key'
   + '|backup[-_ ]?code|webauthn|passkey|fido';
 
 /**
