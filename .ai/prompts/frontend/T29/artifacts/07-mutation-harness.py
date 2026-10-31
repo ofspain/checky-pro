@@ -83,6 +83,16 @@ CATALOGUE = "src/i18n/catalogue.ts"
 T29_ONLY = ["src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx"]
 FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
+# The whole suite's expected failure count on a clean tree: the one pre-existing
+# `lintRejectsHandWrittenBackendFetch` case. ASSERTED, not assumed, and the reason is a
+# measured mis-scoring rather than caution. One run of this harness read a baseline of 3
+# instead of 1, and because every verdict is `failed > base_failed`, the two mutants that
+# produce exactly 3 failures - MC13 and MC14 - were reported as SURVIVORS. They are not;
+# re-measured against a correct baseline, both are KILLED. A harness whose baseline can
+# drift silently turns a false negative into a published mutation score, so it now refuses
+# to run rather than report.
+EXPECTED_BASELINE_FAILURES = 1
+
 # --- anchors, copied from the real source ----------------------------------------------------------------
 ERROR_READ = "    const error = params.get('error')?.trim() ?? null;"
 ERROR_BRANCH = """    if (error !== null && error !== '') {
@@ -264,6 +274,17 @@ def main():
     print(f"baseline whole suite: {failed} failed of {total}, exit {code}")
     code29, failed29, total29 = run(T29_ONLY)
     print(f"baseline T29 file:    {failed29} failed of {total29}, exit {code29}\n")
+    if failed != EXPECTED_BASELINE_FAILURES:
+        print(
+            f"REFUSING TO RUN: baseline is {failed} failures, expected "
+            f"{EXPECTED_BASELINE_FAILURES}. Every verdict below would be measured against a\n"
+            "wrong floor, and a mutant producing exactly this many failures would be reported\n"
+            "as a survivor. Check `git status` under frontend/src/ and re-run."
+        )
+        return 1
+    if failed29 != 0:
+        print(f"REFUSING TO RUN: T29's own file fails {failed29} of {total29} on a clean tree.")
+        return 1
     base_failed = failed
 
     survivors = []
@@ -288,7 +309,8 @@ def main():
         revert()
 
     print(f"\nsurvivors: {survivors or 'none'}")
+    return 1 if survivors else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
