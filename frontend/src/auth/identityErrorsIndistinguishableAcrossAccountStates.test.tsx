@@ -311,7 +311,15 @@ const ACCOUNT_STATE_GATE =
   + '|(?:account|user|session)\\.(?:state|status)\\s*[=!]=='
   + '|(?:account|user|session)\\.locked\\b'
   + "|role\\s*[=!]==|\\.role\\s*[=!]==|=== *'(?:MERCHANT|ADMIN)'|=== *\"(?:MERCHANT|ADMIN)\""
-  + "|\\.includes\\s*\\( *['\"](?:MERCHANT|ADMIN)";
+  + "|\\.includes\\s*\\( *['\"](?:MERCHANT|ADMIN)"
+  // Kimi phase 11, and the answer to the hole its own I1 fix left. Keying on the receiver means
+  // `const { state } = account; if (state === 'LOCKED')` has no receiver left to key on, and the scan goes
+  // green over a live gate. The alternative below keys on the LITERAL instead, so it survives any amount of
+  // destructuring, aliasing or renaming - the one thing a state comparison cannot do without is the state's
+  // name. It cannot be relaxed to a bare `state ===`: CallbackScreen compares the OIDC `state` parameter,
+  // which is not an account state, and a case below pins that it stays silent there.
+  + "|[=!]== *['\"](?:LOCKED|SUSPENDED|DELETED|PENDING_VERIFICATION|PENDING_ENROLLMENT)['\"]"
+  + "|case +['\"](?:LOCKED|SUSPENDED|DELETED|PENDING_VERIFICATION)['\"] *:";
 
 function accountStateGates(): RegExp {
   return new RegExp(ACCOUNT_STATE_GATE, 'g');
@@ -732,9 +740,56 @@ type Outcome = {
   text: string;
   liveText: string[];
   liveRegions: number;
+  // Kimi phase 11. `liveRegions` is a COUNT, which is what let these three through: two states could announce
+  // the same sentence through regions of different shape, land focus in different places, or render different
+  // element trees, and every field above would still compare equal.
+  liveShape: string[];
+  focus: string;
+  skeleton: string;
   storedKeys: string[];
   tokenHeld: boolean;
 };
+
+/**
+ * The rendered element tree with every piece of TEXT removed: tag names, nesting depth, and the ARIA
+ * attributes that decide how the tree is announced.
+ *
+ * Kimi's phase 11 gap on structural equivalence. AC4 pins the absence of `class` and `style`, which is the
+ * whole of "visual treatment" only while no design system exists. A cause-specific icon, an extra wrapper, a
+ * different heading level or an `<aside>` around one state's sentence needs neither attribute, and the text
+ * comparison would not see it because the sentence itself is unchanged. Text is excluded deliberately: the
+ * copy is already compared field by field, and including it here would make the skeleton fail for reasons
+ * that have nothing to do with structure.
+ */
+function skeletonOf(root: Element): string {
+  const lines: string[] = [];
+  const walk = (node: Element, depth: number): void => {
+    const aria = [...node.attributes]
+      .filter((attribute) => attribute.name === 'role' || attribute.name.startsWith('aria-'))
+      .map((attribute) => `${attribute.name}=${attribute.value}`)
+      .sort();
+    lines.push(`${'  '.repeat(depth)}${node.tagName.toLowerCase()}${aria.length > 0 ? ` [${aria.join(' ')}]` : ''}`);
+    for (const child of node.children) walk(child, depth + 1);
+  };
+  walk(root, 0);
+  return lines.join('\n');
+}
+
+/**
+ * Where the keyboard is, named by what a visitor would reach rather than by object identity - the elements
+ * are torn down between arrivals, so identity could not be compared across five of them anyway.
+ *
+ * `SignInScreen.tsx:68-69` says focus is deliberately NOT moved, so the honest expectation is that all five
+ * agree on <body>. The claim is the agreement, not the particular answer: a state-keyed `.focus()` call, or
+ * one state's focus deferred by a timer, is exactly the kind of difference a screen-reader user hears and
+ * no other field in this struct records.
+ */
+function focusOf(): string {
+  const active = document.activeElement;
+  if (active === null) return 'none';
+  const role = active.getAttribute('role');
+  return `${active.tagName.toLowerCase()}${role === null ? '' : `[role=${role}]`}`;
+}
 
 /**
  * `search` and `hash` are fields AND are asserted absolutely in AC1.
@@ -759,6 +814,11 @@ async function outcomeOf(arrival: Arrival): Promise<Outcome> {
     text: document.body.textContent ?? '',
     liveText: regions.map((node) => node.textContent ?? ''),
     liveRegions: regions.length,
+    liveShape: regions.map(
+      (node) => `${node.getAttribute('role') ?? '-'}/${node.getAttribute('aria-live') ?? '-'}`,
+    ),
+    focus: focusOf(),
+    skeleton: skeletonOf(document.body),
     storedKeys: Object.keys({ ...globalThis.sessionStorage }).sort(),
     tokenHeld: accessToken.current() !== null,
   };
@@ -971,6 +1031,62 @@ describe('AC1: every account state ends in the one discard closure', () => {
     }
   });
 
+  /**
+   * Kimi's phase 11. The case above drives error-ONLY callbacks, which is what SAS sends - so it proves the
+   * code is not exchanged when there is no code to exchange, and that is a weaker claim than it reads as.
+   *
+   * RFC 6749 does not forbid an authorization response carrying both, and the SPA's own guard is an ordering
+   * decision rather than an impossibility: `CallbackScreen` reads `error` first and discards before it ever
+   * looks for `code`. A refactor that read `code` first would exchange a code handed over alongside a refusal
+   * - a credential the server has already said no to - and every other assertion in this file would still
+   * pass, because the outcome after the exchange failed would look the same.
+   */
+  it('discards without exchanging even when a code arrives ALONGSIDE the error', async () => {
+    for (const fixture of ACCOUNT_STATES) {
+      seedPkceItems();
+      const query = `${queryForState(fixture)}&code=A-CODE-THAT-MUST-NOT-BE-SENT`;
+      const arrival = await arriveAt(query, tokenEndpointAnswers());
+      expect(arrival.fetchSpy, fixture.state).not.toHaveBeenCalled();
+      const outcome = await outcomeOf(arrival);
+      expect(outcome.destination, fixture.state).toBe('/app/sign-in');
+      expect(outcome.text, fixture.state).toContain(en.signIn.discarded);
+      expect(outcome.tokenHeld, fixture.state).toBe(false);
+      arrival.unmount();
+      await clearArrivalSurfaces();
+    }
+  });
+
+  /**
+   * Kimi's phase 11. `error_description` and `error_uri` are OPTIONAL in RFC 6749 §4.1.2.1. SAS sends both
+   * today, and every fixture in this file sends both, so the whole suite rests on a response shape no
+   * standard guarantees - a proxy that strips them, or a backend change, would produce an arrival nothing
+   * here has driven.
+   *
+   * The risk is specific rather than theoretical: code that renders a description would most naturally fall
+   * back to something ELSE when it is missing, and a fallback keyed on the error code is a state-specific
+   * message arriving by the back door. The five `error` codes are driven bare, with nothing else to render.
+   */
+  it('discards identically when the description and URI are absent entirely', async () => {
+    const outcomes: Outcome[] = [];
+    for (const fixture of ACCOUNT_STATES) {
+      seedPkceItems();
+      const bare = new URLSearchParams({ error: fixture.error, state: STATE });
+      const arrival = await arriveAt(`?${bare.toString()}`, tokenEndpointAnswers());
+      outcomes.push(await outcomeOf(arrival));
+      arrival.unmount();
+      await clearArrivalSurfaces();
+    }
+    for (const outcome of outcomes) {
+      expect(outcome.destination).toBe('/app/sign-in');
+      expect(outcome.historyAction).toBe('REPLACE');
+      expect(outcome.search).toBe('');
+      expect(outcome.text).toContain(en.signIn.discarded);
+      expect(outcome.tokenHeld).toBe(false);
+    }
+    // And bare arrivals are indistinguishable from each other, not merely each acceptable on its own.
+    for (const outcome of outcomes.slice(1)) expect(outcome).toEqual(outcomes[0]);
+  });
+
   it('shows the sentence the catalogue owns, not a literal written here', async () => {
     const outcome = await measureState(ACCOUNT_STATES[0]);
     expect(outcome.text).toContain(en.signIn.discarded);
@@ -1028,6 +1144,9 @@ describe('AC2: five account states, one outcome', () => {
       text: en.signIn.discarded,
       liveText: [en.signIn.discarded],
       liveRegions: 1,
+      liveShape: ['status/polite'],
+      focus: 'body',
+      skeleton: 'body\n  main',
       storedKeys: [],
       tokenHeld: false,
       state,
@@ -1048,6 +1167,13 @@ describe('AC2: five account states, one outcome', () => {
     expect(outcome.storedKeys).toEqual(
       [AUTHORIZE_STORAGE_KEYS.state, AUTHORIZE_STORAGE_KEYS.nonce, AUTHORIZE_STORAGE_KEYS.codeVerifier].sort(),
     );
+    // The three fields Kimi's phase 11 added. A field that is always '' or always [] compares equal across
+    // five states for the wrong reason, which is the whole failure mode this control exists to rule out.
+    expect(outcome.liveShape).not.toEqual([]);
+    expect(outcome.liveShape.every((shape) => shape === '-/-')).toBe(false);
+    expect(outcome.focus).not.toBe('none');
+    expect(outcome.skeleton.split('\n').length).toBeGreaterThan(1);
+    expect(outcome.skeleton).toContain('[');
   });
 });
 
@@ -1601,6 +1727,34 @@ describe('AC9: nothing gates a failed sign-in on an account state or a role', ()
     expect(unflagged.map((target) => target.path)).toEqual([]);
   });
 
+  /**
+   * Kimi's phase 11, and it is a hole that KIMI'S OWN I1 FIX OPENED. Keying the state and status alternatives
+   * on the receiver was the right answer to three legitimate hits, but it left the receiver as the thing the
+   * scan needs, and a destructuring assignment takes it away.
+   *
+   * The literal alternative is the answer because it keys on what the gate cannot be written without. A
+   * developer may rename the variable, alias the property, destructure it or pass it through three functions;
+   * the comparison still has to name the state.
+   */
+  it('CONTROL: a gate survives destructuring, and is still flagged by the state LITERAL', () => {
+    const offenders = [
+      synthetic('auth/H.tsx', "const { state } = account;\nif (state === 'LOCKED') showCountdown();"),
+      synthetic('auth/I.tsx', "const { status: s } = account;\nif (s === 'SUSPENDED') return null;"),
+      synthetic('auth/J.tsx', "const flag = readIt();\nif (flag !== 'DELETED') return null;"),
+      synthetic('auth/K.tsx', "switch (whatever) { case 'SUSPENDED': return null; }"),
+    ];
+    const unflagged = offenders.filter((target) => hitsOf([target], accountStateGates()).length === 0);
+    expect(unflagged.map((target) => target.path)).toEqual([]);
+
+    // And the alternative is NOT a bare `state ===`, which would fire on the OIDC state parameter. These two
+    // are the shapes CallbackScreen actually writes, and the scan must stay silent on both.
+    const permitted = [
+      synthetic('auth/L.tsx', "const { state } = params;\nif (state !== stored) discard();"),
+      synthetic('auth/M.tsx', "if (returned.state === sessionStorage.getItem(KEY)) exchange();"),
+    ];
+    expect(hitsOf(permitted, accountStateGates())).toEqual([]);
+  });
+
   it('CONTROL: the state and status alternatives key on the RECEIVER, not on the property alone', async () => {
     /**
      * Kimi I1 recommended a bare `\.state\s*[=!]==` and `\.status\s*[=!]==`. MEASURED, both fire on code
@@ -1713,11 +1867,15 @@ describe('AC11: every instrument has been shown to report dirty', () => {
     { instrument: 'comment stripper', dirtiedBy: 'a state word inside a URL string literal (AC7)' },
     { instrument: 'catalogue scan', dirtiedBy: 'a value, a key name, and an array element (AC8)' },
     { instrument: 'gating scan', dirtiedBy: 'six gates, one per state and two on roles (AC9)' },
+    { instrument: 'destructured gate', dirtiedBy: 'four gates with no receiver left to key on (AC9)' },
+    { instrument: 'live-region shape', dirtiedBy: 'the shell control, which rejects an all-`-/-` field (AC2)' },
+    { instrument: 'focus', dirtiedBy: 'the shell control, which rejects `none` (AC2)' },
+    { instrument: 'DOM skeleton', dirtiedBy: 'the shell control, which rejects a single line with no ARIA (AC2)' },
     { instrument: 'key-set pin', dirtiedBy: 'a seventh signIn key (AC10)' },
   ];
 
   it('names one dirtying violation per instrument', () => {
-    expect(INSTRUMENTS).toHaveLength(13);
+    expect(INSTRUMENTS).toHaveLength(17);
     expect(INSTRUMENTS.filter((row) => row.dirtiedBy.length === 0)).toEqual([]);
   });
 
