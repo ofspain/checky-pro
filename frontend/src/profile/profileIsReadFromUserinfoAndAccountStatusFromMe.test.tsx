@@ -260,6 +260,13 @@ function encodings(text: string): string[] {
   return [...forms];
 }
 
+/**
+ * `document.cookie` and `indexedDB` are NOT in this list, declared rather than quietly omitted - the same
+ * declaration T29 makes at its own sweep, restated here because Kimi's phase 11 is right that inheriting a
+ * surface list without inheriting its caveat reads as a complete sweep to the next maintainer, and a profile
+ * is PII. jsdom gives an empty cookie jar and has no `indexedDB`, so sweeping either would report clean for
+ * an environmental reason and be worse than not sweeping it. Recorded as T30-D7.
+ */
 function surfaces(): Surface[] {
   return [
     { name: 'body', text: document.body.innerHTML },
@@ -333,7 +340,16 @@ const PROFILE_VALUES = [
   FULL_PROFILE.sub,
 ].filter((value): value is string => typeof value === 'string');
 
-type Answer = { status?: number; body?: unknown; headers?: Record<string, string>; redirected?: boolean };
+type Answer = {
+  status?: number;
+  body?: unknown;
+  /** The body VERBATIM, for shapes `JSON.stringify` cannot express - a malformed document, most of all. */
+  rawBody?: string;
+  headers?: Record<string, string>;
+  redirected?: boolean;
+  /** `redirect: 'manual'` in a real browser: `type: 'opaqueredirect'`, `status: 0`, no body (Kimi phase 11). */
+  opaque?: boolean;
+};
 
 type Call = { path: string; method: string; auth: string | null; redirect: RequestRedirect };
 
@@ -386,7 +402,8 @@ function harness(
     // itself throws, and nothing was driving that path.
     if (options.throws !== undefined) throw options.throws;
     const status = answer.status ?? 200;
-    const response = new Response(answer.body === undefined ? null : JSON.stringify(answer.body), {
+    const serialised = answer.rawBody ?? (answer.body === undefined ? null : JSON.stringify(answer.body));
+    const response = new Response(serialised, {
       status: status >= 300 && status < 400 ? 200 : status,
       headers: { 'content-type': 'application/json', ...answer.headers },
     });
@@ -398,6 +415,13 @@ function harness(
     }
     if (answer.redirected) {
       Object.defineProperty(response, 'redirected', { value: true, configurable: true });
+    }
+    // What `redirect: 'manual'` actually produces in a browser, and what jsdom will not produce on its own:
+    // an opaque response with no status to read and no body to parse. The reader has a clause for it; nothing
+    // was driving that clause (Kimi phase 11).
+    if (answer.opaque) {
+      Object.defineProperty(response, 'type', { value: 'opaqueredirect', configurable: true });
+      Object.defineProperty(response, 'status', { value: 0, configurable: true });
     }
     return response;
   });
@@ -569,6 +593,24 @@ describe('T30: AC4 the boundary supplies the bearer and owns the 401', () => {
     expect(tab.calls).toHaveLength(1);
     expect(tab.calls[0].path).toBe('/userinfo');
     expect(tab.calls[0].auth).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('puts the access token itself on no surface and in no console channel', async () => {
+    /**
+     * Kimi's phase 11, and the reason it is T30's to answer rather than already covered.
+     *
+     * `auth/tokensAreNeverWrittenToAnyStorage.test.tsx` owns this claim for the sign-in and callback flows
+     * and sweeps six console channels while doing it - but it never calls `readProfile`, because the profile
+     * read did not exist when it was written. T30 introduces a new flow that holds the token and attaches it
+     * to a request, so a regression logging the `Authorization` header here would be caught by nothing: the
+     * AC6 sweep looks for PROFILE_VALUES, and the token is not one of them (L3).
+     */
+    const watch = watchConsole();
+    const tab = harness([{ status: 401 }, { body: FULL_PROFILE }]);
+    await readProfile(tab.api, tab.tokens);
+    // The renewed token too: the boundary mints it, so it is a value this flow produced rather than received.
+    expect(leaks(surfaces(), [TOKEN, `${TOKEN}-renewed`])).toEqual([]);
+    expect(watch.lines).toEqual([]);
   });
 
   it('lets the BOUNDARY renew on 401 and re-send, which the reader never sees', async () => {
@@ -952,6 +994,66 @@ describe('T30: AC8 a failed read surfaces no detail, not even from a header', ()
     }
   });
 
+  it('collapses a malformed JSON body into unavailable, with no parse detail', async () => {
+    /**
+     * MEASURED rather than assumed, because Kimi's phase 11 states the mechanism and the mechanism decides
+     * which clause does the work: it reports that `openapi-fetch` sets `data` to `undefined` on a parse
+     * failure, which would make the `data === undefined` arm responsible. It does not. The parse happens
+     * INSIDE the awaited `api.GET`, so the `SyntaxError` is thrown there and caught by the transport
+     * `try/catch` I1 added - the same arm that handles a dropped connection.
+     *
+     * So this was already correct, and is now pinned: a future change that moved the parse out of the `try`,
+     * or inspected `answer.error` instead, would surface a `SyntaxError` naming the offending token.
+     */
+    const watch = watchConsole();
+    const tab = harness([{ rawBody: '{ not json' }]);
+    const error = await readProfile(tab.api, tab.tokens).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ReadProfileError);
+    expect((error as ReadProfileError).failure).toBe('unavailable');
+    const text = `${(error as Error).message}\n${(error as Error).stack ?? ''}`;
+    for (const detail of ['JSON', 'Unexpected', 'token', 'not json', 'position']) {
+      expect(text, detail).not.toContain(detail);
+    }
+    expect(watch.lines).toEqual([]);
+  });
+
+  it('carries no cause on any failure path, which is the other place detail can hide', async () => {
+    /**
+     * Kimi's phase 11. `Error` has taken a `cause` since ES2022, and `new Error(msg, { cause })` is the
+     * idiomatic way to wrap a lower-level failure - so a maintainer closing I1 differently would reach for it
+     * by reflex, and every assertion AC8 makes about `message` and `stack` would still pass while the original
+     * `TypeError`, its hostname and its stack rode along on `error.cause`.
+     *
+     * Asserted over every path that can reject, not only the wrapping one: `cause` is absent, not merely
+     * undefined, so setting it to anything at all fails here.
+     */
+    const paths: Array<[string, () => Promise<unknown>]> = [
+      ['no token', () => readProfile(harness([{ body: FULL_PROFILE }], { token: null }).api, { current: () => null })],
+      ['401', async () => {
+        const tab = harness([{ status: 401 }, { status: 401 }]);
+        return readProfile(tab.api, tab.tokens);
+      }],
+      ['302', async () => {
+        const tab = harness([{ status: 302 }, { status: 302 }]);
+        return readProfile(tab.api, tab.tokens);
+      }],
+      ['throwing transport', async () => {
+        const tab = harness([{ body: FULL_PROFILE }], { throws: new TypeError('net::ERR_FAILED') });
+        return readProfile(tab.api, tab.tokens);
+      }],
+      ['unusable body', async () => {
+        const tab = harness([{ body: { sub: '' } }]);
+        return readProfile(tab.api, tab.tokens);
+      }],
+    ];
+    for (const [label, run] of paths) {
+      const error = await run().catch((caught: unknown) => caught);
+      expect(error, label).toBeInstanceOf(ReadProfileError);
+      expect('cause' in (error as object), label).toBe(false);
+      expect((error as Error).cause, label).toBeUndefined();
+    }
+  });
+
   it('the error message is INTERNAL: none of the three strings is in the catalogue', async () => {
     /**
      * Kimi's phase 8 I3, taken as option (a). `ReadProfileError.message` is English and is not catalogue
@@ -1026,6 +1128,30 @@ describe('T30: AC9/AC11 a sub-only response is a success, and a full profile par
   it('parses the full profile O6 will produce, so closing it needs no change here', async () => {
     const tab = harness([{ body: FULL_PROFILE }]);
     expect(await readProfile(tab.api, tab.tokens)).toEqual(FULL_PROFILE);
+  });
+
+  it('rejects a JSON null body as unavailable rather than throwing a raw TypeError', async () => {
+    /**
+     * Kimi's phase 11, and A LIVE DEFECT rather than the unpinned-safety it was reported as.
+     *
+     * Its evidence says `typeof null.sub` evaluates to `'undefined'`, so the code was already safe. It does
+     * not: `typeof` suppresses a ReferenceError for an undeclared identifier, while property access on `null`
+     * throws like any other. MEASURED before the fix, with a `200` whose body is the JSON literal `null`:
+     *
+     *     TypeError: Cannot read properties of null (reading 'sub')
+     *
+     * thrown out of `readProfile` with its stack, past a `try/catch` that only wraps the transport. That is
+     * I1's leak again on the body path. Right recommendation, wrong reason - which is the whole argument for
+     * running a cited line instead of reading it.
+     */
+    const watch = watchConsole();
+    const tab = harness([{ body: null }]);
+    const error = await readProfile(tab.api, tab.tokens).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ReadProfileError);
+    expect(error).not.toBeInstanceOf(TypeError);
+    expect((error as ReadProfileError).failure).toBe('unavailable');
+    expect((error as Error).message).not.toContain('sub');
+    expect(watch.lines).toEqual([]);
   });
 
   it('rejects a body with no usable sub, which is the one claim the contract requires', async () => {
@@ -1103,6 +1229,53 @@ describe('T30: AC12 a missing session is not a 401, and a redirect is not a succ
     await expect(readProfile(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'no-session' });
   });
 
+  it('treats an OPAQUE redirect as no session, which is what a browser actually returns', async () => {
+    /**
+     * Kimi's phase 11. `redirect: 'manual'` does not hand a browser client a readable 3xx: it hands back an
+     * opaque response, `type: 'opaqueredirect'`, `status: 0`, no headers and no body. So the status arm and
+     * the `redirected` arm of the reader's check are both dead in a real browser, and the third arm is the
+     * only one doing the work - while every case here drove one of the first two. Deleting
+     * `response.type === 'opaqueredirect'` left the suite green and broke the no-session path everywhere it
+     * matters most.
+     *
+     * jsdom models neither the redirect mode nor the opaque response, so this is a stub, and said so.
+     */
+    const opaque = { opaque: true };
+    const tab = harness([opaque, opaque]);
+    await expect(readProfile(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'no-session' });
+    expect(tab.calls).toHaveLength(1);
+  });
+
+  it('issues no request for an EMPTY token either, which sends no bearer rather than a bad one', async () => {
+    /**
+     * Kimi's phase 11, accepted with its mechanism corrected. It reports that an empty token sends
+     * `Authorization: Bearer ` - a malformed bearer that would draw a 401. The boundary attaches the header
+     * with `if (token)` (`sessionBoundary.ts:89`), so an empty string sends NO Authorization header at all:
+     * not a malformed bearer but the bearer-less GET this whole clause exists to prevent, `302` and
+     * `Set-Cookie: JSESSIONID` included. Same conclusion, different mechanism.
+     *
+     * The guard names `''` explicitly rather than turning truthy, so that this case fails if it is removed.
+     */
+    const tab = harness([{ status: 302, headers: { location: '/login' } }], { token: '' });
+    await expect(readProfile(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'no-session' });
+    expect(tab.calls).toEqual([]);
+  });
+
+  it('rejects a FOLLOWED redirect even when it carries a perfectly valid profile', async () => {
+    /**
+     * Kimi's phase 11, and the case that makes the check ORDER load-bearing rather than incidental.
+     *
+     * The case above drives a followed redirect carrying HTML, which `!response.ok`-style reasoning would
+     * also reject for the wrong reason - the body is not a profile. This one carries a body that parses
+     * cleanly into a complete `UserInfoResponse`, so the ONLY thing standing between it and a successful
+     * read is that `response.redirected` is checked before the body is looked at. A reordering that moved
+     * the redirect arm after the shape arm would pass every other case in this block.
+     */
+    const followed = { status: 200, redirected: true, body: FULL_PROFILE };
+    const tab = harness([followed, followed]);
+    await expect(readProfile(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'no-session' });
+  });
+
   it('MEASURES the race Kimi I6 names: a token cleared after the check still ends in no-session', async () => {
     /**
      * Kimi's phase 8 I6, accepted as a MEASUREMENT rather than as a restructuring.
@@ -1174,10 +1347,15 @@ describe('T30: AC10 every instrument has been shown to report dirty', () => {
     { instrument: 'internal message', dirtiedBy: 'inversion - none of the three is in the catalogue (AC8, Kimi I3)' },
     { instrument: 'rate-limit wiring', dirtiedBy: 'a 429 on the RE-SEND after a 401, which is what the order is for (AC4, Kimi I5)' },
     { instrument: 'decode-pattern boundary', dirtiedBy: 'a dependency guard over seven JWT libraries (AC5, Kimi I7)' },
+    { instrument: 'opaque redirect', dirtiedBy: "a response whose type is 'opaqueredirect' with status 0 (AC12, phase 11)" },
+    { instrument: 'empty-token guard', dirtiedBy: "'' as well as null, sending NO bearer rather than a bad one (AC12, phase 11)" },
+    { instrument: 'null body', dirtiedBy: 'a 200 whose JSON body is null, measured to throw a raw TypeError (AC9, phase 11)' },
+    { instrument: 'absent cause', dirtiedBy: 'five rejecting paths, each asserted to have no cause at all (AC8, phase 11)' },
+    { instrument: 'token sweep', dirtiedBy: "the access token over T30's own flow, which no other file drives (AC6, phase 11)" },
   ];
 
   it('names one dirtying violation per instrument', () => {
-    expect(INSTRUMENTS).toHaveLength(20);
+    expect(INSTRUMENTS).toHaveLength(25);
     expect(INSTRUMENTS.filter((row) => row.dirtiedBy.length === 0)).toEqual([]);
   });
 

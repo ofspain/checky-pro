@@ -80,7 +80,15 @@ export async function readProfile(api: OidcApi, tokens: Pick<SessionTokens, 'cur
   // `fetch` follows redirects by default, so the call would come back `200 OK, text/html` carrying 1103 bytes
   // of the login page - which openapi-fetch would then hand to a caller expecting a profile, on a success
   // status. There is no 401 anywhere in that sequence for the boundary's renewal to act on.
-  if (tokens.current() === null) throw new ReadProfileError('no-session');
+  //
+  // `''` is guarded as well as `null`, and Kimi's phase 11 is right that it mattered while being wrong about
+  // why: it reports that an empty token sends `Authorization: Bearer `, a malformed bearer. The boundary
+  // attaches the header with `if (token)` (`sessionBoundary.ts:89`), so an empty string sends NO Authorization
+  // header at all - which is not a malformed bearer, it is exactly the bearer-less GET described above,
+  // `Set-Cookie` and all. Same conclusion, different mechanism, so the guard names both values rather than
+  // leaning on truthiness.
+  const token = tokens.current();
+  if (token === null || token === '') throw new ReadProfileError('no-session');
 
   /**
    * Wrapped, because `openapi-fetch` resolves an HTTP error status but REJECTS when the underlying `fetch`
@@ -97,7 +105,21 @@ export async function readProfile(api: OidcApi, tokens: Pick<SessionTokens, 'cur
    * that scan. Its conservatism is reasonable - a scanner cannot tell a comment from a constant - and
    * rephrasing is the right answer rather than loosening another task's instrument.
    */
-  let data: Profile | undefined;
+  /**
+   * `null` is in the type because it is in the runtime, and leaving it out was a live defect.
+   *
+   * MEASURED after Kimi's phase 11 raised it: a `200` whose body is the JSON literal `null` parses to `null`,
+   * `data === undefined` is then false, and `typeof data.sub` throws
+   * `TypeError: Cannot read properties of null (reading 'sub')` straight out of this function - message, stack
+   * and all. That is the I1 leak again on the body path, outside the `try` that closed it on the transport
+   * path.
+   *
+   * Kimi's own reasoning for the finding is wrong: it says `typeof null.sub` evaluates to `'undefined'`, so
+   * the code is already safe and only unpinned. `typeof` suppresses a ReferenceError for an undeclared
+   * identifier; property access on `null` still throws. The recommendation was right for a reason its
+   * evidence did not state, which is why the cited line gets run rather than read.
+   */
+  let data: Profile | undefined | null;
   let response: Response;
   try {
     const answer = await api.GET('/userinfo', {
@@ -123,7 +145,7 @@ export async function readProfile(api: OidcApi, tokens: Pick<SessionTokens, 'cur
   if (response.status === 401 || response.status === 403) throw new ReadProfileError('unauthorized');
   // Everything else that is not a profile, collapsed into one answer on purpose: the visitor learns that it
   // did not work and nothing about why (L4).
-  if (!response.ok || data === undefined || typeof data.sub !== 'string' || data.sub === '') {
+  if (!response.ok || data === undefined || data === null || typeof data.sub !== 'string' || data.sub === '') {
     throw new ReadProfileError('unavailable');
   }
 
