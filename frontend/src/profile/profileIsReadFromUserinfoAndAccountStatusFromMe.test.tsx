@@ -563,6 +563,20 @@ describe('T30: AC4 the boundary supplies the bearer and owns the 401', () => {
     expect(tab.renewals).toBe(1);
   });
 
+  it('surfaces a 403 as unauthorized too, and renews for neither reason twice', async () => {
+    /**
+     * Added because MP21 SURVIVED the first mutation run: reporting a 403 as `unavailable` instead of
+     * `unauthorized` changed nothing, because no case drove a 403 at all. The reader had always handled it -
+     * `response.status === 401 || response.status === 403` - and nothing held it to that.
+     *
+     * The distinction is worth keeping rather than collapsing. A 401 means the credential was not accepted;
+     * a 403 means it was, and the account may not have this. A caller that cannot tell them apart cannot
+     * decide between re-authenticating and telling the visitor their account lacks something.
+     */
+    const tab = harness([{ status: 403 }, { status: 403 }]);
+    await expect(readProfile(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'unauthorized' });
+  });
+
   it('holds exactly POST /oauth2/token public, and not /userinfo', () => {
     // The asymmetry this task introduced. `POST /oauth2/token` carries no bearer because the PKCE verifier is
     // the client's only proof and renewing on its 401 would be circular - renewal IS an exchange. `GET
@@ -806,6 +820,20 @@ describe('T30: AC8 a failed read surfaces no detail, not even from a header', ()
     for (const failure of ['no-session', 'unauthorized', 'unavailable'] as const) {
       expect(new ReadProfileError(failure).message.length).toBeGreaterThan(0);
     }
+    /**
+     * And the class cannot be TALKED INTO carrying detail, which is a stronger property than not doing so.
+     *
+     * MP09 is where this came from. It mutated the reader to throw
+     * `new ReadProfileError(\`unauthorized${header}\`)` and SURVIVED - and the survival was not an escape.
+     * The constructor looks its message up by key, so a key with a header glued on finds nothing and the
+     * message becomes `undefined`. The leak was prevented by construction, not by a test, and the mutant was
+     * INERT rather than uncaught. That distinction is T28's MB27 lesson, and the honest response is to pin
+     * the property here and re-aim the mutant at the shape that can actually leak: a different error type.
+     */
+    const smuggled = new ReadProfileError(
+      `unauthorized Bearer error="invalid_token"` as 'unauthorized',
+    );
+    expect(smuggled.message).not.toContain('invalid_token');
   });
 });
 

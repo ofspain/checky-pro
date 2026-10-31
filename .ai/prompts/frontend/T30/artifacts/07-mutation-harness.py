@@ -118,10 +118,15 @@ MUTANTS = [
      "'POST /oauth2/token', 'GET /userinfo']);"),
 
     # --- MP09-MP11: a failure leaks what it was told (AC8) -----------------------------------------------
-    ("MP09 the WWW-Authenticate header is carried into the error", READER, UNAUTHORIZED,
+    # RE-AIMED after the first run. The original threw
+    # `new ReadProfileError(`unauthorized${detail}`)` and SURVIVED - and that survival was NOT an escape.
+    # `ReadProfileError` looks its message up by key, so a key with a header glued on finds nothing and the
+    # message becomes `undefined`: the leak is prevented by construction, and the mutant was INERT. T28's
+    # MB27 is the same lesson. A mutant that cannot do the harm it names proves nothing either way, so this
+    # one now throws the error type a leaky reader would actually reach for.
+    ("MP09 the header is carried into a plain Error, which CAN hold it", READER, UNAUTHORIZED,
      "  if (response.status === 401 || response.status === 403) {\n"
-     "    const detail = response.headers.get('www-authenticate') ?? '';\n"
-     "    throw new ReadProfileError(`unauthorized${detail}` as 'unauthorized');\n"
+     "    throw new Error(`Profile read refused: ${response.headers.get('www-authenticate') ?? ''}`);\n"
      "  }"),
     ("MP10 the response body's detail reaches the error message", READER, UNAVAILABLE,
      """  if (!response.ok || data === undefined || typeof data.sub !== 'string' || data.sub === '') {
