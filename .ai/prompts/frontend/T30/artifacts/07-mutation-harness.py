@@ -17,6 +17,7 @@ WHAT THE FAMILIES PROBE
   MP20-MP21  the bearer and whose job the 401 is                    (AC4)
   MP22-MP23  the contract stops saying what it says                 (AC1)
   MP24-MP28  the five instruments phase 8 added      (Kimi I1, I2, I3, I5, I4)
+  MP29-MP34  the six instruments phase 11 added                   (Kimi phase 11)
 
 MP01-MP05 ARE THIS TASK'S REASON TO EXIST. R20's third clause is the only one an
 implementation can break invisibly: reading `email` or `email_verified` off the access
@@ -51,10 +52,22 @@ mutants producing exactly 3 failures were reported as SURVIVORS. They were not. 
 that can drift silently turns a false negative into a published mutation score, so this
 harness refuses to run rather than report, and exits non-zero on any survivor.
 
-EXPECTED BASELINE on this host: the whole suite runs 1444 passed / 1 failed - the one is
+ANCHORS ARE ASSERTED TOO, for the same reason and after the same mistake. The I1 fix in
+phase 8 rewrote the `api.GET` call and left MP06 and MP07 pointing at text that no longer
+existed. They printed BROKEN, which is correct - but BROKEN is not SURVIVED, so the run
+still ended `survivors: none` and got reported as 28 of 28. It was 26 killed and 2 never
+applied. `preflight()` now refuses to start until every anchor matches exactly once.
+
+MP29-MP34 ARE WHAT PHASE 11 BOUGHT. MP29 and MP31 are the two that matter: MP29 drops the
+`opaqueredirect` arm, which is the ONLY one of the redirect check's three arms a real
+browser ever reaches, and every case before phase 11 drove one of the other two. MP31
+restores a defect that SHIPPED - without the `data === null` arm, a 200 carrying the JSON
+literal `null` reaches `typeof data.sub` and throws a raw TypeError out of the function.
+
+EXPECTED BASELINE on this host: the whole suite runs 1451 passed / 1 failed - the one is
 the pre-existing `src/api/lintRejectsHandWrittenBackendFetch.test.ts`, an oxlint
 summary-line quirk of this machine, unrelated to T30 and failing before and after it.
-T30's own file runs 46 / 46, exit 0.
+T30's own file runs 53 / 53, exit 0.
 """
 
 import subprocess
@@ -74,16 +87,23 @@ FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 EXPECTED_BASELINE_FAILURES = 1
 
 # --- anchors, copied from the real source ----------------------------------------------------------------
-NO_SESSION = "  if (tokens.current() === null) throw new ReadProfileError('no-session');"
-GET_CALL = """  const { data, response } = await api.GET('/userinfo', {"""
+NO_SESSION = """  const token = tokens.current();
+  if (token === null || token === '') throw new ReadProfileError('no-session');"""
+GET_CALL = "    const answer = await api.GET('/userinfo', {"
 REDIRECT_OPT = "    redirect: 'manual',"
 REDIRECT_GUARD = """  if (response.redirected || (response.status >= 300 && response.status < 400) || response.type === 'opaqueredirect') {
     throw new ReadProfileError('no-session');
   }"""
 UNAUTHORIZED = "  if (response.status === 401 || response.status === 403) throw new ReadProfileError('unauthorized');"
-UNAVAILABLE = """  if (!response.ok || data === undefined || typeof data.sub !== 'string' || data.sub === '') {
-    throw new ReadProfileError('unavailable');
-  }"""
+UNAVAILABLE = (
+    "  if (!response.ok || data === undefined || data === null"
+    " || typeof data.sub !== 'string' || data.sub === '') {\n"
+    "    throw new ReadProfileError('unavailable');\n"
+    "  }"
+)
+NULL_ARM = " || data === null"
+OPAQUE_ARM = " || response.type === 'opaqueredirect'"
+DATA_DECL = "  let data: Profile | undefined | null;"
 RETURN = "  return data;"
 PUBLIC_OPS = "export const OIDC_PUBLIC_OPERATIONS: ReadonlySet<string> = new Set(['POST /oauth2/token']);"
 TRANSPORT_CATCH = """  } catch {
@@ -113,12 +133,12 @@ MUTANTS = [
 
     # --- MP06-MP08: the reader builds its own request (AC3, L6) ------------------------------------------
     ("MP06 the reader calls fetch directly", READER, GET_CALL,
-     "  const raw = await globalThis.fetch('/userinfo');\n"
-     "  const { data, response } = { data: (await raw.json()) as Profile, response: raw };\n"
-     "  void ({"),
+     "    const raw = await globalThis.fetch('/userinfo');\n"
+     "    const answer = { data: (await raw.json()) as Profile, response: raw };\n"
+     "    void ({"),
     ("MP07 the path is assembled rather than named", READER, GET_CALL,
-     """  const path = `/${'userinfo'}` as '/userinfo';
-  const { data, response } = await api.GET(path, {"""),
+     """    const path = `/${'userinfo'}` as '/userinfo';
+    const answer = await api.GET(path, {"""),
     ("MP08 /userinfo is made PUBLIC, so it carries no bearer and never renews", CLIENT, PUBLIC_OPS,
      "export const OIDC_PUBLIC_OPERATIONS: ReadonlySet<string> = new Set(["
      "'POST /oauth2/token', 'GET /userinfo']);"),
@@ -135,10 +155,11 @@ MUTANTS = [
      "    throw new Error(`Profile read refused: ${response.headers.get('www-authenticate') ?? ''}`);\n"
      "  }"),
     ("MP10 the response body's detail reaches the error message", READER, UNAVAILABLE,
-     """  if (!response.ok || data === undefined || typeof data.sub !== 'string' || data.sub === '') {
-    const body = JSON.stringify(data ?? {});
-    throw new ReadProfileError(`unavailable ${body}` as 'unavailable');
-  }"""),
+     "  if (!response.ok || data === undefined || data === null"
+     " || typeof data.sub !== 'string' || data.sub === '') {\n"
+     "    const body = JSON.stringify(data ?? {});\n"
+     "    throw new ReadProfileError(`unavailable ${body}` as 'unavailable');\n"
+     "  }"),
     ("MP11 a failed read is logged", READER, UNAUTHORIZED,
      "  if (response.status === 401 || response.status === 403) {\n"
      "    console.warn('profile read refused', response.headers.get('www-authenticate'));\n"
@@ -147,17 +168,19 @@ MUTANTS = [
 
     # --- MP12-MP15: no session is mistaken for a profile (AC12) -----------------------------------------
     ("MP12 the no-session short-circuit becomes a renewal attempt instead", READER, NO_SESSION,
-     "  if (tokens.current() === null) await tokens.renew();"),
+     "  const token = tokens.current();\n"
+     "  if (token === null || token === '') await tokens.renew();"),
     ("MP13 the short-circuit is removed, so a bearer-less request is sent", READER, NO_SESSION, ""),
     ("MP14 redirect: 'manual' is dropped, so a login page arrives as a success", READER, REDIRECT_OPT, ""),
     ("MP15 the 3xx guard is removed, so a redirect is read as a profile", READER, REDIRECT_GUARD, ""),
 
     # --- MP16-MP17: the sub-only live shape (AC9) --------------------------------------------------------
     ("MP16 a sub-only response is treated as a FAILURE, breaking the live server", READER, UNAVAILABLE,
-     """  if (!response.ok || data === undefined || typeof data.sub !== 'string' || data.sub === ''
-      || data.email === undefined) {
-    throw new ReadProfileError('unavailable');
-  }"""),
+     "  if (!response.ok || data === undefined || data === null"
+     " || typeof data.sub !== 'string' || data.sub === ''\n"
+     "      || data.email === undefined) {\n"
+     "    throw new ReadProfileError('unavailable');\n"
+     "  }"),
     ("MP17 the missing claims are FILLED IN rather than left absent", READER, RETURN,
      "  return { ...data, email: data.email ?? 'unknown@example.invalid', name: data.name ?? 'Unknown' };"),
 
@@ -209,6 +232,41 @@ MUTANTS = [
      """  const client = createOidcClient();
   client.use(boundary.middleware(OIDC_PUBLIC_OPERATIONS));
   if (rateLimit) client.use(rateLimit.middleware);"""),
+
+    # --- MP29-MP34: the instruments phase 11 added (Kimi's eight recommendations) ------------------------
+    # MP29 is the one that matters most of the six. `redirect: 'manual'` in a real browser does NOT return a
+    # readable 3xx - it returns an opaque response, status 0, no body. So this arm is the ONLY one of the
+    # three doing any work where it counts, and until phase 11 every case drove one of the other two.
+    ("MP29 the opaqueredirect arm is dropped, which is the only arm a real browser reaches", READER,
+     OPAQUE_ARM, ""),
+    # MP30: the guard phase 11 widened, narrowed back. '' sends no Authorization header at all, so the
+    # bearer-less 302 and its Set-Cookie happen exactly as if there were no guard.
+    ("MP30 the empty-token guard is narrowed back to null only", READER,
+     "  if (token === null || token === '') throw new ReadProfileError('no-session');",
+     "  if (token === null) throw new ReadProfileError('no-session');"),
+    # MP31 RESTORES A DEFECT THAT SHIPPED: without the null arm, a 200 carrying the JSON literal `null`
+    # reaches `typeof data.sub` and throws `TypeError: Cannot read properties of null` out of the function,
+    # past a try/catch that only wraps the transport.
+    ("MP31 the null arm is removed, so a JSON null body throws a raw TypeError", READER, NULL_ARM, ""),
+    ("MP32 the transport failure is wrapped with a cause, which carries the original error whole", READER,
+     TRANSPORT_CATCH,
+     """  } catch (caught) {
+    const error = new ReadProfileError('unavailable');
+    (error as { cause?: unknown }).cause = caught;
+    throw error;
+  }"""),
+    # MP33 leaks the TOKEN rather than a profile claim, so the AC6 sweep for PROFILE_VALUES cannot see it and
+    # the file that owns this claim for other flows never calls readProfile.
+    ("MP33 the access token is written to window.name on a successful read", READER, RETURN,
+     "  window.name = tokens.current() ?? '';\n  return data;"),
+    # MP34: the body is inspected BEFORE the redirect, which is the order phase 11 made load-bearing. The
+    # existing followed-redirect case carries HTML, so only a redirect carrying a VALID profile separates
+    # the two orders.
+    ("MP34 the redirect check runs only when the body is unusable, so a redirect can be a profile", READER,
+     REDIRECT_GUARD,
+     """  if (data === undefined && (response.redirected || (response.status >= 300 && response.status < 400) || response.type === 'opaqueredirect')) {
+    throw new ReadProfileError('no-session');
+  }"""),
 ]
 
 # MP22-MP23 mutate the CONTRACT rather than source, so they are applied separately.
@@ -289,9 +347,48 @@ def score(label, base_failed):
     return f"{label} [SURVIVED]"
 
 
+def preflight():
+    """Every anchor must be in the source, EXACTLY ONCE, before a single verdict is printed.
+
+    T29 taught that a baseline which can drift silently turns a false negative into a published
+    score. This is the same failure one level up, and it already happened here: the I1 fix in phase
+    8 rewrote the `api.GET` call, which left MP06's and MP07's anchor matching nothing. They printed
+    `BROKEN anchor missed` - correctly - but BROKEN mutants never reach the survivors list, so the
+    run still ended `survivors: none` and was reported as 28/28. It was 26 killed and 2 never
+    applied. A mutant that cannot be applied is not evidence of anything, and a harness that scores
+    one as a non-survivor is lying by omission.
+
+    So: refuse up front, name every stale anchor at once, and make a source change that outruns its
+    mutants impossible to miss rather than easy to miss.
+    """
+    stale = []
+    for label, path, old, _new in MUTANTS:
+        if path is None:
+            continue
+        count = (ROOT / path).read_text().count(old)
+        if count != 1:
+            stale.append(f"  {label.split()[0]:<6} {path} matches its anchor {count} times, expected 1")
+    for label, old, _new in CONTRACT_MUTANTS:
+        count = CONTRACT.read_text().count(old)
+        if count != 1:
+            stale.append(f"  {label.split()[0]:<6} {CONTRACT.name} matches its anchor {count} times, expected 1")
+    if stale:
+        print("REFUSING TO RUN: anchors no longer match the source.\n")
+        print("\n".join(stale))
+        print(
+            "\nThe source moved and these mutants did not follow. They would each print BROKEN,\n"
+            "which is NOT a survivor, so the run would still end `survivors: none` and the score\n"
+            "would be overstated by exactly this many. Re-copy the anchors and run again."
+        )
+        return False
+    return True
+
+
 def main():
     wanted = sys.argv[1] if len(sys.argv) > 1 else ""
     print(f"ROOT = {ROOT}\n")
+    if not preflight():
+        return 1
     code, failed, total = run(FILES)
     print(f"baseline whole suite: {failed} failed of {total}, exit {code}")
     code30, failed30, total30 = run(T30_ONLY)
