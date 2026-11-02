@@ -247,3 +247,31 @@ type alias is checked at its declaration whether or not it is exported.
 
 **Phase 9 complete.** Nine findings: six fixed in code, one rejected on the facts and escalated, two resolved
 as recorded. One defect of my own found and fixed while resolving I6.
+
+---
+
+## CORRECTION, added in phase 11 (2026-11-02)
+
+**The I1 resolution above misattributes the cause.** It says "the declared `lib` ceiling is not enforced by
+TypeScript 7.0.2". The measurement behind that sentence was real, but the explanation was wrong, and Kimi's
+phase 11 A1 is what sent me back to it.
+
+The actual cause is a **transitive dependency**:
+`type-fest@0.16.0/source/basic.d.ts` declares `/// <reference lib="esnext"/>`, and it enters the program
+through `workbox-build` → `tempy@0.6.0` → `type-fest`. That reference pulls the entire esnext lib set into
+the program and lifts the declared `"lib": ["ES2022", …]` ceiling for **every file in `src/`**, under any
+compiler. It explains each measurement at once:
+
+- both TypeScript 7.0.2 **and** the 5.9.3 in the store accept `findLastIndex` under this `tsconfig.json`;
+- a config-less probe, which has no program and therefore no `type-fest`, rejects it;
+- `tsc --listFiles` loads `lib.es2023.*` through `lib.esnext.*`.
+
+So it is not a compiler quirk. **OQ-T31-4 stands but reads differently**: a dependency's `.d.ts` silently
+raises this project's language-level floor, and the remedy is dependency or `types` hygiene, not an edit to
+`lib` — editing `lib` would change nothing, which is what made the original diagnosis look right.
+
+The concrete breakage is gone either way: the one ES2023 call in `src/` is now an ES2022 `reduce`
+(`stateSurvivesRedirectAndIsConsumedOnce.test.tsx:718`), and a sweep found no other post-ES2022 array or
+object API in the tree. The suite and both compilers are green without depending on the widening.
+
+Recorded here rather than silently rewritten, because the phase 12 verdict rests on this artifact.
