@@ -715,7 +715,12 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
       expect(log).toContain(`get ${AUTHORIZE_STORAGE_KEYS.state}`);
       expect(log).toContain(`get ${AUTHORIZE_STORAGE_KEYS.nonce}`);
       expect(log).toContain(`get ${AUTHORIZE_STORAGE_KEYS.codeVerifier}`);
-      const lastRead = log.findLastIndex((event) => event.startsWith('get '));
+      // ES2022, deliberately. `findLastIndex` is ES2023 and type-checks here only because a transitive
+      // dependency (`type-fest` via `tempy` via `workbox-build`) declares `/// <reference lib="esnext"/>`
+      // and silently lifts this project's declared `lib: ["ES2022", ...]` ceiling. Kimi found it as a
+      // build-gate failure in T31 phase 11, from an environment where that reference was not in the
+      // program. A reduce says the same thing and depends on nothing.
+      const lastRead = log.reduce((last, event, index) => (event.startsWith('get ') ? index : last), -1);
       const firstRemoval = log.findIndex((event) => event.startsWith('remove '));
       expect(firstRemoval, 'the control: a removal really happened').toBeGreaterThan(-1);
       expect(lastRead).toBeLessThan(firstRemoval);

@@ -250,26 +250,46 @@ const PERMITTED_STATE_COPY: ReadonlyArray<{ key: string; why: string }> = [];
 const PERMITTED_STATE_SOURCE: ReadonlyArray<{
   file: string;
   words: readonly string[];
-  confinedTo: RegExp;
   why: string;
 }> = [
   {
-    file: 'profile/readAccount.ts',
+    file: 'profile/accountStatus.ts',
     words: ['locked', 'suspended', 'deleted'],
-    // The ONE construct in that file allowed to name a state - Kimi I2. A `.ts` file with no translator
-    // call is a bound on the FILE, and a file licensed to name states can still log one or put one in a
-    // thrown message: `throw new ReadAccountError('suspended')` would have kept both of those checks true.
-    // This is a bound on the PLACE, so the licence covers the runtime enum list and nothing else.
-    confinedTo: /export const ACCOUNT_STATUSES = \[[^\]]*\]/,
     why: 'R20(b) and task 31: the account status is READ from GET /accounts/me and the contract enum names '
       + 'these three, so a runtime list of them is the only way an out-of-contract status can be rejected. '
-      + 'The module validates and returns; it renders no copy and calls no translator.',
+      + 'The licensed file holds that list and the guard over it and nothing else - no carrier can take a '
+      + 'state word out of it.',
   },
 ];
 
-/** What is left of a permitted file once the one construct licensed to name a state is cut out of it. */
-function outsideTheLicence(code: string, row: (typeof PERMITTED_STATE_SOURCE)[number]): string {
-  return code.replace(row.confinedTo, '');
+/**
+ * Every way a state word could leave a licensed file and reach a visitor.
+ *
+ * This is the PLACE bound, and it is the second attempt at one. Kimi I2 found the first version - `.ts` plus
+ * no translator call - too weak: that bounds the FILE, and a file licensed to name states can still log one
+ * or put one in a thrown message. The repair was a regex pinning the words inside one array literal, and
+ * Kimi A2 then found THAT too brittle: it pins a textual shape, so the first reformat breaks it in a way
+ * whose obvious repair is to widen the regex and quietly lose the property.
+ *
+ * So the licence moved to a file that contains nothing but the list and its guard, and the bound became the
+ * carriers. A state word can only reach a visitor by being rendered, thrown, logged or translated. Forbid
+ * all four in the licensed file and the words cannot travel, whatever shape the list is written in.
+ */
+const STATE_WORD_CARRIERS: ReadonlyArray<{ carrier: string; pattern: RegExp }> = [
+  { carrier: 'thrown', pattern: /\bthrow\b/ },
+  { carrier: 'logged', pattern: /\bconsole\./ },
+  { carrier: 'translated', pattern: /\bt\(|useTranslation/ },
+];
+// The fourth carrier, RENDERING, is not in that table and is not matched by a regex. A `.ts` file cannot
+// contain JSX at all under this toolchain, so the extension assertion in the control below is the whole
+// bound - structurally, which is stronger than any pattern. Both earlier attempts at a regex for it fired
+// on a generic type parameter instead: `/<[A-Za-z]/` on `Partial<Record<...>>`, then `/<[A-Z]/` on
+// `AssertNever<Exclude<...>>`. A pattern that cannot tell `<Exclude` from `<Button` would be loosened by the
+// next reader who hit it, and then it would mean nothing.
+
+/** The carriers present in a licensed file. Empty is the only acceptable answer. */
+function carriersIn(code: string): string[] {
+  return STATE_WORD_CARRIERS.filter((row) => row.pattern.test(code)).map((row) => row.carrier);
 }
 
 /** State-word hits in files no `PERMITTED_STATE_SOURCE` row covers. */
@@ -1644,9 +1664,9 @@ describe('AC7: no production module names an account state', () => {
     const hits = hitsOf(targets, new RegExp(ALWAYS_FORBIDDEN_STATE, 'gi'));
 
     expect(unpermittedState(hits, []).map((hit) => hit.file)).toEqual([
-      'profile/readAccount.ts',
-      'profile/readAccount.ts',
-      'profile/readAccount.ts',
+      'profile/accountStatus.ts',
+      'profile/accountStatus.ts',
+      'profile/accountStatus.ts',
     ]);
 
     for (const row of PERMITTED_STATE_SOURCE) {
@@ -1656,45 +1676,40 @@ describe('AC7: no production module names an account state', () => {
         expect(new RegExp(word, 'i').test((code as ScanTarget).code), `${row.file} still names ${word}`)
           .toBe(true);
       }
-      // The bound: the words cannot reach a visitor. No translator call, and - structurally, which is
-      // stronger than any regex - a `.ts` file, which cannot contain JSX at all under this toolchain. The
-      // first draft of this bound tested for `/<[A-Za-z]/` and failed on `Partial<Record<...>>`: a generic
-      // parameter is not a JSX element, and a pattern that cannot tell them apart would have forced the next
-      // reader to loosen it.
+      // 3a. A `.ts` file cannot contain JSX at all under this toolchain, which is structurally stronger than
+      //     any regex for the rendering carrier. An earlier draft tested `/<[A-Za-z]/` and failed on
+      //     `Partial<Record<...>>`: a generic parameter is not a JSX element.
       expect(row.file.endsWith('.ts'), `${row.file} is not a component`).toBe(true);
-      expect((code as ScanTarget).code, `${row.file} calls no translator`).not.toMatch(/\bt\(|useTranslation/);
 
-      // 4. The PLACE bound, Kimi I2. The structural pair above says the file cannot render; it does not say
-      //    the words stay inside the construct the licence was granted for. Cut that construct out and
-      //    nothing may be left - so a logged state, or one in a thrown message, fails here.
-      expect(row.confinedTo.test((code as ScanTarget).code), `${row.file} no longer has its licensed construct`)
-        .toBe(true);
-      expect(
-        outsideTheLicence((code as ScanTarget).code, row),
-        `${row.file} names a state OUTSIDE the construct its allowlist row licenses`,
-      ).not.toMatch(new RegExp(ALWAYS_FORBIDDEN_STATE, 'i'));
+      // 3b. And no carrier of any kind - Kimi I2 for the property, Kimi A2 for this form of it. A state word
+      //     reaches a visitor by being rendered, thrown, logged or translated, and the licensed file does
+      //     none of those, whatever shape the list inside it is written in.
+      expect(carriersIn((code as ScanTarget).code), `${row.file} can carry a state word out`).toEqual([]);
     }
   });
 
-  it('CONTROL: the PLACE bound reports a state word that escapes the licensed construct', () => {
+  it('CONTROL: every carrier of a state word is detected, one synthetic file each', () => {
     /**
-     * The dirty-proof for Kimi I2, and the case that makes the bound above non-vacuous. Both shapes keep the
-     * file a `.ts` with no translator call, which is exactly why the structural pair could not see them.
+     * The dirty-proof for the place bound, and the case that makes it non-vacuous. Each shape below keeps the
+     * file a `.ts` with a perfectly ordinary status list in it - which is exactly why the earlier structural
+     * pair, and then the earlier array-literal regex, could not see them.
      */
-    const row = PERMITTED_STATE_SOURCE[0];
-    const licensed = "export const ACCOUNT_STATUSES = [\n  'ACTIVE',\n  'SUSPENDED',\n] as const;\n";
-    const state = new RegExp(ALWAYS_FORBIDDEN_STATE, 'i');
+    const clean = "export const ACCOUNT_STATUSES = ['ACTIVE', 'SUSPENDED'] as const;";
+    expect(carriersIn(clean)).toEqual([]);
 
-    // Clean: the words live only inside the licensed construct.
-    expect(outsideTheLicence(licensed, row)).not.toMatch(state);
-
-    // Dirty, two ways - a thrown message and a log line.
-    for (const escape of [
-      "throw new ReadAccountError('suspended');",
-      "console.warn('account suspended');",
-    ]) {
-      expect(outsideTheLicence(`${licensed}${escape}`, row), escape).toMatch(state);
+    const dirty: ReadonlyArray<[string, string]> = [
+      ['thrown', `${clean}\nthrow new ReadAccountError('suspended');`],
+      ['logged', `${clean}\nconsole.warn('account suspended');`],
+      ['translated', `${clean}\nconst copy = t('account.suspended');`],
+    ];
+    for (const [carrier, code] of dirty) {
+      expect(carriersIn(code), carrier).toContain(carrier);
     }
+
+    // And the fourth carrier, which is bounded by the extension rather than by a pattern: a licensed row
+    // naming a component would fail the assertion in the case above.
+    expect('profile/AccountStatus.tsx'.endsWith('.ts')).toBe(false);
+    expect('profile/accountStatus.ts'.endsWith('.ts')).toBe(true);
   });
 
   it('CONTROL: a state word inside a URL STRING survives stripping, which it did not before', () => {

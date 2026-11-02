@@ -1,6 +1,9 @@
 import type { components } from '@themistra/api-client';
 import type { AuthApi } from '../api/client';
 import type { SessionTokens } from '../api/sessionBoundary';
+// The status list and its guard live in their own module so T29's allowlist can license a FILE rather
+// than a regex over this one - Kimi phase 11 A2. See `accountStatus.ts` for why that matters.
+import { ACCOUNT_STATUSES, isAccountStatus } from './accountStatus';
 
 /**
  * The account read. R20's second clause, and the SPA's only truthful source of account state.
@@ -39,30 +42,8 @@ import type { SessionTokens } from '../api/sessionBoundary';
  */
 export type Account = components['schemas']['AccountResponse'];
 
-/**
- * The five, as a RUNTIME list - the one place T31 restates any part of the schema, and deliberately the
- * narrowest form that makes the check possible at all.
- *
- * A union is a compile-time artifact: it does not exist at runtime, so nothing can be checked against it
- * without a list. `satisfies` holds this one to the contract in the direction that matters most day to day -
- * a value that stops being a status stops compiling here - and `NoUnlistedStatus` below holds the other.
- * T30's F10 lesson stands: a hand-written copy that happens to match today is not the property worth having.
- */
-export const ACCOUNT_STATUSES = [
-  'PENDING_VERIFICATION',
-  'ACTIVE',
-  'LOCKED',
-  'SUSPENDED',
-  'DELETED',
-] as const satisfies readonly Account['status'][];
-
-/**
- * A status ADDED to the contract and not added above fails here, at compile time, rather than at runtime in
- * front of a visitor. `Exclude` is `never` while the list is complete, and any leftover member makes this
- * alias illegal.
- */
-type AssertNever<T extends never> = T;
-type NoUnlistedStatus = AssertNever<Exclude<Account['status'], (typeof ACCOUNT_STATUSES)[number]>>;
+/** Re-exported so a consumer needs one import, and so the list has exactly one definition. */
+export { ACCOUNT_STATUSES };
 
 /** Why a read did not produce an account. Three cases, and none of them carries a cause the visitor can see. */
 export type ReadAccountFailure = 'no-session' | 'unauthorized' | 'unavailable';
@@ -95,10 +76,6 @@ const FAILURE_MESSAGE: Record<ReadAccountFailure, string> = {
   unauthorized: 'Not authorized.',
   unavailable: 'Account unavailable.',
 };
-
-function isAccountStatus(value: unknown): value is Account['status'] {
-  return typeof value === 'string' && (ACCOUNT_STATUSES as readonly string[]).includes(value);
-}
 
 /**
  * BLANK, not merely empty - Kimi I8. `' '` is a string the server should never send and that no screen can

@@ -67,6 +67,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[5] / "frontend"
 
 READER = "src/profile/readAccount.ts"
+# Kimi A2: the status list and its guard moved here, so T29's allowlist can license a FILE instead of a
+# regex over a construct inside the reader. The licence is now reachable by a production mutant (MQ31).
+STATUS = "src/profile/accountStatus.ts"
 CLIENT = "src/api/client.ts"
 NONCE = "src/auth/idTokenNonce.ts"
 
@@ -215,7 +218,7 @@ MUTANTS = [
     # --- MQ25: the runtime list drifts from the contract (AC2) ------------------------------------------
     # Not a compile error under vitest, which transpiles without typechecking - so the YAML comparison is
     # what has to catch it, and that is the point of having it.
-    ("MQ25 the runtime status list loses DELETED, drifting from the contract enum", READER, DELETED_ROW, ""),
+    ("MQ25 the runtime status list loses DELETED, drifting from the contract enum", STATUS, DELETED_ROW, ""),
 
     # --- MQ26-MQ28: the three phase-9 fixes, each with a mutant of its own ------------------------------
     # Kimi I4. The NARROW cache a needle sweep cannot see: one stringified boolean, no distinctive value
@@ -231,6 +234,30 @@ MUTANTS = [
     # Kimi I8. Back to emptiness: a required field present as one space is handed on as an account.
     ("MQ28 blankness narrows back to emptiness, so a one-space email is a usable account", READER,
      BLANK_STRING, "  return typeof value === 'string' && value !== '';"),
+
+    # --- MQ29-MQ31: the three phase-11 fixes -----------------------------------------------------------
+    # Kimi A5. The ORDER: the body is consulted before the status, so a 401 carrying a complete account is no
+    # longer an `unauthorized`. The measured server never sends that shape, which is exactly why only a case
+    # written for it can see the reordering.
+    ("MQ29 the body is checked before the status, so a 401 carrying an account is not unauthorized", READER,
+     UNAUTHORIZED,
+     "  if ((response.status === 401 || response.status === 403) && !isUsableAccount(data))"
+     " throw new ReadAccountError('unauthorized');"),
+    # Kimi A3. The escape MQ06 could not reach: an ASSEMBLED path in a DIFFERENT production file. The
+    # single-file source case stays green through this one; only the tree-wide scan sees it.
+    ("MQ30 a second caller assembles the path, in a file the single-file case never reads", CLIENT,
+     "export function createOidcApi(",
+     "export function accountPath(): string {\n"
+     "  return `/accounts/${'me'}`;\n"
+     "}\n\n"
+     "export function createOidcApi("),
+    # Kimi I2 + A2. A CARRIER in the licensed module - the regression the allowlist exception exists to
+    # prevent, and the first mutant able to reach that instrument at all: before A2 it lived behind a regex
+    # over a construct, and the harness mutates production source while the instrument is in a test file.
+    # Expect this one killed INHERITED-ONLY: the instrument is T29's, and that is the point.
+    ("MQ31 the licensed status module logs a state word, which is what its licence forbids", STATUS,
+     "export function isAccountStatus",
+     "console.warn('account suspended');\n\nexport function isAccountStatus"),
 ]
 
 
@@ -316,26 +343,27 @@ def main():
     print(f"baseline whole suite: {failed} failed of {total}, exit {code}")
     code31, failed31, total31, _ = run([SHARED_TEST], name_filter="T31:")
     print(f"baseline T31 cases:   {failed31} failed of {total31}, exit {code31}\n")
-    if failed != EXPECTED_BASELINE_FAILURES:
-        print(
-            f"REFUSING TO RUN: baseline is {failed} failures, expected "
-            f"{EXPECTED_BASELINE_FAILURES}. Every verdict below would be measured against a\n"
-            "wrong floor, and a mutant producing exactly this many failures would be reported\n"
-            "as a survivor. Check `git status` and re-run."
-        )
-        return 1
-    if files_failed != KNOWN_ENVIRONMENTAL_FAILURES:
+    # Kimi A7. The NAMES are the real guard, so they are checked first and the count only warns. A host where
+    # the known environmental test fails twice is still a host this harness can measure on - the floor is
+    # MEASURED, not assumed, and `score` compares against it - but an unknown file failing is not, because
+    # then the floor is made of a different test. Refusing on the count alone made the harness unrunnable in
+    # exactly the environment that found this, which is the opposite of what a guard is for.
+    if not files_failed <= KNOWN_ENVIRONMENTAL_FAILURES:
         unexpected = sorted(files_failed - KNOWN_ENVIRONMENTAL_FAILURES)
         fixed = sorted(KNOWN_ENVIRONMENTAL_FAILURES - files_failed)
         print(
-            "REFUSING TO RUN: the baseline failures are not the known environmental ones.\n"
+            "REFUSING TO RUN: a file outside the known environmental set is failing.\n"
             f"  unexpectedly failing: {unexpected or 'none'}\n"
             f"  no longer failing:    {fixed or 'none'}\n"
-            "The count can stay right while the NAMES change, and then every verdict below is\n"
-            "measured against a floor made of a different test. Fix the tree or update\n"
-            "KNOWN_ENVIRONMENTAL_FAILURES deliberately."
+            "A floor made of a different test measures every verdict below against the wrong\n"
+            "thing. Fix the tree, or update KNOWN_ENVIRONMENTAL_FAILURES deliberately."
         )
         return 1
+    if failed != EXPECTED_BASELINE_FAILURES:
+        print(
+            f"NOTE: the baseline is {failed} failures, not the recorded {EXPECTED_BASELINE_FAILURES}, but\n"
+            "every one of them is in the known environmental set, so the measured floor is sound.\n"
+        )
     if failed31 != 0:
         print(f"REFUSING TO RUN: T31's own cases fail {failed31} on a clean tree.")
         return 1

@@ -1564,6 +1564,26 @@ describe('T31: account status from GET /accounts/me', () => {
       }
     });
 
+    it('is the ONLY production file that names /accounts/me, scanned tree-wide', async () => {
+      /**
+       * Kimi A2's companion finding, A3. The case above reads one file, so it proves the property for the one
+       * caller that exists today and says nothing about a second one. The claim worth holding is that the
+       * endpoint has exactly one caller and that caller names it as a literal - otherwise MQ06's escape comes
+       * back in whatever file is added next, and the single-file case would stay green through it.
+       *
+       * Both bounds, as T31 does elsewhere: `readAccount.ts` must be in the answer (or the scan has stopped
+       * seeing the real caller) and nothing else may be.
+       */
+      const targets = await productionSources();
+      const callers = hitsOf(targets, /\/accounts\/me/g).map((hit) => hit.file);
+      expect(callers).toEqual(['profile/readAccount.ts']);
+
+      // And in that one file it is an ARGUMENT, never built. A template literal or a concatenation anywhere
+      // in the tree would reach the same URL while escaping every behavioural case.
+      const assembled = hitsOf(targets, /`[^`]*\/accounts|['"]\/accounts\/['"]\s*\+|\+\s*['"]me['"]/g);
+      expect(assembled).toEqual([]);
+    });
+
     it('exposes the operation on the generated client, typed', async () => {
       const tab = authHarness([{ body: ACCOUNT }]);
       // A typed GET: if the path left the contract this line would not compile, which is the assertion.
@@ -1902,6 +1922,33 @@ describe('T31: account status from GET /accounts/me', () => {
       expect(watch.lines).toEqual([]);
     });
 
+    it('keeps a 401 unauthorized even when its BODY carries detail, or a whole usable account', async () => {
+      /**
+       * Kimi A5. The measured 401 has an empty body and puts its detail in `WWW-Authenticate`, which the case
+       * above drives. This one drives the shape the server does NOT send, because the ordering it depends on
+       * is invisible otherwise: the status is checked before the body is looked at, so no 401 body can be
+       * read as an account and none of its text can travel.
+       *
+       * The second half is the sharper claim. A 401 carrying a COMPLETE, valid account body is exactly what a
+       * reader would return as a success if the shape check ran first - and MQ29 is that reordering.
+       */
+      const detail = 'account suspended by operator 4471, ticket OPS-9912';
+
+      const leaky = authHarness([{ status: 401, body: { error: detail } }, { status: 401, body: { error: detail } }]);
+      const refused = await readAccount(leaky.api, leaky.tokens).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ReadAccountError);
+      expect((refused as ReadAccountError).failure).toBe('unauthorized');
+      const text = `${(refused as Error).message}\n${(refused as Error).stack ?? ''}`;
+      expect(text).not.toContain(detail);
+      expect(text).not.toContain('4471');
+      expect(leaks(surfaces(), [detail])).toEqual([]);
+
+      // A complete account body behind a 401 is still a refusal, not an account.
+      const complete = authHarness([{ status: 401, body: ACCOUNT }, { status: 401, body: ACCOUNT }]);
+      await expect(readAccount(complete.api, complete.tokens))
+        .rejects.toMatchObject({ failure: 'unauthorized' });
+    });
+
     it('names no cause on any failure path, which is the other place detail can hide', async () => {
       /**
        * `Error` has taken a `cause` since ES2022, and `new Error(msg, { cause })` is the idiomatic way to
@@ -1996,6 +2043,10 @@ describe('T31: account status from GET /accounts/me', () => {
       // Kimi I4: the needle sweep can only find values distinctive enough to be needles, and the boolean
       // `emailVerified` is not one. Emptiness of both stores is the needle-free form of the same claim, and
       // it is the only thing that catches a cache holding nothing but `String(account.emailVerified)`.
+      //
+      // Kimi A4 asks for `Object.entries` as well, in case a key were written with an empty-string value.
+      // Measured in jsdom: `setItem('ev', '')` DOES create the key, so `Object.keys` is `['ev']` and this
+      // assertion already fails on it. `entries` would add a second spelling of one claim.
       expect(Object.keys(globalThis.sessionStorage)).toEqual([]);
       expect(Object.keys(globalThis.localStorage)).toEqual([]);
     });
