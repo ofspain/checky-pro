@@ -1947,6 +1947,24 @@ describe('T31: account status from GET /accounts/me', () => {
       const complete = authHarness([{ status: 401, body: ACCOUNT }, { status: 401, body: ACCOUNT }]);
       await expect(readAccount(complete.api, complete.tokens))
         .rejects.toMatchObject({ failure: 'unauthorized' });
+
+      /**
+       * And the SOURCE half, which is what makes the two above load-bearing rather than decorative.
+       *
+       * Measured in `openapi-fetch@0.17.0/dist/index.mjs:232-261`: an ok response returns `{ data, response }`
+       * and a non-ok one returns `{ error, response }`. So a failure body never reaches `data` at all, and
+       * every behavioural assertion about one is held by the client rather than by this reader - which is why
+       * the first mutant written for this case, reordering the status and body checks, proved INERT.
+       *
+       * What this reader can still do wrong is reach for `answer.error` on purpose. That is the one path by
+       * which a server's detail could enter the module, and like the assembled path in AC1 it is invisible to
+       * behaviour: `!response.ok` refuses either way. So it is pinned in the source, where it is visible.
+       */
+      const source = strip(await readFile(join(sourceRoot(), 'profile/readAccount.ts'), 'utf8'));
+      expect(source).toContain('data = answer.data;');
+      for (const reach of ['answer.error', '.error as', 'answer[']) {
+        expect(source, reach).not.toContain(reach);
+      }
     });
 
     it('names no cause on any failure path, which is the other place detail can hide', async () => {

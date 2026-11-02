@@ -236,13 +236,14 @@ MUTANTS = [
      BLANK_STRING, "  return typeof value === 'string' && value !== '';"),
 
     # --- MQ29-MQ31: the three phase-11 fixes -----------------------------------------------------------
-    # Kimi A5. The ORDER: the body is consulted before the status, so a 401 carrying a complete account is no
-    # longer an `unauthorized`. The measured server never sends that shape, which is exactly why only a case
-    # written for it can see the reordering.
-    ("MQ29 the body is checked before the status, so a 401 carrying an account is not unauthorized", READER,
-     UNAUTHORIZED,
-     "  if ((response.status === 401 || response.status === 403) && !isUsableAccount(data))"
-     " throw new ReadAccountError('unauthorized');"),
+    # Kimi A5, second attempt. The FIRST attempt reordered the status and body checks and proved INERT,
+    # measured in `openapi-fetch@0.17.0/dist/index.mjs:232-261`: a non-ok response returns `{ error, response }`
+    # and NEVER populates `data`, so every arm that consults `data` on a failure is already looking at
+    # `undefined` whatever order it runs in. The reachable version is this one - the reader reaching for the
+    # error body it is not supposed to know about. Behaviourally inert as well (`!response.ok` still refuses),
+    # so like MQ06 it is killable by a source scan or not at all.
+    ("MQ29 the reader adopts the server's ERROR body as data, which is detail it must not touch", READER,
+     "    data = answer.data;", "    data = answer.data ?? (answer.error as typeof data);"),
     # Kimi A3. The escape MQ06 could not reach: an ASSEMBLED path in a DIFFERENT production file. The
     # single-file source case stays green through this one; only the tree-wide scan sees it.
     ("MQ30 a second caller assembles the path, in a file the single-file case never reads", CLIENT,
