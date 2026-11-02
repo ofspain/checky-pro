@@ -59,6 +59,7 @@ be "a quoted literal argument and never assembled" in those words and simply had
 behind it. Held now by a source scan, because that is the only instrument that can see it.
 """
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -74,10 +75,20 @@ FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 EXPECTED_BASELINE_FAILURES = 1
 
+# Kimi I6. The count alone absorbs a swap: if the environmental failure were fixed on the same day an
+# unrelated test broke, the floor would still be 1 and every verdict would be measured against the wrong
+# one. So the failing FILES are pinned too, and the count stays to catch a second failure inside this file.
+KNOWN_ENVIRONMENTAL_FAILURES = {
+    # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass here.
+    "src/api/lintRejectsHandWrittenBackendFetch.test.ts",
+}
+
 # --- anchors, copied from the real source ----------------------------------------------------------------
 NO_SESSION = """  const token = tokens.current();
-  if (token === null || token === '') throw new ReadAccountError('no-session');"""
-EMPTY_ARM = " || token === ''"
+  if (token === null || token.trim() === '') throw new ReadAccountError('no-session');"""
+EMPTY_ARM = " || token.trim() === ''"
+TRIM = "token.trim() === ''"
+BLANK_STRING = "  return typeof value === 'string' && value.trim() !== '';"
 GET_CALL = "    const answer = await api.GET('/accounts/me');"
 UNAUTHORIZED = (
     "  if (response.status === 401 || response.status === 403)"
@@ -88,7 +99,7 @@ RETURN = "  return data;"
 NULL_GUARD = "  if (typeof body !== 'object' || body === null) return false;"
 BOOL_GUARD = "    && typeof account.emailVerified === 'boolean'"
 STATUS_GUARD = "    && isAccountStatus(account.status)"
-UUID_GUARD = "    isNonEmptyString(account.accountUuid)"
+UUID_GUARD = "    isNonBlankString(account.accountUuid)"
 DELETED_ROW = "  'DELETED',\n"
 TRANSPORT_CATCH = """  } catch {
     // Discarded, not inspected: there is nothing in a transport failure a visitor should be told, and the
@@ -205,6 +216,21 @@ MUTANTS = [
     # Not a compile error under vitest, which transpiles without typechecking - so the YAML comparison is
     # what has to catch it, and that is the point of having it.
     ("MQ25 the runtime status list loses DELETED, drifting from the contract enum", READER, DELETED_ROW, ""),
+
+    # --- MQ26-MQ28: the three phase-9 fixes, each with a mutant of its own ------------------------------
+    # Kimi I4. The NARROW cache a needle sweep cannot see: one stringified boolean, no distinctive value
+    # anywhere in it. Only the store-emptiness assertion added in phase 9 can kill this.
+    ("MQ26 only the emailVerified flag is cached, which no needle in the sweep is distinctive enough to find",
+     READER, RETURN,
+     "  globalThis.sessionStorage.setItem('ev', String(data.emailVerified));\n"
+     "  return data;"),
+    # Kimi I5. Back to the narrower guard: whitespace is truthy, so the boundary attaches it and a malformed
+    # bearer goes out with the measured Set-Cookie and one doomed renewal.
+    ("MQ27 the no-session guard loses trim(), so a whitespace token sends a malformed bearer", READER,
+     TRIM, "token === ''"),
+    # Kimi I8. Back to emptiness: a required field present as one space is handed on as an account.
+    ("MQ28 blankness narrows back to emptiness, so a one-space email is a usable account", READER,
+     BLANK_STRING, "  return typeof value === 'string' && value !== '';"),
 ]
 
 
@@ -215,6 +241,7 @@ def run(files, name_filter=None):
     proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
     out = proc.stdout + proc.stderr
     failed = total = None
+    files_failed = set()
     for line in out.splitlines():
         stripped = line.strip()
         if stripped.startswith("Tests "):
@@ -222,7 +249,10 @@ def run(files, name_filter=None):
             failed = int(body.split("failed")[0].strip()) if "failed" in body else 0
             if "(" in body:
                 total = int(body.split("(")[-1].rstrip(")"))
-    return proc.returncode, failed, total
+        match = re.search(r"\bFAIL\b\s+(\S+\.(?:ts|tsx))", stripped)
+        if match:
+            files_failed.add(match.group(1))
+    return proc.returncode, failed, total, files_failed
 
 
 def apply(path, old, new):
@@ -264,12 +294,12 @@ def preflight():
 
 
 def score(label, base_failed):
-    code, failed, total = run(FILES)
+    code, failed, total, _ = run(FILES)
     if failed is None:
         print(f"  BROKEN    -              {label}")
         return None
     if failed > base_failed:
-        _, own_failed, _ = run([SHARED_TEST], name_filter="T31:")
+        _, own_failed, _, _ = run([SHARED_TEST], name_filter="T31:")
         own = "own" if (own_failed or 0) > 0 else "INHERITED-ONLY"
         print(f"  KILLED    {own:<14} {label}  ({failed} failed of {total}, exit {code})")
         return None
@@ -282,9 +312,9 @@ def main():
     print(f"ROOT = {ROOT}\n")
     if not preflight():
         return 1
-    code, failed, total = run(FILES)
+    code, failed, total, files_failed = run(FILES)
     print(f"baseline whole suite: {failed} failed of {total}, exit {code}")
-    code31, failed31, total31 = run([SHARED_TEST], name_filter="T31:")
+    code31, failed31, total31, _ = run([SHARED_TEST], name_filter="T31:")
     print(f"baseline T31 cases:   {failed31} failed of {total31}, exit {code31}\n")
     if failed != EXPECTED_BASELINE_FAILURES:
         print(
@@ -294,17 +324,31 @@ def main():
             "as a survivor. Check `git status` and re-run."
         )
         return 1
+    if files_failed != KNOWN_ENVIRONMENTAL_FAILURES:
+        unexpected = sorted(files_failed - KNOWN_ENVIRONMENTAL_FAILURES)
+        fixed = sorted(KNOWN_ENVIRONMENTAL_FAILURES - files_failed)
+        print(
+            "REFUSING TO RUN: the baseline failures are not the known environmental ones.\n"
+            f"  unexpectedly failing: {unexpected or 'none'}\n"
+            f"  no longer failing:    {fixed or 'none'}\n"
+            "The count can stay right while the NAMES change, and then every verdict below is\n"
+            "measured against a floor made of a different test. Fix the tree or update\n"
+            "KNOWN_ENVIRONMENTAL_FAILURES deliberately."
+        )
+        return 1
     if failed31 != 0:
         print(f"REFUSING TO RUN: T31's own cases fail {failed31} on a clean tree.")
         return 1
     base_failed = failed
 
     survivors = []
+    broken = []
     for label, path, old, new in MUTANTS:
         if wanted and wanted not in label:
             continue
         if not apply(path, old, new):
             print(f"  BROKEN    anchor missed  {label}")
+            broken.append(label)
             revert()
             continue
         survived = score(label, base_failed)
@@ -313,7 +357,12 @@ def main():
         revert()
 
     print(f"\nsurvivors: {survivors or 'none'}")
-    return 1 if survivors else 0
+    # A BROKEN mutant is not a survivor, and until phase 9 it did not reach the exit code either - so a run
+    # whose anchors had rotted could still exit 0 and be published as a full score. That was T30's exact
+    # defect, and `preflight` only guards the anchors it can see before the first verdict: `score` prints
+    # BROKEN too, when a run produces no parseable count at all. Both now fail the run.
+    print(f"broken:    {broken or 'none'}")
+    return 1 if (survivors or broken) else 0
 
 
 if __name__ == "__main__":

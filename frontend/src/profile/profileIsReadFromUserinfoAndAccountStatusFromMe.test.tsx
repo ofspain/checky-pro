@@ -1427,7 +1427,17 @@ describe('T31: account status from GET /accounts/me', () => {
    */
   const SUSPENDED: Account = { ...ACCOUNT, status: 'SUSPENDED' };
 
-  /** Every value a leak could carry, including the status, which is the whole point of the task. */
+  /**
+   * Every value a leak could carry that is DISTINCTIVE enough to sweep for - the status included, which is
+   * the whole point of the task.
+   *
+   * `emailVerified` is deliberately not here, and Kimi I4 is right that its absence leaves the needle sweep
+   * blind to a write of `'true'` or `'false'`. The answer is not to add it: those are two of the commonest
+   * substrings in any document, so their absence from a blank surface would prove nothing - the same
+   * reasoning that keeps `ACTIVE` out of this list. The gap is closed instead by asserting the stronger
+   * property one case below, that the success path writes NOTHING to either store at all, which needs no
+   * needle to be distinctive.
+   */
   const ACCOUNT_VALUES = [
     SUSPENDED.accountUuid,
     SUSPENDED.email,
@@ -1786,8 +1796,11 @@ describe('T31: account status from GET /accounts/me', () => {
       await expect(readAccount(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'unavailable' });
     });
 
-    it.each(REQUIRED_STRINGS)('rejects a body whose %s is empty or null or wrong-typed', async (field) => {
-      for (const value of ['', null, 42, {}]) {
+    it.each(REQUIRED_STRINGS)('rejects a body whose %s is empty, BLANK, null or wrong-typed', async (field) => {
+      // `'   '` is Kimi I8. A present-but-blank required field is the same absence wearing a type: an email
+      // of one space renders as nothing, and whatever shows it reads as broken. The contract says these are
+      // present, so blank is not a value the reader should hand on.
+      for (const value of ['', '   ', '\t\n', null, 42, {}]) {
         const tab = authHarness([{ body: { ...ACCOUNT, [field]: value } }]);
         await expect(readAccount(tab.api, tab.tokens), `${field}=${String(value)}`)
           .rejects.toMatchObject({ failure: 'unavailable' });
@@ -1980,6 +1993,11 @@ describe('T31: account status from GET /accounts/me', () => {
       expect(account).toEqual(SUSPENDED);
       expect(leaks(surfaces(), ACCOUNT_VALUES)).toEqual([]);
       expect(watch.lines).toEqual([]);
+      // Kimi I4: the needle sweep can only find values distinctive enough to be needles, and the boolean
+      // `emailVerified` is not one. Emptiness of both stores is the needle-free form of the same claim, and
+      // it is the only thing that catches a cache holding nothing but `String(account.emailVerified)`.
+      expect(Object.keys(globalThis.sessionStorage)).toEqual([]);
+      expect(Object.keys(globalThis.localStorage)).toEqual([]);
     });
 
     it('writes nothing to either store, even on the failure paths', async () => {
@@ -2066,6 +2084,8 @@ describe('T31: account status from GET /accounts/me', () => {
     it.each([
       ['null', null],
       ['an empty string', ''],
+      ['a single space', ' '],
+      ['a tab and a newline', '\t\n'],
     ])('issues NO request at all when the tab holds %s', async (_label, token) => {
       /**
        * The reason differs from T30's and is written out because of that. This endpoint answers a
@@ -2076,6 +2096,11 @@ describe('T31: account status from GET /accounts/me', () => {
        * `''` is guarded alongside `null` because the boundary attaches the header with `if (token)`
        * (`sessionBoundary.ts:89`): an empty string sends NO `Authorization` header at all, which is exactly
        * the bearer-less request this guard exists to prevent. T30 paid a phase 11 finding for that gap.
+       *
+       * WHITESPACE is Kimi I5, and it arrives by the opposite route: `'   '` is truthy, so the boundary DOES
+       * attach it, and `Authorization: Bearer    ` goes out. That is a malformed bearer, which the live
+       * server answers with the same 401, the same `Set-Cookie` and one doomed renewal - both side effects
+       * this guard exists to prevent, reached by a value the `=== ''` guard waved through.
        */
       const tab = authHarness([{ status: 401 }], { token });
       await expect(readAccount(tab.api, tab.tokens)).rejects.toMatchObject({ failure: 'no-session' });
@@ -2121,11 +2146,16 @@ describe('T31: account status from GET /accounts/me', () => {
       { instrument: 'internal message', dirtiedBy: 'inversion - none of the three is in the catalogue (AC9)' },
       { instrument: 'leak sweep', dirtiedBy: 'a sentinel on each of the seven surfaces (AC10)' },
       { instrument: 'console watcher', dirtiedBy: 'a sentinel on each of six channels (AC10)' },
-      { instrument: 'no-session guard', dirtiedBy: 'null and empty-string tokens, plus a control that a token DOES call (AC13)' },
+      { instrument: 'no-session guard', dirtiedBy: 'null, empty and WHITESPACE tokens, plus a control that a token DOES call (AC13, Kimi I5)' },
+      // Added in phase 9. The first two live in other tasks' files because the exception and the narrowing
+      // they bound are T31's, and an exception without a dirty-proof is how a scan rots.
+      { instrument: 'state-word PLACE bound', dirtiedBy: "a thrown 'suspended' and a logged one, both outside the licensed construct (Kimi I2)" },
+      { instrument: 'left-bounded tfa', dirtiedBy: 'four caught spellings against three *tFailure types that fired before it (Kimi I3)' },
+      { instrument: 'store emptiness', dirtiedBy: 'the success path, where no needle for a boolean could be distinctive (Kimi I4)' },
     ];
 
     it('names one dirtying violation per instrument', () => {
-      expect(T31_INSTRUMENTS).toHaveLength(21);
+      expect(T31_INSTRUMENTS).toHaveLength(24);
       expect(T31_INSTRUMENTS.filter((row) => row.dirtiedBy.length === 0)).toEqual([]);
     });
 

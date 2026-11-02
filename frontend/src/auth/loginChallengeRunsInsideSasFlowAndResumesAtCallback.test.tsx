@@ -954,6 +954,39 @@ describe('no credential input and no second-factor logic ship in the SPA (AC2, A
     expect(unexplainedHits(hitsOf(permitted, mfaIdentifiers()))).toEqual([]);
   });
 
+  it('CONTROL: the LEFT-BOUNDED tfa still catches every spelling it is meant to, and no *tFailure', () => {
+    /**
+     * Kimi I3's control, and it belongs to T27 rather than to T31, which narrowed the pattern.
+     *
+     * `tfa` was unbounded until 2026-10-31 and matched inside `ReadAccountFailure` - `...ntFailure` contains
+     * `tFa` - so it would equally have fired on `PaymentFailure` and every other `*tFailure` the payment
+     * tasks are specified to write. `\btfa` fixes that, and this case pins what the fix costs.
+     *
+     * THE COST, stated so nobody removes the bound to "fix" it: a camelCase SUFFIX such as `paymentTfa` is
+     * no longer caught. That is not reparable here. The pattern is compiled case-insensitively at both call
+     * sites, and under `i` there is nothing to tell the `tFa` of `ReadAccountFailure` from the `Tfa` of
+     * `paymentTfa` - both are `tfa` followed by a letter. Catching the one and not the other needs case,
+     * which `i` throws away. Removing the left bound to recover `paymentTfa` brings back a false positive on
+     * every `*tFailure` in the tree, which is the worse trade: a scan that cries wolf gets its exceptions
+     * widened until it means nothing. `twoFactor` and `multiFactor` are caught by the `multi[-_ ]?factor`
+     * and `2fa` alternatives rather than by this one.
+     */
+    const caught: ScanTarget[] = [{
+      path: 'account/Factors.tsx',
+      code: strip('const a = tfa; const b = tfaCode; const c = tfa_method; const d = "TFA";'),
+    }];
+    const hits = unexplainedHits(hitsOf(caught, mfaIdentifiers()));
+    expect(hits).toHaveLength(4);
+
+    // And the false positives the bound exists to remove. These are real identifiers in this tree and in the
+    // payment tasks' specifications, and every one of them fired before the narrowing.
+    const innocent: ScanTarget[] = [{
+      path: 'profile/readAccount.ts',
+      code: strip('type ReadAccountFailure = "a"; type PaymentFailure = "b"; type RenewalFailure = "c";'),
+    }];
+    expect(unexplainedHits(hitsOf(innocent, mfaIdentifiers()))).toEqual([]);
+  });
+
   it('CONTROL: the scan refuses an empty tree rather than reporting clean', () => {
     // The vacuity failure in its most likely form: a walker pointed at the wrong directory finds nothing,
     // every pattern matches nothing, and every row above goes green over a tree it never read.

@@ -62,7 +62,7 @@ export const ACCOUNT_STATUSES = [
  * alias illegal.
  */
 type AssertNever<T extends never> = T;
-export type NoUnlistedStatus = AssertNever<Exclude<Account['status'], (typeof ACCOUNT_STATUSES)[number]>>;
+type NoUnlistedStatus = AssertNever<Exclude<Account['status'], (typeof ACCOUNT_STATUSES)[number]>>;
 
 /** Why a read did not produce an account. Three cases, and none of them carries a cause the visitor can see. */
 export type ReadAccountFailure = 'no-session' | 'unauthorized' | 'unavailable';
@@ -100,8 +100,13 @@ function isAccountStatus(value: unknown): value is Account['status'] {
   return typeof value === 'string' && (ACCOUNT_STATUSES as readonly string[]).includes(value);
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value !== '';
+/**
+ * BLANK, not merely empty - Kimi I8. `' '` is a string the server should never send and that no screen can
+ * usefully show: an email of one space renders as nothing and reads as a bug in whatever displays it. The
+ * contract says these fields are present, and a present-but-blank field is the same absence wearing a type.
+ */
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
 }
 
 /**
@@ -128,9 +133,9 @@ function isUsableAccount(body: unknown): body is Account {
   if (typeof body !== 'object' || body === null) return false;
   const account = body as Partial<Record<keyof Account, unknown>>;
   return (
-    isNonEmptyString(account.accountUuid)
-    && isNonEmptyString(account.email)
-    && isNonEmptyString(account.createdAt)
+    isNonBlankString(account.accountUuid)
+    && isNonBlankString(account.email)
+    && isNonBlankString(account.createdAt)
     && typeof account.emailVerified === 'boolean'
     && isAccountStatus(account.status)
   );
@@ -154,8 +159,14 @@ export async function readAccount(api: AuthApi, tokens: Pick<SessionTokens, 'cur
   // `''` is guarded alongside `null` because the boundary attaches the header with `if (token)`
   // (`sessionBoundary.ts:89`), so an empty string sends NO `Authorization` header at all and produces exactly
   // the bearer-less request this guard exists to prevent. T30 learned that one from a phase 11 finding.
+  //
+  // `trim()` widens that to WHITESPACE - Kimi I5. `'   '` is truthy, so the boundary does attach it, and the
+  // request goes out as `Authorization: Bearer    `: a malformed bearer, which provokes the 401 with its
+  // `Set-Cookie` and one renewal that cannot succeed. Same two side effects this guard exists to prevent,
+  // reached by a value the narrower guard waved through. The token itself is never trimmed - only the
+  // DECISION about whether it is a token at all.
   const token = tokens.current();
-  if (token === null || token === '') throw new ReadAccountError('no-session');
+  if (token === null || token.trim() === '') throw new ReadAccountError('no-session');
 
   /**
    * Wrapped, because `openapi-fetch` resolves an HTTP error status but REJECTS when the underlying `fetch`

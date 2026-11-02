@@ -247,15 +247,30 @@ const PERMITTED_STATE_COPY: ReadonlyArray<{ key: string; why: string }> = [];
  * An upper AND lower bound, as T29's timer allowlist and T30's decode allowlist are: a control removes the row
  * and proves the scan reports the file it protects.
  */
-const PERMITTED_STATE_SOURCE: ReadonlyArray<{ file: string; words: readonly string[]; why: string }> = [
+const PERMITTED_STATE_SOURCE: ReadonlyArray<{
+  file: string;
+  words: readonly string[];
+  confinedTo: RegExp;
+  why: string;
+}> = [
   {
     file: 'profile/readAccount.ts',
     words: ['locked', 'suspended', 'deleted'],
+    // The ONE construct in that file allowed to name a state - Kimi I2. A `.ts` file with no translator
+    // call is a bound on the FILE, and a file licensed to name states can still log one or put one in a
+    // thrown message: `throw new ReadAccountError('suspended')` would have kept both of those checks true.
+    // This is a bound on the PLACE, so the licence covers the runtime enum list and nothing else.
+    confinedTo: /export const ACCOUNT_STATUSES = \[[^\]]*\]/,
     why: 'R20(b) and task 31: the account status is READ from GET /accounts/me and the contract enum names '
       + 'these three, so a runtime list of them is the only way an out-of-contract status can be rejected. '
       + 'The module validates and returns; it renders no copy and calls no translator.',
   },
 ];
+
+/** What is left of a permitted file once the one construct licensed to name a state is cut out of it. */
+function outsideTheLicence(code: string, row: (typeof PERMITTED_STATE_SOURCE)[number]): string {
+  return code.replace(row.confinedTo, '');
+}
 
 /** State-word hits in files no `PERMITTED_STATE_SOURCE` row covers. */
 function unpermittedState(hits: Hit[], rows = PERMITTED_STATE_SOURCE): Hit[] {
@@ -1648,6 +1663,37 @@ describe('AC7: no production module names an account state', () => {
       // reader to loosen it.
       expect(row.file.endsWith('.ts'), `${row.file} is not a component`).toBe(true);
       expect((code as ScanTarget).code, `${row.file} calls no translator`).not.toMatch(/\bt\(|useTranslation/);
+
+      // 4. The PLACE bound, Kimi I2. The structural pair above says the file cannot render; it does not say
+      //    the words stay inside the construct the licence was granted for. Cut that construct out and
+      //    nothing may be left - so a logged state, or one in a thrown message, fails here.
+      expect(row.confinedTo.test((code as ScanTarget).code), `${row.file} no longer has its licensed construct`)
+        .toBe(true);
+      expect(
+        outsideTheLicence((code as ScanTarget).code, row),
+        `${row.file} names a state OUTSIDE the construct its allowlist row licenses`,
+      ).not.toMatch(new RegExp(ALWAYS_FORBIDDEN_STATE, 'i'));
+    }
+  });
+
+  it('CONTROL: the PLACE bound reports a state word that escapes the licensed construct', () => {
+    /**
+     * The dirty-proof for Kimi I2, and the case that makes the bound above non-vacuous. Both shapes keep the
+     * file a `.ts` with no translator call, which is exactly why the structural pair could not see them.
+     */
+    const row = PERMITTED_STATE_SOURCE[0];
+    const licensed = "export const ACCOUNT_STATUSES = [\n  'ACTIVE',\n  'SUSPENDED',\n] as const;\n";
+    const state = new RegExp(ALWAYS_FORBIDDEN_STATE, 'i');
+
+    // Clean: the words live only inside the licensed construct.
+    expect(outsideTheLicence(licensed, row)).not.toMatch(state);
+
+    // Dirty, two ways - a thrown message and a log line.
+    for (const escape of [
+      "throw new ReadAccountError('suspended');",
+      "console.warn('account suspended');",
+    ]) {
+      expect(outsideTheLicence(`${licensed}${escape}`, row), escape).toMatch(state);
     }
   });
 
