@@ -514,6 +514,32 @@ describe('emailVerifiedClaimIsNotAccountState', () => {
       expect(ACCOUNT_STATUSES).toContain('PENDING_VERIFICATION');
     });
 
+    it('the reader hands the truthful field through UNCHANGED, with no coercion between the two', async () => {
+      // AC3's third clause, which had no instrument of its own until phase 10 went looking for one. The
+      // other two cases pin the CONTRACT; this one pins that nothing between the contract and the caller
+      // rewrites the answer. A source pin rather than a driven read, deliberately: driving it would mean
+      // duplicating T31's transport harness here, a far larger duplication than the scan helpers already
+      // logged as OQ-T32-4, to re-prove transport behaviour T31 owns. What T32 needs is narrower - that
+      // the field is VALIDATED as a boolean and then passed along as itself.
+      const reader = await readFile(join(sourceRoot(), 'profile/readAccount.ts'), 'utf8');
+      const code = strip(reader);
+      expect(code).toContain("typeof account.emailVerified === 'boolean'");
+      expect(code).toContain('return data;');
+      // No construction of the field on the way out. Any of these would be a module deciding verification
+      // state for itself, which is this task's failure direction: unverified reported as verified.
+      // Each is a REGEX, not a substring: `emailVerified =` is a prefix of the `=== 'boolean'` guard this
+      // same case requires, so the substring form failed on the very code it was written to protect.
+      const FORBIDDEN = [
+        /emailVerified\s*:/,          // constructing the field in a new object literal
+        /emailVerified\s*=(?!=)/,     // assigning to it
+        /Boolean\s*\(/,               // coercing whatever arrived into a verdict
+        /!!/,                         // the same coercion, written shorter
+      ];
+      for (const forbidden of FORBIDDEN) {
+        expect(code, `readAccount.ts now writes ${forbidden}`).not.toMatch(forbidden);
+      }
+    });
+
     it('the /userinfo field is documented as NOT the token claim, in the line that cites this task', async () => {
       const userinfo = stanza(await contract('oidc.yaml'), '    UserInfoResponse:', '    TokenResponse');
       const field = stanza(userinfo, '        email_verified:', '        name:');
