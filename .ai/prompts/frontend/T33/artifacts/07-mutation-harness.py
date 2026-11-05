@@ -66,10 +66,13 @@ MUTANTS = [
     ("NR02 the token is cleared asynchronously, leaving a window where it is still held",
      REAUTH, CLEAR, "    globalThis.setTimeout(clearAccessToken, 0);"),
 
-    # The ORDER, which the module says is load-bearing: clearing last means a throw anywhere above it
-    # leaves a tab that looks signed in. Only the throwing-navigate case can tell this from the original.
+    # The ORDER, which the module says is load-bearing. TWO edits, because one replacement can only
+    # delete a line and deletion is already NR01: this moves the clear BELOW the navigation, so every
+    # ordinary case still passes - the token does get cleared - and only the throwing-navigate case can
+    # tell the mutant from the original. That is the point of the order, so that is the only case that
+    # should be able to see it.
     ("NR03 the token is cleared LAST, after the navigation that can throw",
-     REAUTH, CLEAR + "\n", ""),
+     REAUTH, (CLEAR + "\n", NAVIGATE), ("", NAVIGATE + "\n" + CLEAR)),
 
     # --- NR04-NR08: the copy (AC5), which is where L4 is kept or lost -------------------------------
     ("NR04 no notice is set, so the screen says nothing about why the visitor is here",
@@ -142,12 +145,26 @@ def run(files, name_filter=None):
     return proc.returncode, failed, total, files_failed
 
 
+def edits_of(old, new):
+    """One mutant, one or more replacements.
+
+    A single replacement cannot express a REORDER - it can only delete or rewrite in place - and NR03
+    needs one: moving the clear below the navigation is a different regression from removing it, and the
+    first version of that row deleted the line and called itself a reorder, which made it a duplicate of
+    NR01 wearing another name. A mutant that measures something other than its own description is worse
+    than a missing mutant, because the score counts it.
+    """
+    return list(zip(old, new)) if isinstance(old, tuple) else [(old, new)]
+
+
 def apply(path, old, new):
     target = REPO / path
     text = target.read_text()
-    if text.count(old) != 1:
-        return False
-    target.write_text(text.replace(old, new, 1))
+    for find, replace in edits_of(old, new):
+        if text.count(find) != 1:
+            return False
+        text = text.replace(find, replace, 1)
+    target.write_text(text)
     return True
 
 
@@ -159,10 +176,12 @@ def revert():
 def preflight():
     """Every anchor in its file, exactly once, before a single verdict is printed."""
     stale = []
-    for label, path, old, _new in MUTANTS:
-        count = (REPO / path).read_text().count(old)
-        if count != 1:
-            stale.append(f"  {label.split()[0]:<6} {path} matches its anchor {count} times, expected 1")
+    for label, path, old, new in MUTANTS:
+        text = (REPO / path).read_text()
+        for find, _replace in edits_of(old, new):
+            count = text.count(find)
+            if count != 1:
+                stale.append(f"  {label.split()[0]:<6} {path} matches an anchor {count} times, expected 1")
     if stale:
         print("REFUSING TO RUN: anchors no longer match the source.\n")
         print("\n".join(stale))
