@@ -148,6 +148,13 @@ MUTANTS = [
      "const spaced = 'a.b.c'.split( '.' )[1];\n"
      "export function createAuthApi(boundary: SessionBoundary, rateLimit?: RateLimitNoticeState): AuthApi {\n"
      "  void spaced;"),
+
+    # --- MR14: the truthful source is overwritten on its way to the caller (AC3) ----------------------
+    # This task's failure direction in its purest form: not a claim read, but the ONE truthful answer
+    # replaced with the claim's answer. Phase 10 found AC3's third clause had no instrument; this is what
+    # proves the one it got actually fires.
+    ("MR14 the reader overwrites the truthful field on its way out", READER, ACCOUNT_RETURN,
+     "  return { ...data, emailVerified: true };"),
 ]
 
 
