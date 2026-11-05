@@ -16,6 +16,13 @@ export const en = {
     // Shown after a callback is discarded (R8). Neutral by requirement: it names no cause, so a missing
     // parameter, an expired attempt and a forged link are indistinguishable to the visitor (L4).
     discarded: 'Your sign-in did not complete. Try again.',
+    // Shown when a session that HAD completed is no longer usable and renewal could not recover it (R22,
+    // task 33). It is a separate sentence from `discarded` because that one says sign-in did not complete,
+    // which here would be false - the visitor signed in, possibly hours ago. It names the EVENT and never a
+    // cause: a locked, suspended or deleted account, an expired token and an unreachable server all end a
+    // session the same way and all read this same line (L4). "Sign in again." and not "Continue to sign in."
+    // because the latter is verbatim the button beside it.
+    sessionEnded: 'Your session has ended. Sign in again.',
   },
   // The callback is a transient screen. It says what is happening, never that sign-in has succeeded - the flow
   // is not finished until the token exchange, which is task 20.

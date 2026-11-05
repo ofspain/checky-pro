@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { buildAuthorizeRequest } from './authorizeRequest';
-import { takeSignInNotice } from './signInNotice';
+import { NOTICE_COPY_KEY, takeSignInNotice } from './signInNotice';
 
 /**
  * The sign-in screen: the first screen in the application, and the one that starts the OIDC authorization code
@@ -70,7 +70,7 @@ export function SignInScreen() {
       <div role="status" aria-live="polite">
         {/* The notice yields to a fresh attempt: this attempt's status is more current than the last one's
             epitaph. */}
-        {notice !== null && status === 'idle' ? t('signIn.discarded') : null}
+        {notice !== null && status === 'idle' ? t(NOTICE_COPY_KEY[notice]) : null}
         {status === 'starting' ? t('signIn.starting') : null}
         {status === 'failed' ? t('signIn.failed') : null}
       </div>

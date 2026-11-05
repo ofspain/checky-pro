@@ -815,8 +815,12 @@ describe('callbackValidatesNonce', () => {
     });
 
     it('adds no catalogue string (AC13)', () => {
+      // The list grew by one in task 33: `sessionEnded`, for a session that had completed and is no longer
+      // usable (R22). This case's claim is unchanged - THIS task adds no string - and the pin still fails if
+      // another arrives. T28's suite holds the justification; this is the third independent copy of the same
+      // enumeration, which is the duplication OQ-T32-4 records, measured here at the cost of one line each.
       expect(Object.keys(en.signIn).sort()).toEqual(
-        ['action', 'discarded', 'explanation', 'failed', 'heading', 'starting'].sort(),
+        ['action', 'discarded', 'explanation', 'failed', 'heading', 'sessionEnded', 'starting'].sort(),
       );
       expect(Object.keys(en.callback).sort()).toEqual(['heading', 'working'].sort());
     });

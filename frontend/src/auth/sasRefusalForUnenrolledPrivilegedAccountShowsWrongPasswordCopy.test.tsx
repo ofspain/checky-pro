@@ -248,10 +248,18 @@ const FORBIDDEN_KEY_SOURCE =
  *
  * Kimi asked for an assertion that the failed-sign-in screen renders exactly `signIn.failed` and
  * `signIn.discarded`. That enumeration is factually wrong and would fail against correct code: the screen
- * renders `heading`, `explanation` and `action` as well, always. The defensible pin is the KEY SET - a seventh
+ * renders `heading`, `explanation` and `action` as well, always. The defensible pin is the KEY SET - a new
  * `signIn.*` key is a new sentence somebody added, and this fails until they justify it here.
+ *
+ * JUSTIFIED, once: `sessionEnded` was added by **task 33** (R22) for a session that had completed and is no
+ * longer usable. It could not reuse `discarded`, whose sentence says sign-in did not complete - false for a
+ * visitor who signed in hours ago - and L4 does not require the reuse, because L4 makes copy identical across
+ * account states and token conditions, not across every event in a session's life. The new key matches no
+ * alternative in `FORBIDDEN_KEY_SOURCE` and its sentence names no cause, which the cases below still check.
  */
-const SIGN_IN_KEYS = ['action', 'discarded', 'explanation', 'failed', 'heading', 'starting'] as const;
+const SIGN_IN_KEYS = [
+  'action', 'discarded', 'explanation', 'failed', 'heading', 'sessionEnded', 'starting',
+] as const;
 
 // ---------------------------------------------------------------------------------------------------------
 // Instrument 1 and 2 — the source and path scans
@@ -1378,13 +1386,13 @@ describe('AC8: no user-facing string mentions enrollment, a factor, a code or a 
     expect(catalogueStrings().length).toBeGreaterThanOrEqual(10);
   });
 
-  it('pins the signIn key set to exactly the six that exist, so a seventh fails', () => {
+  it('pins the signIn key set to exactly the seven that exist, so an eighth fails', () => {
     // Kimi F7, reformulated: Kimi asked for "exactly signIn.failed and signIn.discarded", which is wrong -
     // the screen renders heading, explanation and action as well. The defensible pin is the key set.
     expect(Object.keys(en.signIn).sort()).toEqual([...SIGN_IN_KEYS]);
   });
 
-  it("CONTROL: the key-set pin fails when a seventh key arrives, whatever it is called", () => {
+  it("CONTROL: the key-set pin fails when one more key arrives, whatever it is called", () => {
     const withSeventh = { ...en.signIn, needsEnrollment: 'Set up your authenticator.' };
     expect(Object.keys(withSeventh).sort()).not.toEqual([...SIGN_IN_KEYS]);
     // And its value would be caught by the copy scan too, which is the belt to the key set's braces.
@@ -1401,8 +1409,9 @@ describe('AC9: one sentence per outcome, and no sentence names a cause', () => {
     expect(en.signIn.discarded.length).toBeGreaterThan(0);
   });
 
-  it('names no cause in either', () => {
-    for (const sentence of [en.signIn.failed, en.signIn.discarded]) {
+  it('names no cause in any of them', () => {
+    // `sessionEnded` joined in task 33 and is held to the same bar rather than exempted from it.
+    for (const sentence of [en.signIn.failed, en.signIn.discarded, en.signIn.sessionEnded]) {
       expect(namesEnrollment(sentence)).toBe(false);
       expect(forbiddenCopyEntries([{ key: 'probe', value: sentence }])).toEqual([]);
     }

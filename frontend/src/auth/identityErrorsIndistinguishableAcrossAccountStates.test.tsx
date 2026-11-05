@@ -365,8 +365,18 @@ const PERMITTED_TIMERS: ReadonlyArray<{ file: string; hit: string; count: number
   },
 ];
 
-/** AC10's pin, cited to T28 rather than re-derived: exactly these six keys exist under `signIn`. */
-const SIGN_IN_KEYS = ['action', 'discarded', 'explanation', 'failed', 'heading', 'starting'] as const;
+/**
+ * AC10's pin, cited to T28 rather than re-derived: exactly these keys exist under `signIn`.
+ *
+ * ONE MORE, JUSTIFIED: `sessionEnded` was added by **task 33** (R22) for a session that HAD completed and is
+ * no longer usable. It could not reuse `discarded`, whose sentence says sign-in did not complete - false for a
+ * visitor who signed in hours ago - and L4 does not require the reuse, because L4 makes copy identical across
+ * account states and token conditions, not across every event in a session's life. The sentence names no state
+ * and no cause, which the cases below now check for it too.
+ */
+const SIGN_IN_KEYS = [
+  'action', 'discarded', 'explanation', 'failed', 'heading', 'sessionEnded', 'starting',
+] as const;
 
 /**
  * Account-state-shaped and role-shaped names, inherited from T28's AC7 instrument.
@@ -1989,20 +1999,24 @@ describe('AC9: nothing gates a failed sign-in on an account state or a role', ()
   });
 });
 
-describe('AC10: two failure sentences, and exactly six signIn keys', () => {
-  it('pins the signIn key set to exactly the six that exist, so a seventh fails', () => {
+describe('AC10: the failure sentences, and exactly the signIn keys that exist', () => {
+  it('pins the signIn key set to exactly the seven that exist, so an eighth fails', () => {
     expect(Object.keys(en.signIn).sort()).toEqual([...SIGN_IN_KEYS]);
-    expect(SIGN_IN_KEYS).toHaveLength(6);
+    expect(SIGN_IN_KEYS).toHaveLength(7);
   });
 
-  it('keeps the failed and discarded sentences distinct, and neither names a state', () => {
-    expect(en.signIn.failed).not.toBe(en.signIn.discarded);
-    for (const sentence of [en.signIn.failed, en.signIn.discarded]) {
+  it('keeps the three failure sentences distinct, and none of them names a state', () => {
+    // `sessionEnded` joined these in task 33 and is held to the same bar. Distinctness matters because each
+    // reports a different EVENT in one session's life; what L4 forbids is a sentence that reports a different
+    // ACCOUNT, and `namesForbiddenState` is what checks that of all three.
+    const sentences = [en.signIn.failed, en.signIn.discarded, en.signIn.sessionEnded];
+    expect(new Set(sentences).size).toBe(sentences.length);
+    for (const sentence of sentences) {
       expect(namesForbiddenState(sentence)).toBe(false);
     }
   });
 
-  it('CONTROL: the key-set pin fails when a seventh key arrives, whatever it is called', () => {
+  it('CONTROL: the key-set pin fails when one more key arrives, whatever it is called', () => {
     const withSeventh = { ...en.signIn, accountSuspended: 'This account has been suspended.' };
     expect(Object.keys(withSeventh).sort()).not.toEqual([...SIGN_IN_KEYS]);
     expect(forbiddenStateEntries([{ key: 'signIn.accountSuspended', value: withSeventh.accountSuspended }]))
