@@ -1,7 +1,11 @@
 /// <reference types="node" />
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createI18n } from '../i18n/i18n';
 import { createAuthApi } from '../api/client';
 import { SiblingRenewalFailedError } from '../api/crossTabRenewal';
 import { createSessionBoundary, type SessionTokens } from '../api/sessionBoundary';
@@ -10,7 +14,8 @@ import { en } from '../i18n/catalogue';
 import { accessToken, clearAccessToken, retainAccessToken } from './accessToken';
 import { createRenewalFailureHandler } from './cleanReauth';
 import { RETURN_TARGET_KEY, takeReturnTarget } from './returnTarget';
-import { NOTICE_COPY_KEY, takeSignInNotice } from './signInNotice';
+import { SignInScreen } from './SignInScreen';
+import { NOTICE_COPY_KEY, setSignInNotice, takeSignInNotice } from './signInNotice';
 
 /**
  * R22, clauses 1 to 3: a failed renewal transitions to clean re-auth, shows no half-authenticated screen, and
@@ -110,6 +115,30 @@ function rejectingSession(reason: unknown, initial: string | null = 'held-token'
 /** Lets the microtask the boundary schedules the hook in actually run. */
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+/**
+ * Renders the real sign-in screen, the shape copied from T15's suite.
+ *
+ * Needed because the handler's whole visible effect is a sentence on THAT screen: a case that stopped at
+ * "the notice was set" would pass while the screen displayed the wrong sentence, which is exactly what the
+ * screen did before this task changed it - it rendered `signIn.discarded` for any notice at all.
+ */
+let mounted: { root: Root; container: HTMLElement } | null = null;
+
+function renderSignIn(): HTMLElement {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  act(() => {
+    root.render(
+      <I18nextProvider i18n={createI18n()}>
+        <SignInScreen />
+      </I18nextProvider>,
+    );
+  });
+  mounted = { root, container };
+  return container;
+}
+
 /** Records where the handler navigated, standing in for the router the wiring will supply. */
 function recorder() {
   const to: string[] = [];
@@ -157,6 +186,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (mounted) {
+    const { root, container } = mounted;
+    act(() => root.unmount());
+    container.remove();
+    mounted = null;
+  }
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   clearAccessToken();
@@ -408,6 +443,24 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       expect(en.signIn.sessionEnded).not.toMatch(forbidden);
       // CONTROL: the pattern really does fire on the sentence this rejects.
       expect('Your token expired, so renewal failed.').toMatch(forbidden);
+    });
+
+    it('puts THAT sentence on the sign-in screen, and not the discarded one', () => {
+      createRenewalFailureHandler(recorder().navigate)();
+      const text = renderSignIn().textContent ?? '';
+      expect(text).toContain(en.signIn.sessionEnded);
+      expect(text).not.toContain(en.signIn.discarded);
+      // A missing provider makes useTranslation return the key, which this catches.
+      expect(text).not.toContain('signIn.');
+    });
+
+    it('CONTROL: the same screen still shows the discarded sentence for a discarded callback', () => {
+      // The screen now chooses by notice, so this is the proof that choosing did not break R8's path -
+      // T18 owns that sentence and this task must not have quietly taken it over.
+      setSignInNotice('discarded');
+      const text = renderSignIn().textContent ?? '';
+      expect(text).toContain(en.signIn.discarded);
+      expect(text).not.toContain(en.signIn.sessionEnded);
     });
 
     it('is taken once, so a reloaded sign-in page stops saying it', () => {
