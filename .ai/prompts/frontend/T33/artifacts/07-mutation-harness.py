@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""T33 mutation harness - clean re-auth on failed renewal.
+
+WHAT THIS IS. Each mutant is a regression this task exists to prevent, applied to real source,
+measured against a real baseline, and reverted. A case that cannot tell the mutant from the
+original is a case that was never holding anything.
+
+IT REVERTS WITH `git checkout`. COMMIT YOUR TESTS FIRST. Uncommitted test edits are destroyed
+silently - that cost 19 cases in T14 and 5 in T15.
+
+THE MACHINERY IS T32'S, UNCHANGED, and that is deliberate: the baseline is pinned by FAILING FILE
+NAME with the count only warning (T31 A7), every anchor must match exactly once before a single
+verdict prints (T30's real defect), and a BROKEN mutant FAILS the run like a survivor (T31 phase
+9). No contract paths this time - every T33 mutant edits `frontend/src/`.
+
+WHAT A MUTANT HERE CANNOT DO, carried from T32 phase 11: it can only record a fix that turns a
+survivor into a kill. T33 has one documented limit of the false-POSITIVE kind - a tab outside the
+SPA remembers no return target - and that is measured by a control, not by a row below. The
+harness measures an instrument's strength; only a control measures its precision.
+
+    python3 .ai/prompts/frontend/T33/artifacts/07-mutation-harness.py          # all
+    python3 .ai/prompts/frontend/T33/artifacts/07-mutation-harness.py NR04     # one
+"""
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[5]
+FRONTEND = REPO / "frontend"
+
+REAUTH = "frontend/src/auth/cleanReauth.ts"
+NOTICE = "frontend/src/auth/signInNotice.ts"
+CATALOGUE = "frontend/src/i18n/catalogue.ts"
+SCREEN = "frontend/src/auth/SignInScreen.tsx"
+ROUTES = "frontend/src/app/routes.tsx"
+
+OWN_TEST = "src/auth/failedRenewalTriggersCleanReauthWithoutHalfSession.test.tsx"
+FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
+
+EXPECTED_BASELINE_FAILURES = 1
+KNOWN_ENVIRONMENTAL_FAILURES = {
+    # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass.
+    "src/api/lintRejectsHandWrittenBackendFetch.test.ts",
+}
+
+# --- anchors, copied from the real source ----------------------------------------------------------------
+CLEAR = "    clearAccessToken();"
+REMEMBER = "    if (here !== null) rememberReturnTarget(here);"
+SET_NOTICE = "    setSignInNotice('session-ended');"
+NAVIGATE = "    navigate(`/${SIGN_IN_PATH}`);"
+HANDLER_BODY = "  return () => {"
+HANDLER_SIG = "export function createRenewalFailureHandler(navigate: (to: string) => void): () => void {"
+NOTICE_MAP = "  'session-ended': 'signIn.sessionEnded',"
+SENTENCE = "    sessionEnded: 'Your session has ended. Sign in again.',"
+SCREEN_NOTICE = "t(NOTICE_COPY_KEY[notice])"
+AUTH_ROUTES = "      ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),"
+
+MUTANTS = [
+    # --- NR01-NR02: the token (AC1). The first clause of "no half-session" is a tab holding a token ----
+    ("NR01 the held token is never dropped", REAUTH, CLEAR, "    void 0;"),
+
+    # Not "forgets to clear" but "clears a moment later", which is the shape a refactor produces and the
+    # one a synchronous assertion is needed to catch. In that window the tab holds a token it cannot use.
+    ("NR02 the token is cleared asynchronously, leaving a window where it is still held",
+     REAUTH, CLEAR, "    globalThis.setTimeout(clearAccessToken, 0);"),
+
+    # The ORDER, which the module says is load-bearing: clearing last means a throw anywhere above it
+    # leaves a tab that looks signed in. Only the throwing-navigate case can tell this from the original.
+    ("NR03 the token is cleared LAST, after the navigation that can throw",
+     REAUTH, CLEAR + "\n", ""),
+
+    # --- NR04-NR08: the copy (AC5), which is where L4 is kept or lost -------------------------------
+    ("NR04 no notice is set, so the screen says nothing about why the visitor is here",
+     REAUTH, SET_NOTICE, "    void 0;"),
+    ("NR05 the notice reuses `discarded`, whose sentence says sign-in did not complete",
+     REAUTH, SET_NOTICE, "    setSignInNotice('discarded');"),
+    ("NR06 the map points the new notice at the discarded sentence",
+     NOTICE, NOTICE_MAP, "  'session-ended': 'signIn.discarded',"),
+    ("NR07 the sentence becomes a duplicate of the discarded one",
+     CATALOGUE, SENTENCE, "    sessionEnded: 'Your sign-in did not complete. Try again.',"),
+    # L4 in one line: a sentence that names the cause tells an anonymous prober what happened.
+    ("NR08 the sentence names the cause", CATALOGUE, SENTENCE,
+     "    sessionEnded: 'Your session token expired and could not be renewed. Sign in again.',"),
+
+    # --- NR09: the screen (AC5). The notice is invisible unless the screen chooses by it -------------
+    ("NR09 the screen renders the discarded sentence for every notice, as it did before this task",
+     SCREEN, SCREEN_NOTICE, "t('signIn.discarded')"),
+
+    # --- NR10-NR12: the destination (AC4/AC10) ------------------------------------------------------
+    ("NR10 the visitor is sent to the signed-out landing, which states something false",
+     REAUTH, NAVIGATE, "    navigate('/signed-out');"),
+    ("NR11 the path is spelled again as a literal instead of read from the route table",
+     REAUTH, NAVIGATE, "    navigate('/sign-in');"),
+    # T16 measured that a module-scope read of a route constant yields `undefined` rather than throwing,
+    # so this mutant fails CLOSED and silently - the worst available failure mode.
+    ("NR12 a route constant is read at module scope", REAUTH, HANDLER_SIG,
+     "const DESTINATION = `/${SIGN_IN_PATH}`;\nvoid DESTINATION;\n" + HANDLER_SIG),
+
+    # --- NR13-NR14: the failure reason (AC9), which L4 requires to be unreachable -------------------
+    ("NR13 the handler takes the failure reason back", REAUTH, HANDLER_BODY,
+     "  return (reason: unknown) => {\n    void reason;"),
+    ("NR14 the copy is chosen by the failure reason", REAUTH, HANDLER_BODY,
+     "  return (reason: unknown) => {\n"
+     "    if (reason instanceof Error) setSignInNotice('discarded');"),
+
+    # --- NR15-NR16: the return target (AC6) ---------------------------------------------------------
+    ("NR15 where the visitor was is forgotten", REAUTH, REMEMBER, "    void here;"),
+    # Bypassing the allowlist is the dangerous half: an unhonourable target then SITS in storage, which
+    # L16 is about as much as it is about what gets acted on (T24-D15).
+    ("NR16 the target is written straight to storage, bypassing the allowlist", REAUTH, REMEMBER,
+     "    if (here !== null) globalThis.sessionStorage.setItem('themistra.auth.return_to', here);"),
+
+    # --- NR17: the environmental assumption behind "no half-authenticated screen" (AC11) ------------
+    # Not a defect in this task's code at all. It is the day the repository stops making T33's claim
+    # true for free, and the case it kills says so and names T41.
+    ("NR17 an authenticated route gains a screen, so nothing stops a half-authenticated render",
+     ROUTES, AUTH_ROUTES,
+     "      ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path, element: <SignInScreen /> })),"),
+]
+
+
+def run(files, name_filter=None):
+    command = ["npx", "-y", "pnpm@12.14.0", "exec", "vitest", "run", *files]
+    if name_filter:
+        command += ["-t", name_filter]
+    proc = subprocess.run(command, cwd=FRONTEND, capture_output=True, text=True)
+    out = proc.stdout + proc.stderr
+    failed = total = None
+    files_failed = set()
+    for line in out.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Tests "):
+            body = stripped[len("Tests "):]
+            failed = int(body.split("failed")[0].strip()) if "failed" in body else 0
+            if "(" in body:
+                total = int(body.split("(")[-1].rstrip(")"))
+        match = re.search(r"\bFAIL\b\s+(\S+\.(?:ts|tsx))", stripped)
+        if match:
+            files_failed.add(match.group(1))
+    return proc.returncode, failed, total, files_failed
+
+
+def apply(path, old, new):
+    target = REPO / path
+    text = target.read_text()
+    if text.count(old) != 1:
+        return False
+    target.write_text(text.replace(old, new, 1))
+    return True
+
+
+def revert():
+    subprocess.run(["git", "checkout", "--", "frontend/src/"], cwd=REPO, check=False)
+    subprocess.run(["git", "clean", "-fq", "--", "frontend/src/"], cwd=REPO, check=False)
+
+
+def preflight():
+    """Every anchor in its file, exactly once, before a single verdict is printed."""
+    stale = []
+    for label, path, old, _new in MUTANTS:
+        count = (REPO / path).read_text().count(old)
+        if count != 1:
+            stale.append(f"  {label.split()[0]:<6} {path} matches its anchor {count} times, expected 1")
+    if stale:
+        print("REFUSING TO RUN: anchors no longer match the source.\n")
+        print("\n".join(stale))
+        print(
+            "\nThe source moved and these mutants did not follow. Each would print BROKEN, which is\n"
+            "NOT a survivor, so the run would still end `survivors: none` and the score would be\n"
+            "overstated by exactly this many. Re-copy the anchors and run again."
+        )
+        return False
+    return True
+
+
+def score(label, base_failed):
+    code, failed, total = run(FILES)[:3]
+    if failed is None:
+        print(f"  BROKEN    -              {label}")
+        return None, True
+    if failed > base_failed:
+        own_failed = run([OWN_TEST])[1]
+        own = "own" if (own_failed or 0) > 0 else "INHERITED-ONLY"
+        print(f"  KILLED    {own:<14} {label}  ({failed} failed of {total}, exit {code})")
+        return None, False
+    print(f"  SURVIVED  -              {label}  ({failed} failed of {total}, exit {code})")
+    return f"{label} [SURVIVED]", False
+
+
+def main():
+    wanted = sys.argv[1] if len(sys.argv) > 1 else ""
+    print(f"REPO = {REPO}\n")
+    revert()
+    if not preflight():
+        return 1
+
+    code, failed, total, files_failed = run(FILES)
+    print(f"baseline whole suite: {failed} failed of {total}, exit {code}")
+    own_code, own_failed, own_total, _ = run([OWN_TEST])
+    print(f"baseline T33 cases:   {own_failed} failed of {own_total}, exit {own_code}\n")
+
+    # The NAMES are the real guard, so they are checked first and the count only warns.
+    if not files_failed <= KNOWN_ENVIRONMENTAL_FAILURES:
+        unexpected = sorted(files_failed - KNOWN_ENVIRONMENTAL_FAILURES)
+        print(
+            "REFUSING TO RUN: a file outside the known environmental set is failing.\n"
+            f"  unexpectedly failing: {unexpected}\n"
+            "A floor made of a different test measures every verdict below against the wrong\n"
+            "thing. Fix the tree, or update KNOWN_ENVIRONMENTAL_FAILURES deliberately."
+        )
+        return 1
+    if failed != EXPECTED_BASELINE_FAILURES:
+        print(
+            f"NOTE: the baseline is {failed} failures, not the recorded {EXPECTED_BASELINE_FAILURES}, but\n"
+            "every one of them is in the known environmental set, so the measured floor is sound.\n"
+        )
+    if own_failed != 0:
+        print(f"REFUSING TO RUN: T33's own cases fail {own_failed} on a clean tree.")
+        return 1
+    base_failed = failed
+
+    survivors = []
+    broken = []
+    for label, path, old, new in MUTANTS:
+        if wanted and wanted not in label:
+            continue
+        if not apply(path, old, new):
+            print(f"  BROKEN    anchor missed  {label}")
+            broken.append(label)
+            revert()
+            continue
+        survived, was_broken = score(label, base_failed)
+        if survived:
+            survivors.append(survived)
+        if was_broken:
+            broken.append(label)
+        revert()
+
+    print(f"\nsurvivors: {survivors or 'none'}")
+    print(f"broken:    {broken or 'none'}")
+    return 1 if (survivors or broken) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
