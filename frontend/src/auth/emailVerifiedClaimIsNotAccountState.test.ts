@@ -40,6 +40,16 @@ import { REQUESTED_SCOPES } from './authorizeRequest';
  * PAIR rather than alternatives: AC2 asks which channel a mentioning file reads, AC1 keeps the token channel
  * down to one named file that reads neither spelling.
  *
+ * AND THE CHANNEL DETECTOR'S LIMITS ARE MEASURED, not assumed - each has a case below, and each is recorded
+ * here because a limit that lives only in a test is a limit the next reader meets as a surprise failure.
+ * It does not recognise a call through a path constant (`api.GET(USERINFO)`), through bracket notation
+ * (`api['GET'](...)`), or through a destructured `GET`. All three need the VALUE of an identifier, which is
+ * data flow. All three fail toward a FALSE POSITIVE - the legitimate reader is flagged and its author has
+ * to write the normal call or amend this file - which is the safe direction, and the reason they are left
+ * open rather than patched with a pattern per shape. The decode bound errs the same way: because `strip`
+ * keeps literals, a file whose only `split('.')` sits inside a string counts as a decoder and fails AC1.
+ * A scan that fails loudly on a legitimate shape can be argued with. One that passes quietly cannot.
+ *
  * AND IT IS A FORWARD GUARD. No task commissions a signed-in "your email is not verified" surface: tasks
  * 48-51 build the verification LINK flow, where a visitor clicks a link with no session and no claim
  * involved, and nothing in `tasks.md` reads `PENDING_VERIFICATION` to tell a signed-in user anything
@@ -194,31 +204,45 @@ function synthetic(path: string, code: string): ScanTarget {
  *
  * Quote characters themselves are left unmarked; only their contents are marked, and an escape marks both
  * of its characters so a `\\'` inside a literal cannot be read as its end.
+ *
+ * A STACK, not a flag - Kimi's phase 11 A4. A template literal's `${...}` is CODE again, and the flag
+ * version marked everything between backticks as literal, so a real call inside a template expression
+ * (`` `${api.GET('/userinfo')}` ``) read as forged and a forged one inside it read as real. The `${...}`
+ * code can itself open another literal which can open another template, which is why nesting is tracked
+ * rather than special-cased. Braces inside such an expression are counted so that an object literal's `}`
+ * cannot close the expression early.
  */
 function literalMask(code: string): boolean[] {
   const mask = new Array<boolean>(code.length).fill(false);
+  const stack: string[] = [];
   let index = 0;
   while (index < code.length) {
-    const quote = code[index];
-    if (quote !== '"' && quote !== "'" && quote !== '`') {
+    const top = stack[stack.length - 1];
+    const char = code[index];
+    const inLiteral = top === "'" || top === '"' || top === '`';
+    if (inLiteral && char === '\\') {
+      mask[index] = true;
+      if (index + 1 < code.length) mask[index + 1] = true;
+      index += 2;
+      continue;
+    }
+    if (top === '`' && char === '$' && code[index + 1] === '{') {
+      mask[index] = true;
+      mask[index + 1] = true;
+      stack.push('${');
+      index += 2;
+      continue;
+    }
+    if (inLiteral) {
+      if (char === top) stack.pop();
+      else mask[index] = true;
       index += 1;
       continue;
     }
+    if (char === "'" || char === '"' || char === '`') stack.push(char);
+    else if (char === '{') stack.push('{');
+    else if (char === '}' && (top === '{' || top === '${')) stack.pop();
     index += 1;
-    while (index < code.length) {
-      if (code[index] === '\\') {
-        mask[index] = true;
-        mask[index + 1] = true;
-        index += 2;
-        continue;
-      }
-      if (code[index] === quote) {
-        index += 1;
-        break;
-      }
-      mask[index] = true;
-      index += 1;
-    }
   }
   return mask;
 }
@@ -482,6 +506,42 @@ describe('emailVerifiedClaimIsNotAccountState', () => {
       expect(offChannel([commented]).map((hit) => hit.file)).toEqual(['app/Commented.ts']);
     });
 
+    it('CONTROL: a real call inside a TEMPLATE expression is recognised, and a forged one is not', () => {
+      // Kimi's phase 11 A4, in both directions. The flag-based mask this replaces marked everything between
+      // backticks as literal, so the first of these read as forged and the second read as real - the mask
+      // was wrong in BOTH directions at once, which is the worst way for a channel detector to be wrong.
+      const real = synthetic(
+        'profile/Templated.ts',
+        'const s = `${await api.GET(\'/userinfo\', {})}`;\nconst v = s.email_verified;',
+      );
+      expect(readsUserinfo(real)).toBe(true);
+      expect(offChannel([real])).toEqual([]);
+
+      const forged = synthetic(
+        'app/Forged.ts',
+        'const s = `${JSON.stringify("api.GET(\'/userinfo\')")}`;\nconst v = token.email_verified;',
+      );
+      expect(readsUserinfo(forged)).toBe(false);
+      expect(offChannel([forged]).map((hit) => hit.file)).toEqual(['app/Forged.ts']);
+
+      // And an object literal inside the expression does not close it early, which is why braces are counted.
+      const braced = synthetic(
+        'profile/Braced.ts',
+        'const s = `${await api.GET(\'/userinfo\', { headers: {} })}`;\nconst v = s.email_verified;',
+      );
+      expect(readsUserinfo(braced)).toBe(true);
+    });
+
+    it('CONTROL: bracket-notation and destructured calls are NOT recognised - documented limits', () => {
+      // Kimi's phase 11 A7. Neither is the openapi-fetch calling convention and neither survives this
+      // project's typing, but both are syntactically possible, so they are measured rather than assumed
+      // absent. Both fail toward a FALSE POSITIVE: the author is flagged and has to write the normal call.
+      for (const shape of ["api['GET']('/userinfo', {})", "const { GET } = api;\nGET('/userinfo', {})"]) {
+        const odd = synthetic('profile/Odd.ts', `${shape}\nconst v = a.data?.email_verified;`);
+        expect(readsUserinfo(odd), shape).toBe(false);
+      }
+    });
+
     it('CONTROL: a call through a path CONSTANT is not recognised - the measured limit of a source scan', () => {
       // Deciding this needs the value of `USERINFO`, which is data flow, and a static scan has none. The
       // consequence is a FALSE POSITIVE, not a false negative: the legitimate consumer is flagged and the
@@ -527,16 +587,32 @@ describe('emailVerifiedClaimIsNotAccountState', () => {
       expect(code).toContain('return data;');
       // No construction of the field on the way out. Any of these would be a module deciding verification
       // state for itself, which is this task's failure direction: unverified reported as verified.
+      //
       // Each is a REGEX, not a substring: `emailVerified =` is a prefix of the `=== 'boolean'` guard this
       // same case requires, so the substring form failed on the very code it was written to protect.
-      const FORBIDDEN = [
-        /emailVerified\s*:/,          // constructing the field in a new object literal
+      const FORBIDDEN_ANYWHERE = [
+        /emailVerified\s*:/,          // constructing the field in an object literal
         /emailVerified\s*=(?!=)/,     // assigning to it
-        /Boolean\s*\(/,               // coercing whatever arrived into a verdict
-        /!!/,                         // the same coercion, written shorter
+        // Returning a FRESH object replaces the body the contract validated, whatever the field is called -
+        // which is the shape MR14 takes, and the one a rename would otherwise walk straight past. This
+        // replaces the unscoped coercion bans below being asked to catch it by accident.
+        /return\s*\{/,
       ];
-      for (const forbidden of FORBIDDEN) {
+      for (const forbidden of FORBIDDEN_ANYWHERE) {
         expect(code, `readAccount.ts now writes ${forbidden}`).not.toMatch(forbidden);
+      }
+
+      // Coercion is banned only where the FIELD is mentioned - Kimi's phase 11 A3. The unscoped
+      // `/Boolean\s*\(/` and `/!!/` this replaces would have failed on a legitimate `Boolean(someOther)`
+      // for an unrelated field, coupling the test to the whole module's expression vocabulary rather than
+      // to the one field it cares about. Narrowing costs an alias (`const v = account.emailVerified` then
+      // `!!v`), which is data flow and out of reach of any scan; the `return {` ban above is what catches
+      // the shape that alias would have to take to reach the caller.
+      const COERCION = /Boolean\s*\(|!!|\?\?/;
+      const mentioning = code.split('\n').filter((line) => line.includes('emailVerified'));
+      expect(mentioning, 'readAccount.ts no longer mentions the field at all').not.toHaveLength(0);
+      for (const line of mentioning) {
+        expect(line.trim(), 'the field is coerced where it is mentioned').not.toMatch(COERCION);
       }
     });
 
