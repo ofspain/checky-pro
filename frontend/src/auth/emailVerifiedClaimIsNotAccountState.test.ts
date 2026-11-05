@@ -34,6 +34,12 @@ import { REQUESTED_SCOPES } from './authorizeRequest';
  * prop - the enforcement point is token access, not use. The honest claim is "no production module reads the
  * claim", and the broader "no UI is driven by it" rests on that plus review, not on a scan.
  *
+ * AC2's channel rule is file-level in the same way - Kimi's phase 8, finding 7. It permits a FILE that calls
+ * `/userinfo`, not a particular value's flow, so a file that legitimately reads that channel could also read
+ * the claim off a token and still pass. AC1's decode bound is what closes that, which is why the two are a
+ * PAIR rather than alternatives: AC2 asks which channel a mentioning file reads, AC1 keeps the token channel
+ * down to one named file that reads neither spelling.
+ *
  * AND IT IS A FORWARD GUARD. No task commissions a signed-in "your email is not verified" surface: tasks
  * 48-51 build the verification LINK flow, where a visitor clicks a link with no session and no claim
  * involved, and nothing in `tasks.md` reads `PENDING_VERIFICATION` to tell a signed-in user anything
@@ -176,6 +182,56 @@ function synthetic(path: string, code: string): ScanTarget {
   return { path, code: strip(code) };
 }
 
+/**
+ * Which character offsets of a source sit INSIDE a string or template literal.
+ *
+ * `strip` keeps literals on purpose, so a claim name written inside one cannot leave the source before a
+ * scan sees it. The channel check inherits that same preserved surface from the other side - Kimi's phase 8
+ * finding 3. The text `'see api.GET("/userinfo")'` is a literal, and a plain match on it would license the
+ * file that wrote that string to name the claim: comment-spoofing traded for string-spoofing. So a channel
+ * match has to land on a real call, which here means its `.GET(` is not itself inside a literal. The quoted
+ * PATH is of course inside one - that is the argument - which is why only the match's start is tested.
+ *
+ * Quote characters themselves are left unmarked; only their contents are marked, and an escape marks both
+ * of its characters so a `\\'` inside a literal cannot be read as its end.
+ */
+function literalMask(code: string): boolean[] {
+  const mask = new Array<boolean>(code.length).fill(false);
+  let index = 0;
+  while (index < code.length) {
+    const quote = code[index];
+    if (quote !== '"' && quote !== "'" && quote !== '`') {
+      index += 1;
+      continue;
+    }
+    index += 1;
+    while (index < code.length) {
+      if (code[index] === '\\') {
+        mask[index] = true;
+        mask[index + 1] = true;
+        index += 2;
+        continue;
+      }
+      if (code[index] === quote) {
+        index += 1;
+        break;
+      }
+      mask[index] = true;
+      index += 1;
+    }
+  }
+  return mask;
+}
+
+/** True when a file really calls `GET /userinfo`, as opposed to merely containing the text of such a call. */
+function readsUserinfo(target: ScanTarget): boolean {
+  const mask = literalMask(target.code);
+  for (const match of target.code.matchAll(new RegExp(USERINFO_CALL, 'g'))) {
+    if (match.index !== undefined && mask[match.index] !== true) return true;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // The patterns
 // ---------------------------------------------------------------------------------------------------------
@@ -189,7 +245,7 @@ function synthetic(path: string, code: string): ScanTarget {
  * body in it. A bound that matches everything is not a bound. Breadth is applied instead to the NAMED
  * file's own accounting below, where it is safe because the file is named.
  */
-const TOKEN_DECODE = '\\batob\\b|\\bjwt[Dd]ecode\\b|\\bdecodeJwt\\b|split\\([\'"]\\.[\'"]\\)';
+const TOKEN_DECODE = '\\batob\\b|\\bjwt[Dd]ecode\\b|\\bdecodeJwt\\b|split\\(\\s*[\'"]\\.[\'"]\\s*\\)';
 
 /** The five forms the one decoding file actually uses - its LOWER bound. */
 const DECODE_FORMS = ['atob', 'TextDecoder', 'Uint8Array.from', 'JSON.parse', "split('.')"] as const;
@@ -206,8 +262,20 @@ const CLAIM_EITHER_SPELLING = '\\bemail_verified\\b|\\bemailVerified\\b';
 /** The OIDC/token spelling, which is also the `/userinfo` contract's spelling. Hence AC2's channel rule. */
 const CLAIM_OIDC_SPELLING = '\\bemail_verified\\b';
 
-/** Reading `/userinfo` through the generated client - the one channel that may carry this field legitimately. */
-const USERINFO_READ = "GET('/userinfo'";
+/**
+ * Reading `/userinfo` through the generated client - the one channel that may carry this field legitimately.
+ *
+ * A REGEX, not a substring, after Kimi's phase 8 finding 1. The literal `"GET('/userinfo'"` this replaces
+ * recognised exactly one way of writing the call. `api.GET("/userinfo")` in double quotes, or the same call
+ * wrapped by a formatter onto two lines, would have been judged OFF-channel and failed AC2 - a legitimate
+ * consumer flagged as the defect. T30's AC3 pins the single-quote shape of the one existing caller
+ * (`profile/readProfile.ts`), so the shape that would have broken is a SECOND consumer, not today's.
+ *
+ * What it still cannot see is a call through a path constant (`api.GET(USERINFO)`); that needs data flow.
+ * A control below drives that shape and asserts it is NOT recognised, so the gap is measured rather than
+ * assumed.
+ */
+const USERINFO_CALL = '\\.GET\\(\\s*[\'"]/userinfo[\'"]';
 
 /** The one production module permitted to decode a token at all, with what it reads and why. */
 const PERMITTED_DECODE = {
@@ -288,6 +356,34 @@ describe('emailVerifiedClaimIsNotAccountState', () => {
       expect(() => refuseEmpty([], NO_SOURCES)).toThrow(NO_SOURCES);
       expect(refuseEmpty([1], NO_SOURCES)).toEqual([1]);
     });
+
+    it('CONTROL: a formatter-spaced split is still recognised as a decode', () => {
+      // Kimi's phase 8 finding 2. The pattern required `split('.')` with no spaces, so `split( '.' )` -
+      // which is what a formatter configured differently writes, and what `Buffer.from(t.split( '.' )[1])`
+      // would carry - left a NEW decoding file invisible to the bound. AC1's upper bound would still have
+      // passed, because it only ever saw the one named file, and the new decoder would never be asked
+      // whether it reads the claim. A gap that makes the bound pass is worse than one that makes it fail.
+      for (const form of ["split('.')", 'split( \'.\' )', "split(  '.'  )", 'split("a.b".charAt(1))']) {
+        const target = synthetic('auth/New.ts', `const parts = token.${form};`);
+        const recognised = hitsOf([target], new RegExp(TOKEN_DECODE, 'g')).length > 0;
+        // The fourth form is NOT a JWT split and must stay unrecognised, or the arm matches ordinary
+        // string work across the tree - which is the reason the pattern is narrow in the first place.
+        expect(recognised, form).toBe(form !== 'split("a.b".charAt(1))');
+      }
+    });
+
+    it('CONTROL: a decoder named only `decode` is NOT recognised, and that is a measured gap', () => {
+      // The same finding asked whether a generic `decode(token)` should be covered. It is not, and widening
+      // to `\\bdecode\\b` would be the wrong fix: measured against today's tree it matches nothing, but it
+      // reads as a bound while being one rename away from meaning nothing, and `jose`'s real export is
+      // already covered as `decodeJwt`. Recorded here as a known shape rather than silently absent, which
+      // is the difference between an accepted risk and a hole.
+      const hidden = synthetic('auth/Hidden.ts', 'const claims = decode(token); const v = claims.email_verified;');
+      expect(hitsOf([hidden], new RegExp(TOKEN_DECODE, 'g'))).toEqual([]);
+      // AC2 catches it anyway, by the other half of the pair: it names the claim and reads no /userinfo.
+      expect(readsUserinfo(hidden)).toBe(false);
+      expect(hitsOf([hidden], new RegExp(CLAIM_OIDC_SPELLING, 'g'))).toHaveLength(1);
+    });
   });
 
   // -------------------------------------------------------------------------------------------------------
@@ -300,7 +396,7 @@ describe('emailVerifiedClaimIsNotAccountState', () => {
   describe('AC2 a file may name the claim only if it reads /userinfo', () => {
     function offChannel(targets: ScanTarget[]): Hit[] {
       const named = hitsOf(targets, new RegExp(CLAIM_OIDC_SPELLING, 'g'));
-      const byChannel = new Map(targets.map((target) => [target.path, target.code.includes(USERINFO_READ)]));
+      const byChannel = new Map(targets.map((target) => [target.path, readsUserinfo(target)]));
       return named.filter((hit) => byChannel.get(hit.file) !== true);
     }
 
@@ -312,7 +408,7 @@ describe('emailVerifiedClaimIsNotAccountState', () => {
       const targets = await productionSources();
       expect(hitsOf(targets, new RegExp(CLAIM_OIDC_SPELLING, 'g'))).toEqual([]);
       // The file that WOULD be permitted exists and reads the channel, so the rule is not hypothetical.
-      const reader = targets.find((target) => target.code.includes(USERINFO_READ));
+      const reader = targets.find((target) => readsUserinfo(target));
       expect(reader?.path).toBe('profile/readProfile.ts');
     });
 
@@ -345,6 +441,59 @@ describe('emailVerifiedClaimIsNotAccountState', () => {
       expect(offChannel([link])).toEqual([]);
       expect(hitsOf([link], new RegExp(CLAIM_EITHER_SPELLING, 'g'))).toEqual([]);
     });
+
+    it('CONTROL: the channel is recognised in every call shape a formatter can produce', () => {
+      // Kimi's phase 8 finding 1, driven rather than argued. Each of these is a legitimate consumer, and
+      // under the substring match this replaces the last three were judged off-channel and FLAGGED.
+      const shapes = [
+        "const a = await api.GET('/userinfo', {});",
+        'const a = await api.GET("/userinfo", {});',
+        'const a = await api.GET(\n  \'/userinfo\',\n  {},\n);',
+        'const a = await api.GET( \'/userinfo\' );',
+      ];
+      for (const shape of shapes) {
+        const permitted = synthetic('profile/Reader.ts', `${shape}\nconst v = a.data?.email_verified;`);
+        expect(readsUserinfo(permitted), shape).toBe(true);
+        expect(offChannel([permitted]), shape).toEqual([]);
+      }
+    });
+
+    it('CONTROL: a file cannot claim the channel with a STRING that merely contains the call', () => {
+      // Kimi's phase 8 finding 3. `strip` keeps literals so a claim name inside one cannot escape the scan;
+      // the cost is that the channel text can be forged inside one. A quote-aware mask closes it, and this
+      // is the proof - the file below reads the claim off a decoded token while advertising the channel.
+      const spoof = synthetic(
+        'app/Spoof.ts',
+        'const why = "this value comes from api.GET(\'/userinfo\'), honestly";\n'
+          + 'const v = JSON.parse(globalThis.atob(p)).email_verified;',
+      );
+      expect(readsUserinfo(spoof)).toBe(false);
+      expect(offChannel([spoof]).map((hit) => hit.file)).toEqual(['app/Spoof.ts']);
+      // And the forged text really is present, so the refusal is the mask's work and not an empty scan.
+      expect(spoof.code).toContain("GET('/userinfo')");
+    });
+
+    it('CONTROL: a comment cannot claim the channel either, since comments never reach the scan', () => {
+      const commented = synthetic(
+        'app/Commented.ts',
+        "// read via api.GET('/userinfo')\nconst v = token.email_verified;",
+      );
+      expect(readsUserinfo(commented)).toBe(false);
+      expect(offChannel([commented]).map((hit) => hit.file)).toEqual(['app/Commented.ts']);
+    });
+
+    it('CONTROL: a call through a path CONSTANT is not recognised - the measured limit of a source scan', () => {
+      // Deciding this needs the value of `USERINFO`, which is data flow, and a static scan has none. The
+      // consequence is a FALSE POSITIVE, not a false negative: the legitimate consumer is flagged and the
+      // author has to write the literal or amend this file. That is the safe direction to fail, and it is
+      // why this is recorded as a limit rather than patched with a second pattern for one-level constants.
+      const indirect = synthetic(
+        'profile/Indirect.ts',
+        "const USERINFO = '/userinfo';\nconst a = await api.GET(USERINFO, {});\nconst v = a.data?.email_verified;",
+      );
+      expect(readsUserinfo(indirect)).toBe(false);
+      expect(offChannel([indirect]).map((hit) => hit.file)).toEqual(['profile/Indirect.ts']);
+    });
   });
 
   // -------------------------------------------------------------------------------------------------------
@@ -369,7 +518,11 @@ describe('emailVerifiedClaimIsNotAccountState', () => {
       const userinfo = stanza(await contract('oidc.yaml'), '    UserInfoResponse:', '    TokenResponse');
       const field = stanza(userinfo, '        email_verified:', '        name:');
       expect(field).toContain('type: boolean');
-      expect(field).toContain('NOT the access');
+      // Wrap- and case-tolerant rather than an exact phrase - Kimi's phase 8 finding 6. The substring form
+      // this replaces sat on one line only by accident of where that YAML line happens to end: re-wrapping
+      // the description, which changes no meaning at all, would have failed the pin. The disclaimer and the
+      // citation are the signal; the wording around them is editorial. MR08 still dies - it writes `ALSO`.
+      expect(field).toMatch(/\bnot\b\s+the\s+access\s+token/i);
       expect(field).toContain('token-claims.md');
       expect(field).toContain('T32');
     });
@@ -476,6 +629,11 @@ describe('emailVerifiedClaimIsNotAccountState', () => {
   // -------------------------------------------------------------------------------------------------------
 
   describe('AC8 the limitation is stated in this file', () => {
+    // A DISCLOSURE guard, not a behavioural one - Kimi's phase 8 finding 5, accepted as stated. Any rewrite
+    // that keeps these four substrings passes, even one that garbles the reasoning around them, so this
+    // cannot prove the limitation is understood. What it does prove is that the limitation cannot be DELETED
+    // in silence, which is the failure actually worth catching: the paragraph is the only thing standing
+    // between a later reader and the belief that a green scan here means no UI is driven by the claim.
     it('says in its own header that it is a source-side guard and a forward guard', async () => {
       const self = await readFile(expect.getState().testPath as string, 'utf8');
       const header = self.slice(0, self.indexOf('// ---'));
