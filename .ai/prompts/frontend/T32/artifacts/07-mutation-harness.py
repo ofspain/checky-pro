@@ -121,6 +121,33 @@ MUTANTS = [
     ("MR11 a verification flag is cached in sessionStorage (T31 owns this kill)", READER, ACCOUNT_RETURN,
      "  globalThis.sessionStorage.setItem('ev', String(data.emailVerified));\n"
      "  return data;"),
+
+    # --- MR12-MR13: the two holes Kimi's phase 8 found in the instrument itself ------------------------
+    # Both SURVIVED the instrument as it stood at phase 7 and are killed by the phase 9 repair, which is
+    # the only honest way to record a finding that was taken into code: a mutant that dies for the new
+    # reason and would have lived under the old one.
+    #
+    # MR12 forges the channel inside a string literal (I3). `strip` keeps literals so a claim name cannot
+    # escape the scan, and the old substring match therefore licensed any file that merely CONTAINED the
+    # text of a /userinfo call. The quote-aware mask is what kills this.
+    # It reads the claim off an AMBIENT object rather than by decoding, deliberately: a mutant that also
+    # decoded would die on AC1's bound under the OLD pattern too, and would prove nothing about AC2.
+    ("MR12 a module forges the /userinfo channel in a string while reading the claim off-channel",
+     CLIENT, AUTH_API,
+     "const why = \"value from api.GET('/userinfo'), honestly\";\n"
+     "const forged = (globalThis as unknown as { c?: { email_verified?: boolean } }).c?.email_verified;\n"
+     "export function createAuthApi(boundary: SessionBoundary, rateLimit?: RateLimitNoticeState): AuthApi {\n"
+     "  void why;\n"
+     "  void forged;"),
+
+    # MR13 decodes with a formatter-spaced split (I2). The old pattern required `split('.')` exactly, so
+    # this second decoder was invisible to AC1's upper bound - the bound PASSED while a new file decoded.
+    # The spaced split is its ONLY decode form, for the same reason: `atob` was already matched, so a mutant
+    # carrying one would have died under the old pattern and said nothing about the widened arm.
+    ("MR13 a second file decodes a token with a formatter-spaced split", CLIENT, AUTH_API,
+     "const spaced = 'a.b.c'.split( '.' )[1];\n"
+     "export function createAuthApi(boundary: SessionBoundary, rateLimit?: RateLimitNoticeState): AuthApi {\n"
+     "  void spaced;"),
 ]
 
 
