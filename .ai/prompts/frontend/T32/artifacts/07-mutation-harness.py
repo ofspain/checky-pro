@@ -155,6 +155,27 @@ MUTANTS = [
     # proves the one it got actually fires.
     ("MR14 the reader overwrites the truthful field on its way out", READER, ACCOUNT_RETURN,
      "  return { ...data, emailVerified: true };"),
+
+    # --- MR15: the path-constant limit, measured rather than asserted (AC2) ---------------------------
+    # Kimi's phase 11 A6 asked for this, and asked for it to "survive (i.e. be flagged as off-channel)".
+    # Those are opposite outcomes in this harness: a flagged file FAILS the suite, which is a KILL. So the
+    # mutant is recorded here as what it is - a kill that marks a FALSE-POSITIVE boundary, not a defect
+    # caught. The file below is a LEGITIMATE consumer written through a path constant; AC2 cannot read the
+    # value of an identifier, so it flags it. That is the safe direction to fail and the reason the limit
+    # is left open, and this row is what keeps it measured as the instrument changes.
+    #
+    # Note for the reader: the phase 11 A4 repair (template expressions) CANNOT be recorded by a mutant at
+    # all. A mutant can only record a fix that turns a survivor into a kill, and that repair turned a false
+    # POSITIVE into a pass - so it is measured by controls instead. The harness measures an instrument's
+    # strength; only a control can measure its precision.
+    ("MR15 a legitimate /userinfo consumer written through a path constant is FLAGGED (false-positive bound)",
+     CLIENT, AUTH_API,
+     "const USERINFO = '/userinfo';\n"
+     "const indirect = (c: { GET: (p: string, o: object) => unknown }) => c.GET(USERINFO, {});\n"
+     "const shown = (v: { email_verified?: boolean }) => v.email_verified;\n"
+     "export function createAuthApi(boundary: SessionBoundary, rateLimit?: RateLimitNoticeState): AuthApi {\n"
+     "  void indirect;\n"
+     "  void shown;"),
 ]
 
 
