@@ -74,6 +74,7 @@ TARGET_GUARD = """  try {
 ADOPT = "        local.adopt(outcome.token);"
 SHELL_BODY = "  return <div data-testid=\"app-shell\">{children}</div>;"
 SHELL_SIG = "export function AppShell({ children }: { children?: ReactNode }) {"
+PWA_FLAG = "let updateIsWaiting = false;"
 REAUTH_CLEAR = "    clearAccessToken();"
 
 MUTANTS = [
@@ -162,6 +163,12 @@ MUTANTS = [
     ("SO18 every step is individually guarded, so a failure is hidden instead of surfacing",
      SIGNOUT, TAKE_NOTICE,
      "  try { takeSignInNotice(); } catch { /* hidden */ }"),
+
+    # Phase 10's audit: excusing a FILE excuses every declaration in it, so AC7 pins the count. This is the
+    # third mutable arriving in an already-excused module - the shape that was being waved through silently.
+    ("SO19 a third module-scope mutable joins an already-excused module",
+     "frontend/src/pwa/registerServiceWorker.ts", PWA_FLAG,
+     "let thirdThing: string | null = null;\n" + PWA_FLAG),
 
     # --- AC9's canary: the mutant that kills it is the one that FIXES the hazard -------------------------
     ("SO15 the cross-tab adoption is removed, so the pinned hazard no longer reproduces",
