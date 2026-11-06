@@ -75,6 +75,17 @@ ADOPT = "        local.adopt(outcome.token);"
 SHELL_BODY = "  return <div data-testid=\"app-shell\">{children}</div>;"
 SHELL_SIG = "export function AppShell({ children }: { children?: ReactNode }) {"
 PWA_FLAG = "let updateIsWaiting = false;"
+# Anchored through the signature, because the bare removal line is a SUBSTRING of `takeReturnTarget`'s more
+# deeply indented one and `text.count` counts substrings - the preflight refused the first version for
+# matching twice, which is the whole reason it runs before any verdict prints.
+TARGET_REMOVE = """export function clearReturnTarget(): void {
+  try {
+    globalThis.sessionStorage.removeItem(RETURN_TARGET_KEY);"""
+AUTHORIZE_LOOP = "  for (const key of Object.values(AUTHORIZE_STORAGE_KEYS)) {"
+AUTHORIZE_GUARD = """    try {
+      globalThis.sessionStorage.removeItem(key);
+    } catch {"""
+SIGNOUT_IMPORTS = "import { clearAccessToken } from './accessToken';"
 REAUTH_CLEAR = "    clearAccessToken();"
 
 MUTANTS = [
@@ -150,7 +161,10 @@ MUTANTS = [
      "const part = 'auth.draft';\nconst smuggled = `themistra.${part}`;\nvoid smuggled;\n" + SHELL_SIG),
 
     # Kimi phase 8 I8. A permitted caller that stops calling is a stale allowlist entry, and staleness in an
-    # allowlist is the kind of rot that passes forever.
+    # allowlist is the kind of rot that passes forever. This is the mutant COUNTERPART of AC10's stale-caller
+    # case, and it is the fragile half of the pair by design (Kimi phase 11 F10): the anchor is coupled to
+    # `cleanReauth.ts`, so if that file is renamed this mutant prints BROKEN - which fails the run - while
+    # the test itself keeps working from the allowlist alone.
     ("SO17 a permitted caller stops calling its primitive, leaving the allowlist stale",
      "frontend/src/auth/cleanReauth.ts", REAUTH_CLEAR, "    void 0;"),
 
@@ -169,6 +183,38 @@ MUTANTS = [
     ("SO19 a third module-scope mutable joins an already-excused module",
      "frontend/src/pwa/registerServiceWorker.ts", PWA_FLAG,
      "let thirdThing: string | null = null;\n" + PWA_FLAG),
+
+    # --- the five instruments phase 11 added -----------------------------------------------------------
+    # Kimi phase 11 F3. The scan reached `let`, `var` and containers; an object literal at module scope is
+    # mutable state too, and extending to it cost two justified exclusions rather than nothing.
+    ("SO20 a module-scope object literal appears in a module sign-out does not clear",
+     SHELL, SHELL_SIG, "const tabState = { seen: 0 };\nvoid tabState;\n" + SHELL_SIG),
+
+    # Kimi phase 11 F8, and it is the mutant that proves the hole was real: `sessionStorage` and
+    # `localStorage` SHARE `Storage.prototype`, so before F8 this removal matched the expected key list and
+    # passed while emptying the wrong store.
+    ("SO21 a removal is aimed at localStorage, which shares the prototype the watch spies",
+     RETURN_TARGET, TARGET_REMOVE,
+     """export function clearReturnTarget(): void {
+  try {
+    globalThis.localStorage.removeItem(RETURN_TARGET_KEY);"""),
+
+    # Kimi phase 11 F4. The file is `.tsx` for task 36's sake, which is not a licence to put a screen in the
+    # clearing half - and nothing noticed if it did.
+    ("SO22 the clearing half starts importing React, which only its extension ever permitted",
+     SIGNOUT, SIGNOUT_IMPORTS, "import type { ReactNode } from 'react';\n" + SIGNOUT_IMPORTS),
+
+    # Kimi phase 11 F7. AC8 found keys and AC3/AC6 proved the clearing, with nobody holding the join: one
+    # inventory key surviving is exactly the gap that left open.
+    ("SO23 one authorize key is skipped, so an inventory key survives sign-out",
+     "frontend/src/auth/authorizeRequest.ts", AUTHORIZE_LOOP,
+     "  for (const key of Object.values(AUTHORIZE_STORAGE_KEYS).slice(1)) {"),
+
+    # Kimi phase 11 F6. The guard is INSIDE the loop, so a refusal on the first key still attempts the other
+    # two. Hoisting it out is the plausible tidy-up that silently makes a partial failure a total one.
+    ("SO24 the per-key guard is lost, so the first refused removal abandons the rest",
+     "frontend/src/auth/authorizeRequest.ts", AUTHORIZE_GUARD,
+     "      globalThis.sessionStorage.removeItem(key);\n    if (false) {"),
 
     # --- AC9's canary: the mutant that kills it is the one that FIXES the hazard -------------------------
     ("SO15 the cross-tab adoption is removed, so the pinned hazard no longer reproduces",
