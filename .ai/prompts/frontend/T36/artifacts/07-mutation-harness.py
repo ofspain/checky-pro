@@ -242,10 +242,15 @@ MUTANTS = [
     # A REORDER. `hint` becomes null, so the parameter is absent and AC5 fails - the behaviour was already
     # pinned. What was not pinned is that the CAUSE is the order, which is why phase 10 added a source-order
     # case: a reader looking at a failing AC5 would otherwise suspect takeIdToken.
+    # BROKEN on its first run, and the reason is instructive: as two edits it replaced `const hint = ...`
+    # with `  signOut();` FIRST, which left the file holding TWO copies of that line - so the second edit's
+    # anchor matched twice and the apply refused. A reorder of ADJACENT lines is one edit over the block,
+    # not two edits that happen to swap. (T33's NR03 taught that a reorder is not a deletion; this is the
+    # other half - a reorder of neighbours is not two independent edits either.)
     ("ES29 sign-out runs before the ID token is taken, so the hint is always null",
      END_SESSION,
-     (TAKE_HINT, CALL_SIGNOUT),
-     ("  signOut();", "  const hint = takeIdToken();")),
+     "  const hint = takeIdToken();\n  signOut();",
+     "  signOut();\n  const hint = takeIdToken();"),
 
     # The query is built by concatenation, leaving the target's `://` and `/` raw. Every case that reads the
     # value through `searchParams.get()` DECODES and still returns the right string, so this passes them all.
@@ -395,8 +400,13 @@ def main():
 
     kept = [label for label, *_ in MUTANTS if not wanted or wanted in label]
     scored = [label for label in kept if label.split()[0] not in CANARIES]
-    print(f"\nregressions: {len(scored) - len([s for s in survivors if s.split()[0] not in CANARIES])}"
-          f"/{regressions} killed")
+    # A BROKEN mutant is NOT a kill, and the inherited tally counted it as one: `len(scored) - survivors`
+    # reported 30/30 on a run whose own `broken:` line named ES29. The number a reader quotes must not be
+    # inflated by a mutant that never ran, so broken rows come out of the numerator here. Found in T36's
+    # phase 10; the four earlier copies have the same arithmetic.
+    lost = [label for label in survivors + broken if label.split()[0] not in CANARIES]
+    print(f"\nregressions: {len(scored) - len(lost)}/{regressions} killed"
+          f"{'' if not broken else f'  ({len(broken)} BROKEN, not counted as killed)'}")
     if canaries:
         print(f"canaries:    {canaries} - a change elsewhere that must still be caught today, scored apart")
     print(f"survivors:   {survivors or 'none'}")
