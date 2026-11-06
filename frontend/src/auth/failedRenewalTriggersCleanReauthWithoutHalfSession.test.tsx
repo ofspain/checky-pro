@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { act } from 'react';
+import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -392,6 +392,22 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       expect(signIn, 'the sign-in route is missing from the route table').toBeDefined();
       // Kimi phase 3 F1: landing here is a transition to re-auth only if this screen can start one.
       expect(signIn?.element).toBeDefined();
+    });
+
+    it('and that screen is the one that STARTS the flow, not merely some element', () => {
+      /*
+       * Found in phase 10 by reading AC10 clause by clause. The clause says the destination's screen
+       * "builds an authorize request on the visitor's action"; the case above only asserts that SOME
+       * element is attached. A route carrying a different element would have passed it - and would have
+       * passed T15's suite too, because T15 renders `SignInScreen` directly rather than through the route
+       * table. So nothing tied the ROUTE this task navigates to, to the SCREEN that can start re-auth.
+       *
+       * This case is the tie. What that screen then does with the visitor's click is T15's to prove, and
+       * it does; this only fixes which screen is at the other end of the navigation.
+       */
+      const children = appRoutes[0].children ?? [];
+      const signIn = children.find((route) => route.path === SIGN_IN_PATH);
+      expect((signIn?.element as ReactElement | undefined)?.type).toBe(SignInScreen);
     });
 
     it('reads the route names INSIDE a function, never at module scope (source)', async () => {
