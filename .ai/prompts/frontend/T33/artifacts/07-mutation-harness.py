@@ -63,6 +63,7 @@ NOTICE_MAP = "  'session-ended': 'signIn.sessionEnded',"
 SENTENCE = "    sessionEnded: 'Your session has ended. Sign in again.',"
 SCREEN_NOTICE = "t(NOTICE_COPY_KEY[notice])"
 AUTH_ROUTES = "      ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),"
+SIGN_IN_ROUTE = "        if (path === SIGN_IN_PATH) return { path, element: <SignInScreen /> };"
 
 MUTANTS = [
     # --- NR01-NR02: the token (AC1). The first clause of "no half-session" is a tab holding a token ----
@@ -121,6 +122,13 @@ MUTANTS = [
     # L16 is about as much as it is about what gets acted on (T24-D15).
     ("NR16 the target is written straight to storage, bypassing the allowlist", REAUTH, REMEMBER,
      "    if (here !== null) globalThis.sessionStorage.setItem('themistra.auth.return_to', here);"),
+
+    # --- NR18: the destination is tied to the screen that can start re-auth (AC10) -----------------
+    # Phase 10 found that nothing tied them, so this is what proves the case it got actually fires. The
+    # route still resolves and still renders something, which is why the weaker case could not see it.
+    ("NR18 the sign-in route carries a different screen, so the destination cannot start re-auth",
+     ROUTES, SIGN_IN_ROUTE,
+     "        if (path === SIGN_IN_PATH) return { path, element: <CallbackScreen /> };"),
 
     # --- NR17: the environmental assumption behind "no half-authenticated screen" (AC11) ------------
     # Not a defect in this task's code at all. It is the day the repository stops making T33's claim
