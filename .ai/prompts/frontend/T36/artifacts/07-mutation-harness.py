@@ -258,6 +258,29 @@ MUTANTS = [
      END_SESSION, URL_RETURN,
      "  return `${globalThis.location.origin}${END_SESSION_PATH}?`\n"
      "    + `${hint === null ? '' : `id_token_hint=${hint}&`}post_logout_redirect_uri=${postLogoutRedirectUri()}`;"),
+
+    # --- phase 11, Kimi F2: only the HINT is concatenated -------------------------------------------------
+    # The target stays encoded, so ES30's case passes. A token carrying `&` or `#` then splits the query or
+    # truncates it at the fragment, and the post-logout target vanishes from what SAS receives.
+    ("ES31 the hint alone is concatenated, so a token with & or # breaks the query",
+     END_SESSION, HINT_GUARD,
+     "  if (hint !== null) {\n"
+     "    return void parameters.set('post_logout_redirect_uri', postLogoutRedirectUri()) as never;\n"
+     "  }"),
+
+    # --- phase 11, Kimi F3: a way to SEND the token, which the storage bans do not cover -----------------
+    # AC11 forbids fetch and XMLHttpRequest. `sendBeacon` is neither, and it is designed to survive exactly
+    # the page-unload this module causes - so it is the one request that would certainly complete.
+    ("ES32 the ID token is exfiltrated with sendBeacon, which survives the unload",
+     END_SESSION, HANDOVER,
+     "  navigator.sendBeacon('/log', hint ?? '');\n  globalThis.location.assign(endSessionUrl(hint));"),
+
+    # --- phase 11, Kimi F6: the DYNAMIC import route ----------------------------------------------------
+    # A static import is not the only way in. Before F6's fix the needle matched only `from '...'`, so this
+    # bypass would have SURVIVED the import scan added in phase 9.
+    ("ES33 a third module reaches endSession through a dynamic import",
+     SHELL, SHELL_BODY,
+     "  void import('../auth/endSession');\n" + SHELL_BODY),
 ]
 
 def run(files, name_filter=None):

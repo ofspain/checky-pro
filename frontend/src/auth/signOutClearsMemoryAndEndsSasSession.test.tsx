@@ -1152,8 +1152,13 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       // reversal is a REORDER rather than a bug in the hint. A reader looking at a failing AC5 would suspect
       // `takeIdToken`, which would be the wrong place to look. This names the cause.
       const self = (await production()).find((file) => file.path === 'auth/endSession.ts');
-      const takeAt = self!.code.indexOf('takeIdToken()');
-      const signOutAt = self!.code.search(/\bsignOut\s*\(\s*\)/);
+      // Kimi F9: scoped to the function's OWN body. Over the whole file the scan would pass if a helper
+      // above `endSession` happened to call `takeIdToken()` - true today only because the file is small,
+      // which is not a property to rely on. Task 35's AC4 case slices the same way, for the same reason.
+      const body = self!.code.slice(self!.code.indexOf('export function endSession'));
+      expect(body, 'the endSession declaration was not found, so this scan reads the whole file').toContain('takeIdToken');
+      const takeAt = body.indexOf('takeIdToken()');
+      const signOutAt = body.search(/\bsignOut\s*\(\s*\)/);
       expect(takeAt, 'endSession.ts does not take the ID token at all').toBeGreaterThan(0);
       expect(signOutAt, 'endSession.ts does not call signOut at all').toBeGreaterThan(0);
       expect(takeAt, 'signOut() runs before the ID token is taken, so the hint is always null')
@@ -1223,6 +1228,10 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       const url = soleHandover(handover);
       expect(url.origin).toBe('https://checky.example');
       expect(url.pathname).toBe(END_SESSION_PATH);
+      // Kimi F7. A fragment never reaches the server, so anything appended to it is a value the visitor
+      // carries in their history for nothing - and if the hint were ever appended there instead of to the
+      // query, AC5 would fail but the token would still be in the URL bar.
+      expect(url.hash, 'the hand-over URL carries a fragment').toBe('');
     });
 
     it('spells no http or https host anywhere in production source', async () => {
@@ -1270,6 +1279,31 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       expect(raw, 'a raw target leaked into the query string').not.toContain('=https://');
       // And it still round-trips, so the encoding is correct rather than merely present.
       expect(new URL(raw).searchParams.get('post_logout_redirect_uri')).toBe('https://checky.example/app/signed-out');
+    });
+
+    it('percent-encodes the HINT too, measured with a token that would break the query (Kimi F2)', () => {
+      // The case above pins only the post-logout target, so a module that encoded that one and concatenated
+      // the hint would pass it. The token here is deliberately hostile rather than realistic: a real JWT is
+      // base64url and needs no encoding, which is exactly why a concatenation bug would hide behind one
+      // forever. What is under test is the ENCODER, so the input is chosen to make the encoder matter.
+      const hostile = 'T36-id-token-&evil=1#frag+plus';
+      retainIdToken(hostile);
+      const handover = watchHandover('https://checky.example');
+
+      endSession();
+
+      const raw = handover.targets()[0] as string;
+      // Unencoded, the `&` would start a new parameter, the `=` would be read as a separator and the `#`
+      // would truncate the query at the fragment - so the post-logout target would vanish from what SAS
+      // sees. Each of the four is asserted absent in raw form rather than the whole string compared, so the
+      // failure names which character escaped.
+      for (const raw_char of ['&evil', '#frag', '+plus']) {
+        expect(raw, `the hint's \`${raw_char}\` reached the query unencoded`).not.toContain(raw_char);
+      }
+      // And it round-trips, so the encoding is correct and not merely present.
+      expect(new URL(raw).searchParams.get('id_token_hint')).toBe(hostile);
+      expect([...new URL(raw).searchParams.keys()].sort(), 'the hint split the query into extra parameters')
+        .toEqual(['id_token_hint', 'post_logout_redirect_uri']);
     });
 
     it('names a route the route table actually declares, and a PUBLIC one', () => {
@@ -1431,8 +1465,14 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
         // parity with task 35; it is a gap BOTH tasks had, closed in the two modules task 36 owns.
         // `window.name` is the nastiest of the three: it survives a cross-origin navigation, so a token
         // written there would outlive the very hand-over this module performs.
+        // The last six are Kimi's phase 11 F3 and F11, and they are a different FAMILY from the eight
+        // above. Those are places a token could be left; these are ways a token could be SENT. AC11 already
+        // forbids `fetch` and `XMLHttpRequest`, which is what makes the gap specific: `new Image().src =
+        // '/log?' + hint` and `navigator.sendBeacon('/log', hint)` are both requests that neither of those
+        // bans covers, and `sendBeacon` is designed to survive exactly the page-unload this module causes.
         for (const forbidden of [/sessionStorage/, /localStorage/, /\bdocument\.cookie\b/, /indexedDB/, /console\./,
-          /document\.title/, /window\.name/, /history\.state/]) {
+          /document\.title/, /window\.name/, /history\.state/,
+          /sendBeacon/, /new\s+Image\b/, /new\s+Audio\b/, /performance\.mark/, /innerHTML/, /document\.write/]) {
           expect(self!.code, `${path} reaches ${forbidden.source}`).not.toMatch(forbidden);
         }
       }
@@ -1495,8 +1535,12 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
         // because nothing owns a sign-out affordance (OQ-T36-5). The day a task adds one, it adds itself
         // here - which is the handoff, not an obstacle: the message below says so.
       ];
+      // Kimi phase 11 F6: a STATIC import is not the only route. `import('./endSession')` and
+      // `require('./endSession')` reach the module without the word `from`, so the needle covers the module
+      // specifier in any of the three positions rather than the import keyword.
+      const REACHES_END_SESSION = /(?:from|import|require)\s*\(?\s*'\.{1,2}(?:\/auth)?\/endSession'/;
       const importers = (await production())
-        .filter((file) => file.path !== 'auth/endSession.ts' && /from '\.{1,2}(?:\/auth)?\/endSession'/.test(file.code))
+        .filter((file) => file.path !== 'auth/endSession.ts' && REACHES_END_SESSION.test(file.code))
         .map((file) => file.path);
 
       expect(importers.sort(), 'a module imports auth/endSession.ts. If you are wiring the sign-out '
@@ -1509,15 +1553,39 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       // A control rather than a planted file, because the needle is the thing that could be wrong: a
       // same-directory import and one from a sibling directory are spelled differently, and a scan that
       // matched only the first would pass over exactly the module most likely to add the affordance.
-      const needle = /from '\.{1,2}(?:\/auth)?\/endSession'/;
+      const needle = /(?:from|import|require)\s*\(?\s*'\.{1,2}(?:\/auth)?\/endSession'/;
       for (const shape of [
         "import { endSession } from './endSession';",
         "import { endSession } from '../auth/endSession';",
         "import { END_SESSION_PATH } from './endSession';",
+        "const { endSession } = await import('./endSession');",
+        "void import('../auth/endSession');",
+        "const mod = require('./endSession');",
       ]) {
         expect(needle.test(shape), `the import scan is blind to ${shape}`).toBe(true);
       }
       expect(needle.test("import { signOut } from './signOut';"), 'the needle matches an unrelated import')
+        .toBe(false);
+    });
+
+    it('CONTROL: the exfiltration patterns fire on the shapes they exist to stop (Kimi F3, F11)', () => {
+      const FORBIDDEN = [/sendBeacon/, /new\s+Image\b/, /new\s+Audio\b/, /performance\.mark/, /innerHTML/,
+        /document\.write/, /document\.title/, /window\.name/, /history\.state/];
+      for (const leak of [
+        "navigator.sendBeacon('/log', hint);",
+        "new Image().src = '/log?' + hint;",
+        "new Audio('/log?' + hint);",
+        "performance.mark(hint);",
+        "document.body.innerHTML = hint;",
+        "document.write(hint);",
+        "document.title = hint;",
+        "window.name = hint;",
+        "history.state;",
+      ]) {
+        expect(FORBIDDEN.some((pattern) => pattern.test(leak)), `the sweep is blind to \`${leak}\``).toBe(true);
+      }
+      // And it lets the module's real code by, or the scan would be a ban on working.
+      expect(FORBIDDEN.some((pattern) => pattern.test('globalThis.location.assign(endSessionUrl(hint));')))
         .toBe(false);
     });
 
@@ -1648,6 +1716,17 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       const nonceAt = hoisted.indexOf('idTokenNonceMatchesStoredValue(response.idToken)');
       const retainAt = hoisted.indexOf('retainIdToken(response.idToken)');
       expect(retainAt).toBeLessThan(nonceAt);
+    });
+
+    it('retains the ID TOKEN, named as such, exactly once (Kimi F10)', async () => {
+      // AC14 pins WHERE the call is and AC5 pins what reaches the wire, but nothing pinned the ARGUMENT.
+      // `retainIdToken(response.accessToken)` would place a bearer token in the hint - which is ES16's
+      // regression arriving from the other end, and it would satisfy every structural case above.
+      const screen = (await production()).find((file) => file.path === 'auth/CallbackScreen.tsx');
+      expect((screen!.code.match(/retainIdToken\(response\.idToken\)/g) ?? []),
+        'CallbackScreen.tsx does not retain response.idToken exactly once').toHaveLength(1);
+      expect(screen!.code, 'the access token is being retained as the ID token')
+        .not.toMatch(/retainIdToken\(response\.accessToken\)/);
     });
 
     it('and retains it in exactly one place', async () => {
