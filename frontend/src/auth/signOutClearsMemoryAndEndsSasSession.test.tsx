@@ -1211,7 +1211,11 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       expect(url.pathname).toBe(END_SESSION_PATH);
     });
 
-    it('spells no absolute host anywhere in production source', async () => {
+    it('spells no http or https host anywhere in production source', async () => {
+      // NARROWED from "no absolute host" after Kimi's I8, which is right that the regex sees neither a
+      // protocol-relative `//example.com` nor an exotic scheme. Narrowing the claim rather than widening the
+      // scan: a `//` needle over stripped source would fire on a regex literal or a template expression, and
+      // a scan with false positives gets an exclusion list, which is how a scan stops meaning anything.
       // L9's single origin, and R58: a hostname in the bundle is a deployment baked into code. The scan is
       // package-wide rather than scoped to this module, because the hazard is package-wide.
       const offenders = (await production())
@@ -1250,7 +1254,7 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       expect(PUBLIC_ROUTE_PATHS as readonly string[], `${route} is not a declared public route`).toContain(route);
     });
 
-    it('follows the route table when the basename moves, rather than hardcoding /app', async () => {
+    it('URL DERIVATION ONLY: follows the route table when the basename moves, not hardcoding /app', async () => {
       // THE CASE THAT SEPARATES DERIVATION FROM COINCIDENCE. Task 22 recorded why
       // (`authorizeRequestsExactlyTheDeclaredScopes.test.ts:286`): while APP_BASENAME is '/app', `const base =
       // '/app'` and `const base = APP_BASENAME` produce the same string, so no assertion against the real
@@ -1274,7 +1278,7 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       vi.resetModules();
     });
 
-    it('strips a trailing slash the route table might grow', async () => {
+    it('URL DERIVATION ONLY: strips a trailing slash the route table might grow', async () => {
       vi.doMock('../app/routes', async () => {
         const actual = await vi.importActual<typeof import('../app/routes')>('../app/routes');
         return { ...actual, APP_BASENAME: '/console/' };
@@ -1388,7 +1392,14 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       const files = await production();
       for (const path of ['auth/idToken.ts', 'auth/endSession.ts']) {
         const self = files.find((file) => file.path === path);
-        for (const forbidden of [/sessionStorage/, /localStorage/, /\bdocument\.cookie\b/, /indexedDB/, /console\./]) {
+        // The last three are Kimi's I7, and its premise needed correcting before the remedy was worth
+        // taking: I7 says these are "the same seven surfaces T35's AC6 covers". T35's AC6 covers NONE of
+        // them - measured, `document.title` appeared nowhere in this file before this line. So this is not
+        // parity with task 35; it is a gap BOTH tasks had, closed in the two modules task 36 owns.
+        // `window.name` is the nastiest of the three: it survives a cross-origin navigation, so a token
+        // written there would outlive the very hand-over this module performs.
+        for (const forbidden of [/sessionStorage/, /localStorage/, /\bdocument\.cookie\b/, /indexedDB/, /console\./,
+          /document\.title/, /window\.name/, /history\.state/]) {
           expect(self!.code, `${path} reaches ${forbidden.source}`).not.toMatch(forbidden);
         }
       }
@@ -1440,6 +1451,43 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       for (const reason of Object.values(PERMITTED)) expect(reason.length).toBeGreaterThan(40);
     });
 
+    it('is imported by nothing, so the exported constant is not a second route to the endpoint (Kimi I3)', async () => {
+      // THE HOLE THE LITERAL SCAN CANNOT SEE, and it is real: the case above matches
+      // `file.code.includes(END_SESSION_PATH)`, so a module that does `import { END_SESSION_PATH } from
+      // './endSession'` and then navigates to the imported variable spells no literal and passes. The path
+      // constant is deliberately EXPORTED (AC16 compares it against the service-worker denylist), so the
+      // export is the bypass. This scan closes it from the other side: who imports this module at all.
+      const PERMITTED_IMPORTERS: readonly string[] = [
+        // Empty, and that is the honest state of the package: nothing may reach the end-session endpoint
+        // because nothing owns a sign-out affordance (OQ-T36-5). The day a task adds one, it adds itself
+        // here - which is the handoff, not an obstacle: the message below says so.
+      ];
+      const importers = (await production())
+        .filter((file) => file.path !== 'auth/endSession.ts' && /from '\.{1,2}(?:\/auth)?\/endSession'/.test(file.code))
+        .map((file) => file.path);
+
+      expect(importers.sort(), 'a module imports auth/endSession.ts. If you are wiring the sign-out '
+        + 'affordance, that is the right thing to do - add the module to PERMITTED_IMPORTERS here, and note '
+        + 'that OQ-T36-5 can then be closed. If you are reaching for END_SESSION_PATH to navigate there '
+        + 'yourself, call endSession() instead.').toEqual([...PERMITTED_IMPORTERS].sort());
+    });
+
+    it('CONTROL: the import scan catches both spellings of the path it must see', () => {
+      // A control rather than a planted file, because the needle is the thing that could be wrong: a
+      // same-directory import and one from a sibling directory are spelled differently, and a scan that
+      // matched only the first would pass over exactly the module most likely to add the affordance.
+      const needle = /from '\.{1,2}(?:\/auth)?\/endSession'/;
+      for (const shape of [
+        "import { endSession } from './endSession';",
+        "import { endSession } from '../auth/endSession';",
+        "import { END_SESSION_PATH } from './endSession';",
+      ]) {
+        expect(needle.test(shape), `the import scan is blind to ${shape}`).toBe(true);
+      }
+      expect(needle.test("import { signOut } from './signOut';"), 'the needle matches an unrelated import')
+        .toBe(false);
+    });
+
     it('CONTROL: a third module naming the path is caught', async () => {
       const files = await production();
       const planted = files.map((file) =>
@@ -1472,6 +1520,25 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
   });
 
   describe('AC12 a tab holding no ID token still clears and still hands over', () => {
+    it('clears before the URL is built, so a failure there cannot leave a token held (Kimi I9)', () => {
+      // AC1 already pins a throwing `assign`. This pins the step BEFORE it: the URL is built as the
+      // argument to `assign`, so a throw in `URLSearchParams` happens after `signOut()` has run and before
+      // the browser is asked to go anywhere. Correct by construction, and now by measurement.
+      retainAccessToken(aToken());
+      retainIdToken(anIdToken());
+      vi.stubGlobal('location', { origin: 'https://app.example', assign: () => undefined } as unknown as Location);
+      vi.stubGlobal('URLSearchParams', class {
+        constructor() {
+          throw new Error('URL building failed');
+        }
+      });
+
+      expect(() => endSession()).toThrow('URL building failed');
+
+      expect(accessToken.current(), 'a failure building the URL left a bearer token held').toBeNull();
+      expect(takeIdToken(), 'a failure building the URL left an identity assertion held').toBeNull();
+    });
+
     it('omits the parameter rather than sending an empty one', () => {
       retainAccessToken(aToken());
       const handover = watchHandover();

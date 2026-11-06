@@ -82,6 +82,7 @@ CALLBACK_RETAIN = "      retainIdToken(response.idToken);"
 CALLBACK_NONCE = "      if (!idTokenNonceMatchesStoredValue(response.idToken).ok) {"
 DENYLIST_ENTRY = "  '/connect/logout',"
 SHELL_BODY = "  return <div data-testid=\"app-shell\">{children}</div>;"
+SHELL_FIRST_IMPORT = "import type { ReactNode } from 'react';"
 
 MUTANTS = [
     # --- AC1: the clearing completes before the browser leaves -------------------------------------------
@@ -219,6 +220,23 @@ MUTANTS = [
     # --- AC7: a full-page navigation ---------------------------------------------------------------------
     ("ES26 the hand-over becomes a router navigation, which cannot leave the SPA",
      END_SESSION, HANDOVER, "  globalThis.history.pushState({}, '', endSessionUrl(hint));"),
+
+    # --- phase 9, Kimi I3: the bypass the LITERAL scan cannot see -----------------------------------------
+    # A third module imports the exported constant and navigates to it. No literal `/connect/logout` appears
+    # in that module, so ES24's scan passes it. This is the mutant the import-route scan was added for, and
+    # before that scan existed it would have SURVIVED.
+    ("ES27 a third module imports END_SESSION_PATH and reaches the endpoint through the variable",
+     SHELL,
+     (SHELL_FIRST_IMPORT, SHELL_BODY),
+     ("import { END_SESSION_PATH } from '../auth/endSession';\n" + SHELL_FIRST_IMPORT,
+      "  globalThis.location.assign(END_SESSION_PATH);\n" + SHELL_BODY)),
+
+    # --- phase 9, Kimi I7: a surface neither task 35 nor task 36 swept ------------------------------------
+    # `window.name` survives a cross-origin navigation, so a token written there outlives the very hand-over
+    # this module performs. The URL is still correct, so every behavioural case passes.
+    ("ES28 the ID token is written to window.name, which survives the navigation",
+     END_SESSION, HANDOVER,
+     "  window.name = hint ?? '';\n  globalThis.location.assign(endSessionUrl(hint));"),
 ]
 
 def run(files, name_filter=None):
