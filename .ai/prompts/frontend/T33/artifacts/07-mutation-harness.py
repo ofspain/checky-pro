@@ -37,6 +37,13 @@ SCREEN = "frontend/src/auth/SignInScreen.tsx"
 ROUTES = "frontend/src/app/routes.tsx"
 
 OWN_TEST = "src/auth/failedRenewalTriggersCleanReauthWithoutHalfSession.test.tsx"
+
+# A CANARY is not a regression in this task's code. It is a change elsewhere in the repository that will one
+# day be made deliberately, and on that day T33's claim stops being true for free. It must be killed today,
+# so a survivor still fails the run - but it is scored SEPARATELY, because a mutation score is a measure of
+# the current code and a row everyone expects to change state would teach a reader to discount the number.
+# Kimi phase 8 I2 asked for this split and was right to.
+CANARIES = {"NR17"}
 FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 EXPECTED_BASELINE_FAILURES = 1
@@ -242,9 +249,14 @@ def main():
 
     survivors = []
     broken = []
+    regressions = canaries = 0
     for label, path, old, new in MUTANTS:
         if wanted and wanted not in label:
             continue
+        if label.split()[0] in CANARIES:
+            canaries += 1
+        else:
+            regressions += 1
         if not apply(path, old, new):
             print(f"  BROKEN    anchor missed  {label}")
             broken.append(label)
@@ -257,8 +269,14 @@ def main():
             broken.append(label)
         revert()
 
-    print(f"\nsurvivors: {survivors or 'none'}")
-    print(f"broken:    {broken or 'none'}")
+    kept = [label for label, *_ in MUTANTS if not wanted or wanted in label]
+    scored = [label for label in kept if label.split()[0] not in CANARIES]
+    print(f"\nregressions: {len(scored) - len([s for s in survivors if s.split()[0] not in CANARIES])}"
+          f"/{regressions} killed")
+    if canaries:
+        print(f"canaries:    {canaries} - a change elsewhere that must still be caught today, scored apart")
+    print(f"survivors:   {survivors or 'none'}")
+    print(f"broken:      {broken or 'none'}")
     return 1 if (survivors or broken) else 0
 
 
