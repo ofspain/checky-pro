@@ -74,6 +74,7 @@ TARGET_GUARD = """  try {
 ADOPT = "        local.adopt(outcome.token);"
 SHELL_BODY = "  return <div data-testid=\"app-shell\">{children}</div>;"
 SHELL_SIG = "export function AppShell({ children }: { children?: ReactNode }) {"
+REAUTH_CLEAR = "    clearAccessToken();"
 
 MUTANTS = [
     # --- AC1, AC4: the token, which is the only one of the four whose position matters ------------------
@@ -139,6 +140,28 @@ MUTANTS = [
     # so a mutant planting one inside a function would measure a claim the criterion never made.
     ("SO14 a module-scope mutable appears in a module sign-out does not clear",
      SHELL, SHELL_SIG, "let leaked: number | null = 1;\n" + SHELL_SIG),
+
+    # --- the three instruments phase 9 added, each given a mutant of its own ---------------------------
+    # Kimi phase 8 I5. The literal scan cannot see an assembled key, so phase 9 forbade the assembly; this is
+    # the mutant that proves the new ban is load-bearing rather than decorative.
+    ("SO16 a client-side key is assembled at runtime, where the literal scan cannot see it",
+     SHELL, SHELL_SIG,
+     "const part = 'auth.draft';\nconst smuggled = `themistra.${part}`;\nvoid smuggled;\n" + SHELL_SIG),
+
+    # Kimi phase 8 I8. A permitted caller that stops calling is a stale allowlist entry, and staleness in an
+    # allowlist is the kind of rot that passes forever.
+    ("SO17 a permitted caller stops calling its primitive, leaving the allowlist stale",
+     "frontend/src/auth/cleanReauth.ts", REAUTH_CLEAR, "    void 0;"),
+
+    # Kimi phase 8 I9, inverted. This is the "resilient" sign-out the finding imagined: each step guarded, so
+    # a failure is swallowed and the later steps run anyway. It is a design CHANGE, not a bug fix - it hides
+    # the one condition that should surface - and phase 9's case is what records the decision.
+    # The anchor is STEP TWO, not step one. Written against step one first, where it would have proved
+    # nothing: phase 9's case forces the throw in step two, so guarding step one leaves the throw propagating
+    # and the case still passing. A mutant must measure its own description (T33 NR03).
+    ("SO18 every step is individually guarded, so a failure is hidden instead of surfacing",
+     SIGNOUT, TAKE_NOTICE,
+     "  try { takeSignInNotice(); } catch { /* hidden */ }"),
 
     # --- AC9's canary: the mutant that kills it is the one that FIXES the hazard -------------------------
     ("SO15 the cross-tab adoption is removed, so the pinned hazard no longer reproduces",
