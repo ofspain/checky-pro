@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -12,9 +12,11 @@ import { createSessionBoundary, type SessionTokens } from '../api/sessionBoundar
 import { APP_BASENAME, AUTHENTICATED_ROUTE_PATHS, appRoutes, PUBLIC_ROUTE_PATHS, SIGN_IN_PATH } from '../app/routes';
 import { en } from '../i18n/catalogue';
 import { accessToken, clearAccessToken, retainAccessToken } from './accessToken';
-import { createRenewalFailureHandler } from './cleanReauth';
+import { createRenewalFailureHandler, inAppPath } from './cleanReauth';
+import * as returnTargetModule from './returnTarget';
 import { RETURN_TARGET_KEY, takeReturnTarget } from './returnTarget';
 import { SignInScreen } from './SignInScreen';
+import * as noticeModule from './signInNotice';
 import { NOTICE_COPY_KEY, setSignInNotice, takeSignInNotice } from './signInNotice';
 
 /**
@@ -145,7 +147,29 @@ function recorder() {
   return { to, navigate: (path: string) => to.push(path) };
 }
 
-const SURFACE_NEEDLES = ['held-token', 'renewal', 'Renewal', '401', 'sibling', 'Sibling'] as const;
+/*
+ * THE CAUSE WORDS, grounded in L4's own text and used in BOTH places - Kimi's phase 11 F3, which found the
+ * two lists had drifted apart. The catalogue check forbade `expire|token|lock|...`; the surface sweep looked
+ * only for this run's token value and the words `renewal`, `401` and `sibling`. So a regression that logged
+ * "Your token expired" would have passed BOTH: the sweep because `expired` was not a needle, and the
+ * catalogue check because the catalogue sentence was unchanged. One list now feeds both.
+ *
+ *   account states      unknown | lock | suspend | delet
+ *   token conditions    invalid | expire | revoke | token | refresh | renew | 401
+ *   steps and factors   password | mfa | totp        (L2: which factors are required is the server's)
+ *   infrastructure      server | network             (not L4's text; a cause is a cause)
+ */
+const CAUSE_WORDS = [
+  'unknown', 'lock', 'suspend', 'delet',
+  'invalid', 'expire', 'revoke', 'token', 'refresh', 'renew', '401',
+  'password', 'mfa', 'totp',
+  'server', 'network',
+] as const;
+
+const FORBIDDEN_CAUSE = new RegExp(CAUSE_WORDS.join('|'), 'i');
+
+/** Every cause word, plus this run's own token value and the cross-tab vocabulary. */
+const SURFACE_NEEDLES = [...CAUSE_WORDS, 'held-token', 'sibling'] as const;
 const CONSOLE_CHANNELS = ['log', 'info', 'warn', 'error', 'debug', 'trace'] as const;
 
 function watchConsole() {
@@ -359,6 +383,46 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       expect((escaped[0] as Error).message).toBe('the wiring supplied a navigate that throws');
     });
 
+    it('clears the token BEFORE remembering, proven by a remember that throws', async () => {
+      // Kimi's phase 11 F4. The existing order case supplies a throwing `navigate`, which only pins
+      // clear-before-navigate; a reorder putting the clear after `rememberReturnTarget` passed every case,
+      // because the real `rememberReturnTarget` swallows its own storage errors and never throws here.
+      // The MODULE function, not `sessionStorage.setItem`: jsdom's Storage is proxied, so an own-property
+      // spy on it never intercepts - measured, that was this case's first version and it reported
+      // "expected setItem to be called at least once" while the real write went through underneath.
+      const remember = vi.spyOn(returnTargetModule, 'rememberReturnTarget').mockImplementation(() => {
+        throw new Error('the return-target store is gone');
+      });
+      retainAccessToken('held-token');
+      globalThis.history.replaceState({}, '', `${APP_BASENAME}/account`);
+      const nav = recorder();
+
+      expect(() => createRenewalFailureHandler(nav.navigate)()).toThrow('the return-target store is gone');
+      // The order, which is the whole claim: the token was already gone when the throw happened.
+      expect(accessToken.current()).toBeNull();
+      expect(remember).toHaveBeenCalledWith('/account');
+      // Nothing downstream ran, so no notice and no navigation claim the visitor was taken anywhere.
+      expect(takeSignInNotice()).toBeNull();
+      expect(nav.to).toEqual([]);
+      remember.mockRestore();
+    });
+
+    it('survives a notice setter that throws, with the token already gone', () => {
+      // Kimi's phase 11 F2, the second half. If `setSignInNotice` ever throws, the visitor is left with a
+      // cleared token, no notice and no navigation - which is a dead end, but NOT a half-authenticated tab.
+      // That ordering is the whole point of clearing first, so it is asserted rather than assumed.
+      retainAccessToken('held-token');
+      const notice = vi.spyOn(noticeModule, 'setSignInNotice').mockImplementation(() => {
+        throw new Error('the notice store is gone');
+      });
+      const nav = recorder();
+      expect(() => createRenewalFailureHandler(nav.navigate)()).toThrow('the notice store is gone');
+      expect(accessToken.current()).toBeNull();
+      // And the navigation never happened, so nothing claims the visitor was taken anywhere.
+      expect(nav.to).toEqual([]);
+      notice.mockRestore();
+    });
+
     it('and the real handler does not throw for any location it can be run at', () => {
       // The case above proves the boundary's containment. This one proves the handler does not NEED it: the
       // three shapes a tab can be in when its session dies - inside the SPA, at the destination already, and
@@ -394,7 +458,7 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       expect(signIn?.element).toBeDefined();
     });
 
-    it('and that screen is the one that STARTS the flow, not merely some element', () => {
+    it('and the destination route carries SignInScreen, not merely some element', () => {
       /*
        * Found in phase 10 by reading AC10 clause by clause. The clause says the destination's screen
        * "builds an authorize request on the visitor's action"; the case above only asserts that SOME
@@ -402,8 +466,10 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
        * passed T15's suite too, because T15 renders `SignInScreen` directly rather than through the route
        * table. So nothing tied the ROUTE this task navigates to, to the SCREEN that can start re-auth.
        *
-       * This case is the tie. What that screen then does with the visitor's click is T15's to prove, and
-       * it does; this only fixes which screen is at the other end of the navigation.
+       * This case is the tie, and its name says only what it proves - Kimi's phase 11 F6 was right that
+       * the earlier name ("the one that STARTS the flow") claimed the whole clause. What that screen does
+       * with the visitor's click is T15's to prove, and T15 proves it; this fixes which screen is at the
+       * other end of the navigation, which is the half nobody owned.
        */
       const children = appRoutes[0].children ?? [];
       const signIn = children.find((route) => route.path === SIGN_IN_PATH);
@@ -427,6 +493,26 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
   // AC11 — the environmental assumption behind "no half-authenticated screen", pinned so it fails when it
   // stops being true.
   // -------------------------------------------------------------------------------------------------------
+
+  describe('AC4 the basename boundary is exact', () => {
+    it('normalises the tab path, and keeps a lookalike prefix OUTSIDE the SPA', () => {
+      // Kimi's phase 11 F7. Driven through the real `location`, so the normalisation is measured and not
+      // re-implemented here. `/applications/x` is the case worth having: a bare `startsWith(base)` would
+      // have claimed it for the SPA and remembered a return target pointing out of it.
+      for (const [path, expected] of [
+        [APP_BASENAME, '/'],
+        [`${APP_BASENAME}/`, '/'],
+        [`${APP_BASENAME}/account`, '/account'],
+        [`${APP_BASENAME}/invoices/123`, '/invoices/123'],
+        ['/applications/x', null],
+        ['/elsewhere', null],
+        ['/', null],
+      ] as const) {
+        globalThis.history.replaceState({}, '', path);
+        expect(inAppPath(), path).toBe(expected);
+      }
+    });
+  });
 
   describe('AC11 no authenticated route can render anything yet', () => {
     it('pins that every authenticated path has no element - a T41 obligation when it changes', () => {
@@ -472,10 +558,11 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
        * why `session` is absent and why the sentence may say a session has ended - the case below draws that
        * boundary explicitly rather than leaving it to be inferred from an absence.
        */
-      const forbidden = /expire|invalid|revoke|renew|refresh|token|lock|suspend|delet|unknown|password|mfa|totp|server|network|401/i;
-      expect(en.signIn.sessionEnded).not.toMatch(forbidden);
+      // The list and its grouping are at the top of this file, shared with the surface sweep so the two
+      // cannot drift - which they had, until Kimi's phase 11 F3.
+      expect(en.signIn.sessionEnded).not.toMatch(FORBIDDEN_CAUSE);
       // CONTROL: the pattern really does fire on the sentence this rejects.
-      expect('Your token expired, so renewal failed.').toMatch(forbidden);
+      expect('Your token expired, so renewal failed.').toMatch(FORBIDDEN_CAUSE);
     });
 
     it('draws the line at naming the EVENT, which L4 does not forbid', () => {
@@ -504,6 +591,16 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       const text = renderSignIn().textContent ?? '';
       expect(text).toContain(en.signIn.discarded);
       expect(text).not.toContain(en.signIn.sessionEnded);
+    });
+
+    it('REPLACES a notice already pending, rather than queueing behind it', () => {
+      // Kimi's phase 11 F9. The store holds one value and taking it clears it, so queueing is impossible
+      // today - but nothing failed if that changed, and a queue would show the visitor the older, wrong
+      // sentence first. The newer event is always the truer one.
+      setSignInNotice('discarded');
+      createRenewalFailureHandler(recorder().navigate)();
+      expect(takeSignInNotice()).toBe('session-ended');
+      expect(takeSignInNotice()).toBeNull();
     });
 
     it('is taken once, so a reloaded sign-in page stops saying it', () => {
@@ -558,11 +655,25 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       // Kimi's phase 8 I9. Injection is the architectural protection; without this scan a future edit could
       // import the router directly and every behavioural case here would still pass.
       const code = strip(await moduleSource());
-      for (const forbidden of [/react-router/, /useNavigate/, /createBrowserRouter/, /globalThis\.history/]) {
+      // `location.assign` and `location.href =` are the other ways past the injected navigate, and both
+      // would be a FULL-PAGE navigation - which discards the in-memory notice this task just set, so the
+      // visitor would arrive at sign-in with nothing to read. Kimi's phase 11 F5.
+      for (const forbidden of [
+        /react-router/, /useNavigate/, /createBrowserRouter/,
+        /globalThis\.history/, /\blocation\s*\.\s*(assign|replace|href)/, /window\.location/,
+      ]) {
         expect(code, `cleanReauth.ts now imports or reaches for ${forbidden}`).not.toMatch(forbidden);
       }
       // Lower bound: it really does take the navigate it is given, so the scan is not passing over nothing.
       expect(code).toContain('navigate(');
+      // CONTROL: the location patterns fire on the shapes they exist to stop.
+      for (const bypass of ['location.assign(x)', "globalThis.location.href = '/app/sign-in'", 'window.location.reload()']) {
+        expect([/\blocation\s*\.\s*(assign|replace|href)/, /window\.location/].some((p) => p.test(bypass)), bypass)
+          .toBe(true);
+      }
+      // And it does read `location.pathname`, which is a READ and not a navigation - so the ban is on the
+      // three navigating members by name rather than on the object.
+      expect(code).toContain('location.pathname');
     });
   });
 
@@ -590,6 +701,53 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
   // -------------------------------------------------------------------------------------------------------
   // AC6 — no failure information anywhere, and exactly one permitted write.
   // -------------------------------------------------------------------------------------------------------
+
+  describe('AC12 the dormancy is pinned, so wiring cannot happen without reading this', () => {
+    it('records that NO production module constructs the boundary or this handler', async () => {
+      /*
+       * Kimi phase 11 F1 asked for a test asserting that `mountShell` constructs the boundary with this
+       * handler. That test cannot pass today - nothing constructs it - so it would have to be added broken.
+       * This is the same claim from the other side: it pins the CURRENT state, and it fails on the day
+       * somebody wires the SPA up, which is precisely the day they should be reading this file.
+       *
+       * It is a canary, like AC11's. Its message is the handover note.
+       */
+      const root = dirname(expect.getState().testPath as string);
+      const srcRoot = dirname(root);
+      async function walk(dir: string): Promise<string[]> {
+        const found: string[] = [];
+        for (const entry of await readdir(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name);
+          if (entry.isDirectory()) found.push(...(await walk(full)));
+          else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) found.push(full);
+        }
+        return found;
+      }
+      const files = await walk(srcRoot);
+      expect(files.length, 'the scan read no production files').toBeGreaterThan(10);
+
+      // The two files that DECLARE these functions name them too, so they are excluded by path and their
+      // presence is the scan's lower bound. Matching a declaration as a call was this case's first version.
+      const DEFINERS = ['api/sessionBoundary.ts', 'auth/cleanReauth.ts'];
+      const relative = (file: string) => file.slice(srcRoot.length + 1);
+      expect(files.map(relative), 'the files that declare these functions are missing from the scan')
+        .toEqual(expect.arrayContaining(DEFINERS));
+
+      const callers: string[] = [];
+      for (const file of files) {
+        if (DEFINERS.includes(relative(file))) continue;
+        const code = strip(await readFile(file, 'utf8'));
+        if (/createSessionBoundary\s*\(|createRenewalFailureHandler\s*\(/.test(code)) callers.push(file);
+      }
+      expect(
+        callers.map(relative),
+        'Something now constructs the session boundary or this handler. That is the wiring T33 was written '
+          + 'for and could not reach: pass `createRenewalFailureHandler(navigate)` as the boundary\'s '
+          + '`onRenewalFailed`, give it a navigate backed by the router, and delete this case. Until then '
+          + 'every behavioural case in this file is a statement about how the hook WILL be called.',
+      ).toEqual([]);
+    });
+  });
 
   describe('AC6 nothing about the failure is left on any surface', () => {
     it('remembers the allowlisted location and NOTHING else', () => {

@@ -31,9 +31,16 @@ import { setSignInNotice } from './signInNotice';
  * The tab's path inside the SPA, or `null` when the tab is not inside it.
  *
  * The trailing slash is stripped first, so `/app` and a future `/app/` behave alike - the same handling as
- * `authorizeRequest.ts:58-61`, for the same reason.
+ * `authorizeRequest.ts:58-61`, for the same reason. The prefix test uses `${base}/` rather than `base`, so
+ * `/applications/x` is correctly OUTSIDE the SPA; a bare `startsWith(base)` would have claimed it.
+ *
+ * EXPORTED FOR ITS OWN TEST, which is a thing worth justifying rather than doing quietly. Its root result
+ * is otherwise unobservable: `/` is not in `AUTHENTICATED_ROUTE_PATHS`, so `rememberReturnTarget` rejects
+ * it exactly as it rejects `null`, and every indirect case sees the same "nothing was remembered" for two
+ * different reasons. Kimi's phase 11 F7 asked for the normalisation to be pinned, and this is the only way
+ * to pin it without inventing a route nobody asked for.
  */
-function inAppPath(): string | null {
+export function inAppPath(): string | null {
   const base = APP_BASENAME.endsWith('/') ? APP_BASENAME.slice(0, -1) : APP_BASENAME;
   const path = globalThis.location.pathname;
   if (path === base) return '/';
