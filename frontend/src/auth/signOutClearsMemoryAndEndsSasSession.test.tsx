@@ -925,8 +925,18 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
      * those are in sign-out's set, which is exactly why the claim has to be about the SET and not a count.
      * A rule that would have forbidden the callback is a rule about nothing.
      */
-    it('is the only module permitted to call the whole sign-out set', () => {
-      const SIGN_OUT_SET = ['clearAccessToken', 'takeSignInNotice', 'consumeAuthorizeState', 'clearReturnTarget'];
+    it('is the only module permitted to call the whole sign-out set', async () => {
+      // TASK 36 STRENGTHENS THIS, and the reason is a measurement task 36 made about task 35. The set was a
+      // HARDCODED FOUR here. When task 36 added a fifth primitive to signOut.ts, this case went on passing
+      // without noticing: the four were still held only by signOut.ts. So its own description - "the whole
+      // sign-out set" - had quietly become false, because the set it measured was task 35's four rather than
+      // the set sign-out actually calls, and a second module permitted to call all FIVE would not have been
+      // caught. DERIVED FROM SOURCE now, so the set cannot go stale the next time sign-out grows a step.
+      const self = (await production()).find((file) => file.path === 'auth/signOut.ts');
+      const SIGN_OUT_SET = Object.keys(PERMITTED_CALLERS)
+        .filter((primitive) => new RegExp(`\\b${primitive}\\s*\\(`).test(self!.code));
+      expect(SIGN_OUT_SET.length, 'the derivation found no primitives in signOut.ts, so this case is vacuous')
+        .toBe(5);
       const held = new Map<string, string[]>();
       for (const primitive of SIGN_OUT_SET) {
         for (const path of PERMITTED_CALLERS[primitive]) {
@@ -940,12 +950,42 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
           + 'a second sign-out with permission, assembled one allowlist entry at a time. Route it through '
           + 'signOut() instead.',
       ).toEqual(['auth/signOut.ts']);
-      expect(whole[0]?.[1].sort(), 'and it holds all four of them').toEqual([...SIGN_OUT_SET].sort());
+      expect(whole[0]?.[1].sort(), 'and it holds every one of them').toEqual([...SIGN_OUT_SET].sort());
+    });
+
+    it('CONTROL: a second module permitted to call the WHOLE derived set is caught (task 36)', async () => {
+      // The precision half, and it cannot be a mutant: the gap task 36 found was in this file's logic, not
+      // in production source, so there is nothing for a harness to mutate. This plants the thing the
+      // strengthened case exists to catch - a module added to every primitive's list, one entry at a time -
+      // and shows it is seen. Under the OLD hardcoded four, a module holding four-of-five passed; the second
+      // assertion below is what that version could not make.
+      const self = (await production()).find((file) => file.path === 'auth/signOut.ts');
+      const derived = Object.keys(PERMITTED_CALLERS)
+        .filter((primitive) => new RegExp(`\\b${primitive}\\s*\\(`).test(self!.code));
+      const planted: Record<string, readonly string[]> = Object.fromEntries(
+        Object.entries(PERMITTED_CALLERS).map(([primitive, permitted]) => [
+          primitive,
+          derived.includes(primitive) ? [...permitted, 'app/secondSignOut.ts'] : permitted,
+        ]),
+      );
+      const held = new Map<string, string[]>();
+      for (const primitive of derived) {
+        for (const path of planted[primitive] as readonly string[]) {
+          held.set(path, [...(held.get(path) ?? []), primitive]);
+        }
+      }
+      const whole = [...held].filter(([, primitives]) => primitives.length === derived.length);
+      expect(whole.map(([path]) => path).sort(), 'the planted second sign-out went unseen')
+        .toEqual(['app/secondSignOut.ts', 'auth/signOut.ts']);
+      expect(derived, 'the derived set is still task 35\'s four, so the strengthening did nothing')
+        .toContain('takeIdToken');
     });
 
     it('and sign-out itself calls all four, so the allowlist is not vacuous', async () => {
       const self = (await production()).find((file) => file.path === 'auth/signOut.ts');
-      for (const primitive of ['clearAccessToken', 'takeSignInNotice', 'consumeAuthorizeState', 'clearReturnTarget']) {
+      for (const primitive of ['clearAccessToken', 'takeSignInNotice', 'consumeAuthorizeState', 'clearReturnTarget',
+        'takeIdToken', // TASK 36
+      ]) {
         expect(self!.code, `signOut.ts does not call ${primitive}`).toMatch(new RegExp(`\\b${primitive}\\s*\\(`));
       }
       // And it reaches no store itself: the knowledge of which key holds what stays in the owning module.
