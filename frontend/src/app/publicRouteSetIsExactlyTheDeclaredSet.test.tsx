@@ -307,6 +307,15 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // A deliberate COUNT PIN, and it will fail the day the next screen is attached - which is the handoff
       // working, exactly as task 16's did for this task. Whoever attaches the next one extends this list and
       // task 16's SCREENS_ATTACHED_SO_FAR together.
+      //
+      // WHY TWO PINS, decided in phase 7. `routesResolveUnderAppPrefixOnly.test.tsx:161` already pins the same
+      // total against a hand-edited list, and against every mutant in T37's harness this case is a STRICT
+      // SUBSET of it: task 16's compares to the LITERAL 'signed-out', so it also fails when the published
+      // constant is renamed, while this one spells both sides with SIGNED_OUT_PATH and is blind to a rename by
+      // construction (AC10 is what covers the spelling). The redundancy is kept anyway, for one reason: task
+      // 40 extends THIS file with the exhaustive public-route claim, and this case is the seed it grows from -
+      // the total expressed in the route table's own vocabulary. The day task 40 writes that claim, the pin to
+      // retire is task 16's narrowing one, not this one.
       const walk = (route: RouteObject): string[] => {
         const has = route.element !== undefined || route.Component !== undefined || route.errorElement !== undefined;
         return [...(has && route.path !== undefined ? [route.path] : []),
@@ -314,6 +323,16 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       };
       const attached = appRoutes.flatMap(walk);
       expect(attached).toEqual(['sign-in', 'callback', SIGNED_OUT_PATH]);
+
+      // CONTROL, the one task 16's case has and this one was missing: `walk` must COUNT, rather than return a
+      // list that happens to match. Given two attached routes - one nested, one carrying an errorElement
+      // instead of an element - it reports both; given a bare path it reports none.
+      const planted: RouteObject[] = [
+        { path: 'a', errorElement: <i /> },
+        { path: 'b', children: [{ path: 'c', Component: () => null }] },
+      ];
+      expect(planted.flatMap(walk)).toEqual(['a', 'c']);
+      expect([{ path: 'plain' }].flatMap(walk)).toEqual([]);
     });
   });
 
