@@ -43,7 +43,7 @@ OWN_TEST = "src/auth/failedRenewalTriggersCleanReauthWithoutHalfSession.test.tsx
 # so a survivor still fails the run - but it is scored SEPARATELY, because a mutation score is a measure of
 # the current code and a row everyone expects to change state would teach a reader to discount the number.
 # Kimi phase 8 I2 asked for this split and was right to.
-CANARIES = {"NR17"}
+CANARIES = {"NR17", "NR24"}
 FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 EXPECTED_BASELINE_FAILURES = 1
@@ -64,6 +64,8 @@ SENTENCE = "    sessionEnded: 'Your session has ended. Sign in again.',"
 SCREEN_NOTICE = "t(NOTICE_COPY_KEY[notice])"
 AUTH_ROUTES = "      ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),"
 SIGN_IN_ROUTE = "        if (path === SIGN_IN_PATH) return { path, element: <SignInScreen /> };"
+IN_APP_PREFIX = "  return path.startsWith(`${base}/`) ? path.slice(base.length) : null;"
+CLIENT_API = "export function createAuthApi(boundary: SessionBoundary, rateLimit?: RateLimitNoticeState): AuthApi {"
 
 MUTANTS = [
     # --- NR01-NR02: the token (AC1). The first clause of "no half-session" is a tab holding a token ----
@@ -123,12 +125,53 @@ MUTANTS = [
     ("NR16 the target is written straight to storage, bypassing the allowlist", REAUTH, REMEMBER,
      "    if (here !== null) globalThis.sessionStorage.setItem('themistra.auth.return_to', here);"),
 
+    # --- NR19-NR23: the five holes Kimi's phase 11 found in the instruments themselves -------------
+    # Each SURVIVED the suite as it stood at phase 10 and is killed by the phase 11 repair. A finding taken
+    # into code is only recorded honestly by a mutant that dies for the new reason.
+
+    # F3: the sweep's needles were narrower than the cause-word list, so a logged cause walked past both it
+    # and the catalogue check - the catalogue sentence being unchanged.
+    ("NR19 the cause is logged to the console, in words the sweep did not watch for",
+     REAUTH, SET_NOTICE,
+     "    console.warn('session renewal failed: the access token expired');\n" + SET_NOTICE),
+
+    # F4: the order, below the step that only the new throwing-remember case can see. Two edits, because
+    # one replacement can only delete - and deletion is NR01.
+    ("NR20 the token is cleared after the return target is remembered",
+     REAUTH, (CLEAR + "\n", REMEMBER), ("", REMEMBER + "\n" + CLEAR)),
+
+    # F5: the full-page bypass. It discards the in-memory notice this task just set, so the visitor arrives
+    # at sign-in with nothing to read - a defect no behavioural case in this file could see.
+    ("NR21 the injected navigate is bypassed with a full-page location assignment",
+     REAUTH, NAVIGATE, "    globalThis.location.assign(`${APP_BASENAME}/${SIGN_IN_PATH}`);"),
+
+    # F7: the basename boundary. `/applications/x` becomes INSIDE the SPA, and its return target points out
+    # of it - which `rememberReturnTarget`'s allowlist then rejects, so the only visible trace is the wrong
+    # path being offered. Only a direct test of the normalisation can see this.
+    ("NR22 the basename prefix test drops the separator, claiming /applications for the SPA",
+     REAUTH, IN_APP_PREFIX,
+     "  return path.startsWith(base) ? path.slice(base.length) : null;"),
+
+    # F9: a queue instead of a replacement, which would show the visitor the older and now-wrong sentence.
+    ("NR23 a notice already pending is left in place instead of replaced",
+     REAUTH, SET_NOTICE,
+     "    if (takeSignInNotice() === null) setSignInNotice('session-ended');\n"
+     "    else setSignInNotice('discarded');"),
+
     # --- NR18: the destination is tied to the screen that can start re-auth (AC10) -----------------
     # Phase 10 found that nothing tied them, so this is what proves the case it got actually fires. The
     # route still resolves and still renders something, which is why the weaker case could not see it.
     ("NR18 the sign-in route carries a different screen, so the destination cannot start re-auth",
      ROUTES, SIGN_IN_ROUTE,
      "        if (path === SIGN_IN_PATH) return { path, element: <CallbackScreen /> };"),
+
+    # --- NR24: the wiring arrives (AC12) - a CANARY, like NR17 --------------------------------------
+    # Not a defect. It is the day the SPA is wired up, and the case it kills is the handover note telling
+    # that author what to pass as `onRenewalFailed`. Scored apart for the same reason NR17 is.
+    ("NR24 a production module starts constructing the boundary, so the wiring has arrived",
+     CLIENT, CLIENT_API,
+     "const wired = (nav: (to: string) => void) => createRenewalFailureHandler(nav);\n"
+     "void wired;\n" + CLIENT_API),
 
     # --- NR17: the environmental assumption behind "no half-authenticated screen" (AC11) ------------
     # Not a defect in this task's code at all. It is the day the repository stops making T33's claim
