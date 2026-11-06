@@ -14,7 +14,9 @@ const SAMPLE_UUID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 const DECLARED_PATHS: readonly string[] = [...PUBLIC_ROUTE_PATHS, ...AUTHENTICATED_ROUTE_PATHS];
 
 /** The screens attached so far, in route order. A task that attaches one adds it here deliberately (T16: sign-in). */
-const SCREENS_ATTACHED_SO_FAR = ['sign-in', 'callback'] as const;
+const SCREENS_ATTACHED_SO_FAR = ['sign-in', 'callback',
+  'signed-out', // TASK 37 - the signed-out landing. Additive; every case below is task 16's, unchanged.
+] as const;
 
 /** Every route path carrying a rendered element, by whichever of the three keys React Router accepts. */
 function routesWithElements(routes: readonly RouteObject[]): string[] {

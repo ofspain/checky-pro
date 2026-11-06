@@ -4,6 +4,7 @@ import { createBrowserRouter, type RouteObject } from 'react-router';
 // at module scope, so nothing touches the binding while it is still in its temporal dead zone. That property is
 // pinned by a test in the sign-in suite; if it is ever broken the application fails to start, not a test.
 import { CallbackScreen } from '../auth/CallbackScreen';
+import { SignedOutScreen } from '../auth/SignedOutScreen';
 import { SignInScreen } from '../auth/SignInScreen';
 
 /** Every SPA route lives under this prefix, which is disjoint from the backend prefixes the edge sends to the services (L14). */
@@ -18,6 +19,10 @@ export const CALLBACK_PATH = 'callback';
 /** Where a completed sign-in lands when no allowlisted return target was remembered (L1, T24). One spelling. */
 export const HOME_PATH = 'home';
 
+/** Where SAS returns the browser after the end-session call (R19, task 36). Published in task 37, which is why
+ * `endSession.ts` no longer declares it privately: one spelling, and `post_logout_redirect_uri` is built from it. */
+export const SIGNED_OUT_PATH = 'signed-out';
+
 /** Routes reachable without a session (design.md §4c), relative to APP_BASENAME. T40 enforces the split. */
 export const PUBLIC_ROUTE_PATHS = [
   SIGN_IN_PATH,
@@ -28,7 +33,7 @@ export const PUBLIC_ROUTE_PATHS = [
   'resend-verification',
   'reset/request',
   'reset',
-  'signed-out',
+  SIGNED_OUT_PATH,
 ] as const;
 
 /** Routes that need a session (design.md §4c), relative to APP_BASENAME. */
@@ -55,6 +60,7 @@ export const appRoutes: RouteObject[] = [
       ...PUBLIC_ROUTE_PATHS.map((path) => {
         if (path === SIGN_IN_PATH) return { path, element: <SignInScreen /> };
         if (path === CALLBACK_PATH) return { path, element: <CallbackScreen /> };
+        if (path === SIGNED_OUT_PATH) return { path, element: <SignedOutScreen /> };
         return { path };
       }),
       ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),

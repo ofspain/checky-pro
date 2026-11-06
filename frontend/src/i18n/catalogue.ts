@@ -30,4 +30,22 @@ export const en = {
     heading: 'Finishing sign-in',
     working: 'Checking your sign-in…',
   },
+  // The signed-out landing (task 37), last of the three a visitor meets. NOTHING in the spec package specifies
+  // these words - R19 governs the clearing and the end-session call, L14 only that the route exists and is
+  // public - so they are derived from L4 and modelled on `signIn.sessionEnded`, which names an EVENT and never
+  // a cause. The constraint that shaped them is less obvious than L4: this screen is reachable by typing its
+  // URL, so it can be read by a visitor whose tab still holds a token, and it cannot verify otherwise without
+  // becoming a status view L4 forbids. So no string here asserts what is true of the visitor's session.
+  signedOut: {
+    // A page label, not a status report. Not "You have been signed out", not "successfully", and not "of all
+    // devices" - each of those is a claim about state this screen cannot check.
+    heading: 'Signed out',
+    // An INVITATION, which is what carries the burden above: it says nothing about what is currently true, so
+    // it is true for someone who has just signed out AND for someone who arrived here holding a token.
+    // `signIn.sessionEnded`'s "Your session has ended" was considered and rejected for exactly that reason.
+    explanation: 'Sign in again whenever you are ready.',
+    // Deliberately NOT `signIn.action`'s "Continue to sign in", which promises the hand-over to the
+    // server-hosted flow. This only returns the visitor to the sign-in screen, whose heading it matches.
+    action: 'Sign in',
+  },
 } as const;

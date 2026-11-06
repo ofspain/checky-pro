@@ -1,4 +1,4 @@
-import { APP_BASENAME } from '../app/routes';
+import { APP_BASENAME, SIGNED_OUT_PATH } from '../app/routes';
 import { takeIdToken } from './idToken';
 import { signOut } from './signOut';
 
@@ -43,17 +43,6 @@ import { signOut } from './signOut';
  * the two and the one that edits no closed module.
  */
 export const END_SESSION_PATH = '/connect/logout';
-
-/**
- * Where the authorization server returns the browser once the session is ended.
- *
- * `routes.tsx` publishes `SIGN_IN_PATH`, `CALLBACK_PATH` and `HOME_PATH` as named constants but has no
- * `SIGNED_OUT_PATH` - the route exists there only as a literal inside `PUBLIC_ROUTE_PATHS`. That module is
- * closed to this task, so the spelling is declared here and the suite asserts `PUBLIC_ROUTE_PATHS` contains
- * it: a rename of the route then fails a test rather than becoming a `400` from SAS in a browser nobody is
- * watching. It must stay a PUBLIC route for the obvious reason - a visitor arriving there has no session.
- */
-const SIGNED_OUT_PATH = 'signed-out';
 
 /**
  * The post-logout target, derived rather than configured.
