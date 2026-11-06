@@ -137,3 +137,31 @@ export function takeReturnTarget(): string {
     return homeTarget();
   }
 }
+
+/**
+ * Removes the remembered target without reading it (task 35).
+ *
+ * **Why this exists beside `takeReturnTarget` rather than instead of it.** That function returns a destination
+ * because its caller is a navigation; T24-D4 records that the target is "deleted at callback, by the module that
+ * owns its reader", for having been READ, as against the three PKCE items deleted for having been CONSUMED by
+ * the exchange - "different consumers, different moments". Sign-out is a third moment and the only one that
+ * reads nothing: it has no navigation to feed, so a function returning a destination would hand it a value with
+ * nowhere to go and force `homeTarget()` to be computed for a caller that cannot use it. It would also add a
+ * `getItem` to a sign-out whose storage traffic is otherwise four removals and no reads.
+ *
+ * `takeReturnTarget`'s body is deliberately NOT refactored to call this. Two three-line removals in one module
+ * is the cost; editing a closed function's body to save three lines is the worse trade, and this file is what
+ * tasks 22 and 24 are built on.
+ *
+ * Guarded, never throws, idempotent, removes exactly this one key and never calls `clear()` - the same contract
+ * `consumeAuthorizeState` states for its three, and for the same reason: `removeItem` can throw rather than fail
+ * quietly on a store that is denied outright. A sign-out that cannot tidy is still a sign-out; the token is
+ * already gone by the time this runs, and the next `rememberReturnTarget` overwrites whatever survived.
+ */
+export function clearReturnTarget(): void {
+  try {
+    globalThis.sessionStorage.removeItem(RETURN_TARGET_KEY);
+  } catch {
+    // See T24-D9: a store that refuses the removal does not change the visitor's outcome.
+  }
+}

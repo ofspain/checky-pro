@@ -818,7 +818,25 @@ describe('stateSurvivesRedirectAndIsConsumedOnce', () => {
         .map(({ path }) => path)
         .sort();
 
-      expect(callers).toEqual(['auth/CallbackScreen.tsx', 'auth/authorizeRequest.ts']);
+      /*
+       * Three, since task 35. `auth/signOut.ts` is the second CALLER, and it is admitted here rather than
+       * worked around because T23-D2's argument survives it unchanged.
+       *
+       * That argument is about a drive-by navigation: single-use is narrowed to the consuming path "so that
+       * anyone who can get a signed-in visitor to open `/app/callback?state=x` cannot end that tab's pending
+       * sign-in", and the comment above scopes the dependency to "no DISCARD PATH anywhere calling this".
+       * Sign-out is neither. It is unreachable by a link - no element, no affordance, and when one exists it
+       * will be a deliberate gesture - so nothing an attacker can cause now deletes the three.
+       *
+       * And leaving them would be the worse outcome. The triple outlives the tab that wrote it: a visitor who
+       * signs out while a sign-in is in flight elsewhere would otherwise have a surviving `code_verifier`
+       * waiting for a callback that can still arrive and still complete an exchange - a session established
+       * after sign-out, which is the one thing R19 exists to prevent. Sign-out wins over a pending sign-in.
+       *
+       * Nothing else in this file changes: a discard still deletes nothing, and the deleted set is still
+       * exactly the three keys this constant names.
+       */
+      expect(callers).toEqual(['auth/CallbackScreen.tsx', 'auth/authorizeRequest.ts', 'auth/signOut.ts']);
       // And the scan really reports: the same filter over a synthetic module finds it.
       expect(
         [{ path: 'api/somewhere.ts', code: 'consumeAuthorizeState();' }]
