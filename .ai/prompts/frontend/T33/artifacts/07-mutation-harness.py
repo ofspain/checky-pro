@@ -35,6 +35,7 @@ NOTICE = "frontend/src/auth/signInNotice.ts"
 CATALOGUE = "frontend/src/i18n/catalogue.ts"
 SCREEN = "frontend/src/auth/SignInScreen.tsx"
 ROUTES = "frontend/src/app/routes.tsx"
+CLIENT = "frontend/src/api/client.ts"
 
 OWN_TEST = "src/auth/failedRenewalTriggersCleanReauthWithoutHalfSession.test.tsx"
 
@@ -66,6 +67,7 @@ AUTH_ROUTES = "      ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),"
 SIGN_IN_ROUTE = "        if (path === SIGN_IN_PATH) return { path, element: <SignInScreen /> };"
 IN_APP_PREFIX = "  return path.startsWith(`${base}/`) ? path.slice(base.length) : null;"
 CLIENT_API = "export function createAuthApi(boundary: SessionBoundary, rateLimit?: RateLimitNoticeState): AuthApi {"
+CLIENT_IMPORT = "import type { SessionBoundary } from './sessionBoundary';"
 
 MUTANTS = [
     # --- NR01-NR02: the token (AC1). The first clause of "no half-session" is a tab holding a token ----
@@ -168,10 +170,14 @@ MUTANTS = [
     # --- NR24: the wiring arrives (AC12) - a CANARY, like NR17 --------------------------------------
     # Not a defect. It is the day the SPA is wired up, and the case it kills is the handover note telling
     # that author what to pass as `onRenewalFailed`. Scored apart for the same reason NR17 is.
+    # Two edits, so the mutant is SYNTACTICALLY VALID and the module still imports: a bare reference to an
+    # unimported name would throw at import time and fail the whole suite, which is a kill for the wrong
+    # reason. `wired` is never called, so nothing executes - AC12 reads source, not behaviour.
     ("NR24 a production module starts constructing the boundary, so the wiring has arrived",
-     CLIENT, CLIENT_API,
-     "const wired = (nav: (to: string) => void) => createRenewalFailureHandler(nav);\n"
-     "void wired;\n" + CLIENT_API),
+     CLIENT, (CLIENT_IMPORT, CLIENT_API),
+     (CLIENT_IMPORT + "\nimport { createRenewalFailureHandler } from '../auth/cleanReauth';",
+      "const wired = (nav: (to: string) => void) => createRenewalFailureHandler(nav);\n"
+      "void wired;\n" + CLIENT_API)),
 
     # --- NR17: the environmental assumption behind "no half-authenticated screen" (AC11) ------------
     # Not a defect in this task's code at all. It is the day the repository stops making T33's claim
