@@ -179,6 +179,22 @@ const DEFINERS = ['auth/accessToken.ts', 'auth/signInNotice.ts', 'auth/authorize
  */
 const NOT_SESSION_STATE = [
   {
+    file: 'profile/readAccount.ts',
+    declarations: 1,
+    why:
+      'a Record of failure copy keyed by a closed union, declared once and never assigned to at runtime. ' +
+      "Caught because the scan reaches object literals (phase 11 F3) and this one is not `as const`; it is " +
+      "a message table, not the visitor's state, and clearing it would leave the module unable to speak.",
+  },
+  {
+    file: 'profile/readProfile.ts',
+    declarations: 1,
+    why:
+      'the same message table for the profile read, excused for the same reason. Two entries rather than ' +
+      'one pattern, because an exclusion that matches by shape would excuse the next real piece of state ' +
+      'that happens to be shaped like a lookup table.',
+  },
+  {
     file: 'pwa/registerServiceWorker.ts',
     // How many module-scope declarations this entry excuses. Pinned because the frozen criterion says the
     // list holds "registerServiceWorker.ts's TWO PWA entries and nothing else", and excusing a FILE excuses
@@ -193,6 +209,22 @@ const NOT_SESSION_STATE = [
 ] as const;
 
 /* ─────────────────────────── storage and console watches ─────────────────────────── */
+
+/**
+ * Mutable state at MODULE scope, in the three shapes it can take here.
+ *
+ * `let`/`var` is the obvious one. A `const` holding a container (`new Map()`, an array) is the one Kimi
+ * phase 8 I4 added. A `const` holding an object literal is the one phase 11 F3 added - and unlike the other
+ * two, that shape DOES exist in production, so it comes with two excused entries below rather than passing
+ * for free. `as const` is not exempted by the pattern: TypeScript makes such a value deeply readonly, so
+ * mutating it is a compile error, but the exemption would have to be a second regex and the two real cases
+ * are not `as const` anyway.
+ *
+ * Hoisted to module scope in this file so the scan and its control cannot drift apart - they were two copies
+ * of the same literal for one commit, which is the bug this instrument exists to catch in other files.
+ */
+const MUTABLE_AT_MODULE_SCOPE =
+  /^(?:let|var)\s|^const\s+\w+\s*(?::[^=\n]*)?=\s*(?:new\s+(?:Map|Set|WeakMap|WeakSet)\s*\(|\[|\{)/m;
 
 type StorageWatch = { getItem: Mock; setItem: Mock; removeItem: Mock; clear: Mock };
 
@@ -440,7 +472,17 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
 
       signOut();
 
+      // WHICH STORE, not only which keys (Kimi phase 11 F8). `watchStorage` spies `Storage.prototype`, which
+      // `sessionStorage` and `localStorage` SHARE - so a removal aimed at the wrong store would have matched
+      // the key list and passed. The receivers are recorded alongside the keys, and localStorage is asserted
+      // untouched from its own side as well.
+      const receivers = watch.removeItem.mock.instances as unknown[];
       expect(keysOf(watch.removeItem).sort(), 'the four inventory keys, once each').toEqual(inventoryKeys().sort());
+      expect(
+        receivers.every((receiver) => receiver === globalThis.sessionStorage),
+        'a removal was aimed at a store other than sessionStorage',
+      ).toBe(true);
+      expect(globalThis.localStorage.length, 'localStorage was touched').toBe(0);
       expect(watch.removeItem.mock.calls, 'four removals, not five').toHaveLength(4);
       expect(watch.getItem, 'sign-out reads nothing - takeReturnTarget would have added a getItem').not.toHaveBeenCalled();
       expect(watch.setItem, 'sign-out writes nothing').not.toHaveBeenCalled();
@@ -480,8 +522,6 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       // `let`/`var`, AND a top-level `const` holding a mutable container - Kimi phase 8 I4 is right that a
       // `const cache = new Map()` is tab-lifetime mutable state that `let` alone would miss. Measured before
       // choosing: no production module has one today, so the scan is EXTENDED rather than the claim narrowed.
-      const MUTABLE_AT_MODULE_SCOPE =
-        /^(?:let|var)\s|^const\s+\w+\s*(?::[^=\n]*)?=\s*(?:new\s+(?:Map|Set|WeakMap|WeakSet)\s*\(|\[)/m;
       const holders = files.filter((file) => MUTABLE_AT_MODULE_SCOPE.test(file.code)).map((file) => file.path);
       const cleared = INVENTORY.filter((row) => row.key === null).map((row) => row.owner);
       const excused = NOT_SESSION_STATE.map((entry) => entry.file);
@@ -510,11 +550,15 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
 
     it('CONTROL: a module-scope mutable in a scanned file is caught', async () => {
       const files = await production();
-      const MUTABLE_AT_MODULE_SCOPE =
-        /^(?:let|var)\s|^const\s+\w+\s*(?::[^=\n]*)?=\s*(?:new\s+(?:Map|Set|WeakMap|WeakSet)\s*\(|\[)/m;
-      // Both forms, because the pattern grew a second alternative and a control that exercises one of two
-      // branches is a control for half a scan.
-      for (const planted of ['let leaked = 1;', 'const cache = new Map();', 'const seen: string[] = [];']) {
+      // Every alternative the pattern has, because a control that exercises one branch of three is a control
+      // for a third of a scan.
+      for (const planted of [
+        'let leaked = 1;',
+        'var older = 1;',
+        'const cache = new Map();',
+        'const seen: string[] = [];',
+        'const state = { count: 0 };',
+      ]) {
         const files2 = files.map((file) =>
           file.path === 'app/AppShell.tsx' ? { ...file, code: `${planted}\n${file.code}` } : file,
         );
@@ -601,6 +645,25 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       }
     });
 
+    /**
+     * AC8 finds keys and AC3/AC6 prove the clearing, which is a clean separation and leaves nobody holding
+     * the join (Kimi phase 11 F7). One case walks the inventory itself, so adding a row without clearing it
+     * fails here rather than in whichever behavioural case happened to mention that key.
+     */
+    it('and every key in it is really gone after sign-out', async () => {
+      await buildAuthorizeRequest();
+      rememberReturnTarget('/account');
+      for (const key of inventoryKeys()) {
+        expect(globalThis.sessionStorage.getItem(key), `the precondition: ${key} was present`).not.toBeNull();
+      }
+
+      signOut();
+
+      for (const key of inventoryKeys()) {
+        expect(globalThis.sessionStorage.getItem(key), `${key} is in the inventory and survived sign-out`).toBeNull();
+      }
+    });
+
     it('CONTROL: a key outside the inventory is caught', async () => {
       const files = await production();
       const planted = [...files, { path: 'app/planted.ts', code: `const k = '${KEY_PREFIX}auth.smuggled';` }];
@@ -638,6 +701,11 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       const channel = new BroadcastChannel(name);
       const shared = shareRenewalAcrossTabs(accessToken, { channel, locks });
       const sibling = new BroadcastChannel(name);
+      // The observer: a third endpoint whose only job is to say when the message arrived at all.
+      const observer = new BroadcastChannel(name);
+      const delivered = new Promise<void>((resolve) => {
+        observer.addEventListener('message', () => resolve(), { once: true });
+      });
       try {
         retainAccessToken(aToken());
         signOut();
@@ -647,18 +715,26 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
         sibling.postMessage({ type: 'renewal:succeeded', token: siblingToken });
 
         /*
-         * POLLED, NOT WAITED ONE TICK - and the single tick was a real flake, not a theoretical one.
+         * DELIVERY IS OBSERVED, NOT WAITED FOR - which is the part Kimi phase 11 F2 was reaching for, and
+         * the part that fixes the dangerous failure mode rather than just widening the window.
          *
-         * This case passed for its first three runs and then failed with `null` the moment two cases were
-         * added ahead of it: `BroadcastChannel` delivery is a macrotask whose timing depends on how busy the
-         * loop is, so `setTimeout(0)` was racing it. The failure mode is what makes this worth the extra
-         * lines - the case would have reported "GOOD NEWS, the hazard is fixed" when nothing had been fixed
-         * at all. A flaky pin on a known defect is worse than no pin, because it teaches the reader to
-         * re-run it until it agrees.
+         * History: one `setTimeout(0)` passed three runs and then returned `null` the moment two cases ran
+         * ahead of it, because `BroadcastChannel` delivery is a macrotask racing the timer. A bounded poll
+         * followed. F2 objected that a poll is still non-deterministic, and gave two reasons - one of which
+         * is wrong and one of which is the whole point:
          *
-         * The bound is generous and the assertion below is unchanged, so a genuine fix still reports as one:
-         * the token simply stays null for every one of the attempts.
+         *  - "on a fast runner the loop may exit early and still assert the hazard exists" - exiting early
+         *    means the token is NON-null, which IS the hazard. Early exit is the correct outcome.
+         *  - "on a slow runner the bound may not be enough" - this one matters, and it is not a flake, it is
+         *    a FALSE REPAIR REPORT: the poll exhausts, the token is null, and the assertion below announces
+         *    "GOOD NEWS, the hazard is fixed" when all that happened was a slow machine.
+         *
+         * So the two events are separated. A third endpoint on the same channel observes the message, and
+         * `delivered` is awaited with NO bound: if delivery never happens the case fails as a Vitest timeout,
+         * which reads as a channel problem and not as a fix. Only once delivery is known to have occurred is
+         * adoption polled, and a few ticks then suffice because the remaining lag is one listener's turn.
          */
+        await delivered;
         for (let attempt = 0; attempt < 50 && accessToken.current() === null; attempt += 1) {
           await new Promise((resolve) => setTimeout(resolve, 2));
         }
@@ -674,6 +750,7 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
         shared.close();
         channel.close();
         sibling.close();
+        observer.close();
         clearAccessToken();
       }
     });
@@ -692,6 +769,10 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       const hazard = block.slice(0, block.indexOf('describe('));
       expect(hazard, 'the hazard case no longer names task 39').toMatch(/task 39/);
       expect(hazard, 'the hazard case no longer names its open question').toMatch(/OQ-T35-3/);
+      // And the instruction, not only the addressee (Kimi phase 11 F12): a message that names task 39 but
+      // no longer says what to DO leaves its reader knowing they are responsible and not what for.
+      expect(hazard, 'the hazard message no longer says to replace the case').toMatch(/replace this case/i);
+      expect(hazard, 'the hazard message no longer says what the fixed assertion is').toMatch(/stays null/i);
     });
   });
 
@@ -760,6 +841,35 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       expect(missing, 'PERMITTED_CALLERS has gone stale; remove what no longer applies').toEqual([]);
     });
 
+    /**
+     * THE MONOPOLY (Kimi phase 11 F9). Each primitive's list is checked independently above, so a module
+     * added to every list would assemble a second sign-out one entry at a time and never trip the stray
+     * scan. What makes sign-out sign-out is holding the whole SET together, so that is asserted directly.
+     *
+     * Written first as "no other module may hold more than one", which is FALSE and the measurement said so:
+     * `CallbackScreen.tsx` legitimately holds three of the five - it clears the token on a discard, consumes
+     * the authorize state, and takes the return target - because that is the callback's own job. Two of
+     * those are in sign-out's set, which is exactly why the claim has to be about the SET and not a count.
+     * A rule that would have forbidden the callback is a rule about nothing.
+     */
+    it('is the only module permitted to call the whole sign-out set', () => {
+      const SIGN_OUT_SET = ['clearAccessToken', 'takeSignInNotice', 'consumeAuthorizeState', 'clearReturnTarget'];
+      const held = new Map<string, string[]>();
+      for (const primitive of SIGN_OUT_SET) {
+        for (const path of PERMITTED_CALLERS[primitive]) {
+          held.set(path, [...(held.get(path) ?? []), primitive]);
+        }
+      }
+      const whole = [...held].filter(([, primitives]) => primitives.length === SIGN_OUT_SET.length);
+      expect(
+        whole.map(([path]) => path),
+        'a module other than signOut.ts is permitted to call every clearing primitive sign-out uses. That is '
+          + 'a second sign-out with permission, assembled one allowlist entry at a time. Route it through '
+          + 'signOut() instead.',
+      ).toEqual(['auth/signOut.ts']);
+      expect(whole[0]?.[1].sort(), 'and it holds all four of them').toEqual([...SIGN_OUT_SET].sort());
+    });
+
     it('and sign-out itself calls all four, so the allowlist is not vacuous', async () => {
       const self = (await production()).find((file) => file.path === 'auth/signOut.ts');
       for (const primitive of ['clearAccessToken', 'takeSignInNotice', 'consumeAuthorizeState', 'clearReturnTarget']) {
@@ -777,6 +887,11 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       const self = (await production()).find((file) => file.path === 'auth/signOut.ts');
       for (const forbidden of [/\bfetch\s*\(/, /XMLHttpRequest/, /react-router/, /\bt\s*\(/, /catalogue/, /navigate/]) {
         expect(self!.code, `signOut.ts reaches for ${forbidden.source}`).not.toMatch(forbidden);
+      }
+      // And it renders nothing (Kimi phase 11 F4). The file is `.tsx` only so task 36 can extend it; the
+      // extension is not a licence to put a screen in the clearing half, and nothing else noticed if it did.
+      for (const rendering of [/from 'react'/, /from "react"/, /\bReact\b/, /<\/?[A-Z]\w*[\s/>]/, /<>/]) {
+        expect(self!.code, `signOut.ts renders or imports React (${rendering.source})`).not.toMatch(rendering);
       }
     });
 
@@ -837,6 +952,36 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       expect(() => signOut()).not.toThrow();
 
       expect(accessToken.current()).toBeNull();
+    });
+
+    /**
+     * A PARTIAL failure, which is the third shape and the only one with an ordering consequence (Kimi phase
+     * 11 F6). `removeItem` throws while the store is otherwise healthy - the realistic version is a store
+     * that answers reads and refuses writes - and the point is that the FIRST of the four removals throwing
+     * must not prevent the other three. It does not, because each primitive guards its own.
+     *
+     * `QuotaExceededError` is deliberately not a case: quota applies to writes and sign-out never writes.
+     * Naming the conditions actually covered - absent, refusing everything, refusing removals - is honest
+     * where the frozen criterion's "any storage condition" was not.
+     */
+    it('clears everything it can when only removeItem throws', async () => {
+      await buildAuthorizeRequest();
+      rememberReturnTarget('/account');
+      retainAccessToken(aToken());
+      const attempted: string[] = [];
+      vi.spyOn(Storage.prototype, 'removeItem').mockImplementation((key: string) => {
+        attempted.push(key);
+        throw new DOMException('denied', 'SecurityError');
+      });
+
+      expect(() => signOut()).not.toThrow();
+
+      expect(accessToken.current(), 'the security property is unaffected by a store that will not tidy').toBeNull();
+      expect(
+        attempted.sort(),
+        'one removal throwing stopped the others: each primitive must guard its own, so a refusal on the '
+          + 'first key cannot leave the remaining three unattempted',
+      ).toEqual(inventoryKeys().sort());
     });
 
     it('CONTROL: the denied store really does throw', () => {

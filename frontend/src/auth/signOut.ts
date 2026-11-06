@@ -46,6 +46,15 @@ import { takeSignInNotice } from './signInNotice';
  * cannot reach the `SharedRenewal` closure, and the alternative - a latch that makes `adopt` refuse - means
  * ADDING a piece of state in the task whose whole statement is removing it. The suite pins the sequence instead,
  * so whoever builds task 39 meets it as a failing expectation rather than a paragraph.
+ *
+ * **TWO MORE THINGS THIS FUNCTION DOES NOT DO, named so nobody has to wonder.** It does not abort requests
+ * already in flight: `sessionBoundary.ts` reads `current()` as each request is built and never caches it, so
+ * every request built after this call carries no token, but one already on the wire outlives the sign-out by
+ * its own round trip. And it does not clear the boundary's own pending-renewal map, which lives in a factory
+ * closure a zero-argument function cannot reach - so a tab that signs out mid-renewal clears its token while
+ * the boundary may still settle calls that were waiting. Both belong with whoever wires the boundary up;
+ * neither is reachable from here, and neither is a thing a parameter would fix, because the parameter would
+ * have to be the boundary itself.
  */
 export function signOut(): void {
   // FIRST, and the only one of the four whose position matters.
