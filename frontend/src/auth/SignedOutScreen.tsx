@@ -23,11 +23,16 @@ import { SIGN_IN_PATH } from '../app/routes';
  * comment for `signedOut` carries the wording argument; the short version is that the heading is a label and
  * the explanation is an invitation, so neither is false in either arrival.
  *
- * `SIGN_IN_PATH` is read INSIDE the component, never at module scope. `routes.tsx:2-5` documents why that
- * discipline exists: this module is imported BY the route table, so reading an imported route constant while
- * the module graph is still initialising would touch a binding in its temporal dead zone and the application
- * would fail to start rather than fail a test. `CallbackScreen.tsx:99` has followed the same rule since task
- * 17, and this is that pattern rather than a new one.
+ * `SIGN_IN_PATH` is read INSIDE the component, never at module scope, because this module is imported BY the
+ * route table and the binding is still uninitialised while this module's body runs. `routes.tsx:2-5` states
+ * the consequence as "if it is ever broken the application fails to start, not a test" - and phase 7 MEASURED
+ * that, and it is wrong. A module-scope read here raises no ReferenceError at all: the import yields
+ * `undefined` and the way back renders as `href="/app/undefined"`, a dead link on the one screen whose only
+ * job is to offer a live one. The same mutation applied to `authorizeRequest.ts`, which is the cycle task
+ * 16's comment is actually about, also throws nothing and fails exactly one case - the sign-in suite's own
+ * pin. So the discipline is right and the reason given for it was not: what catches a module-scope read is a
+ * test, never the runtime, which is why AC13 has one and why it carries a control.
+ * `CallbackScreen.tsx:99` has followed the same rule since task 17, and this is that pattern, not a new one.
  *
  * A `Link` and not a button: this is the one navigation in the SPA that should NOT leave the document. Every
  * other hand-over here - the sign-in screen's, task 36's - is deliberately a full-page navigation to SAS. A
