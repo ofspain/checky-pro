@@ -180,6 +180,11 @@ const DEFINERS = ['auth/accessToken.ts', 'auth/signInNotice.ts', 'auth/authorize
 const NOT_SESSION_STATE = [
   {
     file: 'pwa/registerServiceWorker.ts',
+    // How many module-scope declarations this entry excuses. Pinned because the frozen criterion says the
+    // list holds "registerServiceWorker.ts's TWO PWA entries and nothing else", and excusing a FILE excuses
+    // every declaration that ever appears in it - so a third one added later would be waved through in
+    // silence. The count is what makes the exclusion specific rather than a blanket.
+    declarations: 2,
     why:
       'the service-worker registration promise and its waiting-update flag. Not session state and not the ' +
       "visitor's: a sign-out that dropped them would re-register a worker and re-prompt for an update that is " +
@@ -330,11 +335,22 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
   });
 
   describe('AC2 it is idempotent', () => {
-    it('is harmless run twice', () => {
+    it('is harmless run twice, and the second call leaves the state the first did', async () => {
+      await buildAuthorizeRequest();
+      rememberReturnTarget('/account');
+      setSignInNotice('session-ended');
       retainAccessToken(aToken());
+
       signOut();
+      // The whole observable state after one call, captured rather than asserted piecemeal: the criterion
+      // says both calls leave the SAME state, which is a comparison and not a list of nulls.
+      const afterOnce = { token: accessToken.current(), keys: Object.keys(globalThis.sessionStorage).sort() };
+
       expect(() => signOut()).not.toThrow();
-      expect(accessToken.current()).toBeNull();
+
+      expect({ token: accessToken.current(), keys: Object.keys(globalThis.sessionStorage).sort() })
+        .toEqual(afterOnce);
+      expect(afterOnce, 'and the state they agree on is the cleared one').toEqual({ token: null, keys: [] });
     });
 
     it('is harmless in a cold tab that never signed in - the state task 39 will call it from', () => {
@@ -476,6 +492,14 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
 
       for (const entry of NOT_SESSION_STATE) {
         expect(entry.why.length, `${entry.file} is excused without a reason`).toBeGreaterThan(60);
+        const excused = files.find((file) => file.path === entry.file);
+        expect(excused, `${entry.file} is excused but is not in the scan`).toBeDefined();
+        expect(
+          (excused!.code.match(new RegExp(MUTABLE_AT_MODULE_SCOPE.source, 'gm')) ?? []).length,
+          `${entry.file} now holds a different number of module-scope mutables than this entry excuses. `
+            + 'Excusing a file excuses every declaration in it; say which, and why the new one is also not '
+            + "the visitor's session state.",
+        ).toBe(entry.declarations);
       }
       // The limitation, stated rather than implied: closure-held state is not module-scope and not reachable
       // from a zero-argument function. AC9 is what that limitation costs.
@@ -655,6 +679,22 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
     });
   });
 
+  describe('AC9b the handover is addressed to someone', () => {
+    /**
+     * The frozen criterion says AC9 carries "a message naming task 39 as the owner", and until now nothing
+     * checked that it does. A pinned hazard whose message loses its addressee becomes a green test beside a
+     * real defect with no one told - which is the failure mode the whole case exists to avoid. Task 32
+     * learned the same thing about a contract sentence: if the message is the deliverable, pin the message.
+     */
+    it("names task 39 and OQ-T35-3 in the hazard case's own source", async () => {
+      const ownSource = await readFile(expect.getState().testPath as string, 'utf8');
+      const block = ownSource.slice(ownSource.indexOf('KNOWN HAZARD'));
+      const hazard = block.slice(0, block.indexOf('describe('));
+      expect(hazard, 'the hazard case no longer names task 39').toMatch(/task 39/);
+      expect(hazard, 'the hazard case no longer names its open question').toMatch(/OQ-T35-3/);
+    });
+  });
+
   describe('AC10 no second, partial sign-out may be assembled elsewhere', () => {
     it('finds every call to a clearing primitive inside the measured allowlist', async () => {
       const files = await production();
@@ -740,6 +780,31 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       }
     });
 
+    /**
+     * THE FROZEN CLAUSE WAS "modifies no file but the two it creates and the one additive export", AND IT IS
+     * FALSE. T35 modified four files outside its own: `returnTarget.ts` as authorized, plus task 23's and
+     * task 24's suites. Phase 10's audit is what caught the discrepancy between the criterion and the task.
+     *
+     * A changed-file set cannot honestly be pinned from inside a test - it would be a git diff asserted at
+     * runtime, green on a dirty tree and red on a rebase. So the corrected clause is recorded in phase 10's
+     * artifact, and what IS pinned here is the rule those edits had to satisfy: an export added to another
+     * task's module must be held to a contract in THAT module's suite (Kimi phase 8 I2). That is the check
+     * which would have caught the omission at the time.
+     */
+    it("the export added to task 24's module is held to a contract in task 24's suite", async () => {
+      const root = dirname(expect.getState().testPath as string);
+      const owner = await readFile(join(root, 'returnTargetOutsideAllowlistFallsBackToHome.test.tsx'), 'utf8');
+      expect(
+        owner,
+        'clearReturnTarget lives in returnTarget.ts, which is task 24\'s. Its contract belongs in task 24\'s '
+          + 'suite: without it, a refactor of that module breaks sign-out and the failure reads as a '
+          + 'sign-out defect rather than a return-target one.',
+      ).toContain('clearReturnTarget');
+      for (const claim of [/idempotent/i, /never throws/i, /reads nothing/i]) {
+        expect(owner, `task 24's suite does not hold the new export to: ${claim.source}`).toMatch(claim);
+      }
+    });
+
     it('holds no module-level mutable state of its own', async () => {
       const self = (await production()).find((file) => file.path === 'auth/signOut.ts');
       expect(self!.code).not.toMatch(/^(let|var)\s/m);
@@ -757,6 +822,21 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       vi.restoreAllMocks();
       expect(accessToken.current(), 'the security property survives a denied store').toBeNull();
       expect(takeSignInNotice(), 'and so does the in-memory notice').toBeNull();
+    });
+
+    /**
+     * Absent, not refusing - and they are different failures. `denyStorage` replaces the methods, so the
+     * store object still exists; some privacy modes remove `sessionStorage` altogether, and then the
+     * expression that reaches for `.removeItem` throws a TypeError before any method is called. The
+     * criterion says "any storage condition", so the two are measured separately.
+     */
+    it('clears the token when sessionStorage is absent altogether', () => {
+      retainAccessToken(aToken());
+      vi.stubGlobal('sessionStorage', undefined);
+
+      expect(() => signOut()).not.toThrow();
+
+      expect(accessToken.current()).toBeNull();
     });
 
     it('CONTROL: the denied store really does throw', () => {
