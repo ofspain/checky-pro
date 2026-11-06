@@ -391,6 +391,9 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // Proves the two assertions above are not the same assertion twice. A node appended as a sibling of
       // <main> leaves `main.textContent` untouched and changes the container's.
       const { main } = await arriveAt();
+      // Counted BEFORE, not hardcoded: pinning the screen's own anchor count here would make this control
+      // fail alongside the case it exists to validate, which measures the screen rather than the sweep.
+      const before = mounted!.container.querySelectorAll('a').length;
       const planted = document.createElement('a');
       planted.href = '/elsewhere';
       planted.textContent = 'Elsewhere';
@@ -398,8 +401,10 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
 
       expect(main!.textContent, 'the landmark changed, so this control proves nothing')
         .toBe(`${COPY.heading}${COPY.explanation}${COPY.action}`);
-      expect(mounted!.container.textContent).toContain('Elsewhere');
-      expect(mounted!.container.querySelectorAll('a')).toHaveLength(2);
+      expect(main!.querySelectorAll('a'), 'the planted node landed inside the landmark').toHaveLength(before);
+      expect(mounted!.container.textContent, 'the container sweep cannot see the planted node')
+        .toContain('Elsewhere');
+      expect(mounted!.container.querySelectorAll('a')).toHaveLength(before + 1);
     });
   });
 
