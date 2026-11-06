@@ -48,10 +48,15 @@ import { takeSignInNotice } from './signInNotice';
  * so whoever builds task 39 meets it as a failing expectation rather than a paragraph.
  */
 export function signOut(): void {
-  // FIRST, and the only one of the four whose position matters. Each later call is guarded inside its own
-  // module and so cannot stop another, but "cannot" is a property of code that may be edited; a token still
-  // held after a partial sign-out is the half-authenticated tab R22 forbids, and that is not a risk worth
-  // taking for a line's worth of ordering. Task 33's handler clears first for the same reason.
+  // FIRST, and the only one of the four whose position matters.
+  //
+  // Precisely why: there is NO try/catch here, so a throw from any step would abandon the steps after it.
+  // None of the three below can throw today - each is guarded inside its own module - so the question does
+  // not arise in practice; but "cannot throw" is a property of code that may be edited, and the clear is the
+  // one step whose omission is a security defect rather than an untidy store. With it first, the worst a
+  // later failure can leave behind is residue: no token, which is what R22 actually forbids. A guard around
+  // each call would be dead code for a condition that cannot occur, and would hide the one that can.
+  // Task 33's handler clears first for the same reason.
   clearAccessToken();
 
   // Discards a notice `cleanReauth` may have queued. Without this, a visitor who signs out deliberately and

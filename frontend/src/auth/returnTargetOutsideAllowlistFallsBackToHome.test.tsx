@@ -43,6 +43,7 @@ import { AUTHENTICATED_ROUTE_PATHS, HOME_PATH } from '../app/routes';
 import { createI18n } from '../i18n/i18n';
 import { AUTHORIZE_STORAGE_KEYS, buildAuthorizeRequest } from './authorizeRequest';
 import {
+  clearReturnTarget,
   isAllowlistedTarget,
   rememberReturnTarget,
   RETURN_TARGET_KEY,
@@ -1632,6 +1633,60 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
       //   more than one of the above in one string  - Kimi F7
       expect(labels).toHaveLength(24);
       expect(new Set(labels).size, 'and no label is duplicated').toBe(24);
+    });
+  });
+
+  /**
+   * `clearReturnTarget` — ADDED BY TASK 35, and its contract is asserted here because this module is T24's.
+   *
+   * Kimi phase 8 I2, accepted: task 35 added an export to this file and tested it only through sign-out. That
+   * leaves a hidden contract change - a refactor of this module could break the new function and only T35's
+   * suite would go red, so the failure would read as a sign-out defect rather than a return-target one.
+   *
+   * The contract is the same one `consumeAuthorizeState` states for its three keys, and the same four claims
+   * `takeReturnTarget` is held to above: removes exactly this key, idempotent, never throws, never calls
+   * `clear()`. What it does NOT share is the read - that absence is the whole reason it exists (T24-D4), so it
+   * is asserted rather than left implied.
+   */
+  describe('clearReturnTarget removes without consuming (task 35, T24-D4)', () => {
+    it('removes exactly this key, and reads nothing', () => {
+      rememberReturnTarget(`/${HOME_PATH}`);
+      globalThis.sessionStorage.setItem('ui.theme', 'dark');
+      const watch = watchStorage();
+      const reads = vi.spyOn(Storage.prototype, 'getItem') as unknown as Mock;
+
+      clearReturnTarget();
+
+      expect(removedKeys(watch)).toEqual([RETURN_TARGET_KEY]);
+      expect(writtenKeys(watch), 'it writes nothing').toEqual([]);
+      expect(reads, 'it reads nothing - that absence is why it exists beside takeReturnTarget').not.toHaveBeenCalled();
+      expect(watch.clear, "clear() would take the other half of L16's carve-out with it").not.toHaveBeenCalled();
+      expect(storedKeys(), 'and the unrelated key is untouched').toEqual(['ui.theme']);
+    });
+
+    it('is idempotent, and does not look first', () => {
+      const watch = watchStorage();
+      expect(() => {
+        clearReturnTarget();
+        clearReturnTarget();
+      }, 'nothing was stored and both calls are harmless').not.toThrow();
+      // Both attempts were made: like `consumeAuthorizeState`, it does not check before removing.
+      expect(removedKeys(watch)).toEqual([RETURN_TARGET_KEY, RETURN_TARGET_KEY]);
+    });
+
+    it('never throws, even when the store refuses every operation (T24-D9)', () => {
+      vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+        throw new DOMException('denied', 'SecurityError');
+      });
+      expect(() => clearReturnTarget(), 'a cleanup that cannot run is not a failure').not.toThrow();
+    });
+
+    it('and the consuming reader still behaves as it always did beside it', () => {
+      // The guard against the refactor I did not make: `takeReturnTarget`'s body was deliberately NOT changed
+      // to delegate to the new function, so this asserts the two are independent rather than coupled.
+      rememberReturnTarget(`/${HOME_PATH}`);
+      expect(takeReturnTarget()).toBe(`/${HOME_PATH}`);
+      expect(storedKeys(), 'the reader still consumes').toEqual([]);
     });
   });
 });

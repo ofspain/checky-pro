@@ -30,15 +30,25 @@ import { accessToken, clearAccessToken, retainAccessToken } from './accessToken'
 import * as authorizeRequestModule from './authorizeRequest';
 import { AUTHORIZE_STORAGE_KEYS, buildAuthorizeRequest } from './authorizeRequest';
 import { RETURN_TARGET_KEY, rememberReturnTarget } from './returnTarget';
+import * as returnTargetModule from './returnTarget';
+import * as signInNoticeModule from './signInNotice';
 import { setSignInNotice, takeSignInNotice } from './signInNotice';
 import { signOut } from './signOut';
 
 /** A key prefix, not a key: AC8 scans for it and also proves no whole key is spelled here. */
 const KEY_PREFIX = 'themistra.';
 
-/** A token nobody could mistake for real, and distinct per use so a stale assertion cannot pass. */
-let tokenSequence = 0;
-const aToken = () => `T35-access-token-${(tokenSequence += 1)}`;
+/**
+ * A token nobody could mistake for real, and distinct per use so a stale assertion cannot pass.
+ *
+ * The counter lives in a closure rather than at module scope (Kimi phase 8 I7): AC7 scans production files
+ * only, so a module-scope `let` here fails nothing - and a suite that enforces a rule it does not itself
+ * follow invites the reader to discount the rule.
+ */
+const aToken = (() => {
+  let sequence = 0;
+  return () => `T35-access-token-${(sequence += 1)}`;
+})();
 
 /* ─────────────────────────── source scanning ─────────────────────────── */
 
@@ -266,6 +276,37 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       ).toBeNull();
     });
 
+    /**
+     * KIMI PHASE 8 I9 ASKED FOR THE OPPOSITE OF THIS CASE, and the opposite is false.
+     *
+     * It recommended spying `takeSignInNotice` to throw and asserting the storage primitives are "still
+     * reached". They are not: `signOut` has no try/catch, so a throw from step 2 abandons steps 3 and 4. That
+     * test would have been added broken. The finding still pointed at something real - the module's comment
+     * implied a resilience the code does not have - so the comment is corrected and the TRUE behaviour is
+     * pinned here instead.
+     *
+     * And this is why the order matters rather than being a style choice. When a later step fails, what is
+     * left behind is residue in a store; what is NOT left behind is a token. That asymmetry is the whole
+     * argument for clearing first, and it is now measured from both ends.
+     */
+    it('and when a later step throws, the rest are abandoned - leaving residue, never a token', () => {
+      retainAccessToken(aToken());
+      rememberReturnTarget('/account');
+      vi.spyOn(signInNoticeModule, 'takeSignInNotice').mockImplementation(() => {
+        throw new Error('step two died');
+      });
+      const consumed = vi.spyOn(authorizeRequestModule, 'consumeAuthorizeState');
+      const cleared = vi.spyOn(returnTargetModule, 'clearReturnTarget');
+
+      expect(() => signOut()).toThrow('step two died');
+
+      expect(accessToken.current(), 'the token went first and is gone').toBeNull();
+      expect(consumed, 'step three was abandoned, which is the honest behaviour').not.toHaveBeenCalled();
+      expect(cleared, 'and so was step four').not.toHaveBeenCalled();
+      expect(globalThis.sessionStorage.getItem(RETURN_TARGET_KEY), 'residue survives, and residue is not a session')
+        .toBe('/account');
+    });
+
     it('and its source puts the clear before the other three (source)', async () => {
       const self = (await production()).find((file) => file.path === 'auth/signOut.ts');
       const body = self!.code.slice(self!.code.indexOf('export function signOut'));
@@ -351,7 +392,9 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
     it('defers nothing: its source has no async, await, timer or microtask (source)', async () => {
       const self = (await production()).find((file) => file.path === 'auth/signOut.ts');
       expect(self, 'auth/signOut.ts is missing from the scan').toBeDefined();
-      for (const deferral of [/\basync\b/, /\bawait\b/, /setTimeout\s*\(/, /queueMicrotask\s*\(/, /\.then\s*\(/, /\bPromise\b/]) {
+      // `Promise` itself is NOT banned (Kimi phase 8 I10): `Promise.resolve()` defers nothing, and a ban that
+      // wide would block a legitimate future change while catching nothing this list misses.
+      for (const deferral of [/\basync\b/, /\bawait\b/, /setTimeout\s*\(/, /setInterval\s*\(/, /queueMicrotask\s*\(/, /requestAnimationFrame\s*\(/, /\.then\s*\(/]) {
         expect(self!.code, `signOut defers work via ${deferral.source}`).not.toMatch(deferral);
       }
     });
@@ -418,7 +461,12 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
   describe('AC7 every module-scope mutable is cleared or excluded with a reason', () => {
     it('finds mutable state only where sign-out clears it or this list excuses it', async () => {
       const files = await production();
-      const holders = files.filter((file) => /^(let|var)\s/m.test(file.code)).map((file) => file.path);
+      // `let`/`var`, AND a top-level `const` holding a mutable container - Kimi phase 8 I4 is right that a
+      // `const cache = new Map()` is tab-lifetime mutable state that `let` alone would miss. Measured before
+      // choosing: no production module has one today, so the scan is EXTENDED rather than the claim narrowed.
+      const MUTABLE_AT_MODULE_SCOPE =
+        /^(?:let|var)\s|^const\s+\w+\s*(?::[^=\n]*)?=\s*(?:new\s+(?:Map|Set|WeakMap|WeakSet)\s*\(|\[)/m;
+      const holders = files.filter((file) => MUTABLE_AT_MODULE_SCOPE.test(file.code)).map((file) => file.path);
       const cleared = INVENTORY.filter((row) => row.key === null).map((row) => row.owner);
       const excused = NOT_SESSION_STATE.map((entry) => entry.file);
 
@@ -431,18 +479,24 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       }
       // The limitation, stated rather than implied: closure-held state is not module-scope and not reachable
       // from a zero-argument function. AC9 is what that limitation costs.
-      expect(files.some((file) => file.path === 'api/crossTabRenewal.ts' && !/^(let|var)\s/m.test(file.code)),
+      expect(files.some((file) => file.path === 'api/crossTabRenewal.ts' && !MUTABLE_AT_MODULE_SCOPE.test(file.code)),
         'crossTabRenewal holds its state in a factory closure, which this scan cannot see - see AC9')
         .toBe(true);
     });
 
     it('CONTROL: a module-scope mutable in a scanned file is caught', async () => {
       const files = await production();
-      const planted = files.map((file) =>
-        file.path === 'app/AppShell.tsx' ? { ...file, code: `let leaked = 1;\n${file.code}` } : file,
-      );
-      const holders = planted.filter((file) => /^(let|var)\s/m.test(file.code)).map((file) => file.path);
-      expect(holders, 'the planted mutable went unseen').toContain('app/AppShell.tsx');
+      const MUTABLE_AT_MODULE_SCOPE =
+        /^(?:let|var)\s|^const\s+\w+\s*(?::[^=\n]*)?=\s*(?:new\s+(?:Map|Set|WeakMap|WeakSet)\s*\(|\[)/m;
+      // Both forms, because the pattern grew a second alternative and a control that exercises one of two
+      // branches is a control for half a scan.
+      for (const planted of ['let leaked = 1;', 'const cache = new Map();', 'const seen: string[] = [];']) {
+        const files2 = files.map((file) =>
+          file.path === 'app/AppShell.tsx' ? { ...file, code: `${planted}\n${file.code}` } : file,
+        );
+        const holders = files2.filter((file) => MUTABLE_AT_MODULE_SCOPE.test(file.code)).map((file) => file.path);
+        expect(holders, `the planted \`${planted}\` went unseen`).toContain('app/AppShell.tsx');
+      }
     });
   });
 
@@ -487,6 +541,42 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       }
     });
 
+    /**
+     * The scan above reads LITERALS, so a key assembled at runtime would slip past it - Kimi phase 8 I5.
+     *
+     * Rather than document the hole, forbid the construction: every client-side key in this package is a
+     * module constant today (measured - no production file concatenates or interpolates one), so a dynamic
+     * key is a new practice and should arrive as a deliberate decision rather than as a silent gap in this
+     * scan. The ban is narrow: it catches `themistra.` inside a template literal or either side of a `+`.
+     */
+    it('and no production module BUILDS a key, so the literal scan cannot be side-stepped', async () => {
+      const files = await production();
+      const DYNAMIC = [
+        new RegExp(`\`[^\`]*${KEY_PREFIX.replace('.', '\\.')}[^\`]*\\$\\{`),
+        new RegExp(`['"]${KEY_PREFIX.replace('.', '\\.')}[\\w.$-]*['"]\\s*\\+`),
+        new RegExp(`\\+\\s*['"]${KEY_PREFIX.replace('.', '\\.')}`),
+      ];
+      const builders: string[] = [];
+      for (const file of files) {
+        for (const pattern of DYNAMIC) if (pattern.test(file.code)) builders.push(file.path);
+      }
+      expect(
+        [...new Set(builders)],
+        'a client-side key is assembled rather than declared. The inventory scan above reads literals, so it '
+          + 'cannot see this one. Declare it as a module constant, or decide deliberately that dynamic keys '
+          + 'are permitted and give this scan a way to enumerate them.',
+      ).toEqual([]);
+
+      // CONTROL: all three shapes are caught, so a clean report is evidence.
+      for (const planted of [
+        `const k = \`${KEY_PREFIX}auth.\${name}\`;`,
+        `const k = '${KEY_PREFIX}auth.' + name;`,
+        `const k = name + '${KEY_PREFIX}auth';`,
+      ]) {
+        expect(DYNAMIC.some((pattern) => pattern.test(planted)), `the planted ${planted} went unseen`).toBe(true);
+      }
+    });
+
     it('CONTROL: a key outside the inventory is caught', async () => {
       const files = await production();
       const planted = [...files, { path: 'app/planted.ts', code: `const k = '${KEY_PREFIX}auth.smuggled';` }];
@@ -514,7 +604,7 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
      * It is asserted as it IS, not as it should be, because a test asserting the fix would have to be added
      * broken. The message is the handover. Whoever builds task 39 meets this as a failing expectation.
      */
-    it('adopts a sibling token AFTER sign-out, which is a session nobody asked for', async () => {
+    it('KNOWN HAZARD: a signed-out tab still adopts a sibling renewal (task 39 must replace this)', async () => {
       const name = `${RENEWAL_CHANNEL}.t35-${Date.now()}`;
       const locks: TabLocks = {
         request: () => {
@@ -531,7 +621,23 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
 
         const siblingToken = aToken();
         sibling.postMessage({ type: 'renewal:succeeded', token: siblingToken });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        /*
+         * POLLED, NOT WAITED ONE TICK - and the single tick was a real flake, not a theoretical one.
+         *
+         * This case passed for its first three runs and then failed with `null` the moment two cases were
+         * added ahead of it: `BroadcastChannel` delivery is a macrotask whose timing depends on how busy the
+         * loop is, so `setTimeout(0)` was racing it. The failure mode is what makes this worth the extra
+         * lines - the case would have reported "GOOD NEWS, the hazard is fixed" when nothing had been fixed
+         * at all. A flaky pin on a known defect is worse than no pin, because it teaches the reader to
+         * re-run it until it agrees.
+         *
+         * The bound is generous and the assertion below is unchanged, so a genuine fix still reports as one:
+         * the token simply stays null for every one of the attempts.
+         */
+        for (let attempt = 0; attempt < 50 && accessToken.current() === null; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 2));
+        }
 
         expect(
           accessToken.current(),
@@ -555,6 +661,11 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       expect(files.map((file) => file.path), 'the modules that declare the primitives are missing from the scan')
         .toEqual(expect.arrayContaining(DEFINERS));
 
+      // WHAT THIS CATCHES AND WHAT IT DOES NOT (Kimi phase 8 I6). It sees a DIRECT call. An alias
+      // (`const drop = clearAccessToken; drop()`), a wrapper, or a reference passed as a callback would pass.
+      // Accepted rather than solved: the threat is someone assembling a second sign-out, which is written as
+      // direct calls, and an AST pass to cover the rest is disproportionate to that. Comments are stripped
+      // first, so a doc comment naming a primitive is not a stray.
       const strays: string[] = [];
       for (const file of files) {
         if (DEFINERS.includes(file.path)) continue;
@@ -586,6 +697,27 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
         }
       }
       expect(strays, 'the planted stray call went unseen').toEqual(['app/planted.ts calls clearAccessToken']);
+    });
+
+    /**
+     * Kimi phase 8 I8: a stale entry never admits an unauthorized caller, but it makes the allowlist less
+     * precise every time a file moves. The same both-directions rule AC8 already applies to the inventory -
+     * a row that no longer describes the code is a failure, not a pass.
+     */
+    it('and every permitted caller really does call its primitive, so no entry is stale', async () => {
+      const files = await production();
+      const missing: string[] = [];
+      for (const [primitive, permitted] of Object.entries(PERMITTED_CALLERS)) {
+        for (const path of permitted) {
+          const file = files.find((candidate) => candidate.path === path);
+          if (!file) {
+            missing.push(`${path} is permitted to call ${primitive} but no longer exists`);
+          } else if (!new RegExp(`\\b${primitive}\\s*\\(`).test(file.code)) {
+            missing.push(`${path} is permitted to call ${primitive} and does not`);
+          }
+        }
+      }
+      expect(missing, 'PERMITTED_CALLERS has gone stale; remove what no longer applies').toEqual([]);
     });
 
     it('and sign-out itself calls all four, so the allowlist is not vacuous', async () => {
