@@ -33,6 +33,10 @@ import { RETURN_TARGET_KEY, rememberReturnTarget } from './returnTarget';
 import * as returnTargetModule from './returnTarget';
 import * as signInNoticeModule from './signInNotice';
 import { setSignInNotice, takeSignInNotice } from './signInNotice';
+import { DENYLISTED_NAVIGATION_PATHS } from '../pwa/navigationDenylist';
+import { APP_BASENAME, PUBLIC_ROUTE_PATHS } from '../app/routes';
+import { END_SESSION_PATH, endSession } from './endSession';
+import { retainIdToken, takeIdToken } from './idToken';
 import { signOut } from './signOut';
 
 /** A key prefix, not a key: AC8 scans for it and also proves no whole key is spelled here. */
@@ -121,6 +125,15 @@ const INVENTORY = [
     clearedBy: 'takeSignInNotice',
     key: null,
   },
+  // TASK 36. The ID token, held only so sign-out can send an `id_token_hint` to the end-session endpoint
+  // (R19 clause 2). No key: it lives in a module-level `let`, as the access token does, because L3 governs it
+  // the same way - identity in memory, never in a store.
+  {
+    what: 'the held ID token',
+    owner: 'auth/idToken.ts',
+    clearedBy: 'takeIdToken',
+    key: null,
+  },
   { what: 'the authorize state', owner: 'auth/authorizeRequest.ts', clearedBy: 'consumeAuthorizeState', key: AUTHORIZE_STORAGE_KEYS.state },
   { what: 'the authorize nonce', owner: 'auth/authorizeRequest.ts', clearedBy: 'consumeAuthorizeState', key: AUTHORIZE_STORAGE_KEYS.nonce },
   { what: 'the PKCE code verifier', owner: 'auth/authorizeRequest.ts', clearedBy: 'consumeAuthorizeState', key: AUTHORIZE_STORAGE_KEYS.codeVerifier },
@@ -162,12 +175,17 @@ const PERMITTED_CALLERS: Readonly<Record<string, readonly string[]>> = {
   clearAccessToken: ['auth/cleanReauth.ts', 'auth/CallbackScreen.tsx', 'auth/signOut.ts'],
   takeSignInNotice: ['auth/SignInScreen.tsx', 'auth/signOut.ts'],
   consumeAuthorizeState: ['auth/CallbackScreen.tsx', 'auth/signOut.ts'],
+  // TASK 36. Two callers, and the pair is the design: `endSession.ts` takes the token for the hint it is
+  // about to send, `signOut.ts` takes it and discards the value so the token is gone on either entry path.
+  takeIdToken: ['auth/endSession.ts', 'auth/signOut.ts'],
   takeReturnTarget: ['auth/CallbackScreen.tsx'],
   clearReturnTarget: ['auth/signOut.ts'],
 };
 
 /** The modules that DECLARE the primitives; excluded by path, because a declaration is not a call. */
-const DEFINERS = ['auth/accessToken.ts', 'auth/signInNotice.ts', 'auth/authorizeRequest.ts', 'auth/returnTarget.ts'];
+const DEFINERS = ['auth/accessToken.ts', 'auth/signInNotice.ts', 'auth/authorizeRequest.ts', 'auth/returnTarget.ts',
+  'auth/idToken.ts', // TASK 36
+];
 
 /**
  * Module-scope mutable declarations that sign-out does NOT clear, each with its reason.
@@ -250,6 +268,59 @@ function watchConsole(): Mock[] {
   return CONSOLE_CHANNELS.map((channel) => vi.spyOn(console, channel).mockImplementation(() => undefined) as unknown as Mock);
 }
 
+/* ─────────────────────── task 36: the hand-over ─────────────────────── */
+
+/** An ID token nobody could mistake for real, distinct per use, for the same reason `aToken` is. */
+const anIdToken = (() => {
+  let sequence = 0;
+  return () => `T36-id-token-${(sequence += 1)}`;
+})();
+
+type Handover = { seen: string[]; targets(): string[] };
+
+/**
+ * Replaces `location` and `window.open` with one counter over all FOUR hand-over mechanisms.
+ *
+ * Copied from `loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx:277-300`, task 16's, named rather
+ * than quietly re-typed - the fifth duplicated helper OQ-T32-4 tracks.
+ *
+ * Why four and not the two this module uses, which Kimi's phase 3 F5 proposed narrowing to: the failure this
+ * counter exists to catch is an ADDITION. A second hand-over fired through `href` or `window.open` ALONGSIDE
+ * the existing `assign` leaves an `assign`-only spy reporting exactly one call, and the case passes while the
+ * SPA has grown two navigations. `window.open` being an unrealistic mechanism for this flow is precisely why
+ * it must be watched: an unrealistic second hand-over is the one nobody would think to look for.
+ *
+ * The `href` setter is reachable only because the WHOLE object is replaced - jsdom's real descriptor is
+ * `configurable: false` and cannot be patched in place (task 16 measured that). `origin` must be carried on
+ * the fake or `postLogoutRedirectUri()` reads `undefined` and builds a silently wrong URL while the hand-over
+ * COUNT still passes.
+ */
+function watchHandover(origin = 'https://app.example'): Handover {
+  const seen: string[] = [];
+  const fake = {
+    origin,
+    assign: (url: string) => void seen.push(`assign:${url}`),
+    replace: (url: string) => void seen.push(`replace:${url}`),
+  } as unknown as Location;
+  Object.defineProperty(fake, 'href', {
+    get: () => `${origin}/app/home`,
+    set: (url: string) => void seen.push(`href:${url}`),
+    configurable: true,
+  });
+  vi.stubGlobal('location', fake);
+  vi.stubGlobal('open', (url?: string | URL) => {
+    seen.push(`open:${String(url)}`);
+    return null;
+  });
+  return { seen, targets: () => seen.map((entry) => entry.slice(entry.indexOf(':') + 1)) };
+}
+
+/** The one hand-over's URL, with the count asserted first so a two-navigation bug cannot read as a pass. */
+function soleHandover(handover: Handover): URL {
+  expect(handover.seen, `expected exactly one hand-over, saw: ${handover.seen.join(', ')}`).toHaveLength(1);
+  return new URL(handover.targets()[0] as string);
+}
+
 /** A store that refuses every operation, for AC12. */
 function denyStorage(): void {
   for (const method of ['getItem', 'setItem', 'removeItem', 'clear'] as const) {
@@ -269,6 +340,7 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
     globalThis.localStorage.clear();
     clearAccessToken();
     takeSignInNotice();
+    takeIdToken(); // TASK 36
   });
 
   afterEach(() => {
@@ -276,6 +348,7 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
     vi.unstubAllGlobals();
     clearAccessToken();
     takeSignInNotice();
+    takeIdToken(); // TASK 36
   });
 
   describe('AC1 no token is held afterwards', () => {
@@ -570,7 +643,7 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
 
   describe('AC8 the inventory is derived, and no key escapes it', () => {
     it('names an owner and a clearing primitive for every piece of state', () => {
-      expect(INVENTORY).toHaveLength(6);
+      expect(INVENTORY).toHaveLength(7); // 6 in task 35; the ID token is task 36's.
       expect(inventoryKeys()).toHaveLength(4);
       expect(new Set(inventoryKeys()).size, 'four distinct keys, not one counted twice').toBe(4);
       for (const row of INVENTORY) {
@@ -987,6 +1060,494 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
     it('CONTROL: the denied store really does throw', () => {
       denyStorage();
       expect(() => globalThis.sessionStorage.removeItem('anything')).toThrow();
+    });
+  });
+
+  /* ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+   * TASK 36 — R19 clause 2. Sign-out ends the SAS session.
+   *
+   * Everything above is task 35's and is left as it was, except where a structure had to grow to admit a
+   * fifth piece of state; each of those is marked `TASK 36`.
+   *
+   * These cases are verified BY DIRECT INVOCATION ONLY. Nothing in the SPA calls `endSession` either, for the
+   * same reason nothing calls `signOut` - the affordance is unowned (OQ-T36-5).
+   * ═══════════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+  describe('AC1 the clearing completes before the browser leaves', () => {
+    it('holds nothing by the time the hand-over happens', () => {
+      retainAccessToken(aToken());
+      retainIdToken(anIdToken());
+      setSignInNotice('session-ended');
+      const handover = watchHandover();
+
+      endSession();
+
+      soleHandover(handover);
+      expect(accessToken.current(), 'a tab navigated away still holding a bearer token').toBeNull();
+      expect(takeIdToken(), 'a tab navigated away still holding an identity assertion').toBeNull();
+      expect(takeSignInNotice(), 'the stale notice survived').toBeNull();
+    });
+
+    it('clears even when the hand-over itself throws', () => {
+      // The order is not a preference: it is what makes a broken navigation safe. A browser that refuses the
+      // assign - an extension, a blocked navigation - must still leave this tab signed out locally.
+      retainAccessToken(aToken());
+      retainIdToken(anIdToken());
+      vi.stubGlobal('location', {
+        origin: 'https://app.example',
+        assign: () => {
+          throw new Error('navigation refused');
+        },
+      } as unknown as Location);
+
+      expect(() => endSession()).toThrow('navigation refused');
+
+      expect(accessToken.current(), 'the clear did not happen before the hand-over').toBeNull();
+      expect(takeIdToken()).toBeNull();
+    });
+
+    it('and the clearing really is sign-out, not a second hand-rolled copy (source)', async () => {
+      const self = (await production()).find((file) => file.path === 'auth/endSession.ts');
+      expect(self, 'auth/endSession.ts is not in the scan').toBeDefined();
+      expect(self!.code, 'endSession must delegate the clearing half, not repeat it').toMatch(/\bsignOut\s*\(\s*\)/);
+      // AC10's monopoly is what makes this sufficient: no module but signOut may call the clearing primitives,
+      // so delegating is the only way endSession can clear anything at all.
+      for (const primitive of ['clearAccessToken', 'takeSignInNotice', 'consumeAuthorizeState', 'clearReturnTarget']) {
+        expect(self!.code, `endSession.ts calls ${primitive} directly instead of through signOut`)
+          .not.toMatch(new RegExp(`\\b${primitive}\\s*\\(`));
+      }
+    });
+  });
+
+  describe('AC2 exactly one hand-over, counted across all four mechanisms', () => {
+    it('performs one navigation and no more', () => {
+      retainIdToken(anIdToken());
+      const handover = watchHandover();
+
+      endSession();
+
+      expect(handover.seen).toHaveLength(1);
+      expect(handover.seen[0]!.startsWith('assign:'), `the mechanism was ${handover.seen[0]}`).toBe(true);
+    });
+
+    it('CONTROL: a watcher installed AFTER the call sees nothing', () => {
+      retainIdToken(anIdToken());
+      const before = watchHandover();
+      endSession();
+      const after = watchHandover();
+      expect(before.seen, 'the real call went uncounted').toHaveLength(1);
+      expect(after.seen, 'a watcher installed too late is what every spy mistake in this package looks like')
+        .toEqual([]);
+    });
+
+    it('CONTROL: the watcher catches a second hand-over through every one of the four mechanisms', () => {
+      const handover = watchHandover();
+      globalThis.location.assign('/one');
+      globalThis.location.replace('/two');
+      globalThis.location.href = '/three';
+      globalThis.open('/four');
+      expect(handover.seen).toEqual(['assign:/one', 'replace:/two', 'href:/three', 'open:/four']);
+    });
+
+    it('reaches for no mechanism but assign, in its own source', async () => {
+      const self = (await production()).find((file) => file.path === 'auth/endSession.ts');
+      for (const forbidden of [/\blocation\s*\.\s*replace\b/, /\blocation\s*\.\s*href\s*=/, /\bopen\s*\(/, /\breload\b/]) {
+        expect(self!.code, `endSession.ts reaches for ${forbidden.source}`).not.toMatch(forbidden);
+      }
+      // Lower bound: it does hand over, so the four bans are not passing over a module that navigates nowhere.
+      expect(self!.code).toMatch(/location\s*\.\s*assign\s*\(/);
+    });
+  });
+
+  describe('AC3 the URL is the end-session path on this origin', () => {
+    it('navigates to END_SESSION_PATH on the origin it read from location', () => {
+      retainIdToken(anIdToken());
+      const handover = watchHandover('https://checky.example');
+
+      endSession();
+
+      const url = soleHandover(handover);
+      expect(url.origin).toBe('https://checky.example');
+      expect(url.pathname).toBe(END_SESSION_PATH);
+    });
+
+    it('spells no absolute host anywhere in production source', async () => {
+      // L9's single origin, and R58: a hostname in the bundle is a deployment baked into code. The scan is
+      // package-wide rather than scoped to this module, because the hazard is package-wide.
+      const offenders = (await production())
+        .filter((file) => /https?:\/\/(?!localhost|127\.0\.0\.1)[\w.-]+\.\w/.test(file.code))
+        .map((file) => file.path);
+      expect(offenders, 'a production module spells an absolute host').toEqual([]);
+      // CONTROL: the pattern fires on the shape it exists to stop.
+      expect(/https?:\/\/(?!localhost|127\.0\.0\.1)[\w.-]+\.\w/.test("const sas = 'https://auth.checky.example';"))
+        .toBe(true);
+    });
+  });
+
+  describe('AC4 post_logout_redirect_uri is derived, and checked against the route table', () => {
+    it('is the origin, the basename and the signed-out route', () => {
+      retainIdToken(anIdToken());
+      const handover = watchHandover('https://checky.example');
+
+      endSession();
+
+      expect(soleHandover(handover).searchParams.get('post_logout_redirect_uri'))
+        .toBe('https://checky.example/app/signed-out');
+    });
+
+    it('names a route the route table actually declares, and a PUBLIC one', () => {
+      // `routes.tsx` has no SIGNED_OUT_PATH export - the route is a bare literal in PUBLIC_ROUTE_PATHS - and
+      // that module is closed to this task, so `endSession.ts` declares the spelling privately. This is the
+      // instrument that keeps the two from drifting: a rename of the route fails HERE rather than becoming a
+      // 400 from SAS in a browser nobody is watching. PUBLIC because a visitor arriving there has no session.
+      retainIdToken(anIdToken());
+      const handover = watchHandover('https://checky.example');
+
+      endSession();
+
+      const target = new URL(soleHandover(handover).searchParams.get('post_logout_redirect_uri') as string);
+      const route = target.pathname.slice(`${APP_BASENAME}/`.length);
+      expect(PUBLIC_ROUTE_PATHS as readonly string[], `${route} is not a declared public route`).toContain(route);
+    });
+
+    it('follows the route table when the basename moves, rather than hardcoding /app', async () => {
+      // THE CASE THAT SEPARATES DERIVATION FROM COINCIDENCE. Task 22 recorded why
+      // (`authorizeRequestsExactlyTheDeclaredScopes.test.ts:286`): while APP_BASENAME is '/app', `const base =
+      // '/app'` and `const base = APP_BASENAME` produce the same string, so no assertion against the real
+      // route table can tell them apart. Task 36 inherits that hole exactly and closes it the same way.
+      vi.doMock('../app/routes', async () => {
+        const actual = await vi.importActual<typeof import('../app/routes')>('../app/routes');
+        return { ...actual, APP_BASENAME: '/console' };
+      });
+      vi.resetModules();
+      const { endSession: moved } = await import('./endSession');
+      const handover = watchHandover('https://checky.example');
+
+      // The dynamic import brings its own `idToken` instance, so no token is retained here: this case is
+      // about the derived URL, and the hint is AC5's. The absent hint is what AC12 covers.
+      moved();
+
+      const target = soleHandover(handover).searchParams.get('post_logout_redirect_uri');
+      expect(target).toBe('https://checky.example/console/signed-out');
+      expect(target).not.toContain('/app');
+      vi.doUnmock('../app/routes');
+      vi.resetModules();
+    });
+
+    it('strips a trailing slash the route table might grow', async () => {
+      vi.doMock('../app/routes', async () => {
+        const actual = await vi.importActual<typeof import('../app/routes')>('../app/routes');
+        return { ...actual, APP_BASENAME: '/console/' };
+      });
+      vi.resetModules();
+      const { endSession: slashed } = await import('./endSession');
+      const handover = watchHandover('https://checky.example');
+
+      slashed();
+
+      // Not `/console//signed-out`: the registered allowlist is compared exactly, and the rejection would be
+      // a 400 at sign-out with nothing here failing first.
+      expect(soleHandover(handover).searchParams.get('post_logout_redirect_uri'))
+        .toBe('https://checky.example/console/signed-out');
+      vi.doUnmock('../app/routes');
+      vi.resetModules();
+    });
+  });
+
+  describe('AC5 id_token_hint carries the retained ID token', () => {
+    it('sends exactly what the callback retained', () => {
+      const identity = anIdToken();
+      retainIdToken(identity);
+      const handover = watchHandover();
+
+      endSession();
+
+      expect(soleHandover(handover).searchParams.get('id_token_hint')).toBe(identity);
+    });
+
+    it('sends the token this tab holds, not a remembered one', () => {
+      // Two unrelated values cannot both be a constant. Task 19's suite makes the same argument about the
+      // verifier, for the same reason: one stored value proves nothing.
+      for (const identity of [anIdToken(), anIdToken()]) {
+        retainIdToken(identity);
+        const handover = watchHandover();
+        endSession();
+        expect(soleHandover(handover).searchParams.get('id_token_hint')).toBe(identity);
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('consumes it through takeIdToken, so there is no reader to leave it behind', async () => {
+      const self = (await production()).find((file) => file.path === 'auth/idToken.ts');
+      expect(self, 'auth/idToken.ts is not in the scan').toBeDefined();
+      // AC15's structural half: no plain reader exists, so a read that forgets to clear cannot be written.
+      expect(self!.code).toMatch(/export function takeIdToken\(\)/);
+      expect(self!.code, 'idToken.ts grew a plain reader; the read-before-clear window is open again')
+        .not.toMatch(/export function (current|get|read|peek)/);
+    });
+  });
+
+  describe('AC6 exactly two parameters', () => {
+    it('sends id_token_hint and post_logout_redirect_uri, and nothing else', () => {
+      retainAccessToken(aToken());
+      retainIdToken(anIdToken());
+      const handover = watchHandover();
+
+      endSession();
+
+      expect([...soleHandover(handover).searchParams.keys()].sort())
+        .toEqual(['id_token_hint', 'post_logout_redirect_uri']);
+    });
+
+    it('names no state, no client id, no scope and no account identifier', async () => {
+      const self = (await production()).find((file) => file.path === 'auth/endSession.ts');
+      for (const forbidden of [/'state'/, /"state"/, /client_id/, /\bscope\b/, /CLIENT_ID/, /REQUESTED_SCOPES/]) {
+        expect(self!.code, `endSession.ts names ${forbidden.source}`).not.toMatch(forbidden);
+      }
+    });
+  });
+
+  describe('AC7 a full-page navigation, not a router one', () => {
+    it('imports no router and reaches for no history', async () => {
+      const self = (await production()).find((file) => file.path === 'auth/endSession.ts');
+      for (const forbidden of [/react-router/, /useNavigate/, /\bnavigate\s*\(/, /globalThis\.history/, /\bhistory\s*\./]) {
+        expect(self!.code, `endSession.ts reaches for ${forbidden.source}`).not.toMatch(forbidden);
+      }
+      // And the positive: it really does leave the SPA. A module that navigated nowhere would pass every ban.
+      expect(self!.code).toMatch(/globalThis\.location\.assign\(/);
+    });
+  });
+
+  describe('AC8 the ID token appears exactly once, and only in the hint', () => {
+    it('reaches the hint and no store, no console channel and no second place in the URL', () => {
+      const identity = anIdToken();
+      retainIdToken(identity);
+      const watch = watchStorage();
+      const channels = watchConsole();
+      const handover = watchHandover();
+
+      endSession();
+
+      const raw = handover.targets()[0] as string;
+      // EXACTLY ONCE, which is the claim phase 4 corrected: the earlier wording forbade every surface and so
+      // forbade the parameter it requires. A token repeated in a fragment or a second parameter fails here.
+      expect(raw.split(identity), `the ID token appears ${raw.split(identity).length - 1} times in the URL`)
+        .toHaveLength(2);
+      expect(new URL(raw).searchParams.get('id_token_hint')).toBe(identity);
+
+      for (const [index, channel] of channels.entries()) {
+        const calls = JSON.stringify((channel.mock.calls as unknown[][]) ?? []);
+        expect(calls, `the ID token reached console.${CONSOLE_CHANNELS[index]}`).not.toContain(identity);
+      }
+      const written = JSON.stringify((watch.setItem.mock.calls as unknown[][]) ?? []);
+      expect(written, 'the ID token reached a store').not.toContain(identity);
+      expect(watch.setItem, 'sign-out wrote to a store').not.toHaveBeenCalled();
+    });
+
+    it('and neither module names a storage surface at all (source)', async () => {
+      const files = await production();
+      for (const path of ['auth/idToken.ts', 'auth/endSession.ts']) {
+        const self = files.find((file) => file.path === path);
+        for (const forbidden of [/sessionStorage/, /localStorage/, /\bdocument\.cookie\b/, /indexedDB/, /console\./]) {
+          expect(self!.code, `${path} reaches ${forbidden.source}`).not.toMatch(forbidden);
+        }
+      }
+    });
+  });
+
+  describe('AC9 sign-out clears the ID token', () => {
+    it('clears it when sign-out is called on its own, with no hand-over at all', () => {
+      // The entry path that would otherwise leak: `endSession()` consumes the token for its hint, so a test
+      // that only ever calls `endSession` would pass even if `signOut` ignored the ID token entirely.
+      retainIdToken(anIdToken());
+
+      signOut();
+
+      expect(takeIdToken(), 'signOut() left the ID token held').toBeNull();
+    });
+
+    it('is idempotent across both entry paths', () => {
+      retainIdToken(anIdToken());
+      const handover = watchHandover();
+      endSession();
+      expect(soleHandover(handover).searchParams.has('id_token_hint')).toBe(true);
+      // signOut's own call found null and cleared nothing; calling either again changes nothing.
+      expect(takeIdToken()).toBeNull();
+      signOut();
+      expect(takeIdToken()).toBeNull();
+    });
+
+    it('CONTROL: the ID token really is held until something clears it', () => {
+      const identity = anIdToken();
+      retainIdToken(identity);
+      expect(takeIdToken(), 'retainIdToken did not hold, so every clearing case above is vacuous').toBe(identity);
+    });
+  });
+
+  describe('AC10 only sign-out ends the SAS session', () => {
+    it('spells the end-session path in exactly two production modules, each for a different reason', async () => {
+      const PERMITTED = {
+        'auth/endSession.ts': 'the hand-over itself: the one module that navigates there (R19 cl. 2)',
+        'pwa/navigationDenylist.ts': 'a DENYLIST entry (R57), so the worker never answers this path from cache',
+      } as const;
+      const holders = (await production())
+        .filter((file) => file.code.includes(END_SESSION_PATH))
+        .map((file) => file.path);
+
+      expect(holders.sort(), 'a third production module names the end-session path. Only the hand-over may '
+        + 'navigate there and only the service-worker denylist may name it; add it to PERMITTED with a reason '
+        + 'or route it through endSession().').toEqual(Object.keys(PERMITTED).sort());
+      for (const reason of Object.values(PERMITTED)) expect(reason.length).toBeGreaterThan(40);
+    });
+
+    it('CONTROL: a third module naming the path is caught', async () => {
+      const files = await production();
+      const planted = files.map((file) =>
+        file.path === 'app/AppShell.tsx' ? { ...file, code: `const out = '${END_SESSION_PATH}';\n${file.code}` } : file,
+      );
+      expect(planted.filter((file) => file.code.includes(END_SESSION_PATH)).map((file) => file.path))
+        .toContain('app/AppShell.tsx');
+    });
+
+    it('and endSession is the only module permitted to take the ID token besides signOut', () => {
+      // PERMITTED_CALLERS already holds this, checked by task 35's own stale-caller and allowlist cases. Named
+      // here so AC10's claim is traceable to the instrument that enforces it rather than restated loosely.
+      expect(PERMITTED_CALLERS.takeIdToken).toEqual(['auth/endSession.ts', 'auth/signOut.ts']);
+    });
+  });
+
+  describe('AC11 task 36 adds no route, catalogue key, backend call or storage key', () => {
+    it('adds nothing to the route table, the catalogue or the wire', async () => {
+      const files = await production();
+      for (const path of ['auth/idToken.ts', 'auth/endSession.ts']) {
+        const self = files.find((file) => file.path === path);
+        for (const forbidden of [/\bfetch\s*\(/, /XMLHttpRequest/, /useTranslation/, /\bt\s*\(/, /catalogue/, /createAuthApi/]) {
+          expect(self!.code, `${path} reaches for ${forbidden.source}`).not.toMatch(forbidden);
+        }
+      }
+      // The storage half is AC8's source scan; the route half is AC4's PUBLIC_ROUTE_PATHS check, which proves
+      // the target is a route that ALREADY existed. This case is the remaining third: no wire, no copy.
+      expect(PUBLIC_ROUTE_PATHS as readonly string[]).toContain('signed-out');
+    });
+  });
+
+  describe('AC12 a tab holding no ID token still clears and still hands over', () => {
+    it('omits the parameter rather than sending an empty one', () => {
+      retainAccessToken(aToken());
+      const handover = watchHandover();
+
+      endSession();
+
+      const url = soleHandover(handover);
+      // ABSENT, not empty. `id_token_hint=` asks SAS to end the session identified by the empty string, and a
+      // `?? ''` is exactly the shape that mistake takes - URLSearchParams would serialise it without complaint.
+      expect(url.searchParams.has('id_token_hint'), 'an empty hint was sent instead of none').toBe(false);
+      expect(url.search).not.toContain('id_token_hint');
+      expect(url.searchParams.get('post_logout_redirect_uri')).toBeTruthy();
+      expect(accessToken.current()).toBeNull();
+    });
+
+    it('hands over rather than skipping, because skipping is the worse failure', () => {
+      // OQ-T36-3: unreachable in production today (`renew()` always rejects, so `adopt` fires only from
+      // crossTabRenewal.ts:103). Kept because the alternative is worse - a skipped hand-over leaves the SAS
+      // cookie alive, and the next /oauth2/authorize returns a code without asking for anything. A failed
+      // end-session leaves the visitor locally signed out and confused; a skipped one leaves them signed in
+      // and reassured. Task 36 makes this shape PRODUCIBLE for the first time: after a sibling renewal a
+      // signed-out tab holds an access token and no ID token (OQ-T35-3).
+      const handover = watchHandover();
+      endSession();
+      expect(handover.seen, 'a tab with no ID token skipped the hand-over').toHaveLength(1);
+    });
+  });
+
+  describe('AC13 a second endSession, pinned as it is rather than latched', () => {
+    it('clears nothing further, omits the hint, and hands over again', () => {
+      retainIdToken(anIdToken());
+      const handover = watchHandover();
+
+      endSession();
+      endSession();
+
+      // KNOWN AND ACCEPTED, not a defect: in a real browser the first navigation has already left the page.
+      // A latch would be module-level mutable state - the one thing this module may not hold (AC15) - traded
+      // for a second navigation that cannot happen. If a future task needs idempotence, this case is what it
+      // changes, and it should change this message with it.
+      expect(handover.seen, 'two calls, two hand-overs').toHaveLength(2);
+      expect(new URL(handover.targets()[0] as string).searchParams.has('id_token_hint')).toBe(true);
+      expect(
+        new URL(handover.targets()[1] as string).searchParams.has('id_token_hint'),
+        'the second call re-sent a hint, which means the first did not consume the token',
+      ).toBe(false);
+      expect(takeIdToken()).toBeNull();
+    });
+  });
+
+  describe('AC14 the callback retains the ID token AFTER the nonce check', () => {
+    it('places the retention on the far side of the check, with the early return between (source)', async () => {
+      // Structural because it has to be, exactly as task 19's AC14 case is for the access token
+      // (`callbackValidatesNonceAndKeepsAccessTokenInMemory.test.tsx:1019`): a token retained before the check
+      // and discarded after would leave both holders null at the end of a behavioural case, so the correct and
+      // incorrect orders are distinguishable only in the source. An ID token hoisted above the check is worse
+      // than an access token would be: it is a signed identity assertion for a login this tab did not start,
+      // and it looks perfectly valid afterwards - only its nonce was wrong.
+      const screen = (await production()).find((file) => file.path === 'auth/CallbackScreen.tsx');
+      expect(screen, 'auth/CallbackScreen.tsx is not in the scan').toBeDefined();
+      const nonceAt = screen!.code.indexOf('idTokenNonceMatchesStoredValue(response.idToken)');
+      const retainAt = screen!.code.indexOf('retainIdToken(response.idToken)');
+      expect(nonceAt, 'the nonce check is not where this scan expects it').toBeGreaterThan(0);
+      expect(retainAt, 'CallbackScreen.tsx does not retain the ID token at all').toBeGreaterThan(0);
+      expect(retainAt, 'the ID token is retained BEFORE the nonce check').toBeGreaterThan(nonceAt);
+      expect(screen!.code.slice(nonceAt, retainAt), 'nothing stops the two being reordered').toContain('return;');
+    });
+
+    it('CONTROL: the scan catches a hoisted retention', () => {
+      const hoisted = [
+        'retainIdToken(response.idToken);',
+        'if (!idTokenNonceMatchesStoredValue(response.idToken).ok) { discard(); return; }',
+      ].join('\n');
+      const nonceAt = hoisted.indexOf('idTokenNonceMatchesStoredValue(response.idToken)');
+      const retainAt = hoisted.indexOf('retainIdToken(response.idToken)');
+      expect(retainAt).toBeLessThan(nonceAt);
+    });
+
+    it('and retains it in exactly one place', async () => {
+      const holders = (await production())
+        // Excluding the DEFINER by path, as task 35's AC10 does: `export function retainIdToken(` is a
+        // declaration, not a call, and a scan that cannot tell them apart would report the owning module as
+        // its own caller forever. Measured - this case failed on exactly that before the exclusion.
+        .filter((file) => file.path !== 'auth/idToken.ts' && /\bretainIdToken\s*\(/.test(file.code))
+        .map((file) => file.path);
+      expect(holders.sort(), 'the ID token is retained somewhere besides the callback').toEqual(['auth/CallbackScreen.tsx']);
+      // CONTROL: the needle really does fire, so the exclusion has not emptied the scan.
+      expect(/\bretainIdToken\s*\(/.test('retainIdToken(response.idToken);')).toBe(true);
+    });
+  });
+
+  describe('AC15 neither new module holds mutable state it should not', () => {
+    it('gives endSession.ts no module-scope mutable at all', async () => {
+      const self = (await production()).find((file) => file.path === 'auth/endSession.ts');
+      expect(MUTABLE_AT_MODULE_SCOPE.test(self!.code), 'endSession.ts grew module-scope mutable state').toBe(false);
+      // Task 35's AC7 scan is what makes this binding package-wide; this case states it for the module that
+      // AC13 explicitly declines to latch, so the two decisions are recorded in one place.
+    });
+
+    it("counts idToken.ts's one mutable, which is the whole deliverable", async () => {
+      const self = (await production()).find((file) => file.path === 'auth/idToken.ts');
+      const declarations = (self!.code.match(new RegExp(MUTABLE_AT_MODULE_SCOPE.source, 'gm')) ?? []).length;
+      // ONE. Task 35's AC7 proves sign-out clears this file's state; it does not pin how much of it there is,
+      // which is the hole phase 2 found and AC9 closes - a SECOND `let` added here would be cleared by nothing
+      // and excused by nothing, and AC7 would still pass because the file is in the cleared list.
+      expect(declarations, 'idToken.ts holds more than the one token it exists to hold').toBe(1);
+    });
+  });
+
+  describe('AC16 the two spellings of the end-session path cannot drift', () => {
+    it('is on the service-worker navigation denylist', () => {
+      // R57, and the reason the hand-over is a full-page navigation at all: without this entry the worker's
+      // navigation fallback would hand index.html to a browser on its way to the end-session endpoint, and
+      // nobody could sign out. Held by a test rather than by an import, so the pwa layer keeps no dependency
+      // on the auth layer for the sake of a string.
+      expect(DENYLISTED_NAVIGATION_PATHS as readonly string[]).toContain(END_SESSION_PATH);
     });
   });
 });

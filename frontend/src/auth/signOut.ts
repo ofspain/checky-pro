@@ -1,5 +1,6 @@
 import { clearAccessToken } from './accessToken';
 import { consumeAuthorizeState } from './authorizeRequest';
+import { takeIdToken } from './idToken';
 import { clearReturnTarget } from './returnTarget';
 import { takeSignInNotice } from './signInNotice';
 
@@ -67,6 +68,17 @@ export function signOut(): void {
   // each call would be dead code for a condition that cannot occur, and would hide the one that can.
   // Task 33's handler clears first for the same reason.
   clearAccessToken();
+
+  // SECOND, and for the first step's reason rather than for a reason of its own (task 36). The ID token is a
+  // credential too - a signed assertion of who signed in - so L3 governs it as it governs the access token, and
+  // it belongs with the clear above rather than among the three stores below. It is second rather than first
+  // because, between two credentials, the bearer token is the one an attacker can spend.
+  //
+  // The value is discarded here, as `takeSignInNotice()`'s is. `endSession()` calls this same primitive first,
+  // for the `id_token_hint` it is about to send, so on that path this call finds `null` and clears nothing.
+  // That is what makes the ID token gone whether sign-out was entered through `endSession()` or through this
+  // function alone, without either having to know about the other (`idToken.ts:58-70`).
+  takeIdToken();
 
   // Discards a notice `cleanReauth` may have queued. Without this, a visitor who signs out deliberately and
   // then returns to sign in reads "Your session has ended" - true of a renewal that failed, false and faintly

@@ -6,6 +6,7 @@ import { clearAccessToken, retainAccessToken } from './accessToken';
 import { AUTHORIZE_STORAGE_KEYS, consumeAuthorizeState } from './authorizeRequest';
 import { takeReturnTarget } from './returnTarget';
 import { exchangeAuthorizationCode } from './codeExchange';
+import { retainIdToken } from './idToken';
 import { idTokenNonceMatchesStoredValue } from './idTokenNonce';
 import { setSignInNotice } from './signInNotice';
 
@@ -167,6 +168,12 @@ export function CallbackScreen() {
       // stop, and invisible afterwards, since a held token looks the same whoever it was minted for. The early
       // return above is what keeps the two from being reordered by accident.
       retainAccessToken(response.accessToken);
+      // Task 36, and it belongs on THIS side of the nonce check for the reason above, not for a weaker version
+      // of it. An ID token retained before the check would be an identity assertion this tab holds for a login
+      // it did not start, and unlike a held access token it would still look perfectly valid - it is signed, and
+      // its nonce is simply the wrong one. It exists only so sign-out can send an `id_token_hint` to the
+      // end-session endpoint (R19 clause 2); `idToken.ts` holds it in memory and nowhere else (L3).
+      retainIdToken(response.idToken);
       // R8's "single-use", and the last thing this flow does with storage.
       //
       // Here and nowhere earlier. The verifier is read INSIDE the exchange (`codeExchange.ts:59`) and the nonce
