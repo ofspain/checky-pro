@@ -217,6 +217,17 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // The "only action" half, which is what makes the criterion more than decorative.
       expect(main!.querySelectorAll('button'), 'a button appeared beside the link').toHaveLength(0);
       expect(main!.querySelectorAll('input, select, textarea, form'), 'the landing grew a control').toHaveLength(0);
+
+      // PHASE 7. Every assertion above - and in AC6, AC11 and AC13 - reaches through `main!`. A mutant that
+      // rendered a second anchor as a SIBLING of <main>, inside a fragment, survived all 25 cases: not one of
+      // them looked at the container outside the landmark. So the counts are repeated at the container, which
+      // is the boundary that actually matters for "the only action on the screen".
+      const { container } = mounted!;
+      expect([...container.querySelectorAll('a')], 'a way out was rendered OUTSIDE <main>').toHaveLength(1);
+      expect(container.querySelectorAll('button, input, select, textarea, form'),
+        'a control was rendered OUTSIDE <main>').toHaveLength(0);
+      expect([...container.querySelectorAll('*')].filter((node) => node.parentElement === container)
+        .map((node) => node.tagName), 'the screen renders something beside its landmark').toEqual(['MAIN']);
     });
 
     it('is a real anchor, not a button wired to navigate', async () => {
@@ -367,8 +378,28 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       expect(text, 'the held token reached the landing screen').not.toContain('T37-ACCESS-TOKEN');
       expect(text, 'something UUID-shaped reached the landing screen')
         .not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-      // The whole rendered text is three known strings and nothing else.
-      expect(text).toBe(`${COPY.heading}${COPY.explanation}${COPY.action}`);
+      // The whole rendered text is three known strings and nothing else. PHASE 7: asserted on the CONTAINER
+      // rather than on `main`, because a mutant that rendered a fourth string beside the landmark passed this
+      // case while `main` stayed byte-identical. `main` is still checked, so a string moving OUT of the
+      // landmark fails here too rather than merely relocating.
+      const whole = `${COPY.heading}${COPY.explanation}${COPY.action}`;
+      expect(text, 'the landmark no longer holds exactly the three strings').toBe(whole);
+      expect(mounted!.container.textContent, 'text was rendered outside <main>').toBe(whole);
+    });
+
+    it('CONTROL: the container-scoped sweep sees what a main-scoped one cannot', async () => {
+      // Proves the two assertions above are not the same assertion twice. A node appended as a sibling of
+      // <main> leaves `main.textContent` untouched and changes the container's.
+      const { main } = await arriveAt();
+      const planted = document.createElement('a');
+      planted.href = '/elsewhere';
+      planted.textContent = 'Elsewhere';
+      mounted!.container.append(planted);
+
+      expect(main!.textContent, 'the landmark changed, so this control proves nothing')
+        .toBe(`${COPY.heading}${COPY.explanation}${COPY.action}`);
+      expect(mounted!.container.textContent).toContain('Elsewhere');
+      expect(mounted!.container.querySelectorAll('a')).toHaveLength(2);
     });
   });
 
