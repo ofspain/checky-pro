@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { RENEWAL_CHANNEL, RENEWAL_LOCK, shareRenewalAcrossTabs, type TabLocks } from '../api/crossTabRenewal';
 import { accessToken, clearAccessToken, retainAccessToken } from './accessToken';
+import * as authorizeRequestModule from './authorizeRequest';
 import { AUTHORIZE_STORAGE_KEYS, buildAuthorizeRequest } from './authorizeRequest';
 import { RETURN_TARGET_KEY, rememberReturnTarget } from './returnTarget';
 import { setSignInNotice, takeSignInNotice } from './signInNotice';
@@ -236,6 +237,45 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       expect(accessToken.current(), 'the precondition: a token really was held').not.toBeNull();
       signOut();
       expect(accessToken.current()).toBeNull();
+    });
+
+    /**
+     * THE ORDER, measured rather than claimed. This case exists because a mutant that moved the clear to
+     * LAST survived the suite as first written: `signOut.ts` says in so many words that the position is
+     * load-bearing, AC1 asserted the outcome, and nothing asserted the sequence. Designing the mutant found
+     * the hole; re-reading the cases had not.
+     *
+     * The step made to throw is `consumeAuthorizeState`, because in real life none of the three later steps
+     * can - each is guarded inside its own module - which is exactly why the gap was invisible. `signOut`
+     * has no `catch`, so the throw escapes, and the assertion is about what is already true when it does.
+     * Spying the module object works because Vitest keeps a named import as a live binding (task 33
+     * measured this after an own-property spy on jsdom's proxied `Storage` silently intercepted nothing).
+     */
+    it('clears FIRST, proven by a later step that throws', () => {
+      retainAccessToken(aToken());
+      vi.spyOn(authorizeRequestModule, 'consumeAuthorizeState').mockImplementation(() => {
+        throw new Error('the store died mid-sign-out');
+      });
+
+      expect(() => signOut()).toThrow('the store died mid-sign-out');
+
+      expect(
+        accessToken.current(),
+        'a step after the clear threw and the token was still held: that is the half-authenticated tab R22 '
+          + 'forbids. clearAccessToken() must be the FIRST statement in signOut().',
+      ).toBeNull();
+    });
+
+    it('and its source puts the clear before the other three (source)', async () => {
+      const self = (await production()).find((file) => file.path === 'auth/signOut.ts');
+      const body = self!.code.slice(self!.code.indexOf('export function signOut'));
+      const at = (primitive: string) => body.search(new RegExp(`\\b${primitive}\\s*\\(`));
+      for (const later of ['takeSignInNotice', 'consumeAuthorizeState', 'clearReturnTarget']) {
+        expect(at('clearAccessToken'), `${later} is called before the token is cleared`).toBeLessThan(at(later));
+      }
+      // The cheap pin beside the behavioural one, and not instead of it: this one would still pass if the
+      // clear were moved into a branch that does not run.
+      expect(at('clearAccessToken'), 'the scan found no call at all').toBeGreaterThan(-1);
     });
 
     it('drops a token ADOPTED from a sibling tab, which is written by a different path', () => {
