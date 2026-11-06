@@ -1146,6 +1146,20 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       expect(takeIdToken()).toBeNull();
     });
 
+    it('takes the ID token BEFORE calling sign-out, by source order (phase 10)', async () => {
+      // PHASE 10 GAP, and it is a near-miss rather than a hole: reversing these two lines makes `hint` null,
+      // the parameter absent, and AC5 fails - so the behaviour IS pinned. What was not pinned is that the
+      // reversal is a REORDER rather than a bug in the hint. A reader looking at a failing AC5 would suspect
+      // `takeIdToken`, which would be the wrong place to look. This names the cause.
+      const self = (await production()).find((file) => file.path === 'auth/endSession.ts');
+      const takeAt = self!.code.indexOf('takeIdToken()');
+      const signOutAt = self!.code.search(/\bsignOut\s*\(\s*\)/);
+      expect(takeAt, 'endSession.ts does not take the ID token at all').toBeGreaterThan(0);
+      expect(signOutAt, 'endSession.ts does not call signOut at all').toBeGreaterThan(0);
+      expect(takeAt, 'signOut() runs before the ID token is taken, so the hint is always null')
+        .toBeLessThan(signOutAt);
+    });
+
     it('and the clearing really is sign-out, not a second hand-rolled copy (source)', async () => {
       const self = (await production()).find((file) => file.path === 'auth/endSession.ts');
       expect(self, 'auth/endSession.ts is not in the scan').toBeDefined();
@@ -1237,6 +1251,25 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
 
       expect(soleHandover(handover).searchParams.get('post_logout_redirect_uri'))
         .toBe('https://checky.example/app/signed-out');
+    });
+
+    it('percent-encodes the target, so SAS parses one parameter and not three', () => {
+      // PHASE 10 GAP. Every case above reads the value through `searchParams.get()`, which DECODES - so a URL
+      // built by string concatenation, with the target's `://` and `/` left raw, returns the right string
+      // from every one of them and passes. The raw query is where the difference lives: an unencoded
+      // `https://app.example/app/signed-out` puts a bare `:` and three `/` into the query, and what SAS
+      // receives depends on its parser rather than on this module. `URLSearchParams.toString()` is what makes
+      // that not a question, and this is the case that notices if it stops being used.
+      retainIdToken(anIdToken());
+      const handover = watchHandover('https://checky.example');
+
+      endSession();
+
+      const raw = handover.targets()[0] as string;
+      expect(raw, 'the post-logout target is not percent-encoded').toContain('https%3A%2F%2Fchecky.example%2Fapp%2Fsigned-out');
+      expect(raw, 'a raw target leaked into the query string').not.toContain('=https://');
+      // And it still round-trips, so the encoding is correct rather than merely present.
+      expect(new URL(raw).searchParams.get('post_logout_redirect_uri')).toBe('https://checky.example/app/signed-out');
     });
 
     it('names a route the route table actually declares, and a PUBLIC one', () => {

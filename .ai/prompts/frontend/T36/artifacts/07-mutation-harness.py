@@ -237,6 +237,22 @@ MUTANTS = [
     ("ES28 the ID token is written to window.name, which survives the navigation",
      END_SESSION, HANDOVER,
      "  window.name = hint ?? '';\n  globalThis.location.assign(endSessionUrl(hint));"),
+
+    # --- phase 10: the two gaps the clause-by-clause audit found ----------------------------------------
+    # A REORDER. `hint` becomes null, so the parameter is absent and AC5 fails - the behaviour was already
+    # pinned. What was not pinned is that the CAUSE is the order, which is why phase 10 added a source-order
+    # case: a reader looking at a failing AC5 would otherwise suspect takeIdToken.
+    ("ES29 sign-out runs before the ID token is taken, so the hint is always null",
+     END_SESSION,
+     (TAKE_HINT, CALL_SIGNOUT),
+     ("  signOut();", "  const hint = takeIdToken();")),
+
+    # The query is built by concatenation, leaving the target's `://` and `/` raw. Every case that reads the
+    # value through `searchParams.get()` DECODES and still returns the right string, so this passes them all.
+    ("ES30 the query is concatenated by hand, leaving the post-logout target unencoded",
+     END_SESSION, URL_RETURN,
+     "  return `${globalThis.location.origin}${END_SESSION_PATH}?`\n"
+     "    + `${hint === null ? '' : `id_token_hint=${hint}&`}post_logout_redirect_uri=${postLogoutRedirectUri()}`;"),
 ]
 
 def run(files, name_filter=None):
