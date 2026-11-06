@@ -333,10 +333,13 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       // report this deliberate throw as a failure of the file. Nothing is silenced - it is CAUGHT and
       // counted, which turns a comment in another module into something that fails if it stops being true.
       const saved = process.listeners('uncaughtException');
-      process.removeAllListeners('uncaughtException');
       const escaped: unknown[] = [];
-      process.on('uncaughtException', (error) => escaped.push(error));
       try {
+        // Inside the try, not before it - Kimi's phase 8 I3. With these two calls above the `try`, a throw
+        // between them would leave the runner with no handlers at all and the `finally` would never run.
+        process.removeAllListeners('uncaughtException');
+        process.on('uncaughtException', (error) => escaped.push(error));
+
         installTransport();
         const session = rejectingSession(new Error('renewal rejected'));
         const api = createAuthApi(createSessionBoundary(session.tokens, () => {
@@ -439,10 +442,34 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
     });
 
     it('names no cause, status, step or factor', () => {
+      /*
+       * GROUNDED IN L4, GROUP BY GROUP - Kimi's phase 8 I5, which was right that the list was judgement
+       * presented as a rule. L4 requires copy to be identical across "unknown or missing, locked, suspended,
+       * and deleted accounts and across bad, expired, and used tokens":
+       *
+       *   account states      unknown | lock | suspend | delet
+       *   token conditions    invalid | expire | revoke | token | refresh | renew | 401
+       *   steps and factors   password | mfa | totp        (L2: which factors are required is the server's)
+       *   infrastructure      server | network             (not L4's text; a cause is a cause)
+       *
+       * The last group is mine and is marked as mine. What L4 does NOT forbid is naming the EVENT, which is
+       * why `session` is absent and why the sentence may say a session has ended - the case below draws that
+       * boundary explicitly rather than leaving it to be inferred from an absence.
+       */
       const forbidden = /expire|invalid|revoke|renew|refresh|token|lock|suspend|delet|unknown|password|mfa|totp|server|network|401/i;
       expect(en.signIn.sessionEnded).not.toMatch(forbidden);
       // CONTROL: the pattern really does fire on the sentence this rejects.
       expect('Your token expired, so renewal failed.').toMatch(forbidden);
+    });
+
+    it('draws the line at naming the EVENT, which L4 does not forbid', () => {
+      // Making the boundary visible, so the next author does not read the list above as "no nouns allowed"
+      // and does not widen it without noticing what that would cost. `session` is deliberately absent: a
+      // sentence may say WHAT happened to the visitor's own session, never WHY or to WHOSE account.
+      expect(en.signIn.sessionEnded.toLowerCase()).toContain('session');
+      // And a list that also banned the event word would reject the sentence this task is required to show,
+      // which is the trade being made - measured, not asserted.
+      expect(en.signIn.sessionEnded).toMatch(/session/i);
     });
 
     it('puts THAT sentence on the sign-in screen, and not the discarded one', () => {
@@ -497,11 +524,29 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       expect(outcomes[0]).toEqual({ to: [`/${SIGN_IN_PATH}`], notice: 'session-ended', held: null });
     });
 
-    it('does not name the reason parameter in its own source', async () => {
+    it('does not name the reason parameter, nor bind a caught error, in its own source', async () => {
       const code = strip(await moduleSource());
-      for (const forbidden of [/\breason\b/, /\bcatch\b/, /instanceof/]) {
+      // `catch (error)` BINDS what was thrown and so can inspect it; `catch {}` cannot. Kimi's phase 8 I4:
+      // the earlier `/\bcatch\b/` ban blocked both, so a future author guarding a throwing `navigate` -
+      // which is safe and which this module may one day want - would have failed a test about the failure
+      // REASON. The ban is now on the binding, which is the thing that could leak a cause.
+      for (const forbidden of [/\breason\b/, /catch\s*\(/, /instanceof/]) {
         expect(code, `cleanReauth.ts now writes ${forbidden}`).not.toMatch(forbidden);
       }
+      // CONTROL: the narrowed pattern still fires on the shape it is meant to stop, and lets the safe one by.
+      expect('try { navigate(x); } catch (error) { report(error); }').toMatch(/catch\s*\(/);
+      expect('try { navigate(x); } catch { /* discarded */ }').not.toMatch(/catch\s*\(/);
+    });
+
+    it('imports no router, so the injected navigate cannot be quietly bypassed (source)', async () => {
+      // Kimi's phase 8 I9. Injection is the architectural protection; without this scan a future edit could
+      // import the router directly and every behavioural case here would still pass.
+      const code = strip(await moduleSource());
+      for (const forbidden of [/react-router/, /useNavigate/, /createBrowserRouter/, /globalThis\.history/]) {
+        expect(code, `cleanReauth.ts now imports or reaches for ${forbidden}`).not.toMatch(forbidden);
+      }
+      // Lower bound: it really does take the navigate it is given, so the scan is not passing over nothing.
+      expect(code).toContain('navigate(');
     });
   });
 
@@ -563,7 +608,10 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       await settle();
 
       // The return target is the one permitted write (L16a) and carries no failure information, so it is
-      // removed before the sweep rather than excused inside it.
+      // removed before the sweep rather than excused inside it. Kimi's phase 8 I10 asked why: excusing it
+      // INSIDE the sweep would mean writing a needle exception, and an exception in a leak sweep is the one
+      // place a real leak can hide. Taking it means the sweep has no exceptions at all. What the stored
+      // value IS stays covered by the case above, which asserts it equals `/account` exactly.
       takeReturnTarget();
       expect(leaks(SURFACE_NEEDLES, logged())).toEqual([]);
     });
