@@ -24,6 +24,7 @@ import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-rout
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { accessToken, clearAccessToken, retainAccessToken } from '../auth/accessToken';
+import { retainIdToken, takeIdToken } from '../auth/idToken';
 import { createI18n } from '../i18n/i18n';
 import { en } from '../i18n/catalogue';
 import { APP_BASENAME, PUBLIC_ROUTE_PATHS, SIGNED_OUT_PATH, SIGN_IN_PATH, appRoutes } from './routes';
@@ -79,6 +80,46 @@ async function source(): Promise<string> {
   return screenSource;
 }
 
+/**
+ * Every surface this screen must not reach, each paired with a snippet that WOULD trip it.
+ *
+ * The PAIRING is the point. Phase 8's I6 observed that a single planted `sessionStorage` proved the scan
+ * could see one surface and said nothing about the other twelve, so a typo in any other pattern - a
+ * lower-case `sendbeacon`, a dropped word boundary - was unmeasured. The scan and its control iterate THIS
+ * table, so a pattern cannot arrive without a probe that proves it fires.
+ *
+ * The token entries are phase 8's I1, and they are the ones that matter most. AC6 and AC13 compare RENDERED
+ * OUTPUT, so they can only see a read that CHANGES what renders; a module that calls `accessToken()` and
+ * branches to the same markup is invisible to them. This screen's central constraint is that it makes no
+ * claim about the visitor's session, and the first step toward breaking it is reading the session at all.
+ */
+const FORBIDDEN_REACHES: readonly (readonly [RegExp, string])[] = [
+  [/\bfetch\s*\(/, "void fetch('/x');"],
+  [/XMLHttpRequest/, 'void new XMLHttpRequest();'],
+  [/sessionStorage/, "void globalThis.sessionStorage.getItem('x');"],
+  [/localStorage/, "void globalThis.localStorage.getItem('x');"],
+  [/document\.cookie/, 'void document.cookie;'],
+  [/indexedDB/, "void indexedDB.open('x');"],
+  [/setTimeout/, 'setTimeout(() => undefined, 0);'],
+  [/setInterval/, 'setInterval(() => undefined, 0);'],
+  [/useEffect/, 'useEffect(() => undefined, []);'],
+  [/useState/, 'const [x] = useState(0);'],
+  [/useRef/, 'const r = useRef(null);'],
+  [/console\./, "console.log('x');"],
+  [/sendBeacon/, "navigator.sendBeacon('/x');"],
+  // TASK 37 PHASE 8 (I1) - reading the session, which no render comparison can see.
+  [/\baccessToken\s*\(/, 'void accessToken();'],
+  [/\bclearAccessToken\b/, 'clearAccessToken();'],
+  [/\bretainAccessToken\b/, "retainAccessToken('x');"],
+  [/\btakeIdToken\b/, 'void takeIdToken();'],
+  [/\bretainIdToken\b/, "retainIdToken('x');"],
+  [/from '\.\/(?:accessToken|idToken)'/, "import { accessToken } from './accessToken';"],
+  // TASK 37 PHASE 8 (I1) - the surfaces T36's AC8 sweeps, for the same reason it sweeps them.
+  [/document\.title/, "document.title = 'x';"],
+  [/window\.name/, "window.name = 'x';"],
+  [/history\.state/, 'void history.state;'],
+] as const;
+
 function watchStorage(): Record<'getItem' | 'setItem' | 'removeItem' | 'clear', Mock> {
   return {
     getItem: vi.spyOn(Storage.prototype, 'getItem') as unknown as Mock,
@@ -94,6 +135,7 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     globalThis.sessionStorage.clear();
     globalThis.localStorage.clear();
     clearAccessToken();
+    takeIdToken();
   });
 
   afterEach(() => {
@@ -105,14 +147,21 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       mounted = undefined;
     }
     clearAccessToken();
+    takeIdToken();
     vi.restoreAllMocks();
   });
 
   describe('AC1 the declared route resolves to a screen', () => {
     it('renders the signed-out screen at its declared path', async () => {
-      const { main, router } = await arriveAt();
+      const { main, router, container } = await arriveAt();
 
-      expect(main, 'the route resolved to nothing - before task 37 it had no element').not.toBeNull();
+      // PHASE 8 (I10) split this in two, because one assertion was carrying two different failures and
+      // naming only the first. SL19 - the landmark replaced by a plain div - failed here with "the route
+      // resolved to nothing", which is false: the route resolved, and the LANDMARK is what went missing.
+      expect(container.querySelector('*'), 'the route resolved to nothing - before task 37 it had no element')
+        .not.toBeNull();
+      expect(main, 'the screen rendered, but with no <main> landmark - every case below dereferences it')
+        .not.toBeNull();
       expect(main!.querySelector('h1')?.textContent).toBe(COPY.heading);
       // The basename is part of the memory router's location, measured here rather than assumed: it reports
       // `/app/signed-out`, not `/signed-out`. Asserting the short form passed vacuously on nothing.
@@ -217,6 +266,10 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // The "only action" half, which is what makes the criterion more than decorative.
       expect(main!.querySelectorAll('button'), 'a button appeared beside the link').toHaveLength(0);
       expect(main!.querySelectorAll('input, select, textarea, form'), 'the landing grew a control').toHaveLength(0);
+      // PHASE 8 (I5): a styled anchor behaving like a button would be counted as a link above and satisfy
+      // "only one way out" while losing the affordances a real anchor is chosen for.
+      expect(links[0]!.hasAttribute('href'), 'the way back is an anchor with no href').toBe(true);
+      expect(links[0]!.getAttribute('role'), 'the way back is an anchor dressed as a button').toBeNull();
 
       // PHASE 7. Every assertion above - and in AC6, AC11 and AC13 - reaches through `main!`. A mutant that
       // rendered a second anchor as a SIBLING of <main>, inside a fragment, survived all 25 cases: not one of
@@ -235,7 +288,8 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       expect(code, 'the way back is no longer a router Link').toMatch(/<Link\s/);
       // A `navigate()` hand-over would remove middle-click, open-in-new-tab, copy-link and keyboard
       // activation, all of which a real anchor gives for nothing.
-      for (const forbidden of [/useNavigate/, /\bnavigate\s*\(/, /location\s*\.\s*assign/, /<button/]) {
+      for (const forbidden of [/useNavigate/, /\bnavigate\s*\(/, /location\s*\.\s*assign/, /<button/,
+        /role\s*=/]) {
         expect(code, `SignedOutScreen.tsx reaches for ${forbidden.source}`).not.toMatch(forbidden);
       }
     });
@@ -284,18 +338,21 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
 
     it('reaches for nothing it should not, by source', async () => {
       const code = await source();
-      for (const forbidden of [/\bfetch\s*\(/, /XMLHttpRequest/, /sessionStorage/, /localStorage/,
-        /document\.cookie/, /indexedDB/, /setTimeout/, /setInterval/, /useEffect/, /useState/, /useRef/,
-        /console\./, /sendBeacon/]) {
+      for (const [forbidden] of FORBIDDEN_REACHES) {
         expect(code, `SignedOutScreen.tsx reaches for ${forbidden.source}`).not.toMatch(forbidden);
       }
     });
 
-    it('CONTROL: the source scan fires on a planted reach', async () => {
+    it('CONTROL: EVERY pattern in the sweep fires on a planted reach', async () => {
       const code = await source();
-      const planted = `${code}\nvoid globalThis.sessionStorage.getItem('x');`;
-      expect(/sessionStorage/.test(planted), 'the scan would not see a planted store access').toBe(true);
-      expect(/sessionStorage/.test(code), 'the real source already trips the scan').toBe(false);
+      for (const [forbidden, planted] of FORBIDDEN_REACHES) {
+        expect(forbidden.test(`${code}\n${planted}`),
+          `the scan cannot see a planted ${forbidden.source} - the pattern or the probe is wrong`).toBe(true);
+        expect(forbidden.test(code),
+          `the real source already trips ${forbidden.source}, so that entry proves nothing`).toBe(false);
+      }
+      // The sweep cannot shrink unnoticed: a deleted row would leave the loop above passing on fewer surfaces.
+      expect(FORBIDDEN_REACHES, 'the forbidden-surface sweep shrank').toHaveLength(22);
     });
   });
 
@@ -305,11 +362,20 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // cross-site link could fire. R19 clause 1 is task 35's, and by the time SAS redirects here it has
       // already run.
       retainAccessToken('T37-ACCESS-TOKEN-should-survive');
+      // PHASE 8 (I2): BOTH tokens. Task 36 introduced `idToken.ts` so `endSession()` can send an
+      // `id_token_hint`, which makes the ID token session state this screen must leave alone too - and
+      // nothing here covered it, so a mutant calling `takeIdToken()` passed.
+      retainIdToken('T37-ID-TOKEN-should-survive');
 
       await arriveAt();
 
       expect(accessToken.current(), 'the landing screen cleared the session - a URL must not sign anyone out')
         .toBe('T37-ACCESS-TOKEN-should-survive');
+      // `takeIdToken` is the ONLY reader `idToken.ts` publishes - T36 deliberately shipped no plain one, to
+      // foreclose a read-before-clear window - so reading it here also clears it. It is therefore read last,
+      // and `afterEach` drains it for the cases that do not.
+      expect(takeIdToken(), 'the landing screen took the ID token task 36 holds for the end-session hint')
+        .toBe('T37-ID-TOKEN-should-survive');
     });
   });
 
@@ -365,6 +431,17 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       expect(endSession, 'endSession.ts still declares its own copy of the route').not.toMatch(/const SIGNED_OUT_PATH\s*=/);
       expect(endSession, 'endSession.ts does not import the published constant').toMatch(/SIGNED_OUT_PATH.*from '\.\.\/app\/routes'/);
       expect(SIGNED_OUT_PATH).toBe('signed-out');
+
+      // PHASE 8 (I3): importing it is not using it. A module could import the constant to satisfy the two
+      // assertions above and still spell the route literally where the URL is actually built - the exact
+      // drift this case exists to prevent, passing. Scoped to the function, because the file's prose
+      // legitimately mentions `/app/signed-out` while explaining itself.
+      const builder = /function postLogoutRedirectUri\(\)[\s\S]*?\n}/.exec(endSession)?.[0] ?? '';
+      expect(builder, 'postLogoutRedirectUri was not found, so this scan reads nothing').toContain('return');
+      expect(builder, 'the post-logout URL is not built from the published constant')
+        .toMatch(/\$\{SIGNED_OUT_PATH\}/);
+      expect(builder, 'the post-logout URL spells the route literally beside the constant it imports')
+        .not.toMatch(/signed-out/);
     });
   });
 
@@ -382,6 +459,9 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // rather than on `main`, because a mutant that rendered a fourth string beside the landmark passed this
       // case while `main` stayed byte-identical. `main` is still checked, so a string moving OUT of the
       // landmark fails here too rather than merely relocating.
+      // PHASE 8 (I8): this is deliberately whitespace-exact. Three strings, concatenated, no separators.
+      // A `<br>`, a wrapping element that introduces a newline, or a space added for styling WILL fail this
+      // case - that is the strength, not a defect, and whoever changes the markup updates `whole` on purpose.
       const whole = `${COPY.heading}${COPY.explanation}${COPY.action}`;
       expect(text, 'the landmark no longer holds exactly the three strings').toBe(whole);
       expect(mounted!.container.textContent, 'text was rendered outside <main>').toBe(whole);
@@ -390,23 +470,30 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     it('CONTROL: the container-scoped sweep sees what a main-scoped one cannot', async () => {
       // Proves the two assertions above are not the same assertion twice. A node appended as a sibling of
       // <main> leaves `main.textContent` untouched and changes the container's.
-      const { main } = await arriveAt();
-      // Counted BEFORE, not hardcoded: pinning the screen's own anchor count here would make this control
-      // fail alongside the case it exists to validate, which measures the screen rather than the sweep.
-      const before = mounted!.container.querySelectorAll('a').length;
+      // NOTHING here is pinned to what the screen renders. Three earlier versions of this control each
+      // reached for a number or a string belonging to the thing under test, and each failed alongside the
+      // case it exists to validate: first the container's anchor count, then the landmark's measured against
+      // the container's, then the whole-text equality - which made the control fail on SL21, a mutant that
+      // only REORDERS the markup. A control must measure its own claim: here, that a container-scoped sweep
+      // sees what a `main`-scoped one cannot.
+      const { main, container } = await arriveAt();
+      expect(main, 'no landmark, so there are not two scopes to tell apart').not.toBeNull();
+      const textBefore = main!.textContent;
       const insideBefore = main!.querySelectorAll('a').length;
+      const containerBefore = container.querySelectorAll('a').length;
+
       const planted = document.createElement('a');
       planted.href = '/elsewhere';
       planted.textContent = 'Elsewhere';
-      mounted!.container.append(planted);
+      container.append(planted);
 
-      expect(main!.textContent, 'the landmark changed, so this control proves nothing')
-        .toBe(`${COPY.heading}${COPY.explanation}${COPY.action}`);
+      expect(main!.textContent, 'the planted node changed the landmark, so this control proves nothing')
+        .toBe(textBefore);
       expect(main!.querySelectorAll('a'), 'the planted node landed inside the landmark')
         .toHaveLength(insideBefore);
-      expect(mounted!.container.textContent, 'the container sweep cannot see the planted node')
+      expect(container.textContent, 'the container-scoped sweep cannot see the planted node')
         .toContain('Elsewhere');
-      expect(mounted!.container.querySelectorAll('a')).toHaveLength(before + 1);
+      expect(container.querySelectorAll('a')).toHaveLength(containerBefore + 1);
     });
   });
 
