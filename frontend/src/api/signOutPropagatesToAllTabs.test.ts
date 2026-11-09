@@ -382,7 +382,14 @@ describe('signOutPropagatesToAllTabs', () => {
     });
   });
 
-    describe('AC14 the channels this module creates are the channels it closes', () => {
+    /*
+   * AC18 AND AC19 ARE NUMBERED BEYOND THE FROZEN SET, and the gap is the point. Phase 4's brief freezes
+   * AC1-AC17; these two came out of the phase 11 review gate, so they cannot borrow a number. They were
+   * first written as AC14 and AC15 - which the brief already assigns to "T35's AC9 is replaced" and
+   * "excused in NOT_SESSION_STATE with declarations: 1" - and the collision was caught by phase 12's
+   * traceability matrix, whose only job is to make two criteria sharing one number impossible.
+   */
+  describe('AC18 the channels this module creates are the channels it closes (phase 11 F3)', () => {
     /*
      * KIMI PHASE 11 F3 SAID TO ACCEPT THIS AS UNFALSIFIABLE, "like XT18", or to give `close()` an
      * observable side effect. Neither was needed: it is already observable, from the outside, because the
@@ -447,7 +454,7 @@ describe('signOutPropagatesToAllTabs', () => {
     });
   });
 
-  describe('AC15 the sign-out listener and the renewal listener coexist on one tab', () => {
+  describe('AC19 the sign-out listener and the renewal listener coexist on one tab (phase 11 F13)', () => {
     /*
      * KIMI PHASE 11 F13: nothing installed both mechanisms in one tab. Unlikely to break - different
      * channels, different callbacks - but "unlikely" is what an unexercised integration always looks like,
