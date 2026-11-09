@@ -62,10 +62,10 @@ inventory, not a plan:
 | `publicRouteSetIsExactlyTheDeclaredSet.test.tsx:990` | *"leaves the location where it was on a BLOCKED path too, rather than redirecting (**R28, task 41**)"* — `historyAction === 'POP'` | this case **names T41** and exists to fail when the redirect lands |
 | `…:906`, `:913`, `:1120` | T40 AC2 — `container.innerHTML === ''` on a blocked path | a redirect renders the sign-in route instead of nothing |
 | `…:980`, `:1110` | T40 AC10 / boundary — `historyAction === 'POP'` on a **public** path | must **keep** passing: a public path must not be redirected |
-| `…:967` | T40 AC1 — the catch-all's probe renders without a session | fires if the catch-all gains an element |
+| `…:963-969` | T40 AC1 — *"serves the catch-all without a session, **which is what task 41 will need**"*; its probe renders | fires if the catch-all gains an element |
 | `routesResolveUnderAppPrefixOnly.test.tsx:129` | *"sends an unmatched /app path to the silent catch-all, so the shell shows no text"* | the catch-all stops being silent |
 | `…:137` | *"treats the bare /app/ as no route: only the root matches and nothing renders (**T41 owns its redirect**)"* | also names T41 |
-| `…:175` and `publicRouteSet…:429` | the two screen-count pins, both at **three** | fire **only if** the redirect is an element on a route that has a `path`. T40's gate avoided them by being pathless; the catch-all is not |
+| `…:175` and `publicRouteSet…:663` | the two screen-count pins, both at **three** | fire **only if** the redirect is an element on a route that has a `path`. T40's gate avoided them by being pathless; the catch-all is not |
 | `failedRenewalTriggersCleanReauthWithoutHalfSession.test.tsx:518` | task 33's *"every authenticated path has no element"* | fires only if T41 puts an element on each authenticated path |
 
 ## 3 · Established patterns to follow
