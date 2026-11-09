@@ -448,11 +448,17 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
   describe('AC11 nothing identifying is rendered', () => {
     it('renders no address, no identifier and no token-shaped string', async () => {
       retainAccessToken('T37-ACCESS-TOKEN-should-survive');
+      // PHASE 10: the ID token too. AC8 now proves this screen does not TAKE it; this proves it does not
+      // DISPLAY it. They are different failures - T36's whole reason for `idToken.ts` is that the ID token
+      // is identity, so L3 governs it, and a screen that rendered it would leak a subject claim into a
+      // public page reachable by typing its URL.
+      retainIdToken('T37-ID-TOKEN-should-not-render');
       const { main } = await arriveAt();
       const text = main!.textContent ?? '';
 
       expect(text, 'an email address reached the landing screen').not.toContain('@');
-      expect(text, 'the held token reached the landing screen').not.toContain('T37-ACCESS-TOKEN');
+      expect(text, 'the held access token reached the landing screen').not.toContain('T37-ACCESS-TOKEN');
+      expect(text, 'the held ID token reached the landing screen').not.toContain('T37-ID-TOKEN');
       expect(text, 'something UUID-shaped reached the landing screen')
         .not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
       // The whole rendered text is three known strings and nothing else. PHASE 7: asserted on the CONTAINER
@@ -494,6 +500,41 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       expect(container.textContent, 'the container-scoped sweep cannot see the planted node')
         .toContain('Elsewhere');
       expect(container.querySelectorAll('a')).toHaveLength(containerBefore + 1);
+    });
+  });
+
+  // NOT one of the thirteen frozen criteria. Added in PHASE 10 to close FU-T37-1, which phase 7 opened
+  // after noticing that three structural regressions all died INCIDENTALLY: SL19 (the landmark becomes a
+  // div) on AC1's assertion about routing, SL20 (`h1` drops to `h2`) on AC3's heading READ, SL21 (the
+  // action rendered above the heading) on AC11's whole-text ordering. Nothing in T37's criteria, in L4 or
+  // in R19 says a word about landmarks or heading level, so each of those kills was a side effect of a
+  // case about something else - and a side effect is not a contract. This states the shape directly.
+  describe('PHASE 10 the screen has the structure its kills were only implying (FU-T37-1)', () => {
+    it('is one landmark holding a level-one heading, a paragraph and the way back, in that order', async () => {
+      const { main, container } = await arriveAt();
+
+      expect(main, 'the screen renders no <main> landmark').not.toBeNull();
+      expect(main!.parentElement, 'the landmark is nested rather than at the top of the screen').toBe(container);
+      expect(main!.querySelectorAll('h1'), 'the screen has no single level-one heading').toHaveLength(1);
+      expect(main!.querySelectorAll('h2, h3, h4, h5, h6'), 'the screen added a subheading').toHaveLength(0);
+
+      // The reading order, as tags rather than as text, so this case fails for a STRUCTURAL change even
+      // when the rendered text happens to be unchanged - which is the half AC11's equality cannot give.
+      expect([...main!.children].map((node) => node.tagName))
+        .toEqual(['H1', 'P', 'A']);
+    });
+
+    it('CONTROL: the order assertion is sensitive to order, not just to membership', () => {
+      // Without this, `toEqual` on a three-element array could be mistaken for a set comparison. A
+      // hand-built landmark with the same three tags in a different order must not satisfy it.
+      const probe = document.createElement('main');
+      for (const tag of ['a', 'h1', 'p']) probe.append(document.createElement(tag));
+      const tags = [...probe.children].map((node) => node.tagName);
+
+      expect(tags, 'the probe was built wrong, so this control proves nothing').toHaveLength(3);
+      expect(tags).not.toEqual(['H1', 'P', 'A']);
+      expect([...tags].sort(), 'the three tags are the same three, so only ORDER separates them')
+        .toEqual(['A', 'H1', 'P']);
     });
   });
 
