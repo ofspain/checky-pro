@@ -200,6 +200,28 @@ MUTANTS = [
     ("RD14 the index route is spelled `path: ''` instead of `index: true`",
      ROUTES, INDEX_ROUTE, "      { path: '', element: <RedirectToSignIn /> },", "own"),
 
+    # --- phase 11's two new regressions ------------------------------------------------------------------
+    # THE ORDER OF THREE READS, which phase 11's F2 and F6 disagreed about where to measure. The remember
+    # call moves ABOVE the session check, so a visitor who already has a session gets a return target written
+    # into their storage: a stale deep link waiting for a sign-in that is not coming. F2 wanted this caught on
+    # an authenticated path with a session; the gate renders `<Outlet />` there, so the redirect never mounts.
+    # Whichever cases kill this row are the answer, and the run is what says so rather than the argument.
+    ("RD21 the arrival is remembered BEFORE the session is checked",
+     REDIR,
+     (R_COND, R_REMEMBER),
+     ("  const { pathname: early } = useLocation();\n"
+      "  rememberReturnTarget(early);\n" + R_COND,
+      "  void arrival;"),
+     "own"),
+
+    # A `switch` standing between the arrival and the allowlist. Behaviourally invisible - the allowlist
+    # refuses those paths anyway - which is why the no-branch scan had to grow past `if` (phase 11, F1/F4).
+    ("RD22 a switch stands between the arrival and the allowlist",
+     REDIR, R_ARRIVAL,
+     "  let arrival = pathname;\n"
+     "  switch (pathname) { case '/': arrival = pathname; break; default: break; }",
+     "own"),
+
     # --- the instruments phase 6 grew --------------------------------------------------------------------
     # `withProbes`, back to identifying the gate as "the pathless child". This is D1: with task 41's index
     # route present, the derived table finds two gates, fails its own baseline, and takes nine arms down
