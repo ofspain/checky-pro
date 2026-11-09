@@ -92,14 +92,25 @@ function isSignOut(data: unknown): boolean {
 }
 
 /**
- * Tells the app's other tabs that this one signed out. Fire-and-forget.
+ * Tells the app's other tabs that this one signed out. Fire-and-forget, and on the production path that is
+ * now true rather than advertised.
  *
  * A FRESH channel every call, closed immediately. Both halves are measured rather than assumed: a message
  * posted and then closed on the same tick is still delivered, and `postMessage` on an already-closed
  * channel throws a `DOMException` - which is why a cached channel would break the second broadcast, and
  * why `crossTabRenewal.ts:116` guards its own post with `if (!closed)`.
  *
- * An injected channel is the caller's and is NOT closed here.
+ * **WHY THE PRODUCTION PATH SWALLOWS, AND THE INJECTED ONE DOES NOT** (T39 F5, Kimi phase 8 I5). This ran
+ * with a bare `try`/`finally`, so a throw propagated - into `endSession()`, between the local clear and
+ * `location.assign`. The consequence was the worst arrangement available: this tab's token gone, the
+ * siblings not told, and the SAS session never ended because the hand-over was never reached. A visitor who
+ * clicked sign out would stay signed in at the authorization server (R19) because a NOTIFICATION failed.
+ * The alternative costs the siblings a token that lives until it expires; the SAS session still ends. So
+ * the no-argument path catches and drops.
+ *
+ * An injected channel is the caller's, is NOT closed here, and its errors are NOT caught here: that path is
+ * a seam, its channel is in the caller's hand, and swallowing there would hide a caller's bug in the one
+ * place the caller could fix it. The asymmetry is the point, not an oversight.
  */
 export function broadcastSignOut(channel?: BroadcastChannel): void {
   if (channel) {
@@ -110,6 +121,10 @@ export function broadcastSignOut(channel?: BroadcastChannel): void {
   const own = new BroadcastChannel(SIGN_OUT_CHANNEL);
   try {
     own.postMessage({ type: SIGN_OUT_TYPE });
+  } catch {
+    // Dropped on purpose, for the reason in this function's header: a sign-out that cannot tell the other
+    // tabs must still finish its own. There is nowhere to report it to - the next statement in the caller
+    // navigates away - and `console` is a forbidden surface here (L3).
   } finally {
     own.close();
   }
@@ -124,6 +139,13 @@ export function broadcastSignOut(channel?: BroadcastChannel): void {
  * latch and `endSession()` does the broadcasting, and why a receiver structurally cannot echo.
  *
  * `close()` is idempotent and closes only a channel this function created.
+ *
+ * **A THROWING `onSignOut` IS THE CALLER'S.** It surfaces uncaught, as `crossTabRenewal.ts`'s `adopt`
+ * failure deliberately does. Kimi phase 8 I12 proposed wrapping it and added a consequence - *"the listener
+ * would crash and future sign-out broadcasts would be ignored for that tab"* - which is false and was
+ * measured: with a callback that throws on every delivery, two broadcasts produced TWO uncaught errors, so
+ * the handler was still attached for the second. A DOM listener is not detached by throwing. Nothing is
+ * wrapped here, because a wrap would buy only a different route to the same uncaught error.
  */
 export function listenForSignOut(
   onSignOut: () => void,

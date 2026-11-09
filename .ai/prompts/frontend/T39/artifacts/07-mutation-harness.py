@@ -75,6 +75,12 @@ CLOSED_GUARD = "      if (closed) return;"
 CLOSE_OWN = "      if (!injected) channel.close();"
 LATCH_SET = "  signedOut = true;"
 LATCH_DECL = "let signedOut = false;"
+TYPE_DECL = "export const SIGN_OUT_TYPE = 'session:signed-out';"
+SWALLOW = """  } catch {
+    // Dropped on purpose, for the reason in this function's header: a sign-out that cannot tell the other
+    // tabs must still finish its own. There is nowhere to report it to - the next statement in the caller
+    // navigates away - and `console` is a forbidden surface here (L3).
+  } finally {"""
 
 SO_IMPORT = "import { markSignedOut } from '../api/crossTabSignOut';"
 LATCH_CALL = "  markSignedOut();"
@@ -104,10 +110,11 @@ MUTANTS = [
     ("XT02 the no-argument broadcast posts nothing, so only the injected path still works",
      SIGNOUT_PROP, POST_OWN, "    void own;"),
 
-    # F5's hazard, made real: `postMessage` on a closed channel throws a DOMException, so the broadcast
-    # stops being fire-and-forget and takes `endSession()` down with it - after the clear, before the
-    # hand-over, leaving a cleared tab with a live SAS session.
-    ("XT03 the channel is closed before the post, so the broadcast throws into endSession()",
+    # F5's hazard. BEFORE phase 9's fix this killed 22 cases, because the throw propagated into
+    # `endSession()` and took the whole hand-over down. With the swallow in place the post fails silently
+    # instead, so what this row now measures is that the swallow did not swallow the FEATURE: no message
+    # reaches the channel and AC9d says so. A narrow kill where there was a cascade.
+    ("XT03 the channel is closed before the post, so the broadcast silently delivers nothing",
      SIGNOUT_PROP, (MAKE_OWN, POST_OWN),
      ("  const own = new BroadcastChannel(SIGN_OUT_CHANNEL);\n  own.close();",
       "    own.postMessage({ type: SIGN_OUT_TYPE });")),
@@ -268,6 +275,24 @@ MUTANTS = [
     ("XT30 the broadcast runs AFTER the navigation that may already have unloaded the page",
      END_SESSION, (ES_BROADCAST, ES_ASSIGN),
      ("  void 0;", "  globalThis.location.assign(endSessionUrl(hint));\n  broadcastSignOut();")),
+
+    # --- phase 9: the two rows the review's resolution needed -------------------------------------------
+    # The state the production path was in before F5/I5 was accepted, reconstructed in full: a post that
+    # throws AND no catch to drop it. This is what "fire-and-forget" meant when it was only advertised -
+    # the clear has happened, the siblings have not been told, and `location.assign` is never reached, so
+    # the visitor stays signed in at the authorization server. Two edits, because the swallow has to go too.
+    ("XT31 the broadcast throws and nothing drops it, so a failed notification strands the sign-out",
+     SIGNOUT_PROP, (MAKE_OWN, SWALLOW),
+     ("  const own = new BroadcastChannel(SIGN_OUT_CHANNEL);\n  own.close();", "  } finally {")),
+
+    # THE MEASUREMENT THAT REJECTS Kimi phase 8 I10, which asked for a scan asserting `SIGN_OUT_TYPE` is a
+    # string and not an object. It is already enforced, by task 35's `declarations: 1` - and that is not a
+    # deduction, it is how the object form was caught while phase 6 was being written. If this row ever
+    # survives, I10 was right and should be reopened.
+    ("XT32 the message becomes an object constant, which I10 says nothing would catch",
+     SIGNOUT_PROP, TYPE_DECL,
+     "export const SIGN_OUT_MESSAGE = { type: 'session:signed-out' } as const;\n"
+     "export const SIGN_OUT_TYPE = SIGN_OUT_MESSAGE.type;"),
 ]
 
 

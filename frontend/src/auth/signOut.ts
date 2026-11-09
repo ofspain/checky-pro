@@ -39,15 +39,25 @@ import { takeSignInNotice } from './signInNotice';
  * outside a measured allowlist, so a partial sign-out hand-rolled beside this one fails a test rather than
  * shipping.
  *
- * **A HAZARD THIS FUNCTION CANNOT CLOSE (task 39 owns it, OQ-T35-3).** A tab that has signed out can be handed a
- * live token again by a sibling. `crossTabRenewal.ts`'s channel listener calls `local.adopt(token)` on any
- * `renewal:succeeded` message and does not ask whether this tab signed out, so: this tab signs out; a sibling
- * that has not processed any sign-out completes a renewal and posts; this tab adopts. Task 39's propagation
- * narrows the window without closing it, because a sibling whose renewal resolves before it handles the
- * broadcast still posts a success and the channel orders nothing. It is not fixable from here: this function
- * cannot reach the `SharedRenewal` closure, and the alternative - a latch that makes `adopt` refuse - means
- * ADDING a piece of state in the task whose whole statement is removing it. The suite pins the sequence instead,
- * so whoever builds task 39 meets it as a failing expectation rather than a paragraph.
+ * **A HAZARD THIS FUNCTION DOES CLOSE, which task 35 wrote here that it could not (OQ-T35-3, CLOSED by task
+ * 39).** A tab that had signed out could be handed a live token again by a sibling: `crossTabRenewal.ts`'s
+ * channel listener called `local.adopt(token)` on any `renewal:succeeded` message without asking whether this
+ * tab signed out. `markSignedOut()` below is what closes it, with the refusal at `crossTabRenewal.ts:116`.
+ *
+ * TASK 35'S TWO ARGUMENTS AGAINST THAT FIX ARE KEPT, because both were wrong in ways worth not repeating.
+ *
+ *  - *"Propagation narrows the window without closing it, because a sibling whose renewal resolves before it
+ *    handles the broadcast still posts a success and the channel orders nothing."* True about the POST and
+ *    irrelevant: what decides this tab's token is when THIS tab handles, and that is ordered, because channel
+ *    delivery is never observed before a synchronous `signOut()` in the same task. Measured, not reasoned -
+ *    and the suite now asserts both orderings, the post before this call and after it.
+ *  - *"A latch means ADDING a piece of state in the task whose whole statement is removing it."* True of task
+ *    35 and it does not transfer: L18 calls task 39's subject cross-tab COHERENCE, which is stateful by
+ *    nature. The latch is also the inverse of session state - it records that no session may be ADOPTED - so
+ *    it is excused from the clearing inventory rather than added to it (`crossTabSignOut.ts`).
+ *
+ * Kept because the pipeline keeps being right about this: a comment that confidently forecloses a fix is read
+ * as a reason not to try. This one was found by its own task's self-review (T39 F1), not by a reader.
  *
  * **TWO MORE THINGS THIS FUNCTION DOES NOT DO, named so nobody has to wonder.** It does not abort requests
  * already in flight: `sessionBoundary.ts` reads `current()` as each request is built and never caches it, so

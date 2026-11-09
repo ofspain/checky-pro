@@ -109,10 +109,19 @@ export function shareRenewalAcrossTabs(
       // counted or how its waiters settle, which are R21's contract and `siblingTabsShareOneRenewal`'s.
       //
       // A residual it leaves, named rather than left to be discovered (OQ-T39-7): `use()` below still
-      // RETURNS a sibling's token to a local `renew()` caller in a signed-out tab. Nothing holds it - it is
-      // never adopted - but a caller awaiting `renew()` receives it. Who calls `renew()` in a signed-out tab
-      // is R22's half-authenticated question and task 33's, and changing `use()` would change renewal
-      // semantics, which is R21's.
+      // RETURNS a sibling's token to a local `renew()` caller in a signed-out tab.
+      //
+      // CORRECTED, because the first version of this comment understated it (T39 F6, Kimi phase 8 I6). It
+      // said "nothing holds it - it is never adopted", which is true only of this listener. A caller that
+      // receives the token and does the obvious thing with it - hands it to `retainAccessToken` - both
+      // re-authenticates the tab AND RELEASES THE LATCH, so every later sibling success is adopted too. The
+      // residual is therefore not "one token escapes the guard" but "the guarded path can clear its own
+      // guard", which is a different size of thing to hand on.
+      //
+      // Unreachable twice over today: `shareRenewalAcrossTabs` has no production caller, and
+      // `accessToken.renew()` always rejects with RENEWAL_NOT_BUILT, so no genuine success can be produced
+      // at all. Who calls `renew()` in a signed-out tab is R22's half-authenticated question and task 33's,
+      // and changing `use()` would change renewal semantics, which is R21's.
       if (hasSignedOut()) return;
       try {
         local.adopt(outcome.token);
