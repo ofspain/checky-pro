@@ -40,11 +40,14 @@ SIGN_OUT = "frontend/src/auth/signOut.ts"
 ACCESS_TOKEN = "frontend/src/auth/accessToken.ts"
 END_SESSION = "frontend/src/auth/endSession.ts"
 
-# The three files that measure this task: the one it added, and the two inherited suites it grew.
+# The files that measure this task: the one it added, and the three inherited suites it grew. Task 21's
+# was added in phase 10 - without it XT27's kill printed `INHERITED-ONLY` with no named case, because the
+# case that kills it is the one phase 10 added to the suite that owns renewal's counting contract.
 OWN_TESTS = [
     "src/api/signOutPropagatesToAllTabs.test.ts",
     "src/auth/signOutClearsMemoryAndEndsSasSession.test.tsx",
     "src/auth/sessionStorageHoldsOnlyTheL16Items.test.tsx",
+    "src/api/siblingTabsShareOneRenewal.test.ts",
 ]
 
 # AC9c. A failure here is a hazard pin going green-to-red, which is a FIX, not a caught regression.
