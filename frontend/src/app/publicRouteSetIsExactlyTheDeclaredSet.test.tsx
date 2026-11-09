@@ -20,17 +20,19 @@
  */
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { StrictMode } from 'react';
+import { StrictMode, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
-import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router';
+import { createMemoryRouter, Outlet, RouterProvider, type RouteObject } from 'react-router';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { accessToken, clearAccessToken, retainAccessToken } from '../auth/accessToken';
 import { retainIdToken, takeIdToken } from '../auth/idToken';
 import { createI18n } from '../i18n/i18n';
 import { en } from '../i18n/catalogue';
-import { APP_BASENAME, PUBLIC_ROUTE_PATHS, SIGNED_OUT_PATH, SIGN_IN_PATH, appRoutes } from './routes';
+import { RequireSession } from '../auth/RequireSession';
+import { APP_BASENAME, AUTHENTICATED_ROUTE_PATHS, HOME_PATH, PUBLIC_ROUTE_PATHS, SIGNED_OUT_PATH,
+  SIGN_IN_PATH, appRoutes } from './routes';
 
 /** The words, spelled once here so a silent catalogue edit fails rather than passes. */
 const COPY = {
@@ -148,6 +150,209 @@ function watchStorage(): Record<'getItem' | 'setItem' | 'removeItem' | 'clear', 
     clear: vi.spyOn(Storage.prototype, 'clear') as unknown as Mock,
   };
 }
+
+// ===========================================================================================================
+// TASK 40'S INSTRUMENT. One derived table, probes on every declared path, and the gate as the only variable.
+// ===========================================================================================================
+
+/** Fills every `:id` segment, as task 16's suite does. The router does not validate it. */
+const SAMPLE_UUID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+
+function concrete(path: string): string {
+  return path.replaceAll(':id', SAMPLE_UUID);
+}
+
+/** Stands in for whatever screen a later task attaches, so a route that renders has something to render. */
+function Probe({ path }: { path: string }) {
+  return <i data-probe={path}>{`probe:${path}`}</i>;
+}
+
+/** The control's gate: the same shape as `RequireSession`, with the question removed. */
+function PassThrough() {
+  return <Outlet />;
+}
+
+/** Every route in the tree, flattened, so a claim about the WHOLE table cannot be made against one level. */
+function everyRoute(routes: readonly RouteObject[]): RouteObject[] {
+  return routes.flatMap((route) => [route, ...everyRoute(route.children ?? [])]);
+}
+
+/**
+ * `appRoutes`, with a probe on every declared path and on the catch-all, and `gate` on the pathless route.
+ *
+ * IT ASSERTS ITS OWN BASELINE before returning. A derived table that found no gate to replace, or probed the
+ * wrong number of paths, would hand every arm below a green result that measured nothing - which is how a
+ * harness lies. The counts are DERIVED from the exported arrays, never written down (AC5).
+ */
+function withProbes(gate: ReactElement): RouteObject[] {
+  let gatesFound = 0;
+  let probesAttached = 0;
+
+  // The derivation copies THREE keys, so it states which three and fails if the real table ever grows a
+  // fourth. A spread would have carried a `loader` or a `lazy` along silently; naming the keys means a later
+  // task that adds one finds out here, in a case about the instrument, rather than in an arm that quietly
+  // measured a route the derivation had flattened.
+  const copied = new Set(['path', 'element', 'children']);
+  const assertCopyable = (route: RouteObject): void => {
+    for (const key of Object.keys(route)) {
+      expect(copied.has(key), `the derived table would silently drop \`${key}\``).toBe(true);
+    }
+  };
+
+  const table: RouteObject[] = appRoutes.map((root): RouteObject => {
+    assertCopyable(root);
+    return {
+      path: root.path,
+      children: (root.children ?? []).map((child): RouteObject => {
+        assertCopyable(child);
+        if (child.path === undefined) {
+          gatesFound += 1;
+          return {
+            element: gate,
+            children: (child.children ?? []).map((nested): RouteObject => {
+              assertCopyable(nested);
+              probesAttached += 1;
+              return { path: nested.path, element: <Probe path={nested.path as string} /> };
+            }),
+          };
+        }
+        probesAttached += 1;
+        return { path: child.path, element: <Probe path={child.path} /> };
+      }),
+    };
+  });
+
+  expect(gatesFound, 'the derived table found no pathless gate to replace').toBe(1);
+  expect(probesAttached, 'the derived table did not probe every declared path and the catch-all')
+    .toBe(PUBLIC_ROUTE_PATHS.length + AUTHENTICATED_ROUTE_PATHS.length + 1);
+  return table;
+}
+
+/**
+ * Mounts a table at an `/app` location, WITHOUT `AppShell`.
+ *
+ * The shell is not part of the route table - `AppShell.tsx` is a bare `<div>` that task 16's suite wraps
+ * around the provider - so this container IS the outlet's subtree, and `container.innerHTML === ''` is the
+ * exact claim AC8 makes with no scoping to get wrong. The i18n provider is here so that an arm which renders
+ * a real screen is not a second variable; the probes themselves hold no copy.
+ */
+async function arriveWithTable(table: RouteObject[], path: string, options: { strict?: boolean } = {}) {
+  const router = createMemoryRouter(table, {
+    basename: APP_BASENAME,
+    initialEntries: [`${APP_BASENAME}/${concrete(path)}`],
+  });
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const tree = (
+    <I18nextProvider i18n={createI18n()}>
+      <RouterProvider router={router} />
+    </I18nextProvider>
+  );
+  await act(async () => {
+    root.render(options.strict === true ? <StrictMode>{tree}</StrictMode> : tree);
+  });
+  mounted = { root, container, router };
+  return { container, router };
+}
+
+/** Which probe rendered, or `null`. Names the route, so a case cannot pass on the WRONG screen appearing. */
+function probeIn(container: HTMLElement): string | null {
+  return container.querySelector('[data-probe]')?.getAttribute('data-probe') ?? null;
+}
+
+/** Unmounts between iterations of a loop, since `afterEach` only runs between cases. */
+function release(): void {
+  if (mounted) {
+    const { root, container, router } = mounted;
+    act(() => root.unmount());
+    container.remove();
+    router.dispose();
+    mounted = undefined;
+  }
+  clearAccessToken();
+}
+
+let guardCode: string | undefined;
+
+/**
+ * `RequireSession.tsx`'s own source, comments stripped.
+ *
+ * A SECOND READER beside `source()` rather than a rewrite of it: `source()` has eleven call sites, all
+ * task 37's, and the abstraction that serves both is not worth editing them for. Duplication is cheaper
+ * than an abstraction until it isn't (T39 F12 settled this the same way).
+ *
+ * Stripping is not optional. The guard's header NAMES the surfaces it does not touch - `useSyncExternalStore`
+ * and `RateLimitNotice` among them - so a scan that read prose would fail on the comment that explains why
+ * the code is clean. T39's AC2 scan passed on prose its own phase-9 fix had written.
+ */
+async function guardSource(): Promise<string> {
+  guardCode ??= (await readFile(
+    join(dirname(dirname(expect.getState().testPath as string)), 'auth', 'RequireSession.tsx'), 'utf8'))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((line) => {
+      const at = line.indexOf('//');
+      return at >= 0 && !/['"`]/.test(line.slice(0, at)) ? line.slice(0, at) : line;
+    })
+    .join('\n');
+  return guardCode;
+}
+
+/**
+ * Every surface the gate must not reach, each paired with a snippet that WOULD trip it.
+ *
+ * The session READER is deliberately absent, and its writers are deliberately present: asking
+ * `accessToken.current()` is this module's entire job, while writing the session from inside a render would
+ * make the gate a cause rather than a question. The navigation rows are what keep R28's second clause with
+ * task 41, and the route-reading rows are what stop one gate from becoming eleven policies no spec
+ * authorizes - measured at phase 7, where exactly that mutant survived all 1725 tests.
+ */
+const GUARD_FORBIDDEN: readonly (readonly [RegExp, string])[] = [
+  [/\bfetch\s*\(/, "void fetch('/x');"],
+  [/XMLHttpRequest/, 'void new XMLHttpRequest();'],
+  [/sessionStorage/, "void globalThis.sessionStorage.getItem('x');"],
+  [/localStorage/, "void globalThis.localStorage.getItem('x');"],
+  [/document\.cookie/, 'void document.cookie;'],
+  [/indexedDB/, "void indexedDB.open('x');"],
+  [/sendBeacon/, "navigator.sendBeacon('/x');"],
+  [/console\./, "console.log('x');"],
+  [/setTimeout/, 'setTimeout(() => undefined, 0);'],
+  [/setInterval/, 'setInterval(() => undefined, 0);'],
+  // Hooks. The gate is a synchronous read; state or an effect would make it a component with a history, and
+  // StrictMode double-invocation would start to matter.
+  [/\buseState\b/, 'const [x] = useState(0);'],
+  [/\buseEffect\b/, 'useEffect(() => undefined, []);'],
+  [/\buseLayoutEffect\b/, 'useLayoutEffect(() => undefined, []);'],
+  [/\buseRef\b/, 'const r = useRef(null);'],
+  [/\buseMemo\b/, 'const m = useMemo(() => 0, []);'],
+  [/\buseCallback\b/, 'const c = useCallback(() => undefined, []);'],
+  [/\buseReducer\b/, 'const [s] = useReducer((x) => x, 0);'],
+  [/\buseSyncExternalStore\b/, 'const v = useSyncExternalStore(sub, get);'],
+  [/\buseContext\b/, 'const v = useContext(Ctx);'],
+  // Navigation - R28's second clause, which is task 41's.
+  [/\buseNavigate\b/, 'const go = useNavigate();'],
+  [/\buseHref\b/, "const h = useHref('/x');"],
+  [/<Navigate\b/, 'return <Navigate to="/sign-in" replace />;'],
+  [/\bredirect\s*\(/, "return redirect('/sign-in');"],
+  [/location\s*\.\s*assign/, "globalThis.location.assign('/x');"],
+  [/location\s*\.\s*replace/, "globalThis.location.replace('/x');"],
+  [/location\s*\.\s*href/, "globalThis.location.href = '/x';"],
+  // Reading the route or the query, which is where per-path policy starts.
+  [/\buseLocation\b/, 'const l = useLocation();'],
+  [/\buseParams\b/, 'const p = useParams();'],
+  [/\buseSearchParams\b/, 'const [q] = useSearchParams();'],
+  [/URLSearchParams/, "new URLSearchParams('a=1');"],
+  [/globalThis\s*\.\s*location/, 'void globalThis.location.pathname;'],
+  [/window\s*\.\s*location/, 'void window.location.pathname;'],
+  // The session WRITERS. The reader is the job; a write is not.
+  [/\bretainAccessToken\b/, "retainAccessToken('x');"],
+  [/\bclearAccessToken\b/, 'clearAccessToken();'],
+  [/\bretainIdToken\b/, "retainIdToken('x');"],
+  [/\btakeIdToken\b/, 'void takeIdToken();'],
+  // The module boundary, as source rather than as a convention (AC6).
+  [/from ['"]\.\.\/app\//, "import { APP_BASENAME } from '../app/routes';"],
+] as const;
 
 // THE NAME OF THIS FILE DESCRIBES TASK 40'S CLAIM, NOT TASK 37'S. Task 37 owns ONE of the nine public
 // routes; the exhaustive "these nine and only these nine" claim is task 40's, which extends this file. It
@@ -642,4 +847,219 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       expect(readsOutside, 'the scan is blind to a module-scope read').toHaveLength(1);
     });
   });
+
+  // =========================================================================================================
+  // TASK 40 - the exhaustive claim this file is named for. Everything above belongs to task 37 and is
+  // unchanged.
+  //
+  // WHY A PROBE TABLE AND NOT THE REAL ONE. Eleven of the eleven authenticated routes are `{ path }` with no
+  // element, so "an authenticated path serves no content" is TRUE TODAY FOR THE WRONG REASON - there is
+  // nothing there to serve. A suite written against the real table would pass with the guard deleted, which
+  // is the defect AC3 exists to forbid. So these cases derive a table from `appRoutes`, attach a probe
+  // element to every declared path and to the catch-all, and vary ONE value: the element on the gate. The
+  // production arm and the control arm differ in nothing else, which is what makes "nothing rendered" a
+  // measurement rather than an absence.
+  //
+  // PHASE 9 REJECTED THE OTHER CANDIDATE, by measuring it: an isolation mount of `<RequireSession />` as a
+  // route's own element renders "" in BOTH arms, because its `<Outlet />` has no child route and `null`
+  // renders nothing either. That case would pass with the guard inverted, deleted or hard-wired to false.
+  // =========================================================================================================
+
+  describe('AC1, AC2, AC3, AC4 the split, measured against a control', () => {
+    it('serves no content on any of the eleven authenticated paths without a session (AC2, AC8)', async () => {
+      for (const path of AUTHENTICATED_ROUTE_PATHS) {
+        const { container } = await arriveWithTable(withProbes(<RequireSession />), path);
+        // `innerHTML`, not `textContent`. An empty `<div />` in the blocked arm renders NO TEXT, so a text
+        // assertion passes it - measured at phase 7, where that mutant survived all 1725 tests. The shell is
+        // not part of the route table, so this container IS the outlet's subtree and emptiness is exact.
+        expect(container.innerHTML, `${path} served something without a session`).toBe('');
+        release();
+      }
+    });
+
+    it('serves no content under StrictMode either, where every component renders twice (AC2)', async () => {
+      const { container } = await arriveWithTable(withProbes(<RequireSession />), HOME_PATH, { strict: true });
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('does not count an empty-string token as a session (AC2)', async () => {
+      // `retainAccessToken` assigns whatever string it is given - `accessToken.ts:90` is `held = token;`,
+      // with no guard - so `current()` can return `''`, and `!== null` would call that a session.
+      retainAccessToken('');
+      expect(accessToken.current()).toBe('');
+      const { container } = await arriveWithTable(withProbes(<RequireSession />), HOME_PATH);
+      expect(container.innerHTML, 'an empty token opened the gate').toBe('');
+    });
+
+    it('serves every one of the eleven WITH a session, so the gate is a split and not a deny (AC4)', async () => {
+      for (const path of AUTHENTICATED_ROUTE_PATHS) {
+        retainAccessToken('a-token-this-tab-holds');
+        const { container } = await arriveWithTable(withProbes(<RequireSession />), path);
+        expect(probeIn(container), `${path} was refused to a visitor holding a token`).toBe(path);
+        release();
+      }
+    });
+
+    it('CONTROL: the same table, the same paths, a pass-through gate - and the content arrives (AC3)', async () => {
+      // THIS IS THE CASE THAT MAKES AC2 FALSIFIABLE. It differs from the AC2 case in exactly one value: the
+      // element handed to `withProbes`. If it rendered nothing too, AC2 would be measuring the absence of a
+      // screen rather than the presence of a gate.
+      for (const path of AUTHENTICATED_ROUTE_PATHS) {
+        const { container } = await arriveWithTable(withProbes(<PassThrough />), path);
+        expect(probeIn(container), `${path} renders nothing even with the gate removed, so AC2 proves nothing`)
+          .toBe(path);
+        release();
+      }
+    });
+
+    it('serves every one of the nine public paths without a session (AC1)', async () => {
+      for (const path of PUBLIC_ROUTE_PATHS) {
+        const { container } = await arriveWithTable(withProbes(<RequireSession />), path);
+        expect(probeIn(container), `${path} was blocked, and it is public`).toBe(path);
+        release();
+      }
+    });
+
+    it('serves the catch-all without a session, which is what task 41 will need (AC1)', async () => {
+      // The catch-all is a SIBLING of the gate, not a descendant. A catch-all behind the gate would still
+      // have no element of its own, so "the catch-all has no element" cannot see the difference - but task
+      // 41 replaces it with the redirect to sign-in, and a guarded catch-all could not redirect the only
+      // visitor it exists for.
+      const { container } = await arriveWithTable(withProbes(<RequireSession />), 'no-such-route');
+      expect(probeIn(container)).toBe('*');
+    });
+  });
+
+  describe('AC10 a sessionless visit is served, not bounced', () => {
+    it('leaves the location where it was on every public path, and performs no navigation', async () => {
+      for (const path of PUBLIC_ROUTE_PATHS) {
+        const { router } = await arriveWithTable(withProbes(<RequireSession />), path);
+        expect(router.state.location.pathname, path).toBe(`${APP_BASENAME}/${path}`);
+        // 'POP' is the initial entry. A `<Navigate>` or a `redirect()` anywhere in the tree would make this
+        // 'REPLACE' or 'PUSH', so this is the assertion that keeps R28's SECOND clause out of task 40.
+        expect(router.state.historyAction, path).toBe('POP');
+        release();
+      }
+    });
+
+    it('leaves the location where it was on a BLOCKED path too, rather than redirecting (R28, task 41)', async () => {
+      for (const path of AUTHENTICATED_ROUTE_PATHS) {
+        const { router, container } = await arriveWithTable(withProbes(<RequireSession />), path);
+        expect(container.innerHTML).toBe('');
+        expect(router.state.location.pathname, path).toBe(`${APP_BASENAME}/${concrete(path)}`);
+        expect(router.state.historyAction, `${path} redirected, and the redirect is task 41's`).toBe('POP');
+        release();
+      }
+    });
+  });
+
+  describe('AC12 the gate reaches exactly the eleven', () => {
+    it('is one pathless route holding exactly AUTHENTICATED_ROUTE_PATHS, with the public nine and the catch-all beside it', () => {
+      // WHAT THIS ADDS, AND WHAT IT DELIBERATELY DOES NOT. `routesResolveUnderAppPrefixOnly.test.tsx:159`
+      // already pins the whole tree's SHAPE, and phase 7 measured it killing five of the six structural
+      // mutants on its own - including the one that moves the public nine inside the gate, which changes no
+      // behaviour at all because they match at the root first. What that pin cannot see is `element`: it maps
+      // `path`. So this case claims the one thing left - WHICH component the gate is - and the derivation.
+      const children = appRoutes[0].children ?? [];
+      const pathless = children.filter((route) => route.path === undefined);
+
+      expect(pathless, 'the gate is not one pathless route').toHaveLength(1);
+      expect((pathless[0].element as ReactElement).type,
+        'the pathless route carries some other component').toBe(RequireSession);
+      expect((pathless[0].children ?? []).map((route) => route.path),
+        "the gate's children are not exactly the declared authenticated set").toEqual([...AUTHENTICATED_ROUTE_PATHS]);
+      expect(children.filter((route) => route.path !== undefined).map((route) => route.path),
+        'the public nine and the catch-all are no longer siblings of the gate')
+        .toEqual([...PUBLIC_ROUTE_PATHS, '*']);
+    });
+  });
+
+  describe('AC13 no element hides where the count pins cannot look', () => {
+    it('is exactly one pathless route carrying exactly one element, and it is the gate', () => {
+      // THE HOLE THIS TASK OPENS, and the reason it must be pinned here. Both screen-count pins -
+      // `routesResolveUnderAppPrefixOnly.test.tsx:161` and AC9 above - record a route only when
+      // `route.path !== undefined`. Task 40 is the first task to attach an element to a route with no path,
+      // which is exactly what lets those pins keep their three; the cost is that an element on a pathless
+      // route is invisible to both. `pathTree` cannot see it either - it maps `path`.
+      //
+      // MEASURED AT PHASE 9: an `errorElement` added to this very route SURVIVES all 1725 tests without this
+      // case. The three assertions below are the only thing in the repository that holds it.
+      const pathless = everyRoute(appRoutes).filter((route) => route.path === undefined);
+      const carrying = pathless.filter((route) => route.element !== undefined
+        || route.Component !== undefined || route.errorElement !== undefined);
+
+      expect(carrying, 'more than one pathless route carries an element, or none does').toHaveLength(1);
+      expect((carrying[0].element as ReactElement).type).toBe(RequireSession);
+      expect(carrying[0].errorElement, 'the gate route carries a second element the count pins cannot see')
+        .toBeUndefined();
+      expect(carrying[0].Component, 'the gate route carries a second element the count pins cannot see')
+        .toBeUndefined();
+    });
+
+    it('CONTROL: the sweep counts pathless elements, rather than returning a list that happens to match', () => {
+      const planted: RouteObject[] = [
+        { path: 'a', children: [{ element: <i />, children: [{ path: 'b' }] }] },
+        { element: <i /> },
+        { children: [{ path: 'c' }] },
+      ];
+      const pathless = everyRoute(planted).filter((route) => route.path === undefined);
+      expect(pathless, 'a pathless route with no element is not even seen').toHaveLength(3);
+      expect(pathless.filter((route) => route.element !== undefined),
+        'the sweep does not count what it finds').toHaveLength(2);
+    });
+  });
+
+  describe('AC6, AC7 the gate asks one question and reaches for nothing else', () => {
+    it('reaches for nothing it should not, by source', async () => {
+      const code = await guardSource();
+      for (const [forbidden] of GUARD_FORBIDDEN) {
+        expect(code, `RequireSession.tsx reaches for ${forbidden.source}`).not.toMatch(forbidden);
+      }
+    });
+
+    it('CONTROL: EVERY pattern in the sweep fires on a planted reach', () => {
+      // The PAIRING is the point, and it is T37's AC7 lesson: a single planted `sessionStorage` proves the
+      // scan can see one surface and says nothing about the other thirty-six, so a typo in any other pattern
+      // is unmeasured. A pattern cannot arrive here without a snippet that proves it fires.
+      for (const [forbidden, probe] of GUARD_FORBIDDEN) {
+        expect(probe, `the pattern ${forbidden.source} is blind to its own probe`).toMatch(forbidden);
+      }
+    });
+
+    it('reads the session owner, which is the one thing it is allowed to reach for (AC7)', async () => {
+      // The scan above forbids the session WRITERS and says nothing about the reader, because reading the
+      // session is this module's entire job. This is the other half: it must actually ask, and ask THAT.
+      const code = await guardSource();
+      expect(code, 'the gate does not read the session at all').toMatch(/accessToken\s*\.\s*current\s*\(\s*\)/);
+      expect(code, 'the gate decides on something other than truthiness').toMatch(/Boolean\s*\(\s*accessToken/);
+    });
+
+    it('lives in auth/ and imports nothing from app/ (AC6)', async () => {
+      const code = await guardSource();
+      expect(code, 'the guard reaches back into app/').not.toMatch(/from ['"]\.\.\/app\//);
+      // And the direction that IS permitted, from the other side: `app/` names it.
+      const routesCode = await readFile(join(dirname(expect.getState().testPath as string), 'routes.tsx'), 'utf8');
+      expect(routesCode).toMatch(/import \{ RequireSession \} from '\.\.\/auth\/RequireSession';/);
+    });
+  });
+
+  describe('AC1 boundaries: the shapes a public link really arrives in', () => {
+    it('serves a public path with a trailing slash', async () => {
+      // MEASURED, not assumed. React Router normalises the trailing slash before matching, so `/app/verify/`
+      // resolves to `verify` and is served without a session like any other public path. Pinned so a router
+      // upgrade that changed it would be a failure rather than a surprise.
+      const { container, router } = await arriveWithTable(withProbes(<RequireSession />), 'verify/');
+      expect(probeIn(container)).toBe('verify');
+      expect(router.state.historyAction).toBe('POP');
+    });
+
+    it('serves a public path with a query string and keeps the query (AC1)', async () => {
+      // The resolution half is task 16's, at `routesResolveUnderAppPrefixOnly.test.tsx:102`. What is added
+      // here is that the GATE does not touch it: an emailed verification link arrives with a token on it.
+      const { container, router } = await arriveWithTable(withProbes(<RequireSession />), 'verify?token=abc');
+      expect(probeIn(container)).toBe('verify');
+      expect(router.state.location.search).toBe('?token=abc');
+    });
+  });
+
 });
