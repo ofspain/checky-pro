@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import { Outlet } from 'react-router';
 import { accessToken } from './accessToken';
 
@@ -29,7 +30,9 @@ import { accessToken } from './accessToken';
  * navigates after retaining, and a navigation re-renders the matched tree. Adding a subscription would be a
  * new surface on the session owner, which this task is not authorized to touch.
  */
-export function RequireSession() {
+// The return type is STATED rather than inferred (phase 8, I2): the one thing a reader of a route guard
+// needs to know is that it may render nothing, and inference puts that behind a compiler run.
+export function RequireSession(): ReactElement | null {
   // `Boolean(...)` rather than `!== null`, because `retainAccessToken` assigns whatever string it is given
   // (`accessToken.ts:90` is `held = token;`, with no guard), so `current()` can return the empty string -
   // and an empty token is not a session. The brief's constraint says so; this is where it is enforced.

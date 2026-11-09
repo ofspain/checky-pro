@@ -172,12 +172,30 @@ MUTANTS = [
       "      ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),"),
      "inherited"),
 
-    # AC13, the hole this task OPENS. Both screen-count pins record a route only when it has a `path`, so
-    # an element on a second pathless route is invisible to both - a screen smuggled past the handoff.
-    ("RS14 a second pathless route carries a screen, invisible to both count pins",
+    # AC13, THE HOLE THIS TASK OPENS - and the row phase 9 had to rewrite, because the first version
+    # measured something other than its description and the score counted it (self-review F5, Kimi I4).
+    #
+    # The first version ADDED a second pathless route carrying a screen. That dies - but on `pathTree`, which
+    # sees a new entry in the tree's SHAPE and knows nothing about elements. It never reached the claim.
+    # AC13's claim is that exactly one pathless route carries an element, and the way to break it without
+    # touching the shape is to put a second element on the route that is ALREADY pathless. `errorElement` is
+    # the cheapest: `pathTree` maps `path` and cannot see it, `routesWithElements` and T37's AC9 both filter
+    # on `path !== undefined` and cannot see it either. Measured at phase 9: it SURVIVES all 1725 tests, so
+    # AC13 is not redundant - it is the only thing that will ever hold this.
+    ("RS14 the EXISTING pathless gate route carries a second element, with the tree shape unchanged",
+     ROUTES, GATE,
+     "      { element: <RequireSession />, errorElement: <SignInScreen />,\n"
+     "        children: AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })) },",
+     "phase 10"),
+
+    # The first version of RS14, KEPT AND RELABELLED rather than deleted. It is a real regression - a screen
+    # attached where no count pin looks - and it does die; it just dies on the shape pin, so it is a
+    # `pathTree` row and is scored as one. Keeping it means a later task that loosens `pathTree` loses a
+    # named kill here instead of losing it silently.
+    ("RS17 a SECOND pathless route is added carrying a screen (a pathTree row, not an AC13 row)",
      ROUTES, PUBLIC_MAP_END,
      "        return { path };\n      }),\n      { element: <SignInScreen /> },",
-     "phase 10"),
+     "inherited"),
 
     # --- the instruments phase 6 grew -------------------------------------------------------------------
     # Task 33's AC11 walker, put back the way it was. The claim becomes vacuous: the eleven are no longer

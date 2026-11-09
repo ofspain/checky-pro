@@ -8,8 +8,11 @@
  * - **Task 37 (this file today):** `/app/signed-out` is declared, is public, resolves to a screen, and that
  *   screen says the right thing in every way it can be arrived at.
  * - **Task 40 (to be added here):** that these nine paths **and only** these nine are reachable without a
- *   session. That claim needs the auth gate, and no route requires a session yet, so it is not merely
- *   unwritten - it is currently untestable. Task 40 extends this file; it does not create a second one.
+ *   session. Task 40 extends this file; it does not create a second one.
+ *
+ *   THAT SENTENCE USED TO END "it is currently untestable", and task 40 made it false (phase 8, I12):
+ *   `auth/RequireSession.tsx` now gates the eleven authenticated paths as the pathless layout route in
+ *   `routes.tsx`, so the gate exists and the claim can be measured. What is left is writing it.
  *
  * Every string the screen renders is asserted as LITERAL ENGLISH as well as against the catalogue, because
  * `t()` returns the key when an entry is missing - so a case comparing `t('signedOut.heading')` to
@@ -147,8 +150,8 @@ function watchStorage(): Record<'getItem' | 'setItem' | 'removeItem' | 'clear', 
 }
 
 // THE NAME OF THIS FILE DESCRIBES TASK 40'S CLAIM, NOT TASK 37'S. Task 37 owns ONE of the nine public
-// routes; the exhaustive "these nine and only these nine" claim needs an auth gate that does not exist yet
-// and is task 40's, which extends this file. Raised three times (phase 3 F6, phase 8 I4, phase 11 F5) and
+// routes; the exhaustive "these nine and only these nine" claim is task 40's, which extends this file. It
+// said "needs an auth gate that does not exist yet" until task 40 built one (phase 8, I12). Raised three times (phase 3 F6, phase 8 I4, phase 11 F5) and
 // kept three times, because `tasks.md:65` and `:71` name the SAME test for both tasks - renaming would
 // either break that convention or leave task 40 deleting a file. Repeated here, in the describe block, so
 // a reader who opens the suite rather than the header still sees it.

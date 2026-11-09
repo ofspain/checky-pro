@@ -3,6 +3,8 @@ import { createBrowserRouter, type RouteObject } from 'react-router';
 // APP_BASENAME to derive the redirect URI. It resolves because APP_BASENAME is read inside a function there, never
 // at module scope, so nothing touches the binding while it is still in its temporal dead zone. That property is
 // pinned by a test in the sign-in suite; if it is ever broken the application fails to start, not a test.
+// The three imports below it are not part of that cycle (phase 8, I13): the two screens and the T40 guard
+// each read what they need inside a component, so none of them touches a route constant at module scope.
 import { CallbackScreen } from '../auth/CallbackScreen';
 import { SignedOutScreen } from '../auth/SignedOutScreen';
 import { SignInScreen } from '../auth/SignInScreen';
