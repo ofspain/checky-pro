@@ -1965,4 +1965,56 @@ async function settle(delivered: Promise<void>) {
       expect(DENYLISTED_NAVIGATION_PATHS as readonly string[]).toContain(END_SESSION_PATH);
     });
   });
+  /*
+   * TASK 39's half of this suite. The propagation module itself is
+   * `api/signOutPropagatesToAllTabs.test.ts`; what belongs HERE is that `endSession()` - the one real
+   * sign-out entry point - is what tells the other tabs, and where in its body it does so.
+   */
+  describe('AC9d endSession() is what broadcasts, and signOut() is not (task 39)', () => {
+    it('puts exactly one sign-out on the real channel', async () => {
+      const observer = new BroadcastChannel(SIGN_OUT_CHANNEL);
+      const seen: unknown[] = [];
+      observer.addEventListener('message', (event) => void seen.push(event.data));
+      const assign = vi.fn();
+      vi.stubGlobal('location', { origin: 'http://localhost:5173', assign });
+      try {
+        retainAccessToken(aToken());
+        endSession();
+        for (let attempt = 0; attempt < 50 && seen.length === 0; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 2));
+        }
+
+        expect(seen, 'endSession() told no other tab that this one signed out').toHaveLength(1);
+        expect(seen[0]).toEqual({ type: 'session:signed-out' });
+        expect(assign, 'the hand-over to SAS stopped happening').toHaveBeenCalledTimes(1);
+      } finally {
+        observer.close();
+        vi.unstubAllGlobals();
+        clearAccessToken();
+      }
+    });
+
+    it('broadcasts AFTER the local sign-out and BEFORE the hand-over, by source', async () => {
+      /*
+       * Order, asserted from source, because delivery is asynchronous and no runtime observation can place
+       * the post between two synchronous statements. After `signOut()`: this tab finishes its own sign-out
+       * before telling anyone. Before `assign()`: the navigation may unload the page, and a message posted
+       * and then closed on the same tick is still delivered, so the post is queued before the unload begins.
+       */
+      const code = await readFile(
+        join(dirname(expect.getState().testPath as string), 'endSession.ts'), 'utf8');
+      const body = /export function endSession\(\)[\s\S]*?\n}/.exec(code)?.[0] ?? '';
+      expect(body, 'endSession() was not found, so this scan reads nothing').toContain('signOut()');
+
+      const atSignOut = body.indexOf('signOut()');
+      const atBroadcast = body.indexOf('broadcastSignOut()');
+      const atAssign = body.indexOf('location.assign');
+      expect(atBroadcast, 'endSession() no longer broadcasts at all').toBeGreaterThan(-1);
+      expect(atAssign, 'endSession() no longer hands over to SAS').toBeGreaterThan(-1);
+      expect(atSignOut, 'the broadcast runs before this tab has signed itself out').toBeLessThan(atBroadcast);
+      expect(atBroadcast, 'the broadcast runs after a navigation that may already have unloaded the page')
+        .toBeLessThan(atAssign);
+    });
+  });
+
 });
