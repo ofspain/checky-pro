@@ -30,6 +30,7 @@ import { accessToken, clearAccessToken, retainAccessToken } from '../auth/access
 import { retainIdToken, takeIdToken } from '../auth/idToken';
 import { createI18n } from '../i18n/i18n';
 import { en } from '../i18n/catalogue';
+import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
 import { APP_BASENAME, AUTHENTICATED_ROUTE_PATHS, HOME_PATH, PUBLIC_ROUTE_PATHS, SIGNED_OUT_PATH,
   SIGN_IN_PATH, appRoutes } from './routes';
@@ -186,6 +187,7 @@ function everyRoute(routes: readonly RouteObject[]): RouteObject[] {
  */
 function withProbes(gate: ReactElement): RouteObject[] {
   let gatesFound = 0;
+  let pathlessLeaves = 0;
   let probesAttached = 0;
 
   // The derivation copies THREE keys, so it states which three and fails if the real table ever grows a
@@ -193,9 +195,13 @@ function withProbes(gate: ReactElement): RouteObject[] {
   // task that adds one finds out here, in a case about the instrument, rather than in an arm that quietly
   // measured a route the derivation had flattened.
   const copied = new Set(['path', 'element', 'children']);
-  const assertCopyable = (route: RouteObject): void => {
+  // TASK 41 added the index route, whose keys are `index` and `element`. Its allowance is SEPARATE rather
+  // than merged into the set above, because `index` on a route that the derivation copied as a `path` child
+  // would change which arrival matches, and only the pathless leaf is allowed to carry it.
+  const copiedIndex = new Set(['index', 'element']);
+  const assertCopyable = (route: RouteObject, allowed: Set<string> = copied): void => {
     for (const key of Object.keys(route)) {
-      expect(copied.has(key), `the derived table would silently drop \`${key}\``).toBe(true);
+      expect(allowed.has(key), `the derived table would silently drop \`${key}\``).toBe(true);
     }
   };
 
@@ -204,6 +210,20 @@ function withProbes(gate: ReactElement): RouteObject[] {
     return {
       path: root.path,
       children: (root.children ?? []).map((child): RouteObject => {
+        // THE GATE IS THE PATHLESS CHILD WITH CHILDREN, and task 41 is why that is now spelled out. Until
+        // task 41 the gate was the only pathless route in the table, so `path === undefined` identified it;
+        // task 41 added a second - the index route for the bare `/app/` - and with the old test the derived
+        // table found TWO gates, failed its own baseline, and took every arm in this suite down with it,
+        // including the four that should have passed untouched. Replacing the index route with the gate
+        // element would also have put a `children`-less layout where a redirect belongs.
+        if (child.path === undefined && child.children === undefined) {
+          assertCopyable(child, copiedIndex);
+          pathlessLeaves += 1;
+          // Carried through UNCHANGED, element and all. The arms below arrive at a named path, so the index
+          // route never matches and never varies; copying it keeps the derived table the same shape as the
+          // real one, which is what `assertCopyable` exists to notice.
+          return { index: true, element: child.element };
+        }
         assertCopyable(child);
         if (child.path === undefined) {
           gatesFound += 1;
@@ -223,6 +243,10 @@ function withProbes(gate: ReactElement): RouteObject[] {
   });
 
   expect(gatesFound, 'the derived table found no pathless gate to replace').toBe(1);
+  // One pathless LEAF, task 41's index route. Asserted for the same reason as the gate count: if a later task
+  // adds a second, every arm here would be measuring a table whose bare-path arrival had changed, and the
+  // baseline is the only place that can say so.
+  expect(pathlessLeaves, 'the derived table did not find exactly task 41\'s index route').toBe(1);
   expect(probesAttached, 'the derived table did not probe every declared path and the catch-all')
     .toBe(PUBLIC_ROUTE_PATHS.length + AUTHENTICATED_ROUTE_PATHS.length + 1);
   return table;
@@ -659,8 +683,14 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
         return [...(has && route.path !== undefined ? [route.path] : []),
           ...(route.children ?? []).flatMap(walk)];
       };
+      // GROWN BY TASK 41, and the growth is the handoff working on the very next task. The fourth entry is
+      // the CATCH-ALL, and it is named as a redirect rather than appended to the screen list, because this
+      // case's own title is a claim about screens: a reader who found four entries and three screen names
+      // would have to guess which was which. Task 41's other two redirects hang on routes with no `path`,
+      // and `walk` records a route only when it has one - which is the hole T40's AC13 below exists for,
+      // and the reason the number here went up by one rather than by three.
       const attached = appRoutes.flatMap(walk);
-      expect(attached).toEqual(['sign-in', 'callback', SIGNED_OUT_PATH]);
+      expect(attached).toEqual(['sign-in', 'callback', SIGNED_OUT_PATH, '*']);
 
       // CONTROL, the one task 16's case has and this one was missing: `walk` must COUNT, rather than return a
       // list that happens to match. Given two attached routes - one nested, one carrying an errorElement
@@ -897,20 +927,27 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
   // =========================================================================================================
 
   describe('T40 AC1, AC2, AC3, AC4 the split, measured against a control', () => {
-    it('serves no content on any of the eleven authenticated paths without a session (AC2, AC8)', async () => {
+    // ALL THREE BLOCKED ARMS WERE GROWN BY TASK 41, and the grown form is stronger than what it replaced.
+    // Each used to assert `container.innerHTML === ''` - the gate's negative branch rendered nothing. That
+    // was task 40's whole claim and the comment it carried said why emptiness and not emptiness of text:
+    // an empty `<div />` renders no text, so a `textContent` assertion passed a mutant that survived all
+    // 1725 tests. What changed is the gate's negative branch, which now renders task 41's redirect, so the
+    // sign-in probe arrives and the container is not empty. The claim that survives intact is the one that
+    // mattered: the AUTHENTICATED PATH'S OWN probe never renders. `probeIn` names the route, so a case
+    // cannot pass on the wrong one appearing, and asserting the destination is a tighter pin than emptiness
+    // ever was - emptiness could not tell a block from a crash.
+    it('serves the sign-in start, not the path asked for, on all eleven without a session (AC2, AC8, R28)', async () => {
       for (const path of AUTHENTICATED_ROUTE_PATHS) {
-        const { container } = await arriveWithTable(withProbes(<RequireSession />), path);
-        // `innerHTML`, not `textContent`. An empty `<div />` in the blocked arm renders NO TEXT, so a text
-        // assertion passes it - measured at phase 7, where that mutant survived all 1725 tests. The shell is
-        // not part of the route table, so this container IS the outlet's subtree and emptiness is exact.
-        expect(container.innerHTML, `${path} served something without a session`).toBe('');
+        const { container, router } = await arriveWithTable(withProbes(<RequireSession />), path);
+        expect(probeIn(container), `${path} served its own content without a session`).toBe(SIGN_IN_PATH);
+        expect(router.state.location.pathname, path).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
         release();
       }
     });
 
-    it('serves no content under StrictMode either, where every component renders twice (AC2)', async () => {
+    it('serves the sign-in start under StrictMode too, where every component renders twice (AC2)', async () => {
       const { container } = await arriveWithTable(withProbes(<RequireSession />), HOME_PATH, { strict: true });
-      expect(container.innerHTML).toBe('');
+      expect(probeIn(container)).toBe(SIGN_IN_PATH);
     });
 
     it('does not count an empty-string token as a session (AC2)', async () => {
@@ -919,7 +956,7 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       retainAccessToken('');
       expect(accessToken.current()).toBe('');
       const { container } = await arriveWithTable(withProbes(<RequireSession />), HOME_PATH);
-      expect(container.innerHTML, 'an empty token opened the gate').toBe('');
+      expect(probeIn(container), 'an empty token opened the gate').toBe(SIGN_IN_PATH);
     });
 
     it('serves every one of the eleven WITH a session, so the gate is a split and not a deny (AC4)', async () => {
@@ -963,8 +1000,10 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     it('serves the catch-all without a session, which is what task 41 will need (AC1)', async () => {
       // The catch-all is a SIBLING of the gate, not a descendant. A catch-all behind the gate would still
       // have no element of its own, so "the catch-all has no element" cannot see the difference - but task
-      // 41 replaces it with the redirect to sign-in, and a guarded catch-all could not redirect the only
-      // visitor it exists for.
+      // 41 HAS NOW replaced it with the redirect to sign-in, and a guarded catch-all could not redirect the
+      // only visitor it exists for. What this case still measures is that the catch-all RESOLVES without a
+      // session: the derived table puts a probe where task 41's redirect is, so the arm is unchanged and
+      // the redirect itself is claimed in `unauthenticatedRoutesRedirectToSignIn.test.tsx`.
       const { container } = await arriveWithTable(withProbes(<RequireSession />), 'no-such-route');
       expect(probeIn(container)).toBe('*');
     });
@@ -982,12 +1021,22 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       }
     });
 
-    it('leaves the location where it was on a BLOCKED path too, rather than redirecting (R28, task 41)', async () => {
+    // GROWN BY TASK 41, AND INVERTED BY IT. The case was "leaves the location where it was on a BLOCKED
+    // path too, rather than redirecting (R28, task 41)" - and its own parenthesis was the handoff. Task 40
+    // kept R28's second clause out of itself by pinning `historyAction` to 'POP' on a blocked path; task 41
+    // is that clause, so the pin becomes its opposite. It is not loosened: the arm still asserts an exact
+    // history action and an exact destination, and REPLACE rather than PUSH is the half that matters, since
+    // a pushed redirect leaves the blocked path on the back stack for the Back button to bounce off.
+    //
+    // The public arm above is UNCHANGED and is what keeps the two apart: if task 41's redirect leaked onto a
+    // public path, that case fails on the same assertion this one now expects.
+    it('REPLACES the location on a BLOCKED path, sending the visitor to the sign-in start (R28, task 41)', async () => {
       for (const path of AUTHENTICATED_ROUTE_PATHS) {
         const { router, container } = await arriveWithTable(withProbes(<RequireSession />), path);
-        expect(container.innerHTML).toBe('');
-        expect(router.state.location.pathname, path).toBe(`${APP_BASENAME}/${concrete(path)}`);
-        expect(router.state.historyAction, `${path} redirected, and the redirect is task 41's`).toBe('POP');
+        expect(probeIn(container), path).toBe(SIGN_IN_PATH);
+        expect(router.state.location.pathname, path).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+        expect(router.state.historyAction, `${path} pushed, so Back would bounce off the blocked path`)
+          .toBe('REPLACE');
         release();
       }
     });
@@ -1000,8 +1049,15 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // mutants on its own - including the one that moves the public nine inside the gate, which changes no
       // behaviour at all because they match at the root first. What that pin cannot see is `element`: it maps
       // `path`. So this case claims the one thing left - WHICH component the gate is - and the derivation.
+      // TASK 41 made `path === undefined` ambiguous here: the index route for the bare `/app/` is pathless
+      // too. The filter is NARROWED rather than the count raised, because this case is about the gate, and a
+      // length of two would pass whether the second pathless route were an index redirect or a second gate.
+      // What identifies the gate is that it has children - it is a layout route - and task 41's index route
+      // has none, which is also how `withProbes` tells them apart.
       const children = appRoutes[0].children ?? [];
-      const pathless = children.filter((route) => route.path === undefined);
+      const pathless = children.filter((route) => route.path === undefined && route.children !== undefined);
+      expect(children.filter((route) => route.path === undefined),
+        'the root has some pathless route beyond the gate and task 41\'s index redirect').toHaveLength(2);
 
       expect(pathless, 'the gate is not one pathless route').toHaveLength(1);
       expect((pathless[0].element as ReactElement).type,
@@ -1023,17 +1079,28 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // route is invisible to both. `pathTree` cannot see it either - it maps `path`.
       //
       // MEASURED AT PHASE 9: an `errorElement` added to this very route SURVIVES all 1725 tests without this
-      // case. The three assertions below are the only thing in the repository that holds it.
+      // case. The assertions below are the only thing in the repository that holds it.
+      //
+      // GROWN BY TASK 41, WHICH IS THE FIRST THING THIS CASE EVER CAUGHT - one task after it was written.
+      // Task 41 attached an element to a second pathless route, the index route for the bare `/app/`, and
+      // nothing else in the repository can see it: both screen-count pins and `pathTree` record a route only
+      // when it has a `path`. So the count goes from one to two and the second is NAMED, which is the whole
+      // difference between growing this pin and loosening it: a third pathless element still fails here, and
+      // so does an `errorElement` on either of these two.
       const pathless = everyRoute(appRoutes).filter((route) => route.path === undefined);
       const carrying = pathless.filter((route) => route.element !== undefined
         || route.Component !== undefined || route.errorElement !== undefined);
 
-      expect(carrying, 'more than one pathless route carries an element, or none does').toHaveLength(1);
-      expect((carrying[0].element as ReactElement).type).toBe(RequireSession);
-      expect(carrying[0].errorElement, 'the gate route carries a second element the count pins cannot see')
-        .toBeUndefined();
-      expect(carrying[0].Component, 'the gate route carries a second element the count pins cannot see')
-        .toBeUndefined();
+      expect(carrying, 'a pathless route beyond the gate and task 41\'s index redirect carries an element')
+        .toHaveLength(2);
+      expect(carrying.map((route) => (route.element as ReactElement).type))
+        .toEqual([RedirectToSignIn, RequireSession]);
+      for (const route of carrying) {
+        expect(route.errorElement, 'a pathless route carries a second element the count pins cannot see')
+          .toBeUndefined();
+        expect(route.Component, 'a pathless route carries a second element the count pins cannot see')
+          .toBeUndefined();
+      }
     });
 
     it('CONTROL: the sweep counts pathless elements, rather than returning a list that happens to match', () => {
@@ -1117,7 +1184,8 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // the bare-path cases green.
       for (const arrival of [`${HOME_PATH}?foo=bar`, `${HOME_PATH}/`]) {
         const { container } = await arriveWithTable(withProbes(<RequireSession />), arrival);
-        expect(container.innerHTML, `${arrival} was served without a session`).toBe('');
+        // Grown with the AC2 arms above: blocked now means the sign-in probe, not an empty container.
+        expect(probeIn(container), `${arrival} was served without a session`).toBe(SIGN_IN_PATH);
         release();
       }
     });

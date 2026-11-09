@@ -105,14 +105,22 @@ async function spyOnExchange(options: { rejects?: boolean; idToken?: string } = 
         calls.push(grant);
         // What task 20's network call will do on a 400, a revoked verifier or an offline tab.
         if (options.rejects === true) throw new Error('the token endpoint refused the grant');
-        if (options.idToken !== undefined) return { idToken: options.idToken };
+        // TASK 41 ADDED `accessToken`, and the reason is worth keeping. A real token endpoint returns one,
+        // and `CallbackScreen.tsx:170` retains it - but this seam resolved only `idToken`, so
+        // `retainAccessToken(undefined)` ran and no session was held. That was invisible until task 41 put
+        // the auth gate's redirect behind the post-login route: `/app/home` then bounced to `/app/sign-in`,
+        // and the cases below, whose whole discriminator is "home means exchanged, sign-in means
+        // discarded", could no longer tell the two apart. The fixture was less faithful than production,
+        // and the redirect is what exposed it.
+        const accessToken = 'a-token-the-exchange-returned';
+        if (options.idToken !== undefined) return { idToken: options.idToken, accessToken };
         let nonce: string | null = null;
         try {
           nonce = globalThis.sessionStorage.getItem(AUTHORIZE_STORAGE_KEYS.nonce);
         } catch {
           nonce = null;
         }
-        return { idToken: idTokenWith(nonce === null ? {} : { nonce }) };
+        return { idToken: idTokenWith(nonce === null ? {} : { nonce }), accessToken };
       },
     };
   });

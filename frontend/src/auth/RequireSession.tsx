@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { Outlet } from 'react-router';
 import { accessToken } from './accessToken';
+import { RedirectToSignIn } from './RedirectToSignIn';
 
 /**
  * The auth gate: R28's first clause, and the first thing in `src/` that makes a route require a session.
@@ -12,11 +13,15 @@ import { accessToken } from './accessToken';
  * have taken the element slot task 42 needs, and driven both screen-count pins from three to fourteen on
  * the day it landed.
  *
- * **IT RENDERS NOTHING RATHER THAN REDIRECTING.** R28's second clause - send anything else to the sign-in
- * start - is TASK 41's, and rendering nothing silently is the established behaviour here for a route that
- * must not render: the catch-all has done exactly this since task 1 (L11, and
- * `app/routesResolveUnderAppPrefixOnly.test.tsx:124-137`). Taking the redirect here would also take the
- * return target and the replace-vs-push decision with it, neither of which this task owns.
+ * **IT USED TO RENDER NOTHING, AND TASK 41 CHANGED THAT.** This paragraph said R28's second clause - send
+ * anything else to the sign-in start - was task 41's, and that rendering nothing silently was the
+ * established behaviour for a route that must not render. Task 41 built it, so the negative branch now
+ * delegates to `RedirectToSignIn`, which owns the destination, the return target and the replace-vs-push
+ * decision - the three things this paragraph said came together, and they did.
+ *
+ * What this component still owns is the QUESTION, is a session held, and nothing else. The arrival is read
+ * one component down, which is why task 40's source scan on this file still forbids `useLocation` and still
+ * passes.
  *
  * **IT CLAIMS ONLY WHAT IT CHECKS.** A held token does NOT prove the account is usable: a SUSPENDED account
  * keeps a working token, and `/accounts/me` is the only thing that can say otherwise (task 31). This gate
@@ -39,5 +44,5 @@ export function RequireSession(): ReactElement | null {
   // Named rather than inlined into the ternary, so `Boolean` is a conversion and not a cast oxlint would
   // strip as redundant in a condition position.
   const hasSession = Boolean(accessToken.current());
-  return hasSession ? <Outlet /> : null;
+  return hasSession ? <Outlet /> : <RedirectToSignIn />;
 }

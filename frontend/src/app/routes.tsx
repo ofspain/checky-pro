@@ -8,6 +8,7 @@ import { createBrowserRouter, type RouteObject } from 'react-router';
 import { CallbackScreen } from '../auth/CallbackScreen';
 import { SignedOutScreen } from '../auth/SignedOutScreen';
 import { SignInScreen } from '../auth/SignInScreen';
+import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
 
 /** Every SPA route lives under this prefix, which is disjoint from the backend prefixes the edge sends to the services (L14). */
@@ -55,12 +56,19 @@ export const AUTHENTICATED_ROUTE_PATHS = [
   'receipts/:id',
 ] as const;
 
-/** The single source of the route set. Screens are attached by their own tasks. The catch-all keeps
- * React Router's default English 404 from rendering (L11); T41 replaces it with the sign-in redirect. */
+/** The single source of the route set. Screens are attached by their own tasks. The catch-all kept React
+ * Router's default English 404 from rendering (L11); task 41 gave it the sign-in redirect, which is also what
+ * the index route and the gate's negative branch render. */
 export const appRoutes: RouteObject[] = [
   {
     path: '/',
     children: [
+      // TASK 41 - the bare `/app/`, which matched the root alone and rendered nothing. An INDEX route is what
+      // react-router matches for it, and measured at phase 4 it takes `/app` and `/app/` while leaving
+      // `sign-in` and the catch-all exactly where they were. It carries no `path`, so the screen-count pins
+      // cannot see it - which is why task 40's AC13, the pin for an element on a pathless route, is the
+      // instrument that holds it.
+      { index: true, element: <RedirectToSignIn /> },
       ...PUBLIC_ROUTE_PATHS.map((path) => {
         if (path === SIGN_IN_PATH) return { path, element: <SignInScreen /> };
         if (path === CALLBACK_PATH) return { path, element: <CallbackScreen /> };
@@ -72,10 +80,11 @@ export const appRoutes: RouteObject[] = [
       // rather than replacing it. Pathless deliberately: `path: ''` would be a string in the route tree and
       // would change what the bare `/app/` matches.
       { element: <RequireSession />, children: AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })) },
-      // OUTSIDE the gate, on purpose. The catch-all must answer without a session, because task 41 replaces
-      // it with the redirect to the sign-in start - and a catch-all behind the gate could not redirect the
-      // visitor who has no session, which is the only visitor it is for.
-      { path: '*' },
+      // STILL OUTSIDE the gate, and task 41 is why that mattered. It carries the redirect now, and a
+      // catch-all behind the gate could not have redirected the visitor with no session - the only visitor it
+      // is for. It is the one redirect of the three that sits on a route WITH a path, so it is the one the
+      // screen-count pins see: four elements now, three screens and one redirect, named apart.
+      { path: '*', element: <RedirectToSignIn /> },
     ],
   },
 ];

@@ -3,7 +3,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { createMemoryRouter, matchRoutes, RouterProvider, type RouteObject } from 'react-router';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AppShell } from './AppShell';
-import { APP_BASENAME, appRoutes, AUTHENTICATED_ROUTE_PATHS, createAppRouter, PUBLIC_ROUTE_PATHS } from './routes';
+import { APP_BASENAME, appRoutes, AUTHENTICATED_ROUTE_PATHS, createAppRouter, PUBLIC_ROUTE_PATHS,
+  SIGN_IN_PATH } from './routes';
 
 // Lets act() flush React 19 renders synchronously in this test environment.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -17,6 +18,20 @@ const DECLARED_PATHS: readonly string[] = [...PUBLIC_ROUTE_PATHS, ...AUTHENTICAT
 const SCREENS_ATTACHED_SO_FAR = ['sign-in', 'callback',
   'signed-out', // TASK 37 - the signed-out landing. Additive; every case below is task 16's, unchanged.
 ] as const;
+
+/**
+ * Routes carrying an element that is NOT a screen, kept apart from the count above (TASK 41).
+ *
+ * A redirect is an element, and the walker below counts elements - correctly, because a pin that learned to
+ * ignore a class of them would stop being one. So the redirect is named here instead, and the two lists are
+ * added together at the assertion. That keeps `SCREENS_ATTACHED_SO_FAR` meaning what its name says, which is
+ * what makes it a handoff: task 42 attaches a SCREEN and extends that list, not this one.
+ *
+ * Only the catch-all appears here. Task 41's other two redirects are on routes with no `path` - the gate's
+ * negative branch and the index route - and the walker records a route only when it has one, which is why
+ * the pin for an element on a PATHLESS route lives in the named suite instead (task 40's AC13).
+ */
+const REDIRECTS_ATTACHED_SO_FAR = ['*'] as const;
 
 /** Every route path carrying a rendered element, by whichever of the three keys React Router accepts. */
 function routesWithElements(routes: readonly RouteObject[]): string[] {
@@ -121,20 +136,45 @@ describe('routesResolveUnderAppPrefixOnly', () => {
     }
   });
 
-  it('sends an unmatched /app path to the silent catch-all, so the shell shows no text (AC4, L11)', async () => {
+  // GROWN BY T41, which gave the catch-all the sign-in redirect. The case was "sends an unmatched /app path
+  // to the SILENT catch-all, so the shell shows no text", and the catch-all is not silent any more: it was
+  // always the arrival that had nowhere to go, and R28's second clause is that it goes to sign-in. What is
+  // kept is the part that was always the claim - an unmatched path produces no error and no 404 text of
+  // React Router's own (L11) - and what is added is where it lands.
+  it('sends an unmatched /app path through the catch-all to the sign-in start (AC4, L11, R28)', async () => {
     const { router, shellText } = await renderAt(`${APP_BASENAME}/no-such-route`);
 
-    expect(router.state.matches.map((match) => match.route.path)).toEqual(['/', '*']);
+    expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+    expect(router.state.historyAction, 'pushed, so Back lands on the route that refused them').toBe('REPLACE');
+    expect(router.state.matches.map((match) => match.route.path)).toEqual(['/', SIGN_IN_PATH]);
     expect(router.state.errors).toBeNull();
-    expect(shellText).toBe('');
+    // Not empty any more, because the sign-in screen renders - which is the point. What the shell must never
+    // show is React Router's own English 404, and the catalogue assertion in the sign-in suite is what pins
+    // the words; here it is enough that the text is the screen's and not the router's.
+    expect(shellText).not.toBe('');
+    expect(shellText).not.toMatch(/404|Not Found/i);
   });
 
-  it('treats the bare /app/ as no route: only the root matches and nothing renders (T41 owns its redirect)', async () => {
+  // GROWN BY T41, and this case's own title said it would be: "(T41 owns its redirect)". The bare `/app/`
+  // matched the root alone and rendered nothing; an INDEX route now matches it and redirects. The pin that
+  // the root still matches is kept, because the index route is a CHILD of it - a redirect that had replaced
+  // the root rather than nesting under it would gate the public nine too, and that is task 40's RS13.
+  it('sends the bare /app/ through its index route to the sign-in start (R28, T41)', async () => {
     const { router, shellText } = await renderAt(`${APP_BASENAME}/`);
 
-    expect(router.state.matches.map((match) => match.route.path)).toEqual(['/']);
+    expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+    expect(router.state.historyAction).toBe('REPLACE');
+    expect(router.state.matches.map((match) => match.route.path)).toEqual(['/', SIGN_IN_PATH]);
     expect(router.state.errors).toBeNull();
-    expect(shellText).toBe('');
+    expect(shellText).not.toBe('');
+  });
+
+  // And the form with no trailing slash, which task 41 measured at phase 4 to match the same index route.
+  it('sends the bare /app through the same index route (R28, T41)', async () => {
+    const { router } = await renderAt(APP_BASENAME);
+
+    expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+    expect(router.state.matches.map((match) => match.route.path)).toEqual(['/', SIGN_IN_PATH]);
   });
 
   it('declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)', () => {
@@ -157,6 +197,12 @@ describe('routesResolveUnderAppPrefixOnly', () => {
     // - now - that the guard's path is `undefined` rather than a string. `path: ''` would read as `['', [...]]`
     // here and would change what the bare `/app/` matches (the case above).
     expect(pathTree(appRoutes)).toEqual([['/', [
+      // GROWN BY T41: the index route for the bare `/app/`, first child of the root. It carries no `path`, so
+      // it reads as `undefined` here exactly as the gate's level does - and naming it rather than loosening
+      // the assertion is what keeps this pin able to say WHERE in the order it sits. An index route placed
+      // after a public path would still match `/app/`, so order is not behaviour here; it is intent, and
+      // intent is what a reader of the table needs.
+      [undefined, []],
       ...PUBLIC_ROUTE_PATHS.map((path) => [path, []]),
       [undefined, AUTHENTICATED_ROUTE_PATHS.map((path) => [path, []])],
       ['*', []],
@@ -172,7 +218,8 @@ describe('routesResolveUnderAppPrefixOnly', () => {
     // counted as a screen, and this pin keeps its meaning. The filter is load-bearing from now on, so the
     // thing it cannot see is pinned where T40's claims live: `publicRouteSetIsExactlyTheDeclaredSet.test.tsx`
     // asserts that exactly ONE pathless route in the whole tree carries an element, and that it is the guard.
-    expect(routesWithElements(appRoutes)).toEqual([...SCREENS_ATTACHED_SO_FAR]);
+    expect(routesWithElements(appRoutes))
+      .toEqual([...SCREENS_ATTACHED_SO_FAR, ...REDIRECTS_ATTACHED_SO_FAR]);
 
     // The predicate counts, rather than always returning a one-element list that happens to match: given two
     // attached routes it reports both, and given none it reports none.

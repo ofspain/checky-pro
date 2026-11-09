@@ -113,7 +113,15 @@ async function arriveWithToken(
   idToken: unknown,
   options: { strict?: boolean; catchEscaping?: boolean } = {},
 ): Promise<Rendered> {
-  const exchange = vi.fn(async (_grant: { code: string; state: string }) => ({ idToken }));
+  // TASK 41 ADDED `accessToken`, and the reason is worth keeping. A real token endpoint returns one,
+  // and `CallbackScreen.tsx:170` retains it - but this seam resolved only `idToken`, so
+  // `retainAccessToken(undefined)` ran and no session was held. That was invisible until task 41 put
+  // the auth gate's redirect behind the post-login route: `/app/home` then bounced to `/app/sign-in`,
+  // and the cases below, whose whole discriminator is "home means exchanged, sign-in means
+  // discarded", could no longer tell the two apart. The fixture was less faithful than production,
+  // and the redirect is what exposed it.
+  const exchange = vi.fn(async (_grant: { code: string; state: string }) =>
+    ({ idToken, accessToken: 'a-token-the-exchange-returned' }));
   const seam =
     options.catchEscaping === true
       ? (grant: { code: string; state: string }) => {
