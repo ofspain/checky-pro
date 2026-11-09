@@ -160,7 +160,35 @@ const FORBIDDEN: readonly [RegExp, string][] = [
   [/\bsignOut\s*\(/, 'signOut();'],
   [/\bendSession\s*\(/, 'endSession();'],
   [/\bmarkSignedOut\b/, 'markSignedOut();'],
+  [/\bmarkSignedIn\b/, 'markSignedIn();'],
   [/\bbroadcastSignOut\b/, 'broadcastSignOut();'],
+  [/\blistenForSignOut\b/, 'listenForSignOut(() => undefined);'],
+  // The sign-out LATCH, as a read. A redirect that consulted it would be deciding WHY it is redirecting, and
+  // the three arrivals must be indistinguishable (L4, AC9) - including to the component itself.
+  [/\bhasSignedOut\b/, 'if (hasSignedOut()) return null;'],
+  // The notice shown on the sign-in screen. Setting it here would name a cause to the visitor, which is the
+  // one thing R28's redirect may not do - and it would do it for all three arrivals at once.
+  [/\bsetSignInNotice\b/, "setSignInNotice('discarded');"],
+  // The OTHER two return-target entry points. `rememberReturnTarget` is this module's job and is deliberately
+  // absent from this sweep; reading or clearing the target is not, and either would make the redirect a
+  // second authority over something `returnTarget.ts` owns.
+  [/\bclearReturnTarget\b/, 'clearReturnTarget();'],
+  [/\btakeReturnTarget\b/, 'const back = takeReturnTarget();'],
+  // IMPERATIVE navigation, which is how a component navigates when it should be declaring. `<Navigate>` is
+  // the declarative form and is what this module uses; `useNavigate` would move the decision into an effect.
+  [/\buseNavigate\b/, 'const go = useNavigate();'],
+  [/\bnavigate\s*\(/, 'navigate("/sign-in");'],
+  [/\buseHref\b/, 'const href = useHref("/sign-in");'],
+  // BROAD BY CHOICE, and strictly stronger than the narrow rows phase 11's F7 proposed: the module reaches
+  // `window` nowhere, so one row covers `window.name`, `window.history` and anything else arriving that way.
+  // The same reasoning is why F14's `document.cookie` row was declined - `\bdocument\b` already covers it,
+  // and a row that can only fire when a broader one already has adds a number, not a surface.
+  [/\bwindow\b/, 'window.name = "x";'],
+  [/\bhistory\./, 'history.pushState(null, "", "/x");'],
+  // A `switch` is a branch, and the no-branch scan below used to look only for `if`, `?`, `&&` and `||`
+  // (phase 11, F1 and F4). Forbidding it here as well means the rule holds anywhere in the module, not only
+  // in the region between the arrival and the allowlist.
+  [/\bswitch\b/, 'switch (arrival) { default: break; }'],
   [/\bredirect\s*\(/, 'return redirect("/sign-in");'],
   [/from ['"]\.\.\/app\/(?!routes)/, "import { AppShell } from '../app/AppShell';"],
   [/\bt\s*\(/, 'const copy = t("signIn.heading");'],
@@ -293,6 +321,12 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
         const { router } = await arrive(`${APP_BASENAME}/${concrete(path)}`);
         expect(router.state.location.pathname, path).toBe(`${APP_BASENAME}/${concrete(path)}`);
         expect(router.state.historyAction, `${path} was refused to a visitor holding a token`).toBe('POP');
+        // CHEAP CROSS-CHECK, NOT THE INSTRUMENT phase 11's F2 took it for. On an authenticated path WITH a
+        // session the gate renders `<Outlet />`, so `RedirectToSignIn` never mounts and the order of reads
+        // inside it cannot be measured from here - the arrivals that mount it for a signed-in visitor are
+        // the catch-all and the index route, which the two cases below cover. What this holds is the wider
+        // claim that NOTHING on the authenticated-with-session path writes a return target.
+        expect(stored(), `${path} stored a return target for a visitor who already has a session`).toBeNull();
         release();
       }
     });
@@ -315,6 +349,10 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       const { container, router } = await arrive(`${APP_BASENAME}/`);
       expect(router.state.location.pathname).toBe(`${APP_BASENAME}/`);
       expect(container.innerHTML).toBe('');
+      // The same assertion as the unmatched-path case above, and here it is load-bearing rather than cheap:
+      // the index route is OUTSIDE the gate, so this arrival really does mount the redirect for a signed-in
+      // visitor, and a return target written before the session check would land in their storage (F5).
+      expect(stored(), 'a return target was stored for the bare /app/ visitor who has a session').toBeNull();
     });
   });
 
@@ -424,6 +462,9 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       expect(new Set(seen.map((row) => row.action)).size, 'the arrivals differ in history action').toBe(1);
       expect(new Set(seen.map((row) => row.html)).size, 'the arrivals render differently').toBe(1);
       expect(seen[0].where).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+      // SAMENESS IS NOT CORRECTNESS (phase 11, F3): three arrivals that all PUSHED would collapse to one
+      // action and pass every assertion above. The shared value has to be named.
+      expect(seen[0].action, 'the arrivals agree on a history action that is not REPLACE').toBe('REPLACE');
       // The ONLY thing that differs is the return target, and it differs in the visitor's own storage rather
       // than on the page: (a) remembers, (b) and (c) do not, which the AC7 cases above pin.
       expect(seen[0].html).not.toBe('');
@@ -466,10 +507,38 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       // source can show it.
       const code = await redirectSource();
       const call = code.indexOf('rememberReturnTarget(');
+      const read = code.indexOf('const { pathname }');
+      // BOTH ANCHORS MUST EXIST, or the slice between them is empty and this case passes while measuring
+      // nothing (phase 11, F4). A rename of the local would land here, as a failure that says so, rather
+      // than silently reducing the scan to `''.not.toMatch(...)`.
       expect(call, 'the call was not found, so this scan measures nothing').toBeGreaterThan(0);
-      const before = code.slice(code.indexOf('const { pathname }'), call);
+      expect(read, 'the arrival read was not found, so this scan measures nothing').toBeGreaterThan(0);
+      expect(read, 'the arrival is read AFTER it is remembered').toBeLessThan(call);
+      const before = code.slice(read, call);
+      expect(before).toContain('const { pathname }');
+      // Every control-flow keyword, not only `if` and the operators. A `switch` whose default case skipped
+      // the write would be behaviourally invisible - the allowlist refuses those paths anyway - and would
+      // still be a second copy of the rule.
       expect(before, 'a branch stands between the arrival and the allowlist')
-        .not.toMatch(/\bif\b|\?|&&|\|\|/);
+        .not.toMatch(/\bif\b|\bswitch\b|\bwhile\b|\bfor\b|\btry\b|\bdo\b|\?|&&|\|\|/);
+    });
+
+    it('asks whether a session is held BEFORE it reads or remembers anything (phase 11, F6)', async () => {
+      // THE ORDER IS LOAD-BEARING AND BEHAVIOUR CANNOT FULLY SEE IT. A return target written for a visitor
+      // who already has a session is a stale deep link waiting in their storage for a sign-in that is not
+      // coming; the arrivals that would expose it are the two outside the gate, and those are covered. This
+      // is the claim stated where it actually lives - in the order of three reads in one function body.
+      const code = await redirectSource();
+      const body = code.slice(code.indexOf('export function RedirectToSignIn'));
+      const ask = body.indexOf('accessToken.current()');
+      const location = body.indexOf('useLocation(');
+      const remember = body.indexOf('rememberReturnTarget(');
+      for (const [label, at] of [['the session read', ask], ['the arrival read', location],
+        ['the remember call', remember]] as const) {
+        expect(at, `${label} was not found, so this scan measures nothing`).toBeGreaterThan(-1);
+      }
+      expect(ask, 'the arrival is read before the session is checked').toBeLessThan(location);
+      expect(ask, 'the arrival is remembered before the session is checked').toBeLessThan(remember);
     });
 
     it('reaches for nothing it should not, by source (AC10, phase 3 F17, F18)', async () => {
@@ -492,7 +561,7 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       }
       // (3) A deleted row would leave the loop passing on fewer surfaces, and a DUPLICATED one would mean a
       // surface swept twice and another not at all while the length still looked right (T40 phase 11, F2).
-      expect(FORBIDDEN, 'the forbidden-surface sweep shrank').toHaveLength(25);
+      expect(FORBIDDEN, 'the forbidden-surface sweep shrank').toHaveLength(37);
       expect(new Set(FORBIDDEN.map(([pattern]) => pattern.source)),
         'two rows of the sweep hold the same pattern').toHaveLength(FORBIDDEN.length);
     });
