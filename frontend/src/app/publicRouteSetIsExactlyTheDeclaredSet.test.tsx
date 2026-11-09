@@ -350,14 +350,40 @@ const GUARD_FORBIDDEN: readonly (readonly [RegExp, string])[] = [
   [/\bclearAccessToken\b/, 'clearAccessToken();'],
   [/\bretainIdToken\b/, "retainIdToken('x');"],
   [/\btakeIdToken\b/, 'void takeIdToken();'],
+  // PHASE 11 (F1). The four rows above forbid the standalone writers and say NOTHING about the methods on
+  // the object this module already imports: `accessToken.adopt('x')` sets the token - it delegates to
+  // `retainAccessToken` - and would have passed the sweep untouched. `renew()` is an action on the session
+  // too, and it always rejects, so a render that called it would produce an unhandled rejection per paint.
+  // The identifiers are forbidden rather than the call shapes, so an alias - `const { adopt } = accessToken`
+  // - is caught as well.
+  [/\badopt\b/, "accessToken.adopt('x');"],
+  [/\brenew\b/, 'void accessToken.renew();'],
+  // PHASE 11 (F1), the cross-tab primitives. These are the surfaces where a side effect would not stay in
+  // this tab: the sign-out latch decides whether a SIBLING's renewal may be adopted, and a broadcast reaches
+  // every open tab. A gate that set the latch while deciding what to render would sign other tabs out.
+  [/\bmarkSignedOut\b/, 'markSignedOut();'],
+  [/\bmarkSignedIn\b/, 'markSignedIn();'],
+  [/\bbroadcastSignOut\b/, 'broadcastSignOut();'],
+  [/\blistenForSignOut\b/, 'listenForSignOut(() => undefined);'],
+  [/\bsignOut\s*\(/, 'signOut();'],
+  [/\bendSession\s*\(/, 'endSession();'],
+  // PHASE 11 (F7), for parity with T37's privacy sweep. The gate renders nothing, so a leak here would be
+  // deliberate rather than incidental - but they are still places a render can leave state behind.
+  [/document\.title/, "document.title = 'x';"],
+  [/window\.name/, "window.name = 'x';"],
+  [/history\.state/, 'void history.state;'],
+  // PHASE 11 (F10). The layering row below is a STATIC-import pattern, and a dynamic one would walk past it.
+  [/import\s*\(\s*['"]\.\.\/app\//, "void import('../app/routes');"],
+  [/require\s*\(\s*['"]\.\.\/app\//, "require('../app/routes');"],
   // The module boundary, as source rather than as a convention (AC6).
   [/from ['"]\.\.\/app\//, "import { APP_BASENAME } from '../app/routes';"],
 ] as const;
 
 // THE NAME OF THIS FILE DESCRIBES TASK 40'S CLAIM, NOT TASK 37'S. Task 37 owns ONE of the nine public
 // routes; the exhaustive "these nine and only these nine" claim is task 40's, which extends this file. It
-// said "needs an auth gate that does not exist yet" until task 40 built one (phase 8, I12). Raised three times (phase 3 F6, phase 8 I4, phase 11 F5) and
-// kept three times, because `tasks.md:65` and `:71` name the SAME test for both tasks - renaming would
+// said "needs an auth gate that does not exist yet" until task 40 built one (phase 8, I12).
+//
+// The shared name was raised three times (phase 3 F6, phase 8 I4, phase 11 F5) and kept three times, because `tasks.md:65` and `:71` name the SAME test for both tasks - renaming would
 // either break that convention or leave task 40 deleting a file. Repeated here, in the describe block, so
 // a reader who opens the suite rather than the header still sees it.
 describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
@@ -900,6 +926,15 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       }
     });
 
+    it('serves an authenticated path under StrictMode WITH a session too (AC4, phase 11 F5)', async () => {
+      // The gate is a pure read, so double-invocation should not matter - and "should not" is the reason to
+      // measure it. The no-session arm has had a StrictMode case since this suite was written; this is the
+      // other half, so both outcomes are pinned under the mode every suite here mounts in.
+      retainAccessToken('a-token-this-tab-holds');
+      const { container } = await arriveWithTable(withProbes(<RequireSession />), HOME_PATH, { strict: true });
+      expect(probeIn(container)).toBe(HOME_PATH);
+    });
+
     it('CONTROL: the same table, the same paths, a pass-through gate - and the content arrives (AC3)', async () => {
       // THIS IS THE CASE THAT MAKES AC2 FALSIFIABLE. It differs from the AC2 case in exactly one value: the
       // element handed to `withProbes`. If it rendered nothing too, AC2 would be measuring the absence of a
@@ -1017,13 +1052,30 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       }
     });
 
-    it('CONTROL: EVERY pattern in the sweep fires on a planted reach', () => {
+    it('CONTROL: EVERY pattern in the sweep fires on a planted reach, and the sweep cannot shrink', async () => {
       // The PAIRING is the point, and it is T37's AC7 lesson: a single planted `sessionStorage` proves the
-      // scan can see one surface and says nothing about the other thirty-six, so a typo in any other pattern
+      // scan can see one surface and says nothing about the other forty-nine, so a typo in any other pattern
       // is unmeasured. A pattern cannot arrive here without a snippet that proves it fires.
+      //
+      // PHASE 11 (F2) BROUGHT THIS UP TO T37'S CONTROL, which had three things this one did not. F2 named
+      // the duplicate check; reading that control to apply it found the other two.
+      const code = await guardSource();
       for (const [forbidden, probe] of GUARD_FORBIDDEN) {
-        expect(probe, `the pattern ${forbidden.source} is blind to its own probe`).toMatch(forbidden);
+        // (1) Fired against the REAL SOURCE plus the probe, not against the probe alone. A pattern anchored
+        // in a way that only works on a bare line - `^` without `m`, say - passes the isolated check and
+        // then never fires on a file.
+        expect(forbidden.test(`${code}\n${probe}`),
+          `the scan cannot see a planted ${forbidden.source} - the pattern or the probe is wrong`).toBe(true);
+        // (2) And the real source must not ALREADY trip it, or the row in the scan above proves nothing.
+        expect(forbidden.test(code),
+          `the real source already trips ${forbidden.source}, so that entry proves nothing`).toBe(false);
       }
+      // (3) The sweep cannot shrink unnoticed: a deleted row would leave the loop passing on fewer surfaces.
+      expect(GUARD_FORBIDDEN, 'the forbidden-surface sweep shrank').toHaveLength(50);
+      // And a count cannot see a DUPLICATED row, which would mean one surface swept twice and another not at
+      // all while the length still looked right (phase 11, F2).
+      expect(new Set(GUARD_FORBIDDEN.map(([pattern]) => pattern.source)),
+        'two rows of the sweep hold the same pattern').toHaveLength(GUARD_FORBIDDEN.length);
     });
 
     it('reads the session owner, which is the one thing it is allowed to reach for (AC7)', async () => {
@@ -1051,6 +1103,18 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       const { container, router } = await arriveWithTable(withProbes(<RequireSession />), 'verify/');
       expect(probeIn(container)).toBe('verify');
       expect(router.state.historyAction).toBe('POP');
+    });
+
+    it('BLOCKS an authenticated path arriving with a query string or a trailing slash (AC2, phase 11 F4)', async () => {
+      // The gate asks the session owner and reads no part of the URL - AC7's scan is what holds that - so
+      // these two should be blocked exactly like the bare path. They are here because that is an inference
+      // from a source scan, and a route-reading regression is precisely what would break it while leaving
+      // the bare-path cases green.
+      for (const arrival of [`${HOME_PATH}?foo=bar`, `${HOME_PATH}/`]) {
+        const { container } = await arriveWithTable(withProbes(<RequireSession />), arrival);
+        expect(container.innerHTML, `${arrival} was served without a session`).toBe('');
+        release();
+      }
     });
 
     it('serves a public path with a query string and keeps the query (AC1)', async () => {
