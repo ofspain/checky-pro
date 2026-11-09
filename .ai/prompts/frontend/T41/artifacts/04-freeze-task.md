@@ -127,8 +127,8 @@ one arithmetic claim is wrong (**F2**); everything else holds.
 | **F5** | one component for all three arrivals makes them identical | **ACCEPT** — and the frozen shape is why **L4** holds at the *mechanism* level, not only in the outcome |
 | **F6** | the bare `/app/` needs an index route | **ACCEPT, measured** (§3), including both halves of its own question |
 | **F7** | the catch-all must not redirect an authenticated visitor | **ACCEPT** — `null` when a token is held. R28 is conditioned *"WHILE a visitor is unauthenticated"*, so this is the line between what the spec asks for and what it does not say. **This closes phase 2's open question 1** |
-| **F8** | the allowlist means (b) and (c) need no branch | **ACCEPT** — and `returnTarget.ts:76-78` goes further than the finding: *"Nothing in production calls this yet: **R28's redirect (task 41) is its caller**, and this exists so that task is a one-line call rather than a design (T24-D2)."* **T24 built this for T41 by name** |
-| **F9** | parameterised paths are not remembered | **ACCEPT, and do not fix.** `returnTarget.ts:51-58` excludes a path whose *segment* begins with `:` (T24-D5), so `/invoices/:id` and `/receipts/:id` redirect and remember **nothing** — the visitor lands on home. Pinned as a boundary, not changed: `returnTarget.ts` is on the NOT-to-modify list and four closed tasks measure it |
+| **F8** | the allowlist means (b) and (c) need no branch | **ACCEPT** — and `returnTarget.ts:77` goes further than the finding: *"Nothing in production calls this yet: **R28's redirect (task 41) is its caller**, and this exists so that task is a one-line call rather than a design (T24-D2)."* **T24 built this for T41 by name** |
+| **F9** | parameterised paths are not remembered | **ACCEPT, and do not fix.** `returnTarget.ts:55-57` excludes a path whose *segment* begins with `:` (T24-D5), so `/invoices/:id` and `/receipts/:id` redirect and remember **nothing** — the visitor lands on home. Pinned as a boundary, not changed: `returnTarget.ts` is on the NOT-to-modify list and four closed tasks measure it |
 | **F10** | use `replace` | **ACCEPT** — and §1 shows why it has to be stated: the loader form's obvious spelling **pushes** |
 | **F11** | build the destination from `SIGN_IN_PATH`, read inside the function | **ACCEPT** — with a source scan. §1's OOM is the cost of the alternative |
 | **F12** | the redirect renders no copy | **ACCEPT, no action** — `<Navigate>` renders nothing; AC10 already says so |
@@ -170,7 +170,7 @@ at an unmatched path renders **nothing**, as today, because R28 does not speak a
 - `src/auth/RequireSession.tsx` — `null` → `<RedirectToSignIn />`. Nothing else; its own scan is untouched.
 - `src/app/routes.tsx` — the index route and the catch-all's element.
 - `src/app/routesResolveUnderAppPrefixOnly.test.tsx` — the `/app/` match pin (`:132`), the catch-all silence
-  pin (`:124`), `pathTree` (`:154`, the index route's level) and the screen-count expectation (`:175`,
+  pin (`:124`), `pathTree` (`:159`, the index route's level) and the screen-count expectation (`:175`,
   three → four, **naming the redirect as a redirect**).
 - `src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx` — T37's AC9 (`:663`), **T40's AC13** (one pathless
   element → two), and T40's blocked-path cases, which asserted blankness and `POP` and now assert the
