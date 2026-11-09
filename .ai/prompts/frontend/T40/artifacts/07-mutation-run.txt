@@ -1,0 +1,136 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 1 failed of 1725, exit 1
+
+  SURVIVED  -              RS01 the gate is open: every authenticated path is served with no session  (1 failed of 1725, exit 1)
+  SURVIVED  -              RS02 the gate never opens: an authenticated path is refused even with a session  (1 failed of 1725, exit 1)
+  SURVIVED  -              RS03 an empty-string token counts as a session (Boolean -> !== null)  (1 failed of 1725, exit 1)
+  SURVIVED  -              RS04 the blocked arm returns an empty fragment instead of null  (1 failed of 1725, exit 1)
+  SURVIVED  -              RS05 the blocked arm renders an empty element rather than nothing  (1 failed of 1725, exit 1)
+  KILLED    INHERITED-ONLY RS06 the gate redirects instead of rendering nothing, taking task 41's clause  (6 failed of 1725, exit 1)
+  KILLED    INHERITED-ONLY RS07 the gate writes to console  (6 failed of 1725, exit 1)
+  SURVIVED  -              RS08 the gate reads the route it is gating  (1 failed of 1725, exit 1)
+  KILLED    own            RS09 the gate is removed and the eleven are root children again  (3 failed of 1725, exit 1)
+            └ declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)
+            └ reports a real navigation too, so a broken instrument cannot read as a refusal
+  KILLED    own            RS10 the gate route is given path: '' instead of being pathless  (6 failed of 1725, exit 1)
+            └ treats the bare /app/ as no route: only the root matches and nothing renders (T41 owns its redirect)
+            └ declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)
+            └ attaches a screen only to the routes whose task has run (L11, L12)
+            └ attaches an element to sign-in, callback and signed-out, and to nothing else
+            └ reports a real navigation too, so a broken instrument cannot read as a refusal
+  KILLED    own            RS11 the catch-all is moved inside the gate  (3 failed of 1725, exit 1)
+            └ sends an unmatched /app path to the silent catch-all, so the shell shows no text (AC4, L11)
+            └ declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)
+  KILLED    own            RS12 the gate's children are built from both arrays, so the public nine are also inside it  (2 failed of 1725, exit 1)
+            └ declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)
+  KILLED    own            RS13 the gate is moved onto the root, so it gates the public nine as well  (247 failed of 1725, exit 1)
+            └ declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)
+            └ attaches a screen only to the routes whose task has run (L11, L12)
+            └ renders the signed-out screen at its declared path
+            └ renders the same under StrictMode double-invocation
+            └ renders with no token held and nothing in storage, and leaves both that way
+            └ renders exactly the three catalogue strings
+            └ contains none of the words that would disclose why the session ended
+            └ offers a link to sign-in and no other interactive element
+            └ renders byte-identical output for every way it can be arrived at
+            └ attaches an element to sign-in, callback and signed-out, and to nothing else
+            └ CONTROL: the container-scoped sweep sees what a main-scoped one cannot
+            └ is one landmark holding a level-one heading, a paragraph and the way back, in that order
+            └ renders and stays put rather than redirecting
+            └ renders byte-identical output whether or not a token is held
+            └ navigates to the remembered target, from a callback it would otherwise have stayed on
+            └ honours /home, the whole way through a sign-in
+            └ honours /account, the whole way through a sign-in
+            └ honours /account/sessions, the whole way through a sign-in
+            └ honours /account/mfa, the whole way through a sign-in
+            └ honours /api-keys, the whole way through a sign-in
+            └ honours /admin, the whole way through a sign-in
+            └ honours /invoices, the whole way through a sign-in
+            └ honours /payments, the whole way through a sign-in
+            └ honours /notifications, the whole way through a sign-in
+            └ replaces the callback entry rather than pushing the target on top of it
+            └ goes home, and removes nothing on the way
+            └ is indistinguishable from a target the allowlist refused (AC9)
+            └ reads the target before deleting it, and deletes it exactly once
+            └ does not hand the target to the next sign-in
+            └ still honours the target when the removal throws, and says so about what is left behind (AC16)
+            └ consumes a target it refuses, rather than leaving it for the next attempt
+            └ sends no state in the query to sign-in and leaves the target where it is
+            └ sends a state that does not match to sign-in and leaves the target where it is
+            └ sends no code to sign-in and leaves the target where it is
+            └ sends an authorization error to sign-in and leaves the target where it is
+            └ sends a refused exchange to sign-in and leaves the target where it is
+            └ sends a dropped connection to sign-in and leaves the target where it is
+            └ sends a nonce that is not the stored one to sign-in and leaves the target where it is
+            └ leaves the store untouched when a discard had no target to begin with
+            └ and the retry then honours it
+            └ completes the sign-in and goes home when the target cannot be read
+            └ does not navigate after the screen unmounts, and consumes the target anyway
+            └ still navigates under StrictMode, where the cleanup runs between the passes
+            └ adds one key and no secret to a flow that remembers a target
+            └ reports a real navigation too, so a broken instrument cannot read as a refusal
+            └ an absolute URL on another origin
+            └ an absolute URL on this origin
+            └ a protocol-relative host
+            └ a javascript: target
+            └ a data: target
+            └ a backslash path
+            └ a traversal
+            └ an encoded traversal
+            └ a prefix match of an allowlisted path
+            └ a public route
+            └ a route that does not exist
+            └ a parameterised route with a real id su…
+            └ an allowlisted path carrying a query st…
+            └ an allowlisted path carrying a fragment…
+            └ a trailing slash on an allowlisted path…
+            └ an allowlisted path in the wrong case (…
+            └ a trailing slash on a two-segment allow…
+            └ an encoded separator inside an allowlis…
+            └ an allowlisted path with no leading sla…
+            └ a two-segment allowlisted path with no …
+            └ an explicitly relative allowlisted path…
+            └ leading whitespace before an allowliste…
+            └ more than one of the above in one strin…
+            └ a query string and a fragment together …
+            └ leaves "https://evil.example/app/home" where it is when the callback is discarded (AC20)
+            └ leaves "/home/../admin" where it is when the callback is discarded (AC20)
+            └ leaves "/invoices/123" where it is when the callback is discarded (AC20)
+            └ leaves "/HOME" where it is when the callback is discarded (AC20)
+            └ sends "  /account/sessions" home, where a trim would have honoured it
+            └ sends "  /home" home, where a trim would have honoured it
+            └ sends "/home  " home, where a trim would have honoured it
+            └ still reaches home when the removal throws, and the refused value stays (T24-D9)
+            └ treats a refused target it cannot read as no target at all
+  KILLED    own            RS14 a second pathless route carries a screen, invisible to both count pins  (2 failed of 1725, exit 1)
+            └ declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)
+  KILLED    own            RS15 task 33's AC11 walker is shallow again, making its claim vacuous  (2 failed of 1725, exit 1)
+            └ pins that every authenticated path has no element - a T41 obligation when it changes
+  KILLED    own            RS16 task 25's control drops the gate's level from the match chain  (2 failed of 1725, exit 1)
+            └ reports a real navigation too, so a broken instrument cannot read as a refusal
+
+regressions: 10/15 killed
+unfalsifiable: 1 - no observable effect to detect: ['RS04 the blocked arm returns an empty fragment instead of null']
+survivors:   ['RS01', 'RS02', 'RS03', 'RS04', 'RS05', 'RS08']
+broken:      none
+
+--- expectation vs outcome ---
+  RS01   expected phase 10      got SURVIVED  as expected
+  RS02   expected phase 10      got SURVIVED  as expected
+  RS03   expected phase 10      got SURVIVED  as expected
+  RS04   expected unfalsifiable got SURVIVED  as expected
+  RS05   expected phase 10      got SURVIVED  as expected
+  RS06   expected inherited     got KILLED    as expected
+  RS07   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
+  RS08   expected phase 10      got SURVIVED  as expected
+  RS09   expected inherited     got KILLED    as expected
+  RS10   expected inherited     got KILLED    as expected
+  RS11   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
+  RS12   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
+  RS13   expected inherited     got KILLED    as expected
+  RS14   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
+  RS15   expected inherited     got KILLED    as expected
+  RS16   expected inherited     got KILLED    as expected
+
+disagreements: ['RS07', 'RS11', 'RS12', 'RS14']
