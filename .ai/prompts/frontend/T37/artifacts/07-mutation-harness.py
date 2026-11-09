@@ -204,6 +204,48 @@ MUTANTS = [
      ("    <>\n    <main>",
       "    </main>\n    <a href=\"/elsewhere\">{t('signedOut.action')}</a>\n    </>\n  );")),
 
+    # --- PHASE 9: the regressions phase 8's findings said were unmeasured --------------------------------
+    # I1. The screen reads the session and renders the SAME markup. AC6 and AC13 compare rendered output, so
+    # neither can see this; only the source sweep can. Written to prove the new entries are load-bearing.
+    ("SL25 the screen reads the access token and branches to identical markup (I1)",
+     SCREEN,
+     ("import { SIGN_IN_PATH } from '../app/routes';", "  const { t } = useTranslation();"),
+     ("import { SIGN_IN_PATH } from '../app/routes';\nimport { accessToken } from './accessToken';",
+      "  const { t } = useTranslation();\n  const held = accessToken() !== null;\n  void held;")),
+
+    # I1, the other half: a leak to a surface T36's AC8 sweeps and T37's did not.
+    ("SL26 the screen writes the route to document.title (I1)",
+     SCREEN, "  const { t } = useTranslation();",
+     "  const { t } = useTranslation();\n  document.title = t('signedOut.heading');"),
+
+    # I2. The token task 36 introduced, taken by the one screen that must leave it alone. Before phase 9
+    # nothing retained an ID token, so this changed no assertion anywhere.
+    ("SL27 the landing takes the ID token task 36 holds for the end-session hint (I2)",
+     SCREEN,
+     ("import { SIGN_IN_PATH } from '../app/routes';", "  const { t } = useTranslation();"),
+     ("import { SIGN_IN_PATH } from '../app/routes';\nimport { takeIdToken } from './idToken';",
+      "  const { t } = useTranslation();\n  void takeIdToken();")),
+
+    # I3. Imports the published constant - so the two inherited assertions pass - and spells the route
+    # literally where the URL is actually built. The drift AC10 exists to prevent, wearing its own fix.
+    ("SL28 endSession.ts imports the constant and hardcodes the route anyway (I3)",
+     END_SESSION, "${base}/${SIGNED_OUT_PATH}", "${base}/signed-out"),
+
+    # I5. An anchor dressed as a button: counted as a link by "only one way out", while losing the
+    # affordances the Link was chosen for.
+    ("SL29 the way back becomes an anchor with role=button (I5)",
+     SCREEN, LINK,
+     "      <Link role=\"button\" to={`/${SIGN_IN_PATH}`}>{t('signedOut.action')}</Link>"),
+
+    # I12, which phase 9 REJECTED as already covered, kept as the measurement that rejected it: AC5 asserts
+    # the source matches /<Link\s/, and `<NavLink ` does not contain `<Link`. If this ever survives, the
+    # rejection was wrong and I12 should be reopened.
+    ("SL30 the way back becomes a NavLink, which phase 9 claims AC5 already catches (I12)",
+     SCREEN,
+     ("import { Link } from 'react-router';", LINK),
+     ("import { NavLink } from 'react-router';",
+      "      <NavLink to={`/${SIGN_IN_PATH}`}>{t('signedOut.action')}</NavLink>")),
+
     # --- AC9: the count pin, from the other side --------------------------------------------------------
     # A fourth screen attached without either list being extended. Task 16's pin and task 37's AC9 should
     # BOTH fail - the deliberate redundancy at the handoff.

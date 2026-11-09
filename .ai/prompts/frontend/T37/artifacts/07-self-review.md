@@ -133,7 +133,7 @@ three mutants were added to find out what the suite *would* say.
 
 | Mutant | Outcome |
 |---|---|
-| **SL19** `<main>` becomes a `<div>` | Killed, 11 failures — but **on a `TypeError`**, because `main!` is null and every case dereferences it. The suite notices, and tells whoever reads the output nothing about landmarks. |
+| **SL19** `<main>` becomes a `<div>` | Killed, 11 failures — claimed here to be **on a `TypeError`**. **CORRECTED IN PHASE 9 (see `09-review-resolution.md`, I10):** verified narrowly, the first failure is AC1's *named* assertion, so the landmark is pinned by a criterion. The real defect was its message — `the route resolved to nothing`, which is false under this mutant. Split in two in phase 9. |
 | **SL20** `<h1>` drops to `<h2>` | Killed, 4 — AC3's `querySelector('h1')` returns nothing. Incidental, but the message names the heading. |
 | **SL21** the way back is rendered above the heading | Killed, 2 — AC11's whole-text equality, which is order-sensitive. |
 
