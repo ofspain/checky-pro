@@ -9,6 +9,7 @@ import { exchangeAuthorizationCode } from './codeExchange';
 import { retainIdToken } from './idToken';
 import { idTokenNonceMatchesStoredValue } from './idTokenNonce';
 import { setSignInNotice } from './signInNotice';
+import { Heading, Screen, StatusRegion } from '../app/ui';
 
 /**
  * Where the browser returns from the Spring Authorization Server flow.
@@ -212,9 +213,9 @@ export function CallbackScreen() {
   }, []);
 
   return (
-    <main>
-      <h1>{t('callback.heading')}</h1>
-      <div role="status" aria-live="polite">{t('callback.working')}</div>
-    </main>
+    <Screen>
+      <Heading>{t('callback.heading')}</Heading>
+      <StatusRegion>{t('callback.working')}</StatusRegion>
+    </Screen>
   );
 }

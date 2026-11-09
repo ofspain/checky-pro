@@ -1,6 +1,7 @@
 import { useRef, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RateLimitNoticeState } from '../api/rateLimitNotice';
+import { ActionButton, FocusHolder, StatusRegion } from './ui';
 
 /**
  * Shows the fixed "too many requests" copy while `notice` is shown (R23), with no countdown and no timer. The live
@@ -9,6 +10,16 @@ import type { RateLimitNoticeState } from '../api/rateLimitNotice';
  *
  * Render it inside an `<I18nextProvider>` holding the tab's `createI18n()` instance. Don't mount it in `AppShell`
  * until the first screen adds that provider tree: T01's test asserts the shell renders no markup.
+ *
+ * TASK 173 moved it onto three primitives, and this component is the reason `FocusHolder` exists. The focus
+ * dance below needs a ref to a real element that is focusable but not tabbable; `FocusHolder` forwards its ref
+ * for exactly that, and `ActionButton` forwards one too. If either stopped forwarding, `wrapper.current` would
+ * be `null`, `?.focus()` would do nothing, and a keyboard user would be dropped to `<body>` with the button
+ * they pressed gone - silently, with no test failing unless one asserts `document.activeElement`. One already
+ * does: `rateLimitedResponseShowsGenericCopyWithoutReplay.test.tsx:399-400` asserts the active element IS the
+ * wrapper and is NOT `<body>`, and it passed unchanged across this move. That existing case is the evidence,
+ * deliberately cited instead of the criterion (AC6) that phase 10 will add - a comment that names a test which
+ * does not exist yet is a claim, not a measurement (T41 phase 8, I10).
  */
 export function RateLimitNotice({ notice }: { notice: RateLimitNoticeState }) {
   const shown = useSyncExternalStore(notice.subscribe, notice.isShown);
@@ -26,15 +37,18 @@ export function RateLimitNotice({ notice }: { notice: RateLimitNoticeState }) {
   }
 
   return (
-    <div ref={wrapper} tabIndex={-1}>
-      <div role="status" aria-live="polite">
+    <FocusHolder ref={wrapper}>
+      {/* Always rendered, never conditional: a live region mounted at the same moment its text arrives is a
+          new element with content already in it, and a screen reader announces nothing. `StatusRegion` is
+          where that rule now lives, and it is why the ternary is INSIDE it rather than around it. */}
+      <StatusRegion>
         {shown ? t('rateLimit.message') : null}
-      </div>
+      </StatusRegion>
       {shown ? (
-        <button type="button" ref={dismissButton} onClick={dismiss}>
+        <ActionButton ref={dismissButton} onClick={dismiss}>
           {t('rateLimit.dismiss')}
-        </button>
+        </ActionButton>
       ) : null}
-    </div>
+    </FocusHolder>
   );
 }

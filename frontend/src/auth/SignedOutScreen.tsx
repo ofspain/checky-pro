@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router';
+import { Heading, Screen, Text, TextLink } from '../app/ui';
 import { SIGN_IN_PATH } from '../app/routes';
 
 /**
@@ -43,10 +43,10 @@ export function SignedOutScreen() {
   const { t } = useTranslation();
 
   return (
-    <main>
-      <h1>{t('signedOut.heading')}</h1>
-      <p>{t('signedOut.explanation')}</p>
-      <Link to={`/${SIGN_IN_PATH}`}>{t('signedOut.action')}</Link>
-    </main>
+    <Screen>
+      <Heading>{t('signedOut.heading')}</Heading>
+      <Text>{t('signedOut.explanation')}</Text>
+      <TextLink to={`/${SIGN_IN_PATH}`}>{t('signedOut.action')}</TextLink>
+    </Screen>
   );
 }

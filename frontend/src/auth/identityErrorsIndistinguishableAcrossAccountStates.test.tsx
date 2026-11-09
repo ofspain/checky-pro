@@ -1426,11 +1426,27 @@ describe('AC4: no failure screen carries a class or an inline style', () => {
       await clearArrivalSurfaces();
     }
     expect(seen).toHaveLength(5);
-    // A PIN FOR TASK 173, not a claim that styling will never exist. Measured: no production file contains
-    // `className`, `style=`, `styled` or `.css`, so R30's "identical visual treatment" is trivially true
-    // today (T29-D3). When the design system lands, this case is what fails if one failure is styled
-    // differently from another - which is the whole reason to write it before there is any styling to check.
-    expect(seen.map((row) => row.attributes)).toEqual([[], [], [], [], []]);
+    // THE PIN FIRED, AND TASK 173 IS THE TASK IT WAS WRITTEN FOR. It read `toEqual([[], [], [], [], []])`,
+    // with a comment saying so: "A PIN FOR TASK 173, not a claim that styling will never exist... When the
+    // design system lands, this case is what fails if one failure is styled differently from another."
+    // The design system landed, so the claim moves from "no styling" to R30's actual words - the visual
+    // treatment SHALL be IDENTICAL across the five account states.
+    //
+    // IT ASSERTS SAMENESS **AND** NON-EMPTINESS, and the second half is not decoration. Five empty lists
+    // satisfy sameness perfectly, which is how this case passed for 27 units; a version that checked only
+    // sameness would therefore also pass if task 173 were reverted, or if a later refactor quietly stripped
+    // every class. That is the T41 phase-11 F3 lesson - sameness is not correctness - arriving one task later
+    // on a different instrument.
+    const treatments = seen.map((row) => row.attributes);
+    expect(new Set(treatments.map((row) => JSON.stringify(row))),
+      'one account state is styled differently from another (R30)').toHaveLength(1);
+    expect(treatments[0].length,
+      'no element carries styling at all, so this case cannot tell the five states apart').toBeGreaterThan(0);
+    // CLASSES ONLY. An inline `style` keyed on the cause would be the same leak by another route, and
+    // `styleAttributesOf` reports both shapes, so the distinction has to be asserted rather than assumed.
+    for (const attribute of treatments[0]) {
+      expect(attribute, 'an inline style reached a failure screen').toMatch(/^[a-z0-9]+\[class=/);
+    }
   });
 
   it('CONTROL: a class keyed on the cause is caught', () => {

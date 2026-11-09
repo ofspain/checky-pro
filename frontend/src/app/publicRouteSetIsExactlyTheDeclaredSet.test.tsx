@@ -568,13 +568,27 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
 
     it('is a real anchor, not a button wired to navigate', async () => {
+      // GROWN BY TASK 173, WHICH MADE THE OLD FORM OF THIS CLAIM FALSE. It read `toMatch(/<Link\s/)` against
+      // this screen's own source, and the screen now renders `<TextLink>` - react-router's `Link` moved one
+      // layer down into `app/ui/TextLink.tsx`. The CLAIM is unchanged, and it is the claim that matters: the
+      // way back is an anchor with an href, not a button wired to navigate. So the assertion follows it down
+      // a layer and names BOTH halves, which is strictly more than it said before - the screen must reach the
+      // router through the primitive, and the primitive must really be a router `Link`.
       const code = await source();
-      expect(code, 'the way back is no longer a router Link').toMatch(/<Link\s/);
+      expect(code, 'the way back is no longer the TextLink primitive').toMatch(/<TextLink\s/);
+      const primitive = await readFile(
+        join(dirname(dirname(expect.getState().testPath as string)), 'app', 'ui', 'TextLink.tsx'), 'utf8');
+      expect(primitive, 'TextLink no longer renders a router Link').toMatch(/<Link\s/);
+      expect(primitive, 'TextLink renders an anchor of its own instead of the router\'s')
+        .not.toMatch(/<a\s/);
+
       // A `navigate()` hand-over would remove middle-click, open-in-new-tab, copy-link and keyboard
-      // activation, all of which a real anchor gives for nothing.
+      // activation, all of which a real anchor gives for nothing. Applied to BOTH files now, because after
+      // task 173 either one could be where it crept in.
       for (const forbidden of [/useNavigate/, /\bnavigate\s*\(/, /location\s*\.\s*assign/, /<button/,
         /role\s*=/]) {
         expect(code, `SignedOutScreen.tsx reaches for ${forbidden.source}`).not.toMatch(forbidden);
+        expect(primitive, `TextLink.tsx reaches for ${forbidden.source}`).not.toMatch(forbidden);
       }
     });
   });

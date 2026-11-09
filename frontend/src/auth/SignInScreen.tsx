@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { buildAuthorizeRequest } from './authorizeRequest';
 import { NOTICE_COPY_KEY, takeSignInNotice } from './signInNotice';
+import { ActionButton, Heading, Screen, StatusRegion, Text } from '../app/ui';
 
 /**
  * The sign-in screen: the first screen in the application, and the one that starts the OIDC authorization code
@@ -48,32 +49,31 @@ export function SignInScreen() {
   }
 
   return (
-    <main>
-      <h1>{t('signIn.heading')}</h1>
-      <p id="sign-in-explanation">{t('signIn.explanation')}</p>
+    <Screen>
+      <Heading>{t('signIn.heading')}</Heading>
+      <Text id="sign-in-explanation">{t('signIn.explanation')}</Text>
       {/* aria-disabled rather than disabled: a focused element that becomes disabled drops the keyboard user to
           <body>, and this is the only control on the screen. The ref above is what actually makes it inert.
           aria-describedby because the sentence above says the visitor is about to leave for a server-hosted page,
           and a keyboard user tabbing straight to the button would otherwise never hear it. */}
-      <button
-        type="button"
+      <ActionButton
         aria-describedby="sign-in-explanation"
         aria-disabled={status === 'starting'}
         aria-busy={status === 'starting'}
         onClick={() => void startSignIn()}
       >
         {t('signIn.action')}
-      </button>
+      </ActionButton>
       {/* Always rendered, so a screen reader announces the content when it appears rather than the region itself
           arriving with text already in it. Focus is not moved here: the button the visitor pressed is still there
           and still focused, and it is the control they need to retry. */}
-      <div role="status" aria-live="polite">
+      <StatusRegion>
         {/* The notice yields to a fresh attempt: this attempt's status is more current than the last one's
             epitaph. */}
         {notice !== null && status === 'idle' ? t(NOTICE_COPY_KEY[notice]) : null}
         {status === 'starting' ? t('signIn.starting') : null}
         {status === 'failed' ? t('signIn.failed') : null}
-      </div>
-    </main>
+      </StatusRegion>
+    </Screen>
   );
 }
