@@ -53,6 +53,10 @@ T16 = "frontend/src/app/routesResolveUnderAppPrefixOnly.test.tsx"
 # The files that measure this task TODAY. Task 37's AC9 and task 40's six arms live in the first;
 # task 16's four pins live in the second. The named test is phase 10's and is not here yet.
 OWN_TESTS = [
+    # PHASE 10 ADDED THE FIRST ONE, and it is the file `package.md` §8 names. The other two are task 37's and
+    # task 16's, grown by phase 6; a kill in either still counts as this task's, because the growth is this
+    # task's work.
+    "src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx",
     "src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx",
     "src/app/routesResolveUnderAppPrefixOnly.test.tsx",
 ]
@@ -114,7 +118,7 @@ MUTANTS = [
     # at a path that matches nothing is bounced to sign-in, which is a claim this package has not made -
     # and would log a signed-in visitor out of their own address bar.
     ("RD02 the authenticated clause is dropped: a signed-in visitor is redirected too (F7)",
-     REDIR, R_COND, "  const hasSession = false;\n  if (hasSession) return null;", "phase 10"),
+     REDIR, R_COND, "  const hasSession = false;\n  if (hasSession) return null;", "own"),
 
     # The empty-string hole, from the other side. `retainAccessToken('')` assigns whatever it is given
     # (`accessToken.ts:90`), so `!== null` calls an empty token a session and the redirect is suppressed.
@@ -131,7 +135,7 @@ MUTANTS = [
     # AC11 and the import cycle. Behaviourally identical today, which is the point: only a source scan can
     # see it, and the day `SIGN_IN_PATH` changes spelling the literal silently redirects to the catch-all.
     ("RD05 the destination is a hardcoded literal rather than SIGN_IN_PATH",
-     REDIR, R_NAV, '  return <Navigate to="/sign-in" replace />;', "phase 10"),
+     REDIR, R_NAV, '  return <Navigate to="/sign-in" replace />;', "own"),
 
     # AC14, AND THE WHOLE POINT OF THE TASK - BOTH ROWS REWRITTEN AT PHASE 9, because what they used to
     # mutate should never have existed. RD06 removed a BASENAME STRIP and RD07 put an off-by-one in it, on
@@ -146,7 +150,7 @@ MUTANTS = [
     # allowlist, which holds `/account`, so every deep link is refused in silence - no throw, no log, just a
     # visitor who lands on home after signing in. The redirect still works, which is why it would ship.
     ("RD06 the arrival is made absolute, so every deep link is silently discarded (AC14)",
-     REDIR, R_ARRIVAL, "  const arrival = `/app${pathname}`;", "phase 10"),
+     REDIR, R_ARRIVAL, "  const arrival = `/app${pathname}`;", "own"),
 
     # The strip PUT BACK, which is the defect its removal fixed rather than a hypothetical.
     # `/app/app/account` matches the catch-all; `useLocation()` gives `/app/account`; the strip turns that
@@ -156,18 +160,18 @@ MUTANTS = [
      REDIR, R_ARRIVAL,
      "  const base = '/app';\n"
      "  const arrival = pathname.startsWith(`${base}/`) ? pathname.slice(base.length) : pathname;",
-     "phase 10"),
+     "own"),
 
     # AC7. The redirect happens, nothing is remembered, and the visitor lands on home after signing in.
     ("RD08 the return target is never remembered",
-     REDIR, R_REMEMBER, "", "phase 10"),
+     REDIR, R_REMEMBER, "", "own"),
 
     # BEHAVIOURALLY unfalsifiable, and phase 8's I3 is why that is not the same as unkillable: "no branch,
     # the allowlist is the only filter" is a claim about SOURCE, and this package has measured source since
     # T22. A scan forbidding a branch on `arrival` before the call kills this row, phase 10 writes it, and
     # the expectation moves accordingly.
     ("RD09 a branch is added where the allowlist belongs",
-     REDIR, R_REMEMBER, "  if (arrival !== '/') rememberReturnTarget(arrival);", "phase 10"),
+     REDIR, R_REMEMBER, "  if (arrival !== '/') rememberReturnTarget(arrival);", "own"),
 
     # --- the three arrivals ------------------------------------------------------------------------------
     # The gate's negative branch, back to task 40's `null`. This is the arrival R28's first clause creates,

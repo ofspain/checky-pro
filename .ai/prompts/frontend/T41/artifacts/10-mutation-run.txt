@@ -1,0 +1,191 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 1 failed of 1780, exit 1
+
+  KILLED    own            RD01 the redirect never fires: an unauthenticated arrival renders nothing  (25 failed of 1780, exit 1)
+            └ sends an unmatched /app path through the catch-all to the sign-in start (AC4, L11, R28)
+            └ sends the bare /app/ through its index route to the sign-in start (R28, T41)
+            └ sends the bare /app through the same index route (R28, T41)
+            └ sends all eleven to the sign-in start, replacing the entry (AC1, AC6, R28)
+            └ does the same under StrictMode, where every component renders twice
+            └ does not count an empty-string token as a session (AC1)
+            └ sends an unmatched path to the sign-in start (AC2, R28)
+            └ sends a path that RESEMBLES a public one to the sign-in start too (AC2)
+            └ sends /app/ to the sign-in start (AC3, R28)
+            └ sends /app with no trailing slash through the same index route (AC3)
+            └ remembers the arrival for a real authenticated path, basename-free (AC7, AC14)
+            └ remembers every rememberable authenticated path as its own leading-slash form (AC14)
+            └ remembers NOTHING for a parameterised path, by the allowlist (AC7, phase 3 F9)
+            └ remembers nothing for a DOUBLED basename, which is the defect phase 9 removed
+            └ stores the right VALUE under StrictMode, and this suite never counts writes (phase 3 F4)
+            └ writes only L16's return-target key (AC8)
+            └ renders byte-identical output to a direct arrival at the sign-in screen (AC10)
+            └ gives the same destination, the same action and the same markup for (a), (b) and (c)
+            └ asks the session owner, which is one of the two things it is allowed to reach for (AC5)
+            └ serves the sign-in start, not the path asked for, on all eleven without a session (AC2, AC8, R28)
+            └ serves the sign-in start under StrictMode too, where every component renders twice (AC2)
+            └ does not count an empty-string token as a session (AC2)
+            └ REPLACES the location on a BLOCKED path, sending the visitor to the sign-in start (R28, task 41)
+            └ BLOCKS an authenticated path arriving with a query string or a trailing slash (AC2, phase 11 F4)
+  KILLED    own            RD02 the authenticated clause is dropped: a signed-in visitor is redirected too (F7)  (4 failed of 1780, exit 1)
+            └ is not redirected from a path that matches nothing either, and nothing renders (F7, R28)
+            └ is not redirected from the bare /app/ either (F7)
+            └ asks the session owner, which is one of the two things it is allowed to reach for (AC5)
+  KILLED    own            RD03 an empty-string token suppresses the redirect (Boolean -> !== null)  (3 failed of 1780, exit 1)
+            └ does not count an empty-string token as a session (AC1)
+            └ does not count an empty-string token as a session (AC2)
+  KILLED    own            RD04 `replace` is dropped, so the redirect PUSHES  (11 failed of 1780, exit 1)
+            └ sends an unmatched /app path through the catch-all to the sign-in start (AC4, L11, R28)
+            └ sends the bare /app/ through its index route to the sign-in start (R28, T41)
+            └ sends all eleven to the sign-in start, replacing the entry (AC1, AC6, R28)
+            └ does the same under StrictMode, where every component renders twice
+            └ sends an unmatched path to the sign-in start (AC2, R28)
+            └ sends a path that RESEMBLES a public one to the sign-in start too (AC2)
+            └ sends /app/ to the sign-in start (AC3, R28)
+            └ sends /app with no trailing slash through the same index route (AC3)
+            └ replaces rather than pushes, in the source as well as the behaviour (AC6)
+            └ REPLACES the location on a BLOCKED path, sending the visitor to the sign-in start (R28, task 41)
+  KILLED    own            RD05 the destination is a hardcoded literal rather than SIGN_IN_PATH  (3 failed of 1780, exit 1)
+            └ builds the destination from SIGN_IN_PATH, in the `to` prop itself (AC11)
+            └ reads SIGN_IN_PATH inside the function, never at module scope (AC11)
+  KILLED    own            RD06 the arrival is made absolute, so every deep link is silently discarded (AC14)  (5 failed of 1780, exit 1)
+            └ remembers the arrival for a real authenticated path, basename-free (AC7, AC14)
+            └ remembers every rememberable authenticated path as its own leading-slash form (AC14)
+            └ stores the right VALUE under StrictMode, and this suite never counts writes (phase 3 F4)
+            └ writes only L16's return-target key (AC8)
+  KILLED    own            RD07 the basename strip is put back, so a doubled prefix remembers a route nobody asked for  (3 failed of 1780, exit 1)
+            └ remembers nothing for a DOUBLED basename, which is the defect phase 9 removed
+            └ puts no branch on the arrival before remembering it (AC7, phase 8 I3)
+  KILLED    own            RD08 the return target is never remembered  (7 failed of 1780, exit 1)
+            └ remembers the arrival for a real authenticated path, basename-free (AC7, AC14)
+            └ remembers every rememberable authenticated path as its own leading-slash form (AC14)
+            └ stores the right VALUE under StrictMode, and this suite never counts writes (phase 3 F4)
+            └ writes only L16's return-target key (AC8)
+            └ puts no branch on the arrival before remembering it (AC7, phase 8 I3)
+            └ asks the session owner, which is one of the two things it is allowed to reach for (AC5)
+  KILLED    own            RD09 a branch is added where the allowlist belongs  (2 failed of 1780, exit 1)
+            └ puts no branch on the arrival before remembering it (AC7, phase 8 I3)
+  KILLED    own            RD10 the gate renders nothing again instead of delegating  (16 failed of 1780, exit 1)
+            └ sends all eleven to the sign-in start, replacing the entry (AC1, AC6, R28)
+            └ does the same under StrictMode, where every component renders twice
+            └ does not count an empty-string token as a session (AC1)
+            └ remembers the arrival for a real authenticated path, basename-free (AC7, AC14)
+            └ remembers every rememberable authenticated path as its own leading-slash form (AC14)
+            └ remembers NOTHING for a parameterised path, by the allowlist (AC7, phase 3 F9)
+            └ stores the right VALUE under StrictMode, and this suite never counts writes (phase 3 F4)
+            └ writes only L16's return-target key (AC8)
+            └ renders byte-identical output to a direct arrival at the sign-in screen (AC10)
+            └ gives the same destination, the same action and the same markup for (a), (b) and (c)
+            └ serves the sign-in start, not the path asked for, on all eleven without a session (AC2, AC8, R28)
+            └ serves the sign-in start under StrictMode too, where every component renders twice (AC2)
+            └ does not count an empty-string token as a session (AC2)
+            └ REPLACES the location on a BLOCKED path, sending the visitor to the sign-in start (R28, task 41)
+            └ BLOCKS an authenticated path arriving with a query string or a trailing slash (AC2, phase 11 F4)
+  KILLED    own            RD11 the index route is removed, so the bare /app/ renders nothing  (22 failed of 1780, exit 1)
+            └ sends the bare /app/ through its index route to the sign-in start (R28, T41)
+            └ sends the bare /app through the same index route (R28, T41)
+            └ declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)
+            └ serves the sign-in start, not the path asked for, on all eleven without a session (AC2, AC8, R28)
+            └ serves the sign-in start under StrictMode too, where every component renders twice (AC2)
+            └ does not count an empty-string token as a session (AC2)
+            └ serves every one of the eleven WITH a session, so the gate is a split and not a deny (AC4)
+            └ serves an authenticated path under StrictMode WITH a session too (AC4, phase 11 F5)
+            └ CONTROL: the same table, the same paths, a pass-through gate - and the content arrives (AC3)
+            └ serves every one of the nine public paths without a session (AC1)
+            └ serves the catch-all without a session, which is what task 41 will need (AC1)
+            └ leaves the location where it was on every public path, and performs no navigation
+            └ REPLACES the location on a BLOCKED path, sending the visitor to the sign-in start (R28, task 41)
+            └ is one pathless route holding exactly AUTHENTICATED_ROUTE_PATHS, with the public nine and the catch-all beside it
+            └ is exactly one pathless route carrying exactly one element, and it is the gate
+            └ serves a public path with a trailing slash
+            └ BLOCKS an authenticated path arriving with a query string or a trailing slash (AC2, phase 11 F4)
+            └ serves a public path with a query string and keeps the query (AC1)
+            └ sends /app/ to the sign-in start (AC3, R28)
+            └ sends /app with no trailing slash through the same index route (AC3)
+            └ gives the same destination, the same action and the same markup for (a), (b) and (c)
+  KILLED    own            RD12 the catch-all loses its element  (8 failed of 1780, exit 1)
+            └ sends an unmatched /app path through the catch-all to the sign-in start (AC4, L11, R28)
+            └ attaches a screen only to the routes whose task has run (L11, L12)
+            └ sends an unmatched path to the sign-in start (AC2, R28)
+            └ sends a path that RESEMBLES a public one to the sign-in start too (AC2)
+            └ remembers nothing for a DOUBLED basename, which is the defect phase 9 removed
+            └ gives the same destination, the same action and the same markup for (a), (b) and (c)
+            └ attaches an element to sign-in, callback and signed-out, and to nothing else
+  KILLED    own            RD13 the redirect is applied to the public routes too  (7 failed of 1780, exit 1)
+            └ resolves an emailed link with a query string and keeps the query (AC1, AC5)
+            └ attaches a screen only to the routes whose task has run (L11, L12)
+            └ renders eight of them without redirecting, and stays put (AC4, R28)
+            └ keeps the query string on an emailed public link (AC4)
+            └ serves a public path arriving with a trailing slash (AC4)
+            └ attaches an element to sign-in, callback and signed-out, and to nothing else
+  KILLED    own            RD14 the index route is spelled `path: ''` instead of `index: true`  (19 failed of 1780, exit 1)
+            └ declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)
+            └ attaches a screen only to the routes whose task has run (L11, L12)
+            └ attaches an element to sign-in, callback and signed-out, and to nothing else
+            └ serves the sign-in start, not the path asked for, on all eleven without a session (AC2, AC8, R28)
+            └ serves the sign-in start under StrictMode too, where every component renders twice (AC2)
+            └ does not count an empty-string token as a session (AC2)
+            └ serves every one of the eleven WITH a session, so the gate is a split and not a deny (AC4)
+            └ serves an authenticated path under StrictMode WITH a session too (AC4, phase 11 F5)
+            └ CONTROL: the same table, the same paths, a pass-through gate - and the content arrives (AC3)
+            └ serves every one of the nine public paths without a session (AC1)
+            └ serves the catch-all without a session, which is what task 41 will need (AC1)
+            └ leaves the location where it was on every public path, and performs no navigation
+            └ REPLACES the location on a BLOCKED path, sending the visitor to the sign-in start (R28, task 41)
+            └ is one pathless route holding exactly AUTHENTICATED_ROUTE_PATHS, with the public nine and the catch-all beside it
+            └ is exactly one pathless route carrying exactly one element, and it is the gate
+            └ serves a public path with a trailing slash
+            └ BLOCKS an authenticated path arriving with a query string or a trailing slash (AC2, phase 11 F4)
+            └ serves a public path with a query string and keeps the query (AC1)
+  KILLED    own            RD15 withProbes identifies the gate by path alone again (D1)  (14 failed of 1780, exit 1)
+            └ serves the sign-in start, not the path asked for, on all eleven without a session (AC2, AC8, R28)
+            └ serves the sign-in start under StrictMode too, where every component renders twice (AC2)
+            └ does not count an empty-string token as a session (AC2)
+            └ serves every one of the eleven WITH a session, so the gate is a split and not a deny (AC4)
+            └ serves an authenticated path under StrictMode WITH a session too (AC4, phase 11 F5)
+            └ CONTROL: the same table, the same paths, a pass-through gate - and the content arrives (AC3)
+            └ serves every one of the nine public paths without a session (AC1)
+            └ serves the catch-all without a session, which is what task 41 will need (AC1)
+            └ leaves the location where it was on every public path, and performs no navigation
+            └ REPLACES the location on a BLOCKED path, sending the visitor to the sign-in start (R28, task 41)
+            └ serves a public path with a trailing slash
+            └ BLOCKS an authenticated path arriving with a query string or a trailing slash (AC2, phase 11 F4)
+            └ serves a public path with a query string and keeps the query (AC1)
+  KILLED    own            RD16 task 37's AC9 counts three attached routes again  (2 failed of 1780, exit 1)
+            └ attaches an element to sign-in, callback and signed-out, and to nothing else
+  KILLED    own            RD17 task 40's AC12 filters pathless routes by path alone again  (2 failed of 1780, exit 1)
+            └ is one pathless route holding exactly AUTHENTICATED_ROUTE_PATHS, with the public nine and the catch-all beside it
+  KILLED    own            RD18 task 40's AC13 admits only one pathless element again  (2 failed of 1780, exit 1)
+            └ is exactly one pathless route carrying exactly one element, and it is the gate
+  KILLED    own            RD19 task 16's pathTree drops the index route's level  (2 failed of 1780, exit 1)
+            └ declares exactly the 20 §4c paths, all relative, with the catch-all as the only wildcard (L14)
+  KILLED    own            RD20 task 16's element count forgets the redirect  (2 failed of 1780, exit 1)
+            └ attaches a screen only to the routes whose task has run (L11, L12)
+
+regressions: 20/20 killed
+survivors:   none
+broken:      none
+
+--- expectation vs outcome (`own` = killed BY A CASE THIS TASK OWNS) ---
+  RD01   expected own           got KILLED/own as expected
+  RD02   expected own           got KILLED/own as expected
+  RD03   expected own           got KILLED/own as expected
+  RD04   expected own           got KILLED/own as expected
+  RD05   expected own           got KILLED/own as expected
+  RD06   expected own           got KILLED/own as expected
+  RD07   expected own           got KILLED/own as expected
+  RD08   expected own           got KILLED/own as expected
+  RD09   expected own           got KILLED/own as expected
+  RD10   expected own           got KILLED/own as expected
+  RD11   expected own           got KILLED/own as expected
+  RD12   expected own           got KILLED/own as expected
+  RD13   expected own           got KILLED/own as expected
+  RD14   expected own           got KILLED/own as expected
+  RD15   expected own           got KILLED/own as expected
+  RD16   expected own           got KILLED/own as expected
+  RD17   expected own           got KILLED/own as expected
+  RD18   expected own           got KILLED/own as expected
+  RD19   expected own           got KILLED/own as expected
+  RD20   expected own           got KILLED/own as expected
+
+disagreements: none
