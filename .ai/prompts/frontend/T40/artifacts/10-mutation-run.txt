@@ -20,7 +20,7 @@ baseline whole suite: 1 failed of 1743, exit 1
             └ serves no content under StrictMode either, where every component renders twice (AC2)
             └ does not count an empty-string token as a session (AC2)
             └ leaves the location where it was on a BLOCKED path too, rather than redirecting (R28, task 41)
-  KILLED    own            RS06 the gate redirects instead of rendering nothing, taking task 41's clause  (11 failed of 1743, exit 1)
+  KILLED    own            RS06 the gate redirects instead of rendering nothing, taking task 41's clause  (13 failed of 1743, exit 1)
             └ serves no content on any of the eleven authenticated paths without a session (AC2, AC8)
             └ serves no content under StrictMode either, where every component renders twice (AC2)
             └ does not count an empty-string token as a session (AC2)
@@ -214,23 +214,23 @@ unfalsifiable: 1 - no observable effect to detect: ['RS04 the blocked arm return
 survivors:   ['RS04']
 broken:      none
 
---- expectation vs outcome ---
-  RS01   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
-  RS02   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
-  RS03   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
+--- expectation vs outcome (`own` = killed BY A CASE THIS TASK OWNS) ---
+  RS01   expected own           got KILLED/own as expected
+  RS02   expected own           got KILLED/own as expected
+  RS03   expected own           got KILLED/own as expected
   RS04   expected unfalsifiable got SURVIVED  as expected
-  RS05   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
-  RS06   expected inherited     got KILLED    as expected
-  RS07   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
-  RS08   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
-  RS09   expected inherited     got KILLED    as expected
-  RS10   expected inherited     got KILLED    as expected
-  RS11   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
-  RS12   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
-  RS13   expected inherited     got KILLED    as expected
-  RS14   expected phase 10      got KILLED    DISAGREES - inherited cover is wider than assumed
-  RS15   expected inherited     got KILLED    as expected
-  RS16   expected inherited     got KILLED    as expected
-  RS17   expected inherited     got KILLED    as expected
+  RS05   expected own           got KILLED/own as expected
+  RS06   expected own           got KILLED/own as expected
+  RS07   expected own           got KILLED/own as expected
+  RS08   expected own           got KILLED/own as expected
+  RS09   expected own           got KILLED/own as expected
+  RS10   expected own           got KILLED/own as expected
+  RS11   expected own           got KILLED/own as expected
+  RS12   expected own           got KILLED/own as expected
+  RS13   expected own           got KILLED/own as expected
+  RS14   expected own           got KILLED/own as expected
+  RS15   expected own           got KILLED/own as expected
+  RS16   expected own           got KILLED/own as expected
+  RS17   expected own           got KILLED/own as expected
 
-disagreements: ['RS01', 'RS02', 'RS03', 'RS05', 'RS07', 'RS08', 'RS11', 'RS12', 'RS14']
+disagreements: none
