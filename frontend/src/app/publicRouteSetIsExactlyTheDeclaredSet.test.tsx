@@ -889,9 +889,14 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
   // PHASE 9 REJECTED THE OTHER CANDIDATE, by measuring it: an isolation mount of `<RequireSession />` as a
   // route's own element renders "" in BOTH arms, because its `<Outlet />` has no child route and `null`
   // renders nothing either. That case would pass with the guard inverted, deleted or hard-wired to false.
+  // EVERY DESCRIBE BELOW IS PREFIXED `T40`, and that is not decoration. Task 37's own blocks in this file are
+  // numbered AC1-AC13 and so are task 40's, against a DIFFERENT frozen brief - so without the prefix this
+  // file would hold two AC10s, two AC12s and two AC13s, and a failure naming "AC12" would not say whose. The
+  // same collision bit task 39, which renumbered two criteria after its matrix caught them colliding with
+  // its own frozen brief; this is the file-level version of it, caught at phase 12.
   // =========================================================================================================
 
-  describe('AC1, AC2, AC3, AC4 the split, measured against a control', () => {
+  describe('T40 AC1, AC2, AC3, AC4 the split, measured against a control', () => {
     it('serves no content on any of the eleven authenticated paths without a session (AC2, AC8)', async () => {
       for (const path of AUTHENTICATED_ROUTE_PATHS) {
         const { container } = await arriveWithTable(withProbes(<RequireSession />), path);
@@ -965,7 +970,7 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
   });
 
-  describe('AC10 a sessionless visit is served, not bounced', () => {
+  describe('T40 AC10 a sessionless visit is served, not bounced', () => {
     it('leaves the location where it was on every public path, and performs no navigation', async () => {
       for (const path of PUBLIC_ROUTE_PATHS) {
         const { router } = await arriveWithTable(withProbes(<RequireSession />), path);
@@ -988,7 +993,7 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
   });
 
-  describe('AC12 the gate reaches exactly the eleven', () => {
+  describe('T40 AC12 the gate reaches exactly the eleven', () => {
     it('is one pathless route holding exactly AUTHENTICATED_ROUTE_PATHS, with the public nine and the catch-all beside it', () => {
       // WHAT THIS ADDS, AND WHAT IT DELIBERATELY DOES NOT. `routesResolveUnderAppPrefixOnly.test.tsx:159`
       // already pins the whole tree's SHAPE, and phase 7 measured it killing five of the six structural
@@ -1009,7 +1014,7 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
   });
 
-  describe('AC13 no element hides where the count pins cannot look', () => {
+  describe('T40 AC13 no element hides where the count pins cannot look', () => {
     it('is exactly one pathless route carrying exactly one element, and it is the gate', () => {
       // THE HOLE THIS TASK OPENS, and the reason it must be pinned here. Both screen-count pins -
       // `routesResolveUnderAppPrefixOnly.test.tsx:161` and AC9 above - record a route only when
@@ -1044,7 +1049,7 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
   });
 
-  describe('AC6, AC7 the gate asks one question and reaches for nothing else', () => {
+  describe('T40 AC6, AC7 the gate asks one question and reaches for nothing else', () => {
     it('reaches for nothing it should not, by source', async () => {
       const code = await guardSource();
       for (const [forbidden] of GUARD_FORBIDDEN) {
@@ -1095,7 +1100,7 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
   });
 
-  describe('AC1 boundaries: the shapes a public link really arrives in', () => {
+  describe('T40 AC1 boundaries: the shapes a public link really arrives in', () => {
     it('serves a public path with a trailing slash', async () => {
       // MEASURED, not assumed. React Router normalises the trailing slash before matching, so `/app/verify/`
       // resolves to `verify` and is served without a session like any other public path. Pinned so a router
