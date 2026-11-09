@@ -205,13 +205,59 @@ MUTANTS = [
       "    </main>\n    <a href=\"/elsewhere\">{t('signedOut.action')}</a>\n    </>\n  );")),
 
     # --- PHASE 9: the regressions phase 8's findings said were unmeasured --------------------------------
+    # NUMBERING (phase 11, F7): there is no SL24. The label was skipped when phase 9's six were written and
+    # the gap is left rather than closed, because renumbering would make every narrow verification recorded
+    # in artifacts 09 and 10 cite a mutant that no longer has that name. Twenty-nine mutants, SL01-SL30.
+
     # I1. The screen reads the session and renders the SAME markup. AC6 and AC13 compare rendered output, so
-    # neither can see this; only the source sweep can. Written to prove the new entries are load-bearing.
-    ("SL25 the screen reads the access token and branches to identical markup (I1)",
+    # neither can see this; only the source sweep can.
+    #
+    # PHASE 11 (F1) REWROTE THIS MUTANT. It read `accessToken() !== null`, and `accessToken` is an OBJECT -
+    # `accessToken.ts:45` exports a LocalSession with current/adopt/renew. So the mutant planted a call that
+    # cannot legally exist, and its kill proved only that the scan matched an impossible shape and that an
+    # impossible call crashes at runtime. The realistic read is `.current()`, which the OLD pattern did not
+    # match at all - so the regression this mutant claimed to measure was in fact unmeasured.
+    ("SL25 the screen reads the access token with .current() and branches to identical markup (I1, F1)",
      SCREEN,
      ("import { SIGN_IN_PATH } from '../app/routes';", "  const { t } = useTranslation();"),
      ("import { SIGN_IN_PATH } from '../app/routes';\nimport { accessToken } from './accessToken';",
-      "  const { t } = useTranslation();\n  const held = accessToken() !== null;\n  void held;")),
+      "  const { t } = useTranslation();\n  const held = accessToken.current() !== null;\n  void held;")),
+
+    # F1's other half, and the worse one: `adopt()` is not a read. A public screen reachable by typing its
+    # URL would be WRITING to the tab's session. AC2 catches it behaviourally on the no-token arrival; this
+    # measures whether the sweep catches it at all, which before phase 11 it did not.
+    ("SL31 the landing ADOPTS a token into the tab's session (F1)",
+     SCREEN,
+     ("import { SIGN_IN_PATH } from '../app/routes';", "  const { t } = useTranslation();"),
+     ("import { SIGN_IN_PATH } from '../app/routes';\nimport { accessToken } from './accessToken';",
+      "  const { t } = useTranslation();\n  accessToken.adopt('adopted-by-the-landing-screen');")),
+
+    # F4. Neither of these changes a tag name, so the phase 10 structure case saw them only after phase 11
+    # added the semantic assertions.
+    ("SL32 the landmark is overridden to role=region, so it is no longer a main landmark (F4)",
+     SCREEN, "    <main>", "    <main role=\"region\">"),
+
+    ("SL33 the heading is re-levelled with aria-level, so h1 is no longer level one (F4)",
+     SCREEN, HEADING, "      <h1 aria-level=\"2\">{t('signedOut.heading')}</h1>"),
+
+    # F8. The constant is read inside the component - so AC13's scan passes - and the target is hardcoded.
+    ("SL34 SIGN_IN_PATH is read but the Link's target is spelled literally (F8)",
+     SCREEN, LINK,
+     "      <Link to=\"/sign-in\">{t('signedOut.action')}{SIGN_IN_PATH === '' ? '' : ''}</Link>"),
+
+    # F3. A hook on a screen that is deliberately static, pulling session state from a provider.
+    ("SL35 the static screen grows a useContext (F3)",
+     SCREEN,
+     ("import { useTranslation } from 'react-i18next';", "  const { t } = useTranslation();"),
+     ("import { useTranslation } from 'react-i18next';\nimport { useContext, createContext } from 'react';\nconst Ctx = createContext(false);",
+      "  const { t } = useTranslation();\n  void useContext(Ctx);")),
+
+    # F2. The import shape oxlint would reformat but a scan must not depend on it.
+    ("SL36 the token module is imported with double quotes, which the old scan would miss (F2)",
+     SCREEN,
+     ("import { SIGN_IN_PATH } from '../app/routes';", "  const { t } = useTranslation();"),
+     ('import { SIGN_IN_PATH } from \'../app/routes\';\nimport { accessToken } from "./accessToken";',
+      "  const { t } = useTranslation();\n  void accessToken;")),
 
     # I1, the other half: a leak to a surface T36's AC8 sweeps and T37's did not.
     ("SL26 the screen writes the route to document.title (I1)",
