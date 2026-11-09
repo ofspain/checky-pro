@@ -1366,13 +1366,19 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
        * and in T24's `arriveAt`. This case is the part of that finding worth having.)
        */
       it('reports a real navigation too, so a broken instrument cannot read as a refusal', async () => {
+        // GROWN BY T40, which nested every authenticated path under one pathless guard route, so the match
+        // CHAIN gained a level. `routerOutcomeFor` spells a pathless match '(index)' (line 375), and the
+        // level is named here rather than dropped from the assertion: the chain is what this control
+        // measures, and a chain read with `.at(-1)` alone would stop noticing where the leaf sits. The
+        // destination is unchanged - the leaf is still the authenticated path, and `pathname` still matches -
+        // which is the whole reason T40's change is invisible to every other case in this file.
         expect(await routerOutcomeFor(`/${HOME_PATH}`)).toEqual({
           pathname: HOME_ROUTE,
-          matched: ['/', HOME_PATH],
+          matched: ['/', '(index)', HOME_PATH],
         });
         expect(await routerOutcomeFor(A_REAL_TARGET)).toEqual({
           pathname: A_REAL_TARGET_ROUTE,
-          matched: ['/', 'account/sessions'],
+          matched: ['/', '(index)', 'account/sessions'],
         });
       });
 

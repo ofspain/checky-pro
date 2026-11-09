@@ -516,17 +516,31 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
 
   describe('AC11 no authenticated route can render anything yet', () => {
     it('pins that every authenticated path has no element - a T41 obligation when it changes', () => {
-      const children = appRoutes[0].children ?? [];
+      // GROWN BY T40, and the growth is in WHERE it looks, not in what it claims. T40 moved the authenticated
+      // eleven out of the root's direct children and under one pathless guard route, so a search restricted to
+      // `appRoutes[0].children` stopped finding them - and the lower bound below is what turned that into a
+      // failure rather than a silent pass over an empty list. It walks the tree now.
+      //
+      // The attribution in this case's title is also now wrong, and is left as written rather than edited,
+      // because the title is what the task that wrote it claimed: the ROUTE GUARD is task 40's, which is the
+      // change this comment is about, and only the REDIRECT is task 41's. The guard carries no `path`, so it
+      // is not an element on an authenticated path and this pin still reads zero - which is the point. A
+      // SCREEN on one of these paths remains task 42's to attach, and this case is still what will stop it
+      // from landing unnoticed.
+      type Node = { path?: string; element?: unknown; children?: Node[] };
+      const walk = (routes: readonly Node[]): Node[] =>
+        routes.flatMap((route) => [route, ...walk(route.children ?? [])]);
+      const everyRoute = walk(appRoutes as Node[]);
       const withElements = [...AUTHENTICATED_ROUTE_PATHS].filter(
-        (path) => children.find((route) => route.path === path)?.element !== undefined,
+        (path) => everyRoute.find((route) => route.path === path)?.element !== undefined,
       );
       expect(
         withElements,
         'An authenticated route now renders a screen, so "no half-authenticated render" is no longer true by '
-          + 'accident of an empty route table. T41 owns the route guard; this task cannot cover it.',
+          + 'accident of an empty route table. T40 owns the route guard; this task cannot cover it.',
       ).toEqual([]);
       // Lower bound: the paths really are in the table, so the check is not passing over an empty list.
-      expect(children.map((route) => route.path)).toEqual(expect.arrayContaining([...AUTHENTICATED_ROUTE_PATHS]));
+      expect(everyRoute.map((route) => route.path)).toEqual(expect.arrayContaining([...AUTHENTICATED_ROUTE_PATHS]));
     });
   });
 

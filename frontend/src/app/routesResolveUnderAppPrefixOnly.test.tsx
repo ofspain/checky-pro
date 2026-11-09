@@ -151,13 +151,27 @@ describe('routesResolveUnderAppPrefixOnly', () => {
       expect(path.startsWith('/'), path).toBe(false);
       expect(path.includes('*'), path).toBe(false);
     }
-    expect(pathTree(appRoutes)).toEqual([['/', [...DECLARED_PATHS.map((path) => [path, []]), ['*', []]]]]);
+    // GROWN BY T40, which nested the authenticated eleven under one pathless guard route. The level is named
+    // EXPLICITLY rather than the assertion being loosened, because the flat form was carrying three claims
+    // worth keeping: the ORDER of the root's children, that the authenticated paths appear NOWHERE else, and
+    // - now - that the guard's path is `undefined` rather than a string. `path: ''` would read as `['', [...]]`
+    // here and would change what the bare `/app/` matches (the case above).
+    expect(pathTree(appRoutes)).toEqual([['/', [
+      ...PUBLIC_ROUTE_PATHS.map((path) => [path, []]),
+      [undefined, AUTHENTICATED_ROUTE_PATHS.map((path) => [path, []])],
+      ['*', []],
+    ]]]);
   });
 
   // Narrowed by T16, which attached the first screen. It was "no route carries an element", which was the
   // route-table twin of T01's "the shell renders nothing" - and like those, it retires one exception at a time
   // rather than all at once. A task that attaches a screen must come here and name it, which is the point.
   it('attaches a screen only to the routes whose task has run (L11, L12)', () => {
+    // STILL THREE AFTER T40, and that is not an accident worth leaving unsaid: T40 attached an element to a
+    // route with no `path`, and the predicate below only records a route that HAS one - so a guard is not
+    // counted as a screen, and this pin keeps its meaning. The filter is load-bearing from now on, so the
+    // thing it cannot see is pinned where T40's claims live: `publicRouteSetIsExactlyTheDeclaredSet.test.tsx`
+    // asserts that exactly ONE pathless route in the whole tree carries an element, and that it is the guard.
     expect(routesWithElements(appRoutes)).toEqual([...SCREENS_ATTACHED_SO_FAR]);
 
     // The predicate counts, rather than always returning a one-element list that happens to match: given two

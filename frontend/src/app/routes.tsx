@@ -6,6 +6,7 @@ import { createBrowserRouter, type RouteObject } from 'react-router';
 import { CallbackScreen } from '../auth/CallbackScreen';
 import { SignedOutScreen } from '../auth/SignedOutScreen';
 import { SignInScreen } from '../auth/SignInScreen';
+import { RequireSession } from '../auth/RequireSession';
 
 /** Every SPA route lives under this prefix, which is disjoint from the backend prefixes the edge sends to the services (L14). */
 export const APP_BASENAME = '/app';
@@ -23,7 +24,8 @@ export const HOME_PATH = 'home';
  * `endSession.ts` no longer declares it privately: one spelling, and `post_logout_redirect_uri` is built from it. */
 export const SIGNED_OUT_PATH = 'signed-out';
 
-/** Routes reachable without a session (design.md §4c), relative to APP_BASENAME. T40 enforces the split. */
+/** Routes reachable without a session (design.md §4c), relative to APP_BASENAME. T40 enforces the split: these
+ * nine stay direct children of the root, while the authenticated eleven move under `RequireSession` below. */
 export const PUBLIC_ROUTE_PATHS = [
   SIGN_IN_PATH,
   CALLBACK_PATH,
@@ -63,7 +65,14 @@ export const appRoutes: RouteObject[] = [
         if (path === SIGNED_OUT_PATH) return { path, element: <SignedOutScreen /> };
         return { path };
       }),
-      ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),
+      // TASK 40 - the auth gate (R28's first clause). ONE pathless layout route decides for all eleven, so
+      // there is a single place the question is asked and a screen attached later nests inside the gate
+      // rather than replacing it. Pathless deliberately: `path: ''` would be a string in the route tree and
+      // would change what the bare `/app/` matches.
+      { element: <RequireSession />, children: AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })) },
+      // OUTSIDE the gate, on purpose. The catch-all must answer without a session, because task 41 replaces
+      // it with the redirect to the sign-in start - and a catch-all behind the gate could not redirect the
+      // visitor who has no session, which is the only visitor it is for.
       { path: '*' },
     ],
   },
