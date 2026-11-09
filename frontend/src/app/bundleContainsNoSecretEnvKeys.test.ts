@@ -74,6 +74,13 @@ const KNOWN_ABSOLUTE_URLS = [
   // link in a thrown message: not a fetch target, not configuration, and not ours.
   'https://react.i18next.com/latest/usetranslation-hook',
   'https://reactrouter.com/en/main/routers/picking-a-router.',
+  // Added 2026-11-09 by T173, and justified as this list's own comment requires. This one is NOT in a thrown
+  // message like the three above it - it is in the compiled STYLESHEET, which is a new kind of entry for this
+  // list. Tailwind 4 emits `/*! tailwindcss v4.3.5 | MIT License | https://tailwindcss.com */` as the first
+  // line of its output, and the `/*!` form is what minifiers preserve by convention because it is a legal
+  // notice. So it ships for as long as we ship Tailwind, and removing it would mean stripping a license
+  // header. A vendor attribution in a comment: not a fetch target, not configuration, and not ours.
+  'https://tailwindcss.com',
 ] as const;
 
 /** This platform's own services. No emitted file may name one (L9, and the leak that would matter most). */

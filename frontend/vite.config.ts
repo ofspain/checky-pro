@@ -1,3 +1,4 @@
+import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -14,6 +15,11 @@ export default defineConfig({
   envPrefix: ['VITE_'],
   plugins: [
     react(),
+    // TASK 173. Tailwind 4 is CSS-first, so this plugin IS the configuration step: there is no
+    // `tailwind.config.js` and no PostCSS chain, and `src/app/styles.css` holds the `@theme` tokens. The
+    // plugin only compiles what that file imports, so adding it changes nothing until something imports it -
+    // which `app/mountShell.tsx` does.
+    tailwindcss(),
     // injectManifest, not generateSW: the worker is written by hand in src/pwa so it can import the
     // navigation denylist (T09) and the request policy (T11) instead of restating them (L17, R57).
     // No manifest is emitted - an installable PWA is not this task. Registration is hand-written in

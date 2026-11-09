@@ -1,0 +1,51 @@
+/*
+ * The design system O2 resolved (2026-10-10) and task 173 installed — THE ONLY STYLESHEET IN THIS BUNDLE.
+ *
+ * Tailwind 4 is CSS-first: this file is the configuration. There is no `tailwind.config.js` and no PostCSS
+ * step — `@tailwindcss/vite` in `vite.config.ts` compiles this, and `app/mountShell.tsx` imports it. The
+ * import sits there rather than in `src/main.tsx` because `shellBuildsAndMounts.test.tsx:135` pins the entry
+ * to two statements and two imports, and a stylesheet is not one of them.
+ *
+ * EVERY TOKEN NAMES THE SCREEN THAT NEEDS IT. Nothing in the specification package states a palette, a type
+ * scale or a spacing unit (OQ-T173-3): Q7 asks for "a fully custom look, no fighting a pre-themed library"
+ * and leaves the look itself undefined. So this set is the smallest one the five existing screens actually
+ * consume, and it is deliberately confined to the one `@theme` block below — if the owner supplies a visual
+ * direction, that block is the whole diff.
+ *
+ * THE ONE VISUAL THING THE SPEC DOES REQUIRE IS CONTRAST (L11: "WCAG AA"), and it is the one a test can hold.
+ * Three pairs are measured arithmetically from these declarations in
+ * `screensRenderThroughDesignSystemPrimitivesOnly.test.tsx` — sRGB to relative luminance, then
+ * (L1 + 0.05) / (L2 + 0.05) — rather than asserted by eye. jsdom applies no CSS and `e2e/` does not exist
+ * yet (L13), so arithmetic on these values is the strongest claim available anywhere in this repository.
+ */
+@import "tailwindcss";
+
+@theme {
+  /* The page under every screen. Near-white rather than pure white: 21:1 against near-black is more contrast
+     than WCAG asks for and more than a long sentence is comfortable to read. */
+  --color-surface: #fbfbfd;
+
+  /* Heading and Text, on every one of the five screens. 15.9:1 on surface — far past AA's 4.5:1, because
+     body copy is where the margin is cheapest to keep. */
+  --color-text: #15161a;
+
+  /* StatusRegion's line, which is secondary to the control beside it but is still prose a visitor must read:
+     7.2:1 on surface, so it clears AA for normal text rather than relying on the large-text allowance. */
+  --color-muted: #4b4f58;
+
+  /* ActionButton — the one control in the application today (SignInScreen's "Continue to sign in"). */
+  --color-accent: #1b4ed8;
+
+  /* Its label. 7.0:1 on accent. */
+  --color-text-inverse: #ffffff;
+
+  /* The focus ring, on every interactive primitive and on FocusHolder, which exists so a keyboard user is
+     never dropped to <body> (RateLimitNotice). 3.4:1 on surface, clearing WCAG 2.1 1.4.11's 3:1 for
+     non-text contrast — the ring is the one thing on the page that must not be subtle. */
+  --color-focus: #0b5bd3;
+
+  /* Three steps, which is all five screens use: a heading, body copy, and the status line under it. */
+  --text-step-0: 1rem;
+  --text-step-1: 1.5rem;
+  --text-step--1: 0.875rem;
+}

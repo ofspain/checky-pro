@@ -1,3 +1,7 @@
+// The one stylesheet in the bundle (task 173). It is imported HERE and not in `src/main.tsx`, whose two
+// imports and two statements are pinned by `shellBuildsAndMounts.test.tsx:135` - and this is the right home
+// for it anyway: the shell is what brings the i18n instance, the router and now the styles with it.
+import './styles.css';
 import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
