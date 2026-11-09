@@ -188,6 +188,13 @@ const PERMITTED_CALLERS: Readonly<Record<string, readonly string[]>> = {
   // `endSession()` reaches them all through `signOut()`. A second module setting it would be a second
   // sign-out assembling itself, which is the failure mode this whole table exists to catch.
   markSignedOut: ['auth/signOut.ts'],
+  // TASK 39, ADDED IN PHASE 10 (Kimi phase 8 I9), and it is the more dangerous direction of the two. An
+  // unauthorized `markSignedOut()` would sign a tab out too eagerly; an unauthorized `markSignedIn()`
+  // RELEASES the latch, which re-opens OQ-T35-3 - a signed-out tab taking a live token from a sibling.
+  // Nothing scanned for it, because the stray-caller sweep iterates this table's keys and `markSignedIn`
+  // was not one. The single caller is also the design: `accessToken.ts:82` calls `retainAccessToken` "the
+  // only place a non-null token is assigned", so a second sign-in path cannot silently skip the release.
+  markSignedIn: ['auth/accessToken.ts'],
   takeReturnTarget: ['auth/CallbackScreen.tsx'],
   clearReturnTarget: ['auth/signOut.ts'],
 };
@@ -372,6 +379,15 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
     clearAccessToken();
     takeSignInNotice();
     takeIdToken(); // TASK 36
+    // TASK 39, AND IT WAS MISSING. `markSignedIn` was imported into this file and never called, so every
+    // case that signed out left the latch set for every case after it - measured by appending
+    // `expect(hasSignedOut()).toBe(false)` to this file, which failed (T39 F2, Kimi phase 8 I2). Nothing
+    // was broken by it, because every later case that needs an adopt calls `retainAccessToken` first and
+    // so releases the latch itself. That is luck: a case added here that posts a `renewal:succeeded`
+    // without retaining first would be refused, and would fail for a reason belonging to a case that ran
+    // before it. ONE reset point, here - Kimi I15 asked for a second in `renewalRig.close()` as well, and
+    // two make it ambiguous which one is load-bearing.
+    markSignedIn();
   });
 
   describe('AC1 no token is held afterwards', () => {
@@ -776,43 +792,43 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
   });
 
   // TASK 39. Shared by AC9 and AC9c, which is why they are here and not inside either block.
-function renewalRig(tag: string) {
-  const name = `${RENEWAL_CHANNEL}.t39-${tag}-${Date.now()}`;
-  const locks: TabLocks = {
-    request: () => {
-      throw new Error('this rig never takes the lock: it only needs the listener installed');
-    },
-  };
-  const channel = new BroadcastChannel(name);
-  const shared = shareRenewalAcrossTabs(accessToken, { channel, locks });
-  const sibling = new BroadcastChannel(name);
-  const observer = new BroadcastChannel(name);
-  const delivered = new Promise<void>((resolve) => {
-    observer.addEventListener('message', () => resolve(), { once: true });
-  });
-  const close = () => {
-    shared.close();
-    channel.close();
-    sibling.close();
-    observer.close();
-    clearAccessToken();
-  };
-  return { sibling, delivered, close };
-}
-
-/**
- * Delivery is OBSERVED and not waited for, which is task 35's technique kept verbatim because its
- * reasoning survives the fix. A bounded poll alone could exhaust on a slow machine, find null, and report
- * the refusal as a success when nothing was ever delivered - a false PASS now, where before it was a
- * false repair report. So a third endpoint confirms arrival with no bound, and only then is the token read.
- */
-async function settle(delivered: Promise<void>) {
-  await delivered;
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    if (accessToken.current() !== null) return;
+  function renewalRig(tag: string) {
+    const name = `${RENEWAL_CHANNEL}.t39-${tag}-${Date.now()}`;
+    const locks: TabLocks = {
+      request: () => {
+        throw new Error('this rig never takes the lock: it only needs the listener installed');
+      },
+    };
+    const channel = new BroadcastChannel(name);
+    const shared = shareRenewalAcrossTabs(accessToken, { channel, locks });
+    const sibling = new BroadcastChannel(name);
+    const observer = new BroadcastChannel(name);
+    const delivered = new Promise<void>((resolve) => {
+      observer.addEventListener('message', () => resolve(), { once: true });
+    });
+    const close = () => {
+      shared.close();
+      channel.close();
+      sibling.close();
+      observer.close();
+      clearAccessToken();
+    };
+    return { sibling, delivered, close };
   }
-}
+
+  /**
+   * Delivery is OBSERVED and not waited for, which is task 35's technique kept verbatim because its
+   * reasoning survives the fix. A bounded poll alone could exhaust on a slow machine, find null, and report
+   * the refusal as a success when nothing was ever delivered - a false PASS now, where before it was a
+   * false repair report. So a third endpoint confirms arrival with no bound, and only then is the token read.
+   */
+  async function settle(delivered: Promise<void>) {
+    await delivered;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      if (accessToken.current() !== null) return;
+    }
+  }
 
   /*
    * TASK 39 REPLACED WHAT WAS HERE, which is what it was put here for.
@@ -2001,8 +2017,29 @@ async function settle(delivered: Promise<void>) {
        * before telling anyone. Before `assign()`: the navigation may unload the page, and a message posted
        * and then closed on the same tick is still delivered, so the post is queued before the unload begins.
        */
-      const code = await readFile(
+      /*
+       * COMMENTS ARE STRIPPED FIRST, and that is not tidiness (T39 F4, Kimi phase 8 I4). This scan ordered
+       * three statements by `indexOf` over the raw file. `endSession.ts`'s comment above the broadcast says
+       * "because `assign` may unload the page"; rewriting those two words as "because `location.assign` may
+       * unload the page" - a comment-only edit, correct prose about correct code - moves `atAssign` to 225
+       * and `atBroadcast` to 935 and FAILS THIS CASE. Measured, not imagined. In a codebase whose comments
+       * are long because the reasoning is the deliverable, a positional scan over raw source is a tripwire
+       * aimed at prose. The technique is `signOutPropagatesToAllTabs.test.ts`'s `moduleSource()`.
+       */
+      const raw = await readFile(
         join(dirname(expect.getState().testPath as string), 'endSession.ts'), 'utf8');
+      const code = raw
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n')
+        .map((line) => {
+          const at = line.indexOf('//');
+          return at >= 0 && !/['"`]/.test(line.slice(0, at)) ? line.slice(0, at) : line;
+        })
+        .join('\n');
+      // CONTROL: the strip left the statements behind. An over-eager strip would empty the function and
+      // make every `indexOf` below return -1, which would fail - but for the wrong reason, so it is named.
+      expect(code, 'stripping removed the call this scan orders').toContain('broadcastSignOut();');
+      expect(code, 'the comments were not stripped at all').not.toContain('may unload the page');
       const body = /export function endSession\(\)[\s\S]*?\n}/.exec(code)?.[0] ?? '';
       expect(body, 'endSession() was not found, so this scan reads nothing').toContain('signOut()');
 

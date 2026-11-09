@@ -51,6 +51,15 @@ OWN_TESTS = [
 HAZARD_PIN = "KNOWN HAZARD: a stale success from before the sign-out is adopted after a new sign-in"
 
 CANARIES = set()
+
+# SCORED APART, and not as a kill or a loss. XT18 removes `close()`'s idempotency guard; a double
+# `removeEventListener` and a double `BroadcastChannel.close()` are both no-ops by specification, so the
+# guard's removal has NO observable effect and no test can have one. Phase 9 declined to give `close()` an
+# observable side effect for a test's convenience, and phase 10 reworded the two assertions that claimed
+# idempotency to the claim they actually hold. A row that cannot be killed without changing production is a
+# limitation of the code's observability, not a gap in the suite, and counting it either way would lie.
+UNFALSIFIABLE = {"XT18"}
+
 FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 EXPECTED_BASELINE_FAILURES = 1
@@ -431,11 +440,13 @@ def main():
 
     survivors = []
     broken = []
-    regressions = canaries = 0
+    regressions = canaries = unfalsifiable = 0
     for label, path, old, new in MUTANTS:
         if wanted and wanted not in label:
             continue
-        if label.split()[0] in CANARIES:
+        if label.split()[0] in UNFALSIFIABLE:
+            unfalsifiable += 1
+        elif label.split()[0] in CANARIES:
             canaries += 1
         else:
             regressions += 1
@@ -452,17 +463,21 @@ def main():
         revert()
 
     kept = [label for label, *_ in MUTANTS if not wanted or wanted in label]
-    scored = [label for label in kept if label.split()[0] not in CANARIES]
+    apart = CANARIES | UNFALSIFIABLE
+    scored = [label for label in kept if label.split()[0] not in apart]
     # A BROKEN mutant is NOT a kill, and the inherited tally counted it as one. The number a reader
     # quotes must not be inflated by a mutant that never ran. Found in T36's phase 10.
-    lost_labels = [label for label in survivors + broken if label.split()[0] not in CANARIES]
+    lost_labels = [label for label in survivors + broken if label.split()[0] not in apart]
     print(f"\nregressions: {len(scored) - len(lost_labels)}/{regressions} killed"
           f"{'' if not broken else f'  ({len(broken)} BROKEN, not counted as killed)'}")
     if canaries:
         print(f"canaries:    {canaries} - a change elsewhere that must still be caught today, scored apart")
+    if unfalsifiable:
+        print(f"unfalsifiable: {unfalsifiable} - no observable effect to detect; see UNFALSIFIABLE above")
     print(f"survivors:   {survivors or 'none'}")
     print(f"broken:      {broken or 'none'}")
-    return 1 if (survivors or broken) else 0
+    unexpected = [label for label in survivors if label.split()[0] not in apart]
+    return 1 if (unexpected or broken) else 0
 
 
 if __name__ == "__main__":

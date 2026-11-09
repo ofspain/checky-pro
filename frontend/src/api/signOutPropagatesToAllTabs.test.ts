@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { RENEWAL_CHANNEL } from './crossTabRenewal';
 import {
   SIGN_OUT_CHANNEL,
   SIGN_OUT_TYPE,
@@ -40,7 +41,16 @@ function uniqueName(): string {
   return `${SIGN_OUT_CHANNEL}.test-${counter}-${Date.now()}`;
 }
 
-/** Waits for `received` to stop growing, with delivery observed rather than guessed at. */
+/**
+ * A FIXED BOUND, and the comment here used to deny that - it said "waits for `received` to stop growing,
+ * with delivery observed rather than guessed at", naming a variable this file does not have (T39 F7, Kimi
+ * phase 8 I7). Fifty milliseconds of ticks is a guess, which is fine for what it is used for and not fine
+ * to misdescribe: the sentence a reader relies on when deciding whether a negative case needs its own
+ * positive control was telling them it did not. Every case below that asserts something did NOT arrive now
+ * ends by asserting that something DID, on the same channel, because a channel that delivers nothing
+ * satisfies every negative assertion in this file. Task 35's `settle()` observes delivery before polling
+ * and explains why; that technique is what this is not.
+ */
 async function quiet(): Promise<void> {
   for (let tick = 0; tick < 25; tick += 1) await new Promise((resolve) => setTimeout(resolve, 2));
 }
@@ -56,8 +66,8 @@ let source: string | undefined;
  * are long precisely because the reasoning is the deliverable. Same technique as
  * `publicRouteSetIsExactlyTheDeclaredSet.test.tsx`'s `source()`.
  */
-async function moduleSource(): Promise<string> {
-  source ??= (await readFile(join(dirname(expect.getState().testPath as string), 'crossTabSignOut.ts'), 'utf8'))
+function strip(text: string): string {
+  return text
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
     .map((line) => {
@@ -65,6 +75,11 @@ async function moduleSource(): Promise<string> {
       return at >= 0 && !/['"`]/.test(line.slice(0, at)) ? line.slice(0, at) : line;
     })
     .join('\n');
+}
+
+async function moduleSource(): Promise<string> {
+  source ??= strip(
+    await readFile(join(dirname(expect.getState().testPath as string), 'crossTabSignOut.ts'), 'utf8'));
   return source;
 }
 
@@ -130,11 +145,19 @@ describe('signOutPropagatesToAllTabs', () => {
     });
 
     it('never calls a broadcast from signOut.ts, by source', async () => {
-      const signOut = await readFile(
-        join(dirname(dirname(expect.getState().testPath as string)), 'auth', 'signOut.ts'), 'utf8');
+      // STRIPPED, for the reason `moduleSource()` gives and for a second one this site has of its own
+      // (T39 F4, Kimi phase 8 I4). `signOut.ts`'s header was rewritten in phase 9 and now NAMES
+      // `markSignedOut()` in prose - so the second assertion below would pass on a comment while the call
+      // itself had been deleted. A scan that reads prose can be satisfied by a file that does nothing.
+      const signOut = strip(await readFile(
+        join(dirname(dirname(expect.getState().testPath as string)), 'auth', 'signOut.ts'), 'utf8'));
       expect(signOut, 'signOut() broadcasts, so every receiving tab would echo')
         .not.toMatch(/broadcastSignOut/);
       expect(signOut, 'signOut() no longer sets the latch at all').toMatch(/markSignedOut\(\)/);
+      // CONTROL: the strip kept the code and dropped the prose that would have satisfied the line above.
+      expect(signOut, 'stripping removed the function this case reads').toContain('export function signOut()');
+      expect(signOut, 'the header was not stripped, so the assertion above may be reading prose')
+        .not.toContain('cross-tab');
     });
   });
 
@@ -172,6 +195,23 @@ describe('signOutPropagatesToAllTabs', () => {
         .toEqual(['type']);
       expect(JSON.stringify(seen[0]), 'something token-shaped or identifying is in the message')
         .toBe('{"type":"session:signed-out"}');
+    });
+
+    it('pins the channel NAME by literal, because nothing else in the repository does', () => {
+      // Kimi phase 8 I8, half accepted. The TYPE is pinned three times already - the whole-message JSON
+      // equality above, and twice in task 35's suite - so a rename of its value fails those. The CHANNEL
+      // NAME was spelled in exactly one place in the whole repository: the production declaration. Every
+      // test read the constant, so a rename passed everything.
+      //
+      // It matters for the reason the parser is lenient rather than strict: two tabs running different
+      // versions of this app must agree on the channel, or a sign-out reaches nobody and R22 is broken by
+      // a refactor. The literal is split so this case does not supply the string it is checking for.
+      expect(SIGN_OUT_CHANNEL, 'the sign-out channel was renamed, so an older tab hears nothing')
+        .toBe(['themistra', 'session', 'signout'].join('.'));
+      expect(SIGN_OUT_TYPE, 'the sign-out message type was renamed')
+        .toBe(['session', 'signed-out'].join(':'));
+      // And it is not the renewal channel: two channels is the design, for the reason in AC5.
+      expect(SIGN_OUT_CHANNEL).not.toBe(RENEWAL_CHANNEL);
     });
 
     it('spells no token, identifier or timestamp anywhere in the module', async () => {
@@ -216,7 +256,12 @@ describe('signOutPropagatesToAllTabs', () => {
         expect(() => broadcastSignOut(), 'broadcasting threw where the channel does not exist').not.toThrow();
         const listener = listenForSignOut(() => undefined);
         expect(() => listener.close(), 'close() threw on the degraded listener').not.toThrow();
-        expect(() => listener.close(), 'close() is not idempotent on the degraded listener').not.toThrow();
+        // WORDED AS WHAT IT MEASURES (T39 F12, Kimi phase 8 I14). This said "close() is not idempotent",
+        // which it cannot show: the harness removed the `if (closed) return;` guard (XT18) and nothing
+        // failed, because a double `removeEventListener` and a double `BroadcastChannel.close()` are both
+        // no-ops by specification. The guard stays - it documents the intent and survives a `close()` that
+        // one day does something observable - but the claim here is the one that is actually held.
+        expect(() => listener.close(), 'a second close() on the degraded listener throws').not.toThrow();
       } finally {
         globalThis.BroadcastChannel = saved;
       }
@@ -235,12 +280,17 @@ describe('signOutPropagatesToAllTabs', () => {
         clear: vi.spyOn(Storage.prototype, 'clear'),
       };
       const name = uniqueName();
-      opened.push(listenForSignOut(() => markSignedOut(), { channel: channel(name) }));
+      const acted: string[] = [];
+      opened.push(listenForSignOut(() => { acted.push('received'); markSignedOut(); },
+        { channel: channel(name) }));
       broadcastSignOut(channel(name));
       markSignedOut();
       markSignedIn();
       await quiet();
 
+      // The same positive control AC11 needed, for the same reason: a listener that never fires touches no
+      // store either, so "no store was touched" has to be measured over a delivery that happened.
+      expect(acted, 'nothing was delivered, so the untouched store below proves nothing').toEqual(['received']);
       for (const [method, spy] of Object.entries(watch)) {
         expect(spy, `propagation called Storage.${method}`).not.toHaveBeenCalled();
       }
@@ -271,6 +321,21 @@ describe('signOutPropagatesToAllTabs', () => {
       await quiet();
 
       expect(heard, 'a message that is not a sign-out signed this tab out').toEqual([]);
+
+      /*
+       * THE POSITIVE CONTROL, INSIDE THE CASE (T39 F3, Kimi phase 8 I3), and it belongs inside because the
+       * twelve refusals above are only evidence if this channel was live while they were refused.
+       *
+       * Measured before it existed: with `channel.addEventListener` replaced by a no-op, six cases in this
+       * file failed and THIS ONE PASSED - a listener that hears nothing refuses everything. And measured
+       * the other way, this case is the only case in all 1 720 tests that fails when the parser is made
+       * always-true, so it is simultaneously the most load-bearing and the least self-verifying case here.
+       * Now a real sign-out follows the twelve, on the same channel, through the same listener.
+       */
+      broadcastSignOut(other);
+      await quiet();
+      expect(heard, 'the channel was never live, so the twelve refusals above measured nothing')
+        .toEqual(['acted']);
     });
 
     it('ACTS on a sign-out carrying an unknown extra field, deliberately', async () => {
@@ -305,7 +370,7 @@ describe('signOutPropagatesToAllTabs', () => {
       expect(heard, 'the listener never worked, so closing it proves nothing').toEqual(['acted']);
 
       listener.close();
-      listener.close();                                  // idempotent
+      listener.close();          // a second call throws nothing; see AC6 on why that is all it shows
       broadcastSignOut(other);
       await quiet();
 
@@ -365,9 +430,61 @@ describe('signOutPropagatesToAllTabs', () => {
       // per import. Every channel here is created inside a function and closed by it or by `close()`.
       expect(code, 'a BroadcastChannel is constructed at module scope')
         .not.toMatch(/^(?:const|let|var)\s+\w+\s*(?::[^=\n]*)?=\s*new\s+BroadcastChannel/m);
-      // And exactly one module-scope mutable, which is the count task 35's NOT_SESSION_STATE excuses.
-      const mutables = code.match(/^(?:let|var)\s/gm) ?? [];
+      /*
+       * EXACTLY ONE PIECE OF MODULE-SCOPE STATE, which is the count task 35's `NOT_SESSION_STATE` excuses.
+       *
+       * THE PATTERN WAS WIDENED, and the reason is worth keeping (Kimi phase 8 I10, which I rejected and
+       * then reversed). It matched `^(?:let|var)\s` only. A mutant - XT32 - turned `SIGN_OUT_TYPE` into
+       * `export const SIGN_OUT_MESSAGE = { … }` and SURVIVED all 1 720 tests. Task 35's shared scan missed
+       * it too, for one anchor character: `MUTABLE_AT_MODULE_SCOPE` requires `^const`, so every EXPORTED
+       * object, array or Set literal is invisible to it. Phase 6 caught the object form only because the
+       * version written then was a bare `const`.
+       *
+       * A `const` binding to an object literal is not immutable - the binding is, the contents are not,
+       * and `as const` is a compile-time claim - which is exactly why task 35's pattern includes `= {`
+       * and `= [` in the first place. So the exported form is the same hazard wearing a keyword.
+       *
+       * TWO AXES, both measured holes in the inherited pattern:
+       *
+       *  - `^const` → `^(?:export\\s+)?const`. Fourteen exported module-scope object, array and Set
+       *    literals in production source are invisible to the shared scan, among them `accessToken.ts:46`
+       *    - the session object itself - and `api/client.ts:6`'s `new Set([…])`. Two non-exported lookup
+       *    tables are caught and excused by name; the fourteen have never been looked at.
+       *  - `new Set\\s*\\(` → `new Set\\s*(?:<[^>]*>)?\\s*\\(`. A type argument on the constructor defeats
+       *    it. `pwa/registerServiceWorker.ts` is excused with a PINNED `declarations: 2` and holds THREE
+       *    pieces of module-scope state: two `let`s and `const listeners = new Set<UpdateListener>()`.
+       *    The pin says two because the third is unseen, not because it is not there.
+       *
+       * Widened HERE and not in task 35's shared pattern, which is read by task 22's accounting and task
+       * 36's two cases. Changing it would change what fourteen files in four closed tasks are measured
+       * against and would turn an excused file's pinned count false - decisions about those tasks, not
+       * about T39. FU-T39-1.
+       */
+      const MUTABLE = '^(?:let|var)\\s|^(?:export\\s+)?const\\s+\\w+\\s*(?::[^=\\n]*)?='
+        + '\\s*(?:new\\s+(?:Map|Set|WeakMap|WeakSet)\\s*(?:<[^>]*>)?\\s*\\(|\\[|\\{)';
+      const mutables = code.match(new RegExp(MUTABLE, 'gm')) ?? [];
       expect(mutables, 'the module grew a second piece of module-scope state').toHaveLength(1);
+      expect(mutables[0], 'the one declaration found is not the latch').toMatch(/^let\s/);
+
+      /*
+       * CONTROL: the widened half fires, planted both ways round, and the narrow case does not.
+       *
+       * A FRESH RegExp PER PROBE, because the first version of this control shared one `/gm` regex with
+       * the match above and reported FALSE for a string it matches: `.test()` on a global regex advances
+       * `lastIndex`, so the second probe started reading part-way through the third. The control caught a
+       * defect in the control, which is the only reason it was not shipped as a passing scan that had
+       * stopped looking.
+       */
+      const fires = (line: string) => new RegExp(MUTABLE, 'm').test(line);
+      expect(fires('export const MESSAGE = { type: \'x\' } as const;'),
+        'the widened half does not fire on an exported object, so XT32 would survive again').toBe(true);
+      expect(fires('export const PATHS = [\'a\'] as const;')).toBe(true);
+      expect(fires('export const SEEN = new Set<string>();')).toBe(true);
+      expect(fires('const LOOKUP: Record<string, string> = {')).toBe(true);
+      expect(fires('let signedOut = false;')).toBe(true);
+      expect(fires("export const SIGN_OUT_TYPE = 'session:signed-out';"),
+        'the pattern now fires on a plain string constant, so the count above means nothing').toBe(false);
+      expect(fires("export function broadcastSignOut(channel?: BroadcastChannel): void {")).toBe(false);
     });
   });
 });

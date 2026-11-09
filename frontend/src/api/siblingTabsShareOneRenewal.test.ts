@@ -10,6 +10,7 @@ import {
   type SharedRenewal,
   type TabLocks,
 } from './crossTabRenewal';
+import { hasSignedOut, markSignedIn, markSignedOut } from './crossTabSignOut';
 import { createSessionBoundary } from './sessionBoundary';
 
 interface Deferred<T> {
@@ -629,5 +630,58 @@ describe('siblingTabsShareOneRenewal', () => {
 
   it('defaults the grace period to one second', () => {
     expect(SIBLING_GRACE_MS).toBe(1_000);
+  });
+
+  /*
+   * TASK 39 ADDED THIS ONE CASE, and it is here rather than in task 39's own suite because the contract it
+   * measures is THIS task's: an outcome is counted and its waiters settle. Task 39 put a guard inside the
+   * listener - a signed-out tab must not ADOPT a sibling's token - and placed it deliberately BELOW the
+   * count and the waiter wake, with six lines of comment explaining that the counting and the settling are
+   * R21's and must not change.
+   *
+   * Nothing measured that. The mutation harness moved the guard above both (XT27) and it SURVIVED all
+   * 1 720 tests, because the only suite that counts outcomes and settles waiters - this one - never signed
+   * out, so the guard was inert here whatever its position. The paragraph was a claim about behaviour that
+   * no case held, and a later edit could have hoisted the guard, broken R21's contract for exactly the
+   * state task 39 created, and passed everything (T39 F13, Kimi phase 8 I14).
+   *
+   * It also writes down OQ-T39-7, which Kimi phase 8 I6 asked for a test of: a signed-out follower's own
+   * `renew()` still RECEIVES the sibling's token. Nothing adopts it - the guard refuses - but the caller
+   * gets it, and if that caller retained it the latch would be released too. Asserted as it is, so the
+   * residual is a measured fact rather than a sentence in a comment.
+   *
+   * The latch is set and released INSIDE this case, in a `finally`, so no other case in this file can be
+   * reached by it: task 39's latch is module state and this suite has no other reason to know it exists.
+   */
+  it("counts a signed-out tab's outcome and settles its waiters, while refusing the adopt (task 39)", async () => {
+    const locks = fakeLocks();
+    const [a, b] = [openTab(locks), openTab(locks)];
+    try {
+      const leading = a.shared.renew();
+      await vi.waitFor(() => expect(a.renew).toHaveBeenCalledTimes(1));
+
+      // B signs out while A's renewal is in flight - the sequence task 39 exists for.
+      markSignedOut();
+      expect(hasSignedOut(), 'the latch did not take, so this case measures the signed-in path').toBe(true);
+
+      const following = b.shared.renew();
+      a.attempts[0]!.resolve('fresh');
+      expect(await leading).toBe('fresh');
+
+      // SETTLED FROM THE SIBLING'S OUTCOME, which is what proves the outcome was counted and the waiter
+      // woken under the latch. With the guard hoisted above them, B's waiter never wakes: B waits out its
+      // grace period and renews ITSELF, so `b.renew` is called and this resolves from B's own attempt.
+      expect(await following, "a signed-out follower no longer settles from the sibling's outcome")
+        .toBe('fresh');
+      expect(b.renew, 'the signed-out follower renewed itself, so its waiter was never woken')
+        .not.toHaveBeenCalled();
+
+      // AND THE ADOPT IS STILL REFUSED, so this case cannot pass by deleting task 39's guard.
+      expect(b.adopt, 'a signed-out tab adopted a sibling renewal - OQ-T35-3 has reopened')
+        .not.toHaveBeenCalled();
+      expect(b.current(), 'the signed-out tab is holding a token it was handed by a sibling').toBe('old');
+    } finally {
+      markSignedIn();
+    }
   });
 });
