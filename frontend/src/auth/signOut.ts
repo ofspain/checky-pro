@@ -1,3 +1,4 @@
+import { markSignedOut } from '../api/crossTabSignOut';
 import { clearAccessToken } from './accessToken';
 import { consumeAuthorizeState } from './authorizeRequest';
 import { takeIdToken } from './idToken';
@@ -58,7 +59,20 @@ import { takeSignInNotice } from './signInNotice';
  * have to be the boundary itself.
  */
 export function signOut(): void {
-  // FIRST, and the only one of the four whose position matters.
+  // TASK 39, AND IT GOES AHEAD OF THE CLEAR - the one step whose position matters more than the clear's.
+  //
+  // It is first for the clear's OWN reason, stated below: there is no try/catch here, so a throw from any
+  // step abandons the steps after it. A sign-out that cleared the token but left this latch unset is worse
+  // than one that left residue, because the latch is what stops a sibling's `renewal:succeeded` from
+  // handing this tab a live token back (OQ-T35-3, `crossTabSignOut.ts`). Residue is untidy; a re-authenticated
+  // signed-out tab is the defect R22 forbids.
+  //
+  // NOT because of a delivery window between these statements - there is no such window. This function is
+  // synchronous, and channel delivery is never observed before it returns; that was measured rather than
+  // assumed. The window this position closes is a THROW window.
+  markSignedOut();
+
+  // FIRST OF THE FIVE, and the only one of the four whose position matters.
   //
   // Precisely why: there is NO try/catch here, so a throw from any step would abandon the steps after it.
   // None of the three below can throw today - each is guarded inside its own module - so the question does

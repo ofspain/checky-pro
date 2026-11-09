@@ -1,3 +1,4 @@
+import { hasSignedOut } from './crossTabSignOut';
 import { RENEWAL_TIMEOUT_MS, type SessionTokens } from './sessionBoundary';
 
 /** The tab's own session, supplied by the auth module: its silent re-auth, plus a way to take a sibling's token. */
@@ -99,6 +100,20 @@ export function shareRenewalAcrossTabs(
     lastOutcome = outcome;
     for (const wake of [...waiters]) wake();
     if (outcome.type === 'renewal:succeeded') {
+      // TASK 39 (R22, OQ-T35-3). A tab that has signed out does not take a token from a sibling. Without
+      // this, the sequence is: this tab signs out; a sibling that has not yet handled the sign-out finishes
+      // a renewal and posts; this tab adopts; a visitor who signed out is signed back in by a sibling.
+      //
+      // The guard sits HERE and not higher on purpose. The outcome is still counted and its waiters are
+      // still woken above, because this task changes what a signed-out tab ADOPTS - not how renewal is
+      // counted or how its waiters settle, which are R21's contract and `siblingTabsShareOneRenewal`'s.
+      //
+      // A residual it leaves, named rather than left to be discovered (OQ-T39-7): `use()` below still
+      // RETURNS a sibling's token to a local `renew()` caller in a signed-out tab. Nothing holds it - it is
+      // never adopted - but a caller awaiting `renew()` receives it. Who calls `renew()` in a signed-out tab
+      // is R22's half-authenticated question and task 33's, and changing `use()` would change renewal
+      // semantics, which is R21's.
+      if (hasSignedOut()) return;
       try {
         local.adopt(outcome.token);
       } catch (error) {

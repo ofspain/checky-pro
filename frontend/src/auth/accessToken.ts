@@ -1,3 +1,4 @@
+import { markSignedIn } from '../api/crossTabSignOut';
 import type { LocalSession } from '../api/crossTabRenewal';
 
 /**
@@ -80,6 +81,12 @@ export const accessToken: LocalSession = {
  * no new information and a second place to get it wrong.
  */
 export function retainAccessToken(token: string): void {
+  // TASK 39. Releases the sign-out latch, so a tab that signed out and has now signed in again may adopt a
+  // sibling's renewal once more. It is HERE rather than in `CallbackScreen` because this function is, as the
+  // comment above says, the only place a non-null token is assigned - so a second sign-in path added later
+  // cannot silently skip the reset. `adopt` delegates here but cannot reach it while the latch is set: the
+  // guard in `crossTabRenewal`'s listener refuses first.
+  markSignedIn();
   held = token;
 }
 

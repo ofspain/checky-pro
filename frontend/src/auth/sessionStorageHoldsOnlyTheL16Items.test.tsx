@@ -68,6 +68,7 @@ import { I18nextProvider } from 'react-i18next';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { RENEWAL_CHANNEL, RENEWAL_LOCK } from '../api/crossTabRenewal';
+import { SIGN_OUT_CHANNEL } from '../api/crossTabSignOut';
 import { createI18n } from '../i18n/i18n';
 import { AUTHORIZE_STORAGE_KEYS, buildAuthorizeRequest } from './authorizeRequest';
 import { rememberReturnTarget, RETURN_TARGET_KEY } from './returnTarget';
@@ -699,6 +700,15 @@ function nonStorageNamespaceNames(): Array<{ name: string; file: string; why: st
       name: RENEWAL_LOCK,
       file: 'api/crossTabRenewal.ts',
       why: 'a Web Locks name (L18). A lock exists while it is held and persists nothing.',
+    },
+    {
+      // TASK 39. The SECOND allowlist this name had to be added to - task 35's NOT_STORAGE is the other.
+      // Two instruments, in two suites, both asking the same question of the same namespace, and neither
+      // redundant: task 22 owns the carve-out's exhaustiveness and task 35 owns what sign-out clears.
+      name: SIGN_OUT_CHANNEL,
+      file: 'api/crossTabSignOut.ts',
+      why: 'a BroadcastChannel name (L18, R22) for sign-out propagation. A channel delivers to live tabs '
+        + 'and persists nothing; this one carries no token, no identifier and no timestamp at all.',
     },
   ];
 }

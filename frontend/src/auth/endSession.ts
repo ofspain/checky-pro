@@ -1,3 +1,4 @@
+import { broadcastSignOut } from '../api/crossTabSignOut';
 import { APP_BASENAME, SIGNED_OUT_PATH } from '../app/routes';
 import { takeIdToken } from './idToken';
 import { signOut } from './signOut';
@@ -107,5 +108,16 @@ function endSessionUrl(hint: string | null): string {
 export function endSession(): void {
   const hint = takeIdToken();
   signOut();
+  // TASK 39 (R22, L18). AFTER the local sign-out, so this tab is already clean before it tells anyone, and
+  // BEFORE the navigation, because `assign` may unload the page - a message posted and then closed on the
+  // same tick is still delivered, which is measured in `crossTabSignOut.ts`, so the post is safely queued
+  // by the time the unload begins.
+  //
+  // It is HERE and not inside `signOut()`, and that placement is what makes a receiving tab unable to echo:
+  // a tab that handles a sign-out broadcast signs out by calling `signOut()`, which sets the latch and
+  // broadcasts nothing. No sender id, no "ignore my own message" flag, nothing to get wrong. It also lands
+  // R19 correctly - the SAS session is ended ONCE, by the tab the visitor acted in, rather than by N tabs
+  // navigating to `/connect/logout` for one intent.
+  broadcastSignOut();
   globalThis.location.assign(endSessionUrl(hint));
 }

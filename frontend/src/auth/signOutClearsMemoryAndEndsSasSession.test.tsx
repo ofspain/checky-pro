@@ -26,6 +26,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { RENEWAL_CHANNEL, RENEWAL_LOCK, shareRenewalAcrossTabs, type TabLocks } from '../api/crossTabRenewal';
+import { SIGN_OUT_CHANNEL, hasSignedOut, listenForSignOut, markSignedIn } from '../api/crossTabSignOut';
 import { accessToken, clearAccessToken, retainAccessToken } from './accessToken';
 import * as authorizeRequestModule from './authorizeRequest';
 import { AUTHORIZE_STORAGE_KEYS, buildAuthorizeRequest } from './authorizeRequest';
@@ -151,6 +152,11 @@ const inventoryKeys = (): string[] =>
 const NOT_STORAGE = [
   { value: RENEWAL_CHANNEL, why: 'a BroadcastChannel name (L18), not a stored value' },
   { value: RENEWAL_LOCK, why: 'a Web Locks name (L18), not a stored value' },
+  // TASK 39. A second BroadcastChannel name, and a second channel rather than a third message type on the
+  // first one, because `crossTabRenewal.ts` builds its channel only when Web Locks exist - a fine
+  // degradation for renewal, where the cost is a duplicate request, and not for sign-out, where it is a
+  // sibling tab left signed in (R22).
+  { value: SIGN_OUT_CHANNEL, why: 'a BroadcastChannel name (R22, L18), not a stored value' },
 ] as const;
 
 /**
@@ -178,6 +184,10 @@ const PERMITTED_CALLERS: Readonly<Record<string, readonly string[]>> = {
   // TASK 36. Two callers, and the pair is the design: `endSession.ts` takes the token for the hint it is
   // about to send, `signOut.ts` takes it and discards the value so the token is gone on either entry path.
   takeIdToken: ['auth/endSession.ts', 'auth/signOut.ts'],
+  // TASK 39. ONE caller, and the monopoly is the point: the latch must be set by every sign-out path, and
+  // `endSession()` reaches them all through `signOut()`. A second module setting it would be a second
+  // sign-out assembling itself, which is the failure mode this whole table exists to catch.
+  markSignedOut: ['auth/signOut.ts'],
   takeReturnTarget: ['auth/CallbackScreen.tsx'],
   clearReturnTarget: ['auth/signOut.ts'],
 };
@@ -185,6 +195,9 @@ const PERMITTED_CALLERS: Readonly<Record<string, readonly string[]>> = {
 /** The modules that DECLARE the primitives; excluded by path, because a declaration is not a call. */
 const DEFINERS = ['auth/accessToken.ts', 'auth/signInNotice.ts', 'auth/authorizeRequest.ts', 'auth/returnTarget.ts',
   'auth/idToken.ts', // TASK 36
+  // TASK 39. `export function markSignedOut(` matches a call-shaped needle, so without this the module that
+  // DEFINES the primitive is reported as a module that calls it - the same false positive task 36's AC14 hit.
+  'api/crossTabSignOut.ts',
 ];
 
 /**
@@ -211,6 +224,16 @@ const NOT_SESSION_STATE = [
       'the same message table for the profile read, excused for the same reason. Two entries rather than ' +
       'one pattern, because an exclusion that matches by shape would excuse the next real piece of state ' +
       'that happens to be shaped like a lookup table.',
+  },
+  {
+    file: 'api/crossTabSignOut.ts',
+    declarations: 1,
+    why:
+      'the sign-out latch, and it is the INVERSE of session state: it records that no session may be '
+      + 'ADOPTED, not that one exists. So it cannot be in `cleared` - `signOut()` is what SETS it - and '
+      + 'excusing it is the only option this scan offers. Task 35 objected to a latch on the grounds that '
+      + 'it adds state to the task whose statement is removing it, which is true of task 35 and does not '
+      + "transfer: L18 calls task 39's subject cross-tab COHERENCE, which is inherently stateful.",
   },
   {
     file: 'pwa/registerServiceWorker.ts',
@@ -752,100 +775,270 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
     });
   });
 
-  describe('AC9 the hazard sign-out cannot close (task 39 owns it, OQ-T35-3)', () => {
-    /**
-     * A SIGNED-OUT TAB IS RE-AUTHENTICATED BY A SIBLING, and this case proves it rather than describing it.
-     *
-     * `crossTabRenewal.ts`'s listener calls `local.adopt(token)` on any `renewal:succeeded` message and never
-     * asks whether this tab signed out. Task 39's propagation narrows the window and cannot close it: a sibling
-     * whose renewal resolves before it handles the sign-out broadcast still posts a success, and the channel
-     * orders nothing.
-     *
-     * It is asserted as it IS, not as it should be, because a test asserting the fix would have to be added
-     * broken. The message is the handover. Whoever builds task 39 meets this as a failing expectation.
-     */
-    it('KNOWN HAZARD: a signed-out tab still adopts a sibling renewal (task 39 must replace this)', async () => {
-      const name = `${RENEWAL_CHANNEL}.t35-${Date.now()}`;
-      const locks: TabLocks = {
-        request: () => {
-          throw new Error('AC9 never takes the lock: it only needs the listener installed');
-        },
-      };
-      const channel = new BroadcastChannel(name);
-      const shared = shareRenewalAcrossTabs(accessToken, { channel, locks });
-      const sibling = new BroadcastChannel(name);
-      // The observer: a third endpoint whose only job is to say when the message arrived at all.
-      const observer = new BroadcastChannel(name);
-      const delivered = new Promise<void>((resolve) => {
-        observer.addEventListener('message', () => resolve(), { once: true });
-      });
+  // TASK 39. Shared by AC9 and AC9c, which is why they are here and not inside either block.
+function renewalRig(tag: string) {
+  const name = `${RENEWAL_CHANNEL}.t39-${tag}-${Date.now()}`;
+  const locks: TabLocks = {
+    request: () => {
+      throw new Error('this rig never takes the lock: it only needs the listener installed');
+    },
+  };
+  const channel = new BroadcastChannel(name);
+  const shared = shareRenewalAcrossTabs(accessToken, { channel, locks });
+  const sibling = new BroadcastChannel(name);
+  const observer = new BroadcastChannel(name);
+  const delivered = new Promise<void>((resolve) => {
+    observer.addEventListener('message', () => resolve(), { once: true });
+  });
+  const close = () => {
+    shared.close();
+    channel.close();
+    sibling.close();
+    observer.close();
+    clearAccessToken();
+  };
+  return { sibling, delivered, close };
+}
+
+/**
+ * Delivery is OBSERVED and not waited for, which is task 35's technique kept verbatim because its
+ * reasoning survives the fix. A bounded poll alone could exhaust on a slow machine, find null, and report
+ * the refusal as a success when nothing was ever delivered - a false PASS now, where before it was a
+ * false repair report. So a third endpoint confirms arrival with no bound, and only then is the token read.
+ */
+async function settle(delivered: Promise<void>) {
+  await delivered;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    if (accessToken.current() !== null) return;
+  }
+}
+
+  /*
+   * TASK 39 REPLACED WHAT WAS HERE, which is what it was put here for.
+   *
+   * It was AC9, "the hazard sign-out cannot close (task 39 owns it, OQ-T35-3)": a case that asserted the
+   * hazard AS IT WAS - a signed-out tab adopting a sibling's renewal - with an assertion message addressed
+   * to whoever built task 39, and AC9b scanning that message's own source so the handoff could not rot into
+   * a green test beside a real defect. It fired exactly as designed, with its own words: "GOOD NEWS, AND
+   * THIS CASE MUST CHANGE … expected null to be 'T35-access-token-10'".
+   *
+   * AC9b IS DELETED rather than left standing. Its subject was the hazard case's message; with the hazard
+   * closed there is no message to address, and a scan for a vanished string tests nothing. What replaces it
+   * is the last case below: the retired wording must be GONE, so the fix cannot be quietly reverted while a
+   * comment still claims the hazard is someone else's to fix.
+   *
+   * WHY TASK 35 THOUGHT THIS COULD NOT BE CLOSED, and why it can. `signOut.ts:44-46` reasoned that
+   * propagation "narrows the window without closing it, because a sibling whose renewal resolves before it
+   * handles the broadcast still posts a success and the channel orders nothing". That reasons about when the
+   * sibling POSTS. What decides this tab's token is when this tab HANDLES - and only that is ordered, because
+   * channel delivery is never observed before a synchronous `signOut()` in the same task. Both orderings are
+   * asserted below for exactly that reason: the post before the sign-out, and after it.
+   */
+  describe('AC9 a signed-out tab refuses a sibling renewal (OQ-T35-3, CLOSED by task 39)', () => {
+    it('refuses a success posted AFTER the sign-out', async () => {
+      const { sibling, delivered, close } = renewalRig('after');
       try {
         retainAccessToken(aToken());
         signOut();
-        expect(accessToken.current(), 'sign-out did clear the token').toBeNull();
+        expect(accessToken.current(), 'sign-out did not clear the token').toBeNull();
+        expect(hasSignedOut(), 'the latch was not set by signOut()').toBe(true);
 
-        const siblingToken = aToken();
-        sibling.postMessage({ type: 'renewal:succeeded', token: siblingToken });
+        sibling.postMessage({ type: 'renewal:succeeded', token: aToken() });
+        await settle(delivered);
 
-        /*
-         * DELIVERY IS OBSERVED, NOT WAITED FOR - which is the part Kimi phase 11 F2 was reaching for, and
-         * the part that fixes the dangerous failure mode rather than just widening the window.
-         *
-         * History: one `setTimeout(0)` passed three runs and then returned `null` the moment two cases ran
-         * ahead of it, because `BroadcastChannel` delivery is a macrotask racing the timer. A bounded poll
-         * followed. F2 objected that a poll is still non-deterministic, and gave two reasons - one of which
-         * is wrong and one of which is the whole point:
-         *
-         *  - "on a fast runner the loop may exit early and still assert the hazard exists" - exiting early
-         *    means the token is NON-null, which IS the hazard. Early exit is the correct outcome.
-         *  - "on a slow runner the bound may not be enough" - this one matters, and it is not a flake, it is
-         *    a FALSE REPAIR REPORT: the poll exhausts, the token is null, and the assertion below announces
-         *    "GOOD NEWS, the hazard is fixed" when all that happened was a slow machine.
-         *
-         * So the two events are separated. A third endpoint on the same channel observes the message, and
-         * `delivered` is awaited with NO bound: if delivery never happens the case fails as a Vitest timeout,
-         * which reads as a channel problem and not as a fix. Only once delivery is known to have occurred is
-         * adoption polled, and a few ticks then suffice because the remaining lag is one listener's turn.
-         */
-        await delivered;
-        for (let attempt = 0; attempt < 50 && accessToken.current() === null; attempt += 1) {
+        expect(accessToken.current(),
+          'a signed-out tab adopted a sibling renewal - OQ-T35-3 has reopened').toBeNull();
+      } finally {
+        close();
+      }
+    });
+
+    it('refuses a success posted BEFORE the sign-out, which is the ordering task 35 called unclosable',
+      async () => {
+        const { sibling, delivered, close } = renewalRig('before');
+        try {
+          retainAccessToken(aToken());
+          // The sibling posts first. Measured without the guard, this ordering still ends with the token
+          // adopted, because delivery is a later task than the synchronous signOut() below.
+          sibling.postMessage({ type: 'renewal:succeeded', token: aToken() });
+          signOut();
+          await settle(delivered);
+
+          expect(accessToken.current(),
+            'the post-before-sign-out ordering still re-authenticates a signed-out tab').toBeNull();
+        } finally {
+          close();
+        }
+      });
+
+    it('refuses after a sign-out that arrived from a SIBLING TAB, not from this one', async () => {
+      // The mechanism, not just the outcome (Kimi phase 3 F4): the listener is installed, a sibling's
+      // broadcast is what signs this tab out, and only then is the renewal refused. A case that signed out
+      // locally would pass even if propagation did not work at all.
+      const signOutName = `${SIGN_OUT_CHANNEL}.t39-${Date.now()}`;
+      const inbox = new BroadcastChannel(signOutName);
+      const otherTab = new BroadcastChannel(signOutName);
+      const listener = listenForSignOut(() => signOut(), { channel: inbox });
+      const { sibling, delivered, close } = renewalRig('propagated');
+      try {
+        retainAccessToken(aToken());
+        otherTab.postMessage({ type: 'session:signed-out' });
+        for (let attempt = 0; attempt < 50 && accessToken.current() !== null; attempt += 1) {
           await new Promise((resolve) => setTimeout(resolve, 2));
         }
+        expect(accessToken.current(), 'the sign-out broadcast never reached this tab').toBeNull();
+        expect(hasSignedOut(), 'the propagated sign-out did not set the latch').toBe(true);
 
-        expect(
-          accessToken.current(),
-          'GOOD NEWS, AND THIS CASE MUST CHANGE: a signed-out tab no longer adopts a sibling renewal. If you '
-            + 'are building task 39, that is the fix OQ-T35-3 asked for - replace this case with the '
-            + 'assertion that the token stays null and delete OQ-T35-3. If you did NOT intend this, '
-            + 'something changed crossTabRenewal or accessToken by accident.',
-        ).toBe(siblingToken);
+        sibling.postMessage({ type: 'renewal:succeeded', token: aToken() });
+        await settle(delivered);
+        expect(accessToken.current(), 'a tab signed out BY A SIBLING still adopted a renewal').toBeNull();
       } finally {
-        shared.close();
-        channel.close();
-        sibling.close();
-        observer.close();
-        clearAccessToken();
+        listener.close();
+        inbox.close();
+        otherTab.close();
+        close();
       }
+    });
+
+    it('sets the latch even when the very next step of signOut() throws', async () => {
+      /*
+       * The reason markSignedOut() goes FIRST, and the only form that reason can be tested in.
+       *
+       * Kimi phase 3 F3 argued for the position from a different mechanism - a delivery window after
+       * clearAccessToken() during which the latch is unset - and that window cannot exist: signOut() is
+       * synchronous, and the test F3 recommended (post a success "before the clears finish") is unwritable
+       * for the same reason. The window the position actually closes is a THROW window: there is no
+       * try/catch in signOut(), so a throw abandons every later step, and a sign-out that cleared the token
+       * but left the latch unset is a tab that can be handed a live one back.
+       *
+       * Making a later step throw took two attempts. Spying `Storage.prototype.removeItem` does NOT work -
+       * signOut() did not throw, because each store step is guarded inside its own module, which is what its
+       * header claims and this measured. So the throw is injected at the step immediately after the latch,
+       * by mocking the module it comes from; both halves are read from the SAME fresh module graph, because
+       * a dynamic import brings its own instance of the latch (task 36's phase 8 I10 learned that one).
+       */
+      vi.resetModules();
+      vi.doMock('./accessToken', () => ({
+        accessToken: { current: () => null, adopt: () => undefined, renew: () => Promise.reject(new Error('x')) },
+        clearAccessToken: () => {
+          throw new Error('the step right after the latch refused');
+        },
+        retainAccessToken: () => undefined,
+      }));
+      try {
+        const [{ signOut: isolated }, latch] = await Promise.all([
+          import('./signOut'),
+          import('../api/crossTabSignOut'),
+        ]);
+        expect(latch.hasSignedOut(), 'the fresh graph started with the latch already set').toBe(false);
+
+        expect(() => isolated(),
+          'signOut() swallowed the throw, so this case no longer tests the position').toThrow();
+        expect(latch.hasSignedOut(),
+          'a throw mid-sign-out left the latch unset: the tab cleared its token and can still be handed one')
+          .toBe(true);
+      } finally {
+        vi.doUnmock('./accessToken');
+        vi.resetModules();
+      }
+    });
+
+    it('releases the latch on a real sign-in, so a renewed sibling can be adopted again', async () => {
+      const { sibling, delivered, close } = renewalRig('reset');
+      try {
+        retainAccessToken(aToken());
+        signOut();
+        expect(hasSignedOut()).toBe(true);
+
+        const fresh = aToken();
+        retainAccessToken(fresh);                      // a real sign-in, through the single assignment point
+        expect(hasSignedOut(), 'the latch outlived the sign-in that should have released it').toBe(false);
+
+        const renewed = aToken();
+        sibling.postMessage({ type: 'renewal:succeeded', token: renewed });
+        await settle(delivered);
+        expect(accessToken.current(), 'a signed-in tab no longer adopts a sibling renewal at all')
+          .toBe(renewed);
+      } finally {
+        close();
+      }
+    });
+
+    it('the retired hazard wording is gone from this file', async () => {
+      // What replaces AC9b. The old case told its reader the hazard was task 39's to fix; if that wording
+      // survived the fix, a future reader would be told a closed hazard is still open - and a revert of the
+      // guard would leave a green suite and a comment agreeing with it.
+      // The wording is pinned by the RETIRED CASE'S OWN SENTENCES, not by the words "KNOWN HAZARD" or
+      // "GOOD NEWS" - AC9c below deliberately uses both, because it pins a hazard task 39 did not close and
+      // addresses it the same way task 35 addressed this one. A scan for the generic words would therefore
+      // fail on a case that is supposed to be here, which is how the first version of this case was wrong.
+      // The needles are ASSEMBLED, never spelled whole, because the first version of this case found its
+      // own source and failed on itself. This file already holds the technique and the reason - AC8's "spells
+      // no whole key of its own, so a rename breaks it rather than passing it" - and this is that, applied to
+      // a sentence instead of a storage key.
+      const retiredAssertion = ['a signed-out tab still', 'adopts a sibling renewal'].join(' ');
+      const retiredHandoff = ['task 39 must', 'replace this'].join(' ');
+      const ownSource = await readFile(expect.getState().testPath as string, 'utf8');
+
+      expect(ownSource.includes(retiredAssertion),
+        'the retired hazard case is still asserting that the adopt happens').toBe(false);
+      expect(ownSource.includes(retiredHandoff),
+        'the retired handoff still tells its reader the case is task 39\'s to replace').toBe(false);
+      // The needles are real sentences and not typos: each was a verbatim fragment of the retired case, so
+      // a scan that can never match would be indistinguishable from one that is simply looking for nothing.
+      expect(retiredAssertion.length, 'the assembled needle is empty').toBeGreaterThan(20);
+      expect(retiredHandoff.length, 'the assembled needle is empty').toBeGreaterThan(15);
+      // And the control: this file does still name the thing that was closed, so the two scans above are not
+      // passing because their subject vanished entirely.
+      expect(ownSource, 'OQ-T35-3 is no longer named at all, so the above proves nothing')
+        .toContain('OQ-T35-3');
     });
   });
 
-  describe('AC9b the handover is addressed to someone', () => {
-    /**
-     * The frozen criterion says AC9 carries "a message naming task 39 as the owner", and until now nothing
-     * checked that it does. A pinned hazard whose message loses its addressee becomes a green test beside a
-     * real defect with no one told - which is the failure mode the whole case exists to avoid. Task 32
-     * learned the same thing about a contract sentence: if the message is the deliverable, pin the message.
-     */
-    it("names task 39 and OQ-T35-3 in the hazard case's own source", async () => {
-      const ownSource = await readFile(expect.getState().testPath as string, 'utf8');
-      const block = ownSource.slice(ownSource.indexOf('KNOWN HAZARD'));
-      const hazard = block.slice(0, block.indexOf('describe('));
-      expect(hazard, 'the hazard case no longer names task 39').toMatch(/task 39/);
-      expect(hazard, 'the hazard case no longer names its open question').toMatch(/OQ-T35-3/);
-      // And the instruction, not only the addressee (Kimi phase 11 F12): a message that names task 39 but
-      // no longer says what to DO leaves its reader knowing they are responsible and not what for.
-      expect(hazard, 'the hazard message no longer says to replace the case').toMatch(/replace this case/i);
-      expect(hazard, 'the hazard message no longer says what the fixed assertion is').toMatch(/stays null/i);
+  /*
+   * TASK 39 DID NOT CLOSE THIS ONE, and pins it the way task 35 pinned OQ-T35-3 - asserted as it IS, with
+   * the message as the handover. OQ-T39-6.
+   */
+  describe('AC9c the race task 39 does NOT close (OQ-T39-6)', () => {
+    it('KNOWN HAZARD: a stale success from before the sign-out is adopted after a new sign-in', async () => {
+      /*
+       * The latch is released by any token assignment, which it must be, or a tab that signed out and back
+       * in could never adopt a sibling renewal again. That release is also the hole: a `renewal:succeeded`
+       * produced by a renewal that STARTED before the sign-out can arrive after the new sign-in and replace
+       * a fresh token with an older one.
+       *
+       * Closing it needs a generation stamp ON THE MESSAGE, so a tab can tell which session an outcome
+       * belongs to - which means changing `crossTabRenewal`'s closed `Outcome` union, and task 39 chose a
+       * separate channel precisely so sign-out would not depend on that module's shape. It is also
+       * unreachable today: `accessToken.renew()` always rejects with RENEWAL_NOT_BUILT and no task in
+       * `tasks.md` builds renewal, so nothing can produce a genuine success at all.
+       *
+       * WHOEVER BUILDS RENEWAL MEETS THIS AS A FAILING EXPECTATION. When it goes red, that is the fix
+       * OQ-T39-6 asked for: replace this case with the assertion that the FRESH token survives, and delete
+       * OQ-T39-6.
+       */
+      const { sibling, delivered, close } = renewalRig('stale');
+      try {
+        retainAccessToken(aToken());
+        const staleToken = aToken();
+        signOut();
+        const fresh = aToken();
+        retainAccessToken(fresh);                       // signed in again; the latch is released
+
+        sibling.postMessage({ type: 'renewal:succeeded', token: staleToken });
+        await delivered;
+        for (let attempt = 0; attempt < 50 && accessToken.current() === fresh; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 2));
+        }
+
+        expect(accessToken.current(),
+          'GOOD NEWS FOR OQ-T39-6, AND THIS CASE MUST CHANGE: a stale sibling success no longer overwrites '
+            + 'a fresh token. If you are building renewal, that is the fix - replace this case with the '
+            + 'assertion that the fresh token survives, and delete OQ-T39-6.').toBe(staleToken);
+      } finally {
+        close();
+      }
     });
   });
 
@@ -935,8 +1128,11 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       const self = (await production()).find((file) => file.path === 'auth/signOut.ts');
       const SIGN_OUT_SET = Object.keys(PERMITTED_CALLERS)
         .filter((primitive) => new RegExp(`\\b${primitive}\\s*\\(`).test(self!.code));
+      // TASK 39 grew this from five to six: `markSignedOut()` joined, FIRST, ahead of the clear. The count
+      // is derived from source rather than written down, so this is the only line that had to change - and it
+      // changed because the instrument FAILED first, which is the instrument working as task 36 built it.
       expect(SIGN_OUT_SET.length, 'the derivation found no primitives in signOut.ts, so this case is vacuous')
-        .toBe(5);
+        .toBe(6);
       const held = new Map<string, string[]>();
       for (const primitive of SIGN_OUT_SET) {
         for (const path of PERMITTED_CALLERS[primitive]) {
