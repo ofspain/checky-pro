@@ -175,11 +175,16 @@ supplies a direction, that block is the whole diff.
 
 Three claims, because each alone has a hole:
 
-1. **A pinned render-site list.** Eight files today; a ninth must be added deliberately, as
+1. **TWO pinned lists, because a primitive renders a lowercase tag by definition — that is its whole job —
+   and a render site must not.** The render sites are **five** (`app/AppShell.tsx`, `app/RateLimitNotice.tsx`,
+   `auth/SignInScreen.tsx`, `auth/CallbackScreen.tsx`, `auth/SignedOutScreen.tsx`); the primitives are
+   **eight** (§6c). A sixth screen or a ninth primitive must be added to its list deliberately, as
    `SCREENS_ATTACHED_SO_FAR` is.
-2. **A derived sweep that cross-checks the pin.** Every file under `src/app/` and `src/auth/` whose source
-   contains a lowercase JSX tag must appear in the pinned list — so a new screen cannot be invisible to the
-   claim. This is the hole T40's AC13 was written for, applied before it bites.
+2. **A derived sweep that cross-checks both pins.** Measured at phase 5: exactly five non-test files under
+   `src/app/` and `src/auth/` contain a lowercase JSX tag today, and they are precisely the five render sites.
+   After this task there must be thirteen, and **every one must appear in exactly one of the two lists** — so
+   neither a new screen nor an unlisted primitive can be invisible to the claim. This is the hole T40's AC13
+   was written for, closed before it bites rather than after.
 3. **Per file, every lowercase JSX tag name is forbidden.** Fragments (`<>`), component tags (uppercase),
    expressions and spreads are not lowercase tag names and are not flagged (F20). Each forbidden pattern is
    paired with a probe that proves it fires, and the real source must not already trip it.
@@ -193,7 +198,7 @@ AC1–AC12 from phase 2 §4 stand, with these changes:
 
 | | |
 |---|---|
-| **AC2** | extended: **eight** render sites, including `AppShell` via `Surface` — no exemption (F2) |
+| **AC2** | extended: all **five** render sites, including `AppShell` via `Surface` — no exemption (F2). (*Corrected after freezing: this row read "eight render sites". Eight is the PRIMITIVE count; the render sites are five, and conflating them is what §6e's two lists exist to keep apart.*) |
 | **AC3** | extended: the `Only` claim is the three-part construction in §6e, not a single scan |
 | **AC4** | hardened: `className` and `style` are **absent from every primitive's type**, so the violation is a compile error, not a test failure |
 | **AC9** | concrete: the three pairs and thresholds in §6d, computed from the stylesheet |
