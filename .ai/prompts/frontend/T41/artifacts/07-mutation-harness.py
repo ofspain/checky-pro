@@ -59,12 +59,17 @@ OWN_TESTS = [
 
 CANARIES = set()
 
-# SCORED APART. RD09 adds the branch the component's header argues against - skipping the write for the
-# arrival that matched nothing. The allowlist refuses `/` anyway, so the outcome is IDENTICAL and no
-# assertion can separate them. That is worth recording rather than hiding: the case for "no branch, the
-# allowlist is the only filter" is an argument about where a rule lives, NOT about behaviour, and a reader
-# who thought a test was enforcing it would be wrong.
-UNFALSIFIABLE = {"RD09"}
+# EMPTY AT PHASE 9, AND IT HELD ONE ROW AT PHASE 7. RD09 adds the branch the component's header argues
+# against - skipping the write for the arrival that matched nothing - and the allowlist refuses `/` anyway,
+# so no BEHAVIOURAL assertion can separate them. Phase 8's I3 pointed out that this does not make it
+# unkillable: the rule is about where a rule LIVES, which is a claim about source, and source has been an
+# instrument in this package since T22. So RD09 became a `phase 10` row with a scan to write, and
+# "unfalsifiable" went back to meaning no observable effect of ANY kind, in the DOM or in the file.
+#
+# AND THE SAME CORRECTION WENT THE OTHER WAY. Two rows that phase 7 scored as `phase 10` were mutating a
+# line that could not run (see RD06/RD07 below). Phase 7 therefore mislabelled in both directions at once:
+# one row called unkillable that a scan can kill, and two called future work that were measuring nothing.
+UNFALSIFIABLE = set()
 
 FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
@@ -76,7 +81,7 @@ KNOWN_ENVIRONMENTAL_FAILURES = {
 
 # --- anchors, copied from the real source ----------------------------------------------------------------
 R_COND = "  const hasSession = Boolean(accessToken.current());\n  if (hasSession) return null;"
-R_STRIP = ("  const arrival = pathname.startsWith(`${base}/`) ? pathname.slice(base.length) : pathname;")
+R_ARRIVAL = "  const arrival = pathname;"
 R_REMEMBER = "  rememberReturnTarget(arrival);"
 R_NAV = "  return <Navigate to={`/${SIGN_IN_PATH}`} replace />;"
 
@@ -128,27 +133,41 @@ MUTANTS = [
     ("RD05 the destination is a hardcoded literal rather than SIGN_IN_PATH",
      REDIR, R_NAV, '  return <Navigate to="/sign-in" replace />;', "phase 10"),
 
-    # AC14, AND THE WHOLE POINT OF THE TASK. `useLocation().pathname` carries `/app`; the allowlist holds
-    # `/account`. Without the strip every target is refused, silently, and the deep link is gone - no
-    # throw, no log, a visitor who lands on home. The redirect still works, which is why this is the
-    # mutant most likely to ship.
-    ("RD06 the basename is left on the arrival, so every deep link is silently discarded (AC14)",
-     REDIR, R_STRIP, "  const arrival = pathname;", "phase 10"),
+    # AC14, AND THE WHOLE POINT OF THE TASK - BOTH ROWS REWRITTEN AT PHASE 9, because what they used to
+    # mutate should never have existed. RD06 removed a BASENAME STRIP and RD07 put an off-by-one in it, on
+    # the premise that `useLocation().pathname` carries the `/app` prefix. Kimi's I6 doubted it; measured
+    # again over six arrivals through both router constructors, `useLocation()` is basename-RELATIVE and it
+    # is `router.state.location.pathname` that carries the prefix. Both rows were mutating DEAD CODE, so
+    # their survival at phase 7 did not mean "phase 10 has not written the case yet" - there was nothing
+    # there to break. Two rows were reported as future work when they were measuring nothing, and the
+    # phase-7 artifact called one of them "the mutant most likely to ship".
+    #
+    # This is the real defect in that family: the arrival made ABSOLUTE. `/app/account` is not in the
+    # allowlist, which holds `/account`, so every deep link is refused in silence - no throw, no log, just a
+    # visitor who lands on home after signing in. The redirect still works, which is why it would ship.
+    ("RD06 the arrival is made absolute, so every deep link is silently discarded (AC14)",
+     REDIR, R_ARRIVAL, "  const arrival = `/app${pathname}`;", "phase 10"),
 
-    # The same defect one character wide: `/account` becomes `account`, which is not in the allowlist
-    # either. An off-by-one on a slice is the ordinary way this breaks.
-    ("RD07 the strip is off by one, so the remembered target loses its leading slash",
-     REDIR, R_STRIP,
-     "  const arrival = pathname.startsWith(`${base}/`) ? pathname.slice(base.length + 1) : pathname;",
+    # The strip PUT BACK, which is the defect its removal fixed rather than a hypothetical.
+    # `/app/app/account` matches the catch-all; `useLocation()` gives `/app/account`; the strip turns that
+    # into `/account` and remembers a route the visitor never asked for. Only a case arriving at a DOUBLED
+    # prefix can see it, which is why phase 10 must write one.
+    ("RD07 the basename strip is put back, so a doubled prefix remembers a route nobody asked for",
+     REDIR, R_ARRIVAL,
+     "  const base = '/app';\n"
+     "  const arrival = pathname.startsWith(`${base}/`) ? pathname.slice(base.length) : pathname;",
      "phase 10"),
 
     # AC7. The redirect happens, nothing is remembered, and the visitor lands on home after signing in.
     ("RD08 the return target is never remembered",
      REDIR, R_REMEMBER, "", "phase 10"),
 
-    # SCORED APART - see UNFALSIFIABLE above.
+    # BEHAVIOURALLY unfalsifiable, and phase 8's I3 is why that is not the same as unkillable: "no branch,
+    # the allowlist is the only filter" is a claim about SOURCE, and this package has measured source since
+    # T22. A scan forbidding a branch on `arrival` before the call kills this row, phase 10 writes it, and
+    # the expectation moves accordingly.
     ("RD09 a branch is added where the allowlist belongs",
-     REDIR, R_REMEMBER, "  if (arrival !== '/') rememberReturnTarget(arrival);", "unfalsifiable"),
+     REDIR, R_REMEMBER, "  if (arrival !== '/') rememberReturnTarget(arrival);", "phase 10"),
 
     # --- the three arrivals ------------------------------------------------------------------------------
     # The gate's negative branch, back to task 40's `null`. This is the arrival R28's first clause creates,
