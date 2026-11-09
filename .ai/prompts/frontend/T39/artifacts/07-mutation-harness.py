@@ -297,6 +297,15 @@ MUTANTS = [
      SIGNOUT_PROP, (MAKE_OWN, SWALLOW),
      ("  const own = new BroadcastChannel(SIGN_OUT_CHANNEL);\n  own.close();", "  } finally {")),
 
+    # KIMI PHASE 11 F3 recommended accepting this as unfalsifiable "like XT18", or giving `close()` an
+    # observable side effect. Neither was needed: the module reaches for the GLOBAL `BroadcastChannel`, and
+    # a test owns that global, so a counting subclass sees every construction and every close. The
+    # distinction is worth keeping straight - XT18 removes an operation that HAS no effect to detect, this
+    # one removes an operation whose effect was merely unobserved. "No test sees it" and "nothing could see
+    # it" are different claims, and only the second earns a row scored apart.
+    ("XT33 the broadcast leaks the channel it created, one per sign-out",
+     SIGNOUT_PROP, "\n  } finally {\n    own.close();\n  }", "\n  }"),
+
     # THE MEASUREMENT THAT REJECTS Kimi phase 8 I10, which asked for a scan asserting `SIGN_OUT_TYPE` is a
     # string and not an object. It is already enforced, by task 35's `declarations: 1` - and that is not a
     # deduction, it is how the object form was caught while phase 6 was being written. If this row ever
@@ -475,9 +484,14 @@ def main():
           f"{'' if not broken else f'  ({len(broken)} BROKEN, not counted as killed)'}")
     if canaries:
         print(f"canaries:    {canaries} - a change elsewhere that must still be caught today, scored apart")
+    apart_rows = [label for label in survivors if label.split()[0] in apart]
+    escaped = [label for label in survivors if label.split()[0] not in apart]
     if unfalsifiable:
-        print(f"unfalsifiable: {unfalsifiable} - no observable effect to detect; see UNFALSIFIABLE above")
-    print(f"survivors:   {survivors or 'none'}")
+        # Kimi phase 11 F6: XT18 was printed under `survivors` AND counted as scored-apart, and a reader
+        # who saw it on the survivors line had every reason to read it as a regression that escaped. The
+        # two lines are disjoint now - a row is on one or the other, never both.
+        print(f"unfalsifiable: {unfalsifiable} - no observable effect to detect: {apart_rows or 'none'}")
+    print(f"survivors:   {escaped or 'none'}")
     print(f"broken:      {broken or 'none'}")
     unexpected = [label for label in survivors if label.split()[0] not in apart]
     return 1 if (unexpected or broken) else 0

@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { RENEWAL_CHANNEL } from './crossTabRenewal';
+import { RENEWAL_CHANNEL, shareRenewalAcrossTabs } from './crossTabRenewal';
 import {
   SIGN_OUT_CHANNEL,
   SIGN_OUT_TYPE,
@@ -42,15 +42,33 @@ function uniqueName(): string {
 }
 
 /**
- * A FIXED BOUND, and the comment here used to deny that - it said "waits for `received` to stop growing,
- * with delivery observed rather than guessed at", naming a variable this file does not have (T39 F7, Kimi
- * phase 8 I7). Fifty milliseconds of ticks is a guess, which is fine for what it is used for and not fine
- * to misdescribe: the sentence a reader relies on when deciding whether a negative case needs its own
- * positive control was telling them it did not. Every case below that asserts something did NOT arrive now
- * ends by asserting that something DID, on the same channel, because a channel that delivers nothing
- * satisfies every negative assertion in this file. Task 35's `settle()` observes delivery before polling
- * and explains why; that technique is what this is not.
+ * TWO HELPERS, because a positive assertion and a negative one need opposite things from a clock.
+ *
+ * It was one: a fixed 25 x 2 ms spin called `quiet()`, used for both. Kimi phase 11 F2 objected that a
+ * positive case built on a fixed bound fails on a slow runner for a reason that has nothing to do with it -
+ * a message arriving at 60 ms - while paying the full 50 ms when everything is fast. Right, and the split
+ * is the fix rather than a longer bound:
+ *
+ *  - `arrive()` waits FOR something, and returns the moment it is there. A generous ceiling costs nothing
+ *    when it is not reached, so it can be generous. This is task 35's `settle()` shape - observe, then
+ *    proceed - with the observation expressed as a predicate because the thing observed differs per case.
+ *  - `quiet()` waits OUT the possibility of something more: an echo, a late second delivery, a message a
+ *    closed listener might still act on. Here a FIXED bound is the right instrument, and polling would be
+ *    the wrong one - there is no state transition to wait for, and the assertion is stronger the longer it
+ *    waits. It is honestly named now, which is the half of this that phase 10 already fixed (T39 F7).
+ *
+ * The earlier comment on `quiet()` claimed it observed delivery and named a variable this file does not
+ * have. Every negative case still ends with a positive control on the same channel, because a channel that
+ * delivers nothing satisfies every negative assertion here.
  */
+async function arrive(ready: () => boolean, what: string): Promise<void> {
+  for (let tick = 0; tick < 150; tick += 1) {
+    if (ready()) return;
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  throw new Error(`nothing arrived on the sign-out channel within 300ms: ${what}`);
+}
+
 async function quiet(): Promise<void> {
   for (let tick = 0; tick < 25; tick += 1) await new Promise((resolve) => setTimeout(resolve, 2));
 }
@@ -106,7 +124,7 @@ describe('signOutPropagatesToAllTabs', () => {
       opened.push(listenForSignOut(() => cleared.push('signed out'), { channel: inbox }));
 
       broadcastSignOut(actingTab);
-      await quiet();
+      await arrive(() => cleared.length > 0, 'the receiving tab never ran its local action');
 
       expect(cleared, 'the sign-out never reached the sibling tab').toEqual(['signed out']);
     });
@@ -119,7 +137,8 @@ describe('signOutPropagatesToAllTabs', () => {
         opened.push(listenForSignOut(() => heard.push(tab), { channel: channel(name) }));
       }
       broadcastSignOut(channel(name));
-      await quiet();
+      await arrive(() => heard.length >= 3, 'fewer than three tabs ran their local action');
+      await quiet();                       // and no fourth, from a tab that heard it twice
 
       expect(heard.sort(), 'a sign-out reached some tabs and not others').toEqual(['a', 'b', 'c']);
     });
@@ -138,6 +157,10 @@ describe('signOutPropagatesToAllTabs', () => {
       // A receiver whose local action is the most echo-prone thing it could do short of a real loop.
       opened.push(listenForSignOut(() => markSignedOut(), { channel: channel(name) }));
       broadcastSignOut(channel(name));
+      // Both clocks, and in this order: wait FOR the sign-out, then wait OUT an echo of it. One fixed
+      // bound could only do the second, and would report "exactly one message" on a run where the first
+      // had not arrived either.
+      await arrive(() => seen.length > 0, 'the sign-out never reached the observer');
       await quiet();
 
       expect(seen, 'more than one message crossed the sign-out channel for one sign-out').toHaveLength(1);
@@ -187,6 +210,7 @@ describe('signOutPropagatesToAllTabs', () => {
       observer.addEventListener('message', (event) => void seen.push(event.data));
 
       broadcastSignOut(channel(name));
+      await arrive(() => seen.length > 0, 'the message never reached the observer');
       await quiet();
 
       expect(seen).toHaveLength(1);
@@ -234,7 +258,7 @@ describe('signOutPropagatesToAllTabs', () => {
       const heard: string[] = [];
       opened.push(listenForSignOut(() => heard.push('signed out'), { channel: channel(name) }));
       broadcastSignOut(channel(name));
-      await quiet();
+      await arrive(() => heard.length > 0, 'nothing was delivered without Web Locks');
 
       expect(heard, 'propagation stopped working without Web Locks').toEqual(['signed out']);
     });
@@ -286,7 +310,7 @@ describe('signOutPropagatesToAllTabs', () => {
       broadcastSignOut(channel(name));
       markSignedOut();
       markSignedIn();
-      await quiet();
+      await arrive(() => acted.length > 0, 'nothing was delivered to the listener');
 
       // The same positive control AC11 needed, for the same reason: a listener that never fires touches no
       // store either, so "no store was touched" has to be measured over a delivery that happened.
@@ -333,7 +357,7 @@ describe('signOutPropagatesToAllTabs', () => {
        * Now a real sign-out follows the twelve, on the same channel, through the same listener.
        */
       broadcastSignOut(other);
-      await quiet();
+      await arrive(() => heard.length > 0, 'the control sign-out never arrived');
       expect(heard, 'the channel was never live, so the twelve refusals above measured nothing')
         .toEqual(['acted']);
     });
@@ -352,9 +376,118 @@ describe('signOutPropagatesToAllTabs', () => {
       opened.push(listenForSignOut(() => heard.push('acted'), { channel: channel(name) }));
 
       channel(name).postMessage({ type: SIGN_OUT_TYPE, reason: 'idle', version: 2 });
-      await quiet();
+      await arrive(() => heard.length > 0, 'the sign-out with an extra field was never acted on');
 
       expect(heard, 'a sign-out from a newer version of this app was ignored').toEqual(['acted']);
+    });
+  });
+
+    describe('AC14 the channels this module creates are the channels it closes', () => {
+    /*
+     * KIMI PHASE 11 F3 SAID TO ACCEPT THIS AS UNFALSIFIABLE, "like XT18", or to give `close()` an
+     * observable side effect. Neither was needed: it is already observable, from the outside, because the
+     * module reaches for the GLOBAL `BroadcastChannel` constructor and a test owns that global.
+     *
+     * The distinction matters beyond this case. XT18 is unfalsifiable because the operation it removes has
+     * no effect to detect - a double `close()` is a no-op by specification. A missing `close()` has a very
+     * real effect; it was only unobserved. "No test sees it" and "nothing could see it" are different
+     * claims, and the second is the one that earns a row scored apart.
+     */
+    it('closes the channel it created for a broadcast, and leaks none', async () => {
+      const closed: string[] = [];
+      const made: string[] = [];
+      const Real = globalThis.BroadcastChannel;
+      class Counted extends Real {
+        constructor(name: string) {
+          super(name);
+          made.push(name);
+        }
+
+        override close(): void {
+          closed.push(this.name);
+          super.close();
+        }
+      }
+      vi.stubGlobal('BroadcastChannel', Counted);
+      try {
+        broadcastSignOut();
+        broadcastSignOut();
+        expect(made, 'the broadcast did not construct its own channel').toHaveLength(2);
+        expect(closed, 'a channel this module created was left open, one per broadcast')
+          .toEqual([SIGN_OUT_CHANNEL, SIGN_OUT_CHANNEL]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+      // A fresh channel per call is the design, not an accident: `postMessage` on an already-closed
+      // channel throws, so a cached one would break every broadcast after the first.
+      expect(made[0], 'the two broadcasts shared one channel object').toBe(made[1]);
+    });
+
+    it('closes a channel it created for a LISTENER, and never one it was handed', async () => {
+      const closed: string[] = [];
+      const Real = globalThis.BroadcastChannel;
+      class Counted extends Real {
+        override close(): void {
+          closed.push(this.name);
+          super.close();
+        }
+      }
+      vi.stubGlobal('BroadcastChannel', Counted);
+      try {
+        listenForSignOut(() => undefined).close();
+        expect(closed, 'the listener left its own channel open').toEqual([SIGN_OUT_CHANNEL]);
+
+        const injected = new Counted(uniqueName());
+        listenForSignOut(() => undefined, { channel: injected }).close();
+        expect(closed, "close() closed a channel it did not create").toEqual([SIGN_OUT_CHANNEL]);
+        injected.close();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
+  describe('AC15 the sign-out listener and the renewal listener coexist on one tab', () => {
+    /*
+     * KIMI PHASE 11 F13: nothing installed both mechanisms in one tab. Unlikely to break - different
+     * channels, different callbacks - but "unlikely" is what an unexercised integration always looks like,
+     * and this one has a specific way to go wrong that the design chose against: had task 39 put sign-out
+     * on `RENEWAL_CHANNEL` as a third message type, each listener would see the other's traffic and the
+     * only thing standing between them would be a `type` discriminator.
+     */
+    it("each handles its own traffic and neither sees the other's", async () => {
+      const signOutName = uniqueName();
+      const renewalName = `${RENEWAL_CHANNEL}.t39-coexist-${Date.now()}`;
+      const heard: string[] = [];
+      const adopted: string[] = [];
+
+      const local = {
+        current: () => null,
+        adopt: (token: string) => void adopted.push(token),
+        renew: () => Promise.reject(new Error('this rig never renews')),
+      };
+      const renewalChannel = channel(renewalName);
+      const shared = shareRenewalAcrossTabs(local, {
+        channel: renewalChannel,
+        locks: { request: () => { throw new Error('this rig never takes the lock'); } },
+      });
+      opened.push(shared);
+      opened.push(listenForSignOut(() => heard.push('signed out'), { channel: channel(signOutName) }));
+
+      channel(renewalName).postMessage({ type: 'renewal:succeeded', token: 'coexist-token' });
+      await arrive(() => adopted.length > 0, 'the renewal listener never adopted');
+      expect(heard, 'a renewal outcome signed the tab out').toEqual([]);
+
+      broadcastSignOut(channel(signOutName));
+      await arrive(() => heard.length > 0, 'the sign-out listener never fired');
+      await quiet();
+
+      expect(heard, 'the sign-out was handled more than once').toEqual(['signed out']);
+      expect(adopted, 'a sign-out was adopted as a token').toEqual(['coexist-token']);
+      // The separation is the channel, not a discriminator: the two names are different, which is the
+      // decision AC5 explains and this case is the only one that exercises both at once.
+      expect(signOutName.startsWith(SIGN_OUT_CHANNEL)).toBe(true);
+      expect(renewalName.startsWith(RENEWAL_CHANNEL)).toBe(true);
     });
   });
 
@@ -366,7 +499,7 @@ describe('signOutPropagatesToAllTabs', () => {
       const other = channel(name);
 
       broadcastSignOut(other);
-      await quiet();
+      await arrive(() => heard.length > 0, 'the listener never worked at all');
       expect(heard, 'the listener never worked, so closing it proves nothing').toEqual(['acted']);
 
       listener.close();
