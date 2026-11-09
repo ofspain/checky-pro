@@ -105,15 +105,32 @@ const FORBIDDEN_REACHES: readonly (readonly [RegExp, string])[] = [
   [/useEffect/, 'useEffect(() => undefined, []);'],
   [/useState/, 'const [x] = useState(0);'],
   [/useRef/, 'const r = useRef(null);'],
+  // PHASE 11 (F3). This screen is deliberately static, so any hook beyond `useTranslation` is a deviation:
+  // `useReducer` is state, `useMemo`/`useCallback` can cache a read or a side effect, `useContext` can pull
+  // session state out of a provider without naming it. `useId` is left out on purpose - it is genuinely
+  // inert, and forbidding it would make this a style rule rather than a claim about behaviour.
+  [/\buseReducer\b/, 'const [s] = useReducer((x) => x, 0);'],
+  [/\buseMemo\b/, 'const m = useMemo(() => 0, []);'],
+  [/\buseCallback\b/, 'const c = useCallback(() => undefined, []);'],
+  [/\buseContext\b/, 'const v = useContext(Ctx);'],
   [/console\./, "console.log('x');"],
   [/sendBeacon/, "navigator.sendBeacon('/x');"],
   // TASK 37 PHASE 8 (I1) - reading the session, which no render comparison can see.
-  [/\baccessToken\s*\(/, 'void accessToken();'],
+  //
+  // PHASE 11 (F1) CORRECTED THIS, and it was worse than the finding said. The pattern was
+  // `/\baccessToken\s*\(/`, and `accessToken` is not a function: `accessToken.ts:45` exports it as a
+  // `LocalSession` OBJECT with `current()`, `adopt()` and `renew()`. So the entry forbade `accessToken(` -
+  // a shape that cannot legally exist anywhere - and allowed every shape that can. The identifier itself
+  // is what is forbidden now, which covers all three methods and anything added later. `clearAccessToken`
+  // and `retainAccessToken` keep their own rows: neither contains a lower-case `accessToken`.
+  [/\baccessToken\b/, 'void accessToken.current();'],
   [/\bclearAccessToken\b/, 'clearAccessToken();'],
   [/\bretainAccessToken\b/, "retainAccessToken('x');"],
   [/\btakeIdToken\b/, 'void takeIdToken();'],
   [/\bretainIdToken\b/, "retainIdToken('x');"],
-  [/from '\.\/(?:accessToken|idToken)'/, "import { accessToken } from './accessToken';"],
+  // PHASE 11 (F2): quote-agnostic. oxlint enforces single quotes, but a scan for a token read must not
+  // rest on formatter discipline - the probe is deliberately double-quoted to prove it does not.
+  [/from ["']\.\/(?:accessToken|idToken)["']/, 'import { accessToken } from "./accessToken";'],
   // TASK 37 PHASE 8 (I1) - the surfaces T36's AC8 sweeps, for the same reason it sweeps them.
   [/document\.title/, "document.title = 'x';"],
   [/window\.name/, "window.name = 'x';"],
@@ -129,6 +146,12 @@ function watchStorage(): Record<'getItem' | 'setItem' | 'removeItem' | 'clear', 
   };
 }
 
+// THE NAME OF THIS FILE DESCRIBES TASK 40'S CLAIM, NOT TASK 37'S. Task 37 owns ONE of the nine public
+// routes; the exhaustive "these nine and only these nine" claim needs an auth gate that does not exist yet
+// and is task 40's, which extends this file. Raised three times (phase 3 F6, phase 8 I4, phase 11 F5) and
+// kept three times, because `tasks.md:65` and `:71` name the SAME test for both tasks - renaming would
+// either break that convention or leave task 40 deleting a file. Repeated here, in the describe block, so
+// a reader who opens the suite rather than the header still sees it.
 describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -352,7 +375,11 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
           `the real source already trips ${forbidden.source}, so that entry proves nothing`).toBe(false);
       }
       // The sweep cannot shrink unnoticed: a deleted row would leave the loop above passing on fewer surfaces.
-      expect(FORBIDDEN_REACHES, 'the forbidden-surface sweep shrank').toHaveLength(22);
+      expect(FORBIDDEN_REACHES, 'the forbidden-surface sweep shrank').toHaveLength(26);
+      // PHASE 11 (F11): a count cannot see a DUPLICATED row, which would mean one surface was swept twice
+      // and another not at all while the length still looked right.
+      expect(new Set(FORBIDDEN_REACHES.map(([pattern]) => pattern.source)),
+        'two rows of the sweep hold the same pattern').toHaveLength(FORBIDDEN_REACHES.length);
     });
   });
 
@@ -517,6 +544,13 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       expect(main!.parentElement, 'the landmark is nested rather than at the top of the screen').toBe(container);
       expect(main!.querySelectorAll('h1'), 'the screen has no single level-one heading').toHaveLength(1);
       expect(main!.querySelectorAll('h2, h3, h4, h5, h6'), 'the screen added a subheading').toHaveLength(0);
+      // PHASE 11 (F4): the tags above are the markup; these are the SEMANTICS. `<main role="region">` is no
+      // longer a main landmark, and `<h1 aria-level="2">` is no longer a level-one heading, and neither
+      // changes a tag name.
+      expect(main!.getAttribute('role'), 'the landmark is overridden to another role').toBeNull();
+      const heading = main!.querySelector('h1');
+      expect(heading!.getAttribute('aria-level'), 'the level-one heading is re-levelled').toBeNull();
+      expect(heading!.getAttribute('role'), 'the heading is overridden to another role').toBeNull();
 
       // The reading order, as tags rather than as text, so this case fails for a STRUCTURAL change even
       // when the rendered text happens to be unchanged - which is the half AC11's equality cannot give.
@@ -584,6 +618,16 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
         .split('\n')
         .filter((line) => line.includes('SIGN_IN_PATH') && !line.trimStart().startsWith('import'));
       expect(readsOutside, 'SIGN_IN_PATH is read at module scope').toEqual([]);
+    });
+
+    it('builds the way back from SIGN_IN_PATH, in the `to` prop itself (F8)', async () => {
+      const code = await source();
+      // AC13's scan proves the constant is read inside the component, and AC5 proves the rendered href is
+      // right. PHASE 11 (F8) makes the link between them explicit: the constant must appear in the `to`
+      // expression, so a component that read it for some other purpose and hardcoded the target is caught
+      // by a case about the LINK rather than only by an href comparison.
+      expect(code, 'the Link\'s target is not built from SIGN_IN_PATH')
+        .toMatch(/to=\{`\/\$\{SIGN_IN_PATH\}`\}/);
     });
 
     it('CONTROL: the module-scope scan fires on a planted read', () => {
