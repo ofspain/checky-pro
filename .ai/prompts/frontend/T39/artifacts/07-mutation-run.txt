@@ -1,0 +1,142 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 1 failed of 1720, exit 1
+baseline own cases:   0 failed of 165, exit 0
+
+  KILLED    own            XT01 the listener is deaf: nothing is ever delivered to a sibling tab  (8 failed of 1720, exit 1)
+            └ runs the local action in the receiving tab
+            └ reaches EVERY listening tab, not just the first
+            └ puts exactly one message on the channel, counted by a third endpoint
+            └ works with navigator.locks removed entirely
+            └ refuses after a sign-out that arrived from a SIBLING TAB, not from this one
+            └ ACTS on a sign-out carrying an unknown extra field, deliberately
+            └ does nothing with a message that arrives after close
+  KILLED    own            XT02 the no-argument broadcast posts nothing, so only the injected path still works  (2 failed of 1720, exit 1)
+            └ puts exactly one sign-out on the real channel
+  KILLED    own            XT03 the channel is closed before the post, so the broadcast throws into endSession()  (22 failed of 1720, exit 1)
+            └ holds nothing by the time the hand-over happens
+            └ clears even when the hand-over itself throws
+            └ performs one navigation and no more
+            └ CONTROL: a watcher installed AFTER the call sees nothing
+            └ navigates to END_SESSION_PATH on the origin it read from location
+            └ is the origin, the basename and the signed-out route
+            └ percent-encodes the target, so SAS parses one parameter and not three
+            └ percent-encodes the HINT too, measured with a token that would break the query (Kimi F2)
+            └ names a route the route table actually declares, and a PUBLIC one
+            └ URL DERIVATION ONLY: follows the route table when the basename moves, not hardcoding /app
+            └ URL DERIVATION ONLY: strips a trailing slash the route table might grow
+            └ sends exactly what the callback retained
+            └ sends the token this tab holds, not a remembered one
+            └ sends id_token_hint and post_logout_redirect_uri, and nothing else
+            └ reaches the hint and no store, no console channel and no second place in the URL
+            └ is idempotent across both entry paths
+            └ clears before the URL is built, so a failure there cannot leave a token held (Kimi I9)
+            └ omits the parameter rather than sending an empty one
+            └ hands over rather than skipping, because skipping is the worse failure
+            └ clears nothing further, omits the hint, and hands over again
+            └ puts exactly one sign-out on the real channel
+  KILLED    own            XT04 signOut() broadcasts, so every receiving tab echoes and two tabs ping-pong  (3 failed of 1720, exit 1)
+            └ never calls a broadcast from signOut.ts, by source
+            └ puts exactly one sign-out on the real channel
+  KILLED    own            XT05 the listener re-posts what it received, on the same channel  (3 failed of 1720, exit 1)
+            └ reaches EVERY listening tab, not just the first
+            └ puts exactly one message on the channel, counted by a third endpoint
+  KILLED    own            XT06 every receiving tab navigates to the SAS end-session endpoint itself  (4 failed of 1720, exit 1)
+            └ names no identity path in the propagation module
+            └ CONTROL: that scan fires on a planted navigation
+            └ spells the end-session path in exactly two production modules, each for a different reason
+  KILLED    own            XT07 the message grows a timestamp, which is a correlation value on a surface (L3)  (4 failed of 1720, exit 1)
+            └ is exactly a type and no other property
+            └ spells no token, identifier or timestamp anywhere in the module
+            └ puts exactly one sign-out on the real channel
+  KILLED    own            XT08 the message grows a per-tab identifier to de-duplicate with  (4 failed of 1720, exit 1)
+            └ is exactly a type and no other property
+            └ spells no token, identifier or timestamp anywhere in the module
+            └ puts exactly one sign-out on the real channel
+  KILLED    own            XT09 propagation copies renewal's shape and needs Web Locks to listen at all  (9 failed of 1720, exit 1)
+            └ runs the local action in the receiving tab
+            └ reaches EVERY listening tab, not just the first
+            └ puts exactly one message on the channel, counted by a third endpoint
+            └ works with navigator.locks removed entirely
+            └ names no lock anywhere in the module, by source
+            └ refuses after a sign-out that arrived from a SIBLING TAB, not from this one
+            └ ACTS on a sign-out carrying an unknown extra field, deliberately
+            └ does nothing with a message that arrives after close
+  KILLED    own            XT10 broadcasting throws where BroadcastChannel does not exist  (2 failed of 1720, exit 1)
+            └ broadcasts nothing and listens to nothing, and returns a callable close()
+  KILLED    own            XT11 listening throws where BroadcastChannel does not exist  (2 failed of 1720, exit 1)
+            └ broadcasts nothing and listens to nothing, and returns a callable close()
+  KILLED    own            XT12 the latch is persisted to sessionStorage, so sign-out leaves a stored trace  (18 failed of 1720, exit 1)
+            └ is harmless run twice, and the second call leaves the state the first did
+            └ is harmless in a cold tab that never signed in - the state task 39 will call it from
+            └ leaves none of the three authorize items, from a genuinely mid-flight sign-in
+            └ returns undefined rather than a promise, and the state is already clear on the next line
+            └ removes the four inventory keys and performs no read, write or clear
+            └ accounts for every themistra. literal in production source
+            └ CONTROL: a key outside the inventory is caught
+            └ still permits the two legitimate writers, so the widened patterns are not a blanket ban
+            └ finds no third writer, and no caller of clear(), anywhere in production source
+            └ finds no namespace literal in production source outside the inventory and the non-store allowlist
+            └ touches no store while broadcasting, listening or latching
+            └ names no store and no cookie in the module, by source
+            └ clears the token even when every storage operation is refused
+            └ clears the token when sessionStorage is absent altogether
+            └ reaches the hint and no store, no console channel and no second place in the URL
+  KILLED    own            XT13 anything arriving on the channel signs the tab out  (2 failed of 1720, exit 1)
+            └ ignores every shape that is not a sign-out
+  KILLED    own            XT14 the parser refuses a sign-out carrying an unknown extra property (F8's strict half)  (2 failed of 1720, exit 1)
+            └ ACTS on a sign-out carrying an unknown extra field, deliberately
+  KILLED    own            XT15 the type is matched case-insensitively, so a near-miss message signs the tab out  (2 failed of 1720, exit 1)
+            └ ignores every shape that is not a sign-out
+  KILLED    own            XT16 close() leaves the message handler attached  (2 failed of 1720, exit 1)
+            └ does nothing with a message that arrives after close
+  KILLED    own            XT17 close() closes a channel it did not create, breaking its owner's next post  (2 failed of 1720, exit 1)
+            └ leaves an INJECTED channel open for its owner to close
+  SURVIVED  -              XT18 close() loses its idempotency guard  (1 failed of 1720, exit 1)
+  KILLED    own            XT19 the propagation module imports signOut from auth/ and calls it directly  (4 failed of 1720, exit 1)
+            └ touches no store while broadcasting, listening or latching
+            └ imports nothing from auth/
+            └ CONTROL: that scan fires on a planted upward import
+  KILLED    own            XT20 the module holds one channel at module scope, which nothing ever closes  (2 failed of 1720, exit 1)
+            └ declares no BroadcastChannel at module scope
+  KILLED    own            XT21 signOut() no longer sets the latch, so OQ-T35-3 reopens  (9 failed of 1720, exit 1)
+            └ refuses a success posted AFTER the sign-out
+            └ refuses a success posted BEFORE the sign-out, which is the ordering task 35 called unclosable
+            └ refuses after a sign-out that arrived from a SIBLING TAB, not from this one
+            └ sets the latch even when the very next step of signOut() throws
+            └ releases the latch on a real sign-in, so a renewed sibling can be adopted again
+            └ and every permitted caller really does call its primitive, so no entry is stale
+            └ is the only module permitted to call the whole sign-out set
+            └ never calls a broadcast from signOut.ts, by source
+  KILLED    own            XT22 the latch is set AFTER the clear, so a throw mid-sign-out leaves it unset  (2 failed of 1720, exit 1)
+            └ sets the latch even when the very next step of signOut() throws
+  KILLED    own            XT23 the latch is never released, so a tab that signs in again can never adopt a renewal  (3 failed of 1720, exit 1)
+            └ releases the latch on a real sign-in, so a renewed sibling can be adopted again
+            └ KNOWN HAZARD: a stale success from before the sign-out is adopted after a new sign-in
+  KILLED    own            XT24 the latch is released by clearAccessToken() instead of by the sign-in  (5 failed of 1720, exit 1)
+            └ refuses a success posted AFTER the sign-out
+            └ refuses a success posted BEFORE the sign-out, which is the ordering task 35 called unclosable
+            └ refuses after a sign-out that arrived from a SIBLING TAB, not from this one
+            └ releases the latch on a real sign-in, so a renewed sibling can be adopted again
+  KILLED    own            XT25 the renewal listener adopts without asking whether this tab signed out  (4 failed of 1720, exit 1)
+            └ refuses a success posted AFTER the sign-out
+            └ refuses a success posted BEFORE the sign-out, which is the ordering task 35 called unclosable
+            └ refuses after a sign-out that arrived from a SIBLING TAB, not from this one
+  KILLED    own            XT26 the guard is inverted: only a signed-out tab adopts  (15 failed of 1720, exit 1)
+            └ refuses a success posted AFTER the sign-out
+            └ refuses a success posted BEFORE the sign-out, which is the ordering task 35 called unclosable
+            └ refuses after a sign-out that arrived from a SIBLING TAB, not from this one
+            └ releases the latch on a real sign-in, so a renewed sibling can be adopted again
+            └ KNOWN HAZARD: a stale success from before the sign-out is adopted after a new sign-in
+  SURVIVED  -              XT27 the guard moves above the count and the waiter wake, changing how renewal settles  (1 failed of 1720, exit 1)
+  KILLED    own            XT28 endSession() signs this tab out and tells no other tab  (3 failed of 1720, exit 1)
+            └ puts exactly one sign-out on the real channel
+            └ broadcasts AFTER the local sign-out and BEFORE the hand-over, by source
+  KILLED    own            XT29 the broadcast runs BEFORE this tab has signed itself out  (2 failed of 1720, exit 1)
+            └ broadcasts AFTER the local sign-out and BEFORE the hand-over, by source
+  KILLED    own            XT30 the broadcast runs AFTER the navigation that may already have unloaded the page  (2 failed of 1720, exit 1)
+            └ broadcasts AFTER the local sign-out and BEFORE the hand-over, by source
+
+regressions: 28/30 killed
+survivors:   ['XT18 close() loses its idempotency guard [SURVIVED]', 'XT27 the guard moves above the count and the waiter wake, changing how renewal settles [SURVIVED]']
+broken:      none
