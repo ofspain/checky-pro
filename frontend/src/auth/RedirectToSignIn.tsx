@@ -2,7 +2,7 @@ import type { ReactElement } from 'react';
 import { Navigate, useLocation } from 'react-router';
 import { accessToken } from './accessToken';
 import { rememberReturnTarget } from './returnTarget';
-import { APP_BASENAME, SIGN_IN_PATH } from '../app/routes';
+import { SIGN_IN_PATH } from '../app/routes';
 
 /**
  * R28's SECOND clause: a visitor with no session who asked for anything but the nine public routes is sent to
@@ -20,6 +20,10 @@ import { APP_BASENAME, SIGN_IN_PATH } from '../app/routes';
  * only that a session renders the shell and the authenticated routes. Redirecting them would be a claim this
  * package has not made. For the gate's own arrival the question has already been asked one component up;
  * asking again costs one property read and buys one component instead of two.
+ *
+ * **THE ARRIVAL IS READ FROM `useLocation()`, WHICH IS BASENAME-RELATIVE.** That is the form the allowlist in
+ * `returnTarget.ts` holds (`/account`), so no conversion happens here at all. The body says what was measured
+ * and what the first version of this file got wrong about it.
  *
  * **IT CLAIMS ONLY WHAT IT CHECKS.** A held token does not prove the account is usable - a SUSPENDED account
  * keeps a working token, and `/accounts/me` is the only thing that can say otherwise (task 31).
@@ -49,15 +53,30 @@ export function RedirectToSignIn(): ReactElement | null {
   const hasSession = Boolean(accessToken.current());
   if (hasSession) return null;
 
-  // BASENAME-RELATIVE, because `useLocation().pathname` carries the `/app` prefix - the router's own state
-  // says `/app/sign-in`, measured at phase 4. Handing `/app/account` to `rememberReturnTarget` would fail the
-  // allowlist, which holds `/account`, and the deep link would be dropped in SILENCE: no throw, no log, just
-  // a visitor who lands on home. `cleanReauth.ts`'s `inAppPath()` does this same job, but from
-  // `globalThis.location`, which a memory-router test cannot drive - so these four lines are duplicated on
-  // purpose. This is the second instance of the shape; a third would be worth extracting.
+  // ALREADY BASENAME-RELATIVE, AND THIS LINE USED TO STRIP THE BASENAME OFF IT (phase 9, Kimi I6).
+  //
+  // `useLocation().pathname` is relative to the router's basename; it is `router.state.location.pathname` that
+  // carries the `/app` prefix. Phase 4 measured the second and the header here claimed the first, so this
+  // module shipped a strip that could never fire. Measured again at phase 9, six arrivals through BOTH
+  // `createMemoryRouter` and the production `createBrowserRouter`, and they agree exactly:
+  //
+  //     arrival             useLocation().pathname     router.state.location.pathname
+  //     /app/account        /account                   /app/account
+  //     /app/  and  /app    /                          /app/  and  /app
+  //     /app/no-such-route  /no-such-route             /app/no-such-route
+  //     /app/sign-in        /sign-in                   /app/sign-in
+  //     /app/app/account    /app/account               /app/app/account
+  //
+  // The strip was not merely dead: the last row is a path that MATCHES THE CATCH-ALL, and `/app/account`
+  // starts with `/app/`, so the strip turned a route the visitor never asked for into a remembered `/account`.
+  // Removing it is what makes `rememberReturnTarget`'s allowlist the only filter, which is what the next
+  // paragraph claims.
+  //
+  // WHY THE WRONG PREMISE WAS PLAUSIBLE: `cleanReauth.ts:43`'s `inAppPath()` performs exactly this strip and
+  // is RIGHT to, because it reads `globalThis.location.pathname`, which is a real URL and does carry the
+  // prefix. Copying a shape from a module that reads a different source carried its premise along with it.
   const { pathname } = useLocation();
-  const base = APP_BASENAME.endsWith('/') ? APP_BASENAME.slice(0, -1) : APP_BASENAME;
-  const arrival = pathname.startsWith(`${base}/`) ? pathname.slice(base.length) : pathname;
+  const arrival = pathname;
 
   // Unconditionally, with the allowlist as the only filter. There is deliberately no branch for the arrival
   // that matched nothing, for the bare `/app/`, or for a parameterised path: `rememberReturnTarget` refuses

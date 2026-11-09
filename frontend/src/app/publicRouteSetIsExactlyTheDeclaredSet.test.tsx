@@ -242,7 +242,10 @@ function withProbes(gate: ReactElement): RouteObject[] {
     };
   });
 
-  expect(gatesFound, 'the derived table found no pathless gate to replace').toBe(1);
+  // The message names BOTH directions. Before task 41 the only realistic failure was zero; now that two
+  // pathless routes exist, the realistic failure is two, and a message naming only the zero case would
+  // have said the opposite of what happened (phase 7, F3).
+  expect(gatesFound, 'the derived table did not find exactly one pathless gate WITH children').toBe(1);
   // One pathless LEAF, task 41's index route. Asserted for the same reason as the gate count: if a later task
   // adds a second, every arm here would be measuring a table whose bare-path arrival had changed, and the
   // baseline is the only place that can say so.
@@ -939,7 +942,8 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     it('serves the sign-in start, not the path asked for, on all eleven without a session (AC2, AC8, R28)', async () => {
       for (const path of AUTHENTICATED_ROUTE_PATHS) {
         const { container, router } = await arriveWithTable(withProbes(<RequireSession />), path);
-        expect(probeIn(container), `${path} served its own content without a session`).toBe(SIGN_IN_PATH);
+        expect(probeIn(container),
+          `${path} did not send a sessionless visitor to ${SIGN_IN_PATH}`).toBe(SIGN_IN_PATH);
         expect(router.state.location.pathname, path).toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
         release();
       }
@@ -1093,6 +1097,11 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
 
       expect(carrying, 'a pathless route beyond the gate and task 41\'s index redirect carries an element')
         .toHaveLength(2);
+      // ORDER IS DELIBERATE HERE, and it is the one order claim in a case about counts (phase 7, F4). Naming
+      // which pathless element is which is the difference between growing this pin and loosening it. If a
+      // later task reorders the root's children, THIS case fails for a reason that has nothing to do with
+      // elements - `pathTree` in `routesResolveUnderAppPrefixOnly.test.tsx` is the instrument that owns
+      // order, and that is the failure to read first.
       expect(carrying.map((route) => (route.element as ReactElement).type))
         .toEqual([RedirectToSignIn, RequireSession]);
       for (const route of carrying) {
