@@ -12,18 +12,25 @@ T36 because I ran it on an uncommitted test file.
 THE MACHINERY IS T37'S - eighth copy, OQ-T32-4 - with one thing this task needed and no earlier
 copy did:
 
-  IT IS RUN AT PHASE 7, BEFORE THE NAMED SUITE EXISTS. Every earlier task built its harness after
-  its own cases were written, so a survivor meant a gap in finished work. Here a survivor mostly
-  means the work has not been written yet, and the two readings must not be confused. So each row
-  carries an EXPECTATION - `inherited` if an instrument that already exists should kill it, `phase
-  10` if nothing can kill it until the named suite is written - and the run reports the rows whose
-  outcome DISAGREES with their expectation. That disagreement is the finding; the raw survivor
-  count at this phase is not.
+  EVERY ROW CARRIES AN EXPECTATION, AND IT MEANS SOMETHING STRONGER THAN A KILL.
 
-  A row expected `inherited` that survives is a real gap in instruments that already exist.
-  A row expected `phase 10` that DIES is better than predicted, and worth knowing: it means an
-  inherited instrument covers more than this task assumed, and phase 10 must not then claim the
-  kill for a case of its own.
+  IT WAS FIRST RUN AT PHASE 7, BEFORE THE NAMED SUITE EXISTED, which no earlier task's was. A
+  survivor then mostly meant the work was not written yet, so each row predicted `inherited` (an
+  instrument that already exists should kill it) or `phase 10` (nothing can until the suite is
+  written), and the run reported the rows that disagreed. Those predictions and their outcomes are
+  kept in `07-mutation-run.txt` and `09-mutation-run.txt`: five rows died better than predicted,
+  and three of those disagreements changed what phase 10 wrote.
+
+  PHASE 10 WROTE THE SUITE, so the field now carries the claim that matters from here on:
+
+    `own`           killed, AND with a named failure in a file this task owns or grew.
+    `unfalsifiable` no observable effect to detect; scored apart, never as a kill or a loss.
+
+  A row that dies only outside OWN_TESTS prints `INHERITED-ONLY` and is reported as a DISAGREEMENT
+  rather than a kill, because a kill by an unrelated suite is evidence about the mutant and not
+  about this task. RS06 and RS07 died exactly that way at phase 7 - by T22's package-wide `console`
+  sweep, which is a claim about token leaks - and if that sweep is ever narrowed, this harness says
+  so here instead of losing T40's only coverage silently (self-review F4, Kimi I5).
 
     python3 -I .ai/prompts/frontend/T40/artifacts/07-mutation-harness.py        # all
     python3 -I .ai/prompts/frontend/T40/artifacts/07-mutation-harness.py RS05   # one
@@ -89,17 +96,17 @@ MUTANTS = [
     # R28's first clause, switched off. The authenticated eleven are served to a visitor with no session,
     # which is the whole defect this task exists to prevent.
     ("RS01 the gate is open: every authenticated path is served with no session",
-     GUARD, COND, "  const hasSession = true;", "phase 10"),
+     GUARD, COND, "  const hasSession = true;", "own"),
 
     # The opposite: a split that is a deny. A visitor WITH a session is served nothing, which looks like
     # security and is a dead application.
     ("RS02 the gate never opens: an authenticated path is refused even with a session",
-     GUARD, COND, "  const hasSession = false;", "phase 10"),
+     GUARD, COND, "  const hasSession = false;", "own"),
 
     # The empty-string hole the brief's constraint names and F12 settled. `retainAccessToken('')` assigns
     # whatever string it is given (`accessToken.ts:90`), so `!== null` calls an empty token a session.
     ("RS03 an empty-string token counts as a session (Boolean -> !== null)",
-     GUARD, COND, "  const hasSession = accessToken.current() !== null;", "phase 10"),
+     GUARD, COND, "  const hasSession = accessToken.current() !== null;", "own"),
 
     # SCORED APART. Nothing renders either way.
     ("RS04 the blocked arm returns an empty fragment instead of null",
@@ -108,7 +115,7 @@ MUTANTS = [
     # F5's precision issue, as a measurement. An empty <div> renders NO TEXT, so a case asserting only
     # `textContent === ''` passes it; only a case asserting no ELEMENT in the outlet can tell.
     ("RS05 the blocked arm renders an empty element rather than nothing",
-     GUARD, RETURN, "  return hasSession ? <Outlet /> : <div />;", "phase 10"),
+     GUARD, RETURN, "  return hasSession ? <Outlet /> : <div />;", "own"),
 
     # The gate takes task 41's work. R28's second clause is not this task's, and a guard that redirects
     # would make the redirect's return target and replace-vs-push decisions implicit rather than designed.
@@ -117,32 +124,32 @@ MUTANTS = [
      (GUARD_IMPORTS, RETURN),
      ("import { Navigate, Outlet } from 'react-router';\nimport { accessToken } from './accessToken';",
       "  return hasSession ? <Outlet /> : <Navigate to=\"/sign-in\" replace />;"),
-     "inherited"),
+     "own"),
 
     # AC7's forbidden surfaces, one planted reach. The gate is a read; a console write is the cheapest
     # thing to plant that a source scan must see and no render comparison can.
     ("RS07 the gate writes to console",
-     GUARD, COND, "  console.log('gate');\n  const hasSession = Boolean(accessToken.current());", "phase 10"),
+     GUARD, COND, "  console.log('gate');\n  const hasSession = Boolean(accessToken.current());", "own"),
 
     # AC7/F18. The gate asks the session owner and nothing else; a route read is how a gate starts
     # growing per-path policy that no spec authorizes.
     ("RS08 the gate reads the route it is gating",
      GUARD, COND,
      "  const hasSession = Boolean(accessToken.current()) && globalThis.location.pathname !== '/app/admin';",
-     "phase 10"),
+     "own"),
 
     # --- where the gate is applied ----------------------------------------------------------------------
     # The nesting undone: the eleven go back to being direct children of the root and the gate disappears.
     # This is the shape the table had before this task, so anything that passes it has measured nothing.
     ("RS09 the gate is removed and the eleven are root children again",
-     ROUTES, GATE, "      ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),", "inherited"),
+     ROUTES, GATE, "      ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),", "own"),
 
     # The gate kept but given a path. `path: ''` reads as a string in the route tree, changes what the
     # bare `/app/` matches, and makes the authenticated paths resolve one level deeper than declared.
     ("RS10 the gate route is given path: '' instead of being pathless",
      ROUTES, GATE,
      "      { path: '', element: <RequireSession />, children: AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })) },",
-     "inherited"),
+     "own"),
 
     # The catch-all moved behind the gate. It still has no element, so a case asserting "the catch-all has
     # no element" passes - and task 41, which replaces it with the redirect, would be redirecting only the
@@ -153,7 +160,7 @@ MUTANTS = [
      ("      { element: <RequireSession />, children: [...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),\n"
       "        { path: '*' }] },",
       ""),
-     "phase 10"),
+     "own"),
 
     # The gate's children built from both arrays. The public nine keep working - they match at the root
     # first - so NO behavioural case can see this. Only a structural claim about the gate's reach can.
@@ -161,7 +168,7 @@ MUTANTS = [
      ROUTES, GATE,
      "      { element: <RequireSession />,\n"
      "        children: [...AUTHENTICATED_ROUTE_PATHS, ...PUBLIC_ROUTE_PATHS].map((path) => ({ path })) },",
-     "phase 10"),
+     "own"),
 
     # The gate moved onto the root, so it gates the public nine and the catch-all too. R28 inverted: a
     # visitor with no session is served NOTHING, including the sign-in screen they need.
@@ -170,7 +177,7 @@ MUTANTS = [
      (ROOT, GATE),
      ("    path: '/',\n    element: <RequireSession />,\n    children: [",
       "      ...AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })),"),
-     "inherited"),
+     "own"),
 
     # AC13, THE HOLE THIS TASK OPENS - and the row phase 9 had to rewrite, because the first version
     # measured something other than its description and the score counted it (self-review F5, Kimi I4).
@@ -186,7 +193,7 @@ MUTANTS = [
      ROUTES, GATE,
      "      { element: <RequireSession />, errorElement: <SignInScreen />,\n"
      "        children: AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })) },",
-     "phase 10"),
+     "own"),
 
     # The first version of RS14, KEPT AND RELABELLED rather than deleted. It is a real regression - a screen
     # attached where no count pin looks - and it does die; it just dies on the shape pin, so it is a
@@ -195,7 +202,7 @@ MUTANTS = [
     ("RS17 a SECOND pathless route is added carrying a screen (a pathTree row, not an AC13 row)",
      ROUTES, PUBLIC_MAP_END,
      "        return { path };\n      }),\n      { element: <SignInScreen /> },",
-     "inherited"),
+     "own"),
 
     # --- the instruments phase 6 grew -------------------------------------------------------------------
     # Task 33's AC11 walker, put back the way it was. The claim becomes vacuous: the eleven are no longer
@@ -204,13 +211,13 @@ MUTANTS = [
     ("RS15 task 33's AC11 walker is shallow again, making its claim vacuous",
      T33, T33_WALK,
      "      const everyRoute = (appRoutes[0].children ?? []) as Node[];",
-     "inherited"),
+     "own"),
 
     # Task 25's counterfactual control, with the gate's level dropped from the chain rather than named.
     # The control exists to prove the instrument can report a SUCCESSFUL navigation; a chain assertion
     # that no longer matches the real chain reports nothing of the kind.
     ("RS16 task 25's control drops the gate's level from the match chain",
-     T25, T25_CHAIN, "          matched: ['/', HOME_PATH],", "inherited"),
+     T25, T25_CHAIN, "          matched: ['/', HOME_PATH],", "own"),
 ]
 
 
@@ -283,16 +290,17 @@ def score(label, base_failed):
     code, failed, total = run(FILES)[:3]
     if failed is None:
         print(f"  BROKEN    -              {label}")
-        return None, True, None
+        return None, True, None, False
     if failed > base_failed:
         _, own_failed, _, _, names = run(OWN_TESTS, verbose=True)
-        own = "own" if (own_failed or 0) > 0 else "INHERITED-ONLY"
+        by_own = (own_failed or 0) > 0
+        own = "own" if by_own else "INHERITED-ONLY"
         print(f"  KILLED    {own:<14} {label}  ({failed} failed of {total}, exit {code})")
         for name in names:
             print(f"            └ {name}")
-        return None, False, names
+        return None, False, names, by_own
     print(f"  SURVIVED  -              {label}  ({failed} failed of {total}, exit {code})")
-    return label, False, None
+    return label, False, None, False
 
 
 def main():
@@ -322,8 +330,8 @@ def main():
             broken.append(label)
             revert()
             continue
-        lost, was_broken, _names = score(label, base_failed)
-        outcomes[label.split()[0]] = ("SURVIVED" if lost else "KILLED", expect)
+        lost, was_broken, _names, by_own = score(label, base_failed)
+        outcomes[label.split()[0]] = ("SURVIVED" if lost else ("KILLED/own" if by_own else "KILLED/other"), expect)
         if lost:
             survivors.append(lost)
         if was_broken:
@@ -345,15 +353,17 @@ def main():
 
     # THE PHASE 7 VERDICT. A survivor here is expected for every row phase 10 owns; what matters is a row
     # whose outcome disagrees with its expectation.
-    print("\n--- expectation vs outcome ---")
+    print("\n--- expectation vs outcome (`own` = killed BY A CASE THIS TASK OWNS) ---")
     disagreed = []
     for key, (outcome, expect) in sorted(outcomes.items()):
         if expect == "unfalsifiable":
             flag = "as expected" if outcome == "SURVIVED" else "DISAGREES - it has an observable effect"
-        elif expect == "inherited":
-            flag = "as expected" if outcome == "KILLED" else "DISAGREES - a gap in instruments that EXIST"
+        elif outcome == "SURVIVED":
+            flag = "DISAGREES - nothing detects it"
+        elif outcome == "KILLED/other":
+            flag = "DISAGREES - killed only OUTSIDE this task's files"
         else:
-            flag = "as expected" if outcome == "SURVIVED" else "DISAGREES - inherited cover is wider than assumed"
+            flag = "as expected"
         if flag != "as expected":
             disagreed.append(key)
         print(f"  {key:<6} expected {expect:<13} got {outcome:<9} {flag}")
