@@ -76,6 +76,14 @@ under the old scoring all three would have printed `INHERITED-ONLY` and been rep
 · **Recommendation:** Phase 9 replaces all four numbers with the computed ones and corrects the two sentences
   in `06-implementation-notes.md` that quote them. Phase 10's AC9 case prints the computed ratio in its
   assertion message, so the next reader of a wrong comment has the real number beside it.
+· **APPLIED EARLY, 2026-11-11, at the owner's request** — ahead of phase 9, which is where fixes normally
+  land. `styles.css` now reads 17.5 / 7.9 / 6.7 / 5.9, the `@theme` block opens with the formula and the
+  statement that every ratio below is computed rather than estimated, and both sentences in
+  `06-implementation-notes.md` are corrected and marked as corrections. **No colour value changed**: the
+  defect was the arithmetic reported for colours that were already right, so the three frozen pairs clear
+  §6d's thresholds exactly as they did before. The line 24 claim *"21:1 against near-black"* went too - 21:1
+  is black on white, and pure white against this text colour is 18.1:1, so the comparison now names both real
+  figures. Phase 9 carries the remaining half: AC9's assertion message.
 
 ### F2 — RD11 is a BROKEN mutant that the harness scored as a kill
 · **Severity:** **Major**

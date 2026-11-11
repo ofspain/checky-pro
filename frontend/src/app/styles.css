@@ -21,27 +21,33 @@
 @import "tailwindcss";
 
 @theme {
-  /* The page under every screen. Near-white rather than pure white: 21:1 against near-black is more contrast
-     than WCAG asks for and more than a long sentence is comfortable to read. */
+  /* EVERY RATIO BELOW IS COMPUTED, NOT ESTIMATED - sRGB to relative luminance, then (L1+0.05)/(L2+0.05),
+     the same arithmetic the named test performs on these declarations. The first four written here were
+     wrong, one of them by 73% (phase 7, F1): a comment stating a measurement nobody ran reads exactly like
+     one stating a measurement somebody did, and the test cannot tell them apart, because it recomputes from
+     the hex and never looks at the prose.
+
+     The page under every screen. Near-white rather than pure white, which costs almost nothing: against the
+     text colour below, #ffffff gives 18.1:1 and this gives 17.5:1. */
   --color-surface: #fbfbfd;
 
-  /* Heading and Text, on every one of the five screens. 15.9:1 on surface — far past AA's 4.5:1, because
+  /* Heading and Text, on every one of the five screens. 17.5:1 on surface — far past AA's 4.5:1, because
      body copy is where the margin is cheapest to keep. */
   --color-text: #15161a;
 
   /* StatusRegion's line, which is secondary to the control beside it but is still prose a visitor must read:
-     7.2:1 on surface, so it clears AA for normal text rather than relying on the large-text allowance. */
+     7.9:1 on surface, so it clears AA for normal text rather than relying on the large-text allowance. */
   --color-muted: #4b4f58;
 
   /* ActionButton — the one control in the application today (SignInScreen's "Continue to sign in"). */
   --color-accent: #1b4ed8;
 
-  /* Its label. 7.0:1 on accent. */
+  /* Its label. 6.7:1 on accent. */
   --color-text-inverse: #ffffff;
 
   /* The focus ring, on every interactive primitive and on FocusHolder, which exists so a keyboard user is
-     never dropped to <body> (RateLimitNotice). 3.4:1 on surface, clearing WCAG 2.1 1.4.11's 3:1 for
-     non-text contrast — the ring is the one thing on the page that must not be subtle. */
+     never dropped to <body> (RateLimitNotice). 5.9:1 on surface, clearing WCAG 2.1 1.4.11's 3:1 for
+     non-text contrast with room to spare — the ring is the one thing on the page that must not be subtle. */
   --color-focus: #0b5bd3;
 
   /* Three steps, which is all five screens use: a heading, body copy, and the status line under it. */

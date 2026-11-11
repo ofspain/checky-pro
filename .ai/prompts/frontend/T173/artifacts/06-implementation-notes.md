@@ -35,8 +35,13 @@ so an unused token reads as a comment with no subject.
 
 The values are mine, not the owner's: **OQ-T173-3** stands — nothing in `spec/frontend/` states a visual
 direction. The block is deliberately the whole diff if one arrives. What the spec *does* require is contrast
-(L11, "WCAG AA"), so each colour's comment carries its measured ratio: text 15.9:1, muted 7.2:1, inverse on
-accent 7.0:1, focus ring 3.4:1 against the 3:1 that WCAG 2.1 §1.4.11 asks of non-text.
+(L11, "WCAG AA"), so each colour's comment carries its measured ratio: text **17.5:1**, muted **7.9:1**,
+inverse on accent **6.7:1**, focus ring **5.9:1** against the 3:1 that WCAG 2.1 §1.4.11 asks of non-text.
+
+> **Corrected after phase 7's F1, at the owner's request.** This paragraph first read *"text 15.9:1, muted
+> 7.2:1, inverse on accent 7.0:1, focus ring 3.4:1"*, and all four were wrong — the focus pair by 73%. Every
+> threshold cleared then and clears now, so no colour was re-picked; what was wrong was the arithmetic
+> reported for colours that were right. See `07-self-review.md` F1.
 
 ### Created — `src/app/ui/`, eight primitives and an `index.ts`
 
@@ -189,7 +194,7 @@ instrument is stronger evidence than a criterion I have yet to write.
 | AC5 landmarks, one `h1`, live regions, `aria-*` | **done** |
 | AC6 the notice's focus holder keeps focus | **done, and measured** by an existing case |
 | AC7/AC8 copy still from the catalogue | **done** — no literal was moved into a primitive |
-| AC9 three contrast pairs clear AA | **done arithmetically** in the token comments; the test that recomputes them is phase 10's |
+| AC9 three contrast pairs clear AA | **done arithmetically**, and the four stated ratios were **wrong until phase 7 measured them** (F1); the test that recomputes them from the declarations is phase 10's |
 | AC10/AC11 no new storage key, no network call in render | **done** — nothing in `ui/` touches either |
 | AC12 one stylesheet | **done** |
 | AC13 R30 — identical **and** non-empty | **done** — §3 |
