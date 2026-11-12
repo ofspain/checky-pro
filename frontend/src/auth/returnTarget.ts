@@ -32,9 +32,11 @@ import { AUTHENTICATED_ROUTE_PATHS, HOME_PATH } from '../app/routes';
  * - **A query string or fragment** (T24-D6). No caller needs one today, and allowing one means deciding what may
  *   appear in it.
  *
- * WHERE THE VISITOR ACTUALLY LANDS (T24-D11). `/app/home` is registered in the route table with **no element**,
- * and no task in the package builds a home screen, so the fallback is a blank route today. The navigation is
- * real; what renders afterwards is someone else's task.
+ * WHERE THE VISITOR ACTUALLY LANDS (T24-D11, CLOSED BY TASK 174). This paragraph used to read that
+ * `/app/home` is "registered in the route table with no element... so the fallback is a blank route today",
+ * and that whatever rendered afterwards was someone else's task. It was someone else's task and it has now
+ * run: the fallback lands on `HomeScreen`, which renders a landmark and a heading and moves focus to it.
+ * The navigation was always real; what it arrives at is no longer nothing.
  */
 export const RETURN_TARGET_KEY = 'themistra.auth.return_to';
 

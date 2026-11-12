@@ -422,6 +422,37 @@ describe('phase 8 I9: no OTHER screen takes focus, now that every heading can', 
 });
 
 describe('AC10 the focus move survives StrictMode double invocation', () => {
+  it('lands on the same heading through the REAL route table, under StrictMode (AC4 + AC10)', async () => {
+    // The combination neither case covers alone. AC10 below mounts the screen directly, so the route table
+    // and the gate are absent; AC4's with-session case uses the real table but not StrictMode;
+    // `unauthenticatedRoutesRedirectToSignIn.test.tsx:215` does StrictMode through the real table but for
+    // the REDIRECT, where no screen mounts at all. A double-invocation fault that needed the gate above it
+    // would be invisible to all three.
+    retainAccessToken('a-token-for-this-case');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const router = createMemoryRouter(appRoutes, {
+      basename: APP_BASENAME,
+      initialEntries: [`${APP_BASENAME}/${HOME_PATH}`],
+    });
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <I18nextProvider i18n={createI18n()}>
+            <RouterProvider router={router} />
+          </I18nextProvider>
+        </StrictMode>,
+      );
+    });
+    mounted = { root, container };
+
+    expect(router.state.location.pathname).toBe(`${APP_BASENAME}/${HOME_PATH}`);
+    expect(container.querySelectorAll('h1'), 'the gate rendered the screen twice').toHaveLength(1);
+    expect(document.activeElement, 'focus was lost between the gate and the screen under StrictMode')
+      .toBe(container.querySelector('h1'));
+  });
+
   it('lands on the same heading when the effect runs twice', async () => {
     const container = await mountScreen({ strict: true });
 
