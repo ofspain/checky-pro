@@ -98,7 +98,7 @@ FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 REVERT_PATHS = ["frontend/src/", "frontend/vite.config.ts"]
 
-EXPECTED_BASELINE_FAILURES = 1  # of 1815 after phase 10's 34 cases; 1781 at phases 7 and 9
+EXPECTED_BASELINE_FAILURES = 1  # of 1833 after phase 11 grew the suite to 52; 1815 at phase 10, 1781 before
 KNOWN_ENVIRONMENTAL_FAILURES = {
     # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass.
     # USED ONLY FOR THE BASELINE REFUSAL CHECK. Attribution no longer subtracts this file, because only ONE
@@ -255,6 +255,26 @@ MUTANTS = [
       '${extra ?? \'\'}`}>',
       '  return <Surface data-testid="app-shell" className="bg-red-500">{children}</Surface>;'),
      "inherited"),  # was "phase 10" until phase 10: still tsc via the build gate; only the TIMING prediction was wrong
+
+    # --- the visual contract itself, which nothing measured until phase 11 asked (F1, F4, F6) -----------
+    # KIMI'S F1 WAS RIGHT AND THE HARNESS IS WHY IT WAS INVISIBLE: sixteen rows, 16/16 killed, and not one
+    # of them touched a utility class. A primitive could lose the token it exists to apply and every case
+    # passed - the screen still rendered a button, AC9 still found the token, AC14 still found OTHER
+    # utilities in the build. A kill count says nothing about the regressions nobody wrote a row for.
+    ("RD18 ActionButton loses its accent, so the one control has no background (F1)",
+     BUTTON, "bg-accent ", "", "own"),
+
+    ("RD19 the three focusable primitives lose their focus ring: no keyboard indicator (F4, L11)",
+     (BUTTON, LINK, HOLDER),
+     ("focus-visible:outline-2 focus-visible:outline-focus aria-disabled:opacity-70",
+      'outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus"',
+      'outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus"'),
+     ("aria-disabled:opacity-70", 'outline-offset-2"', 'outline-offset-2"'), "own"),
+
+    ("RD20 a primitive hardcodes an inline style, bypassing the token system (F6)",
+     STATUS, ST_OPEN,
+     '      <div ref={ref} role="status" aria-live="polite" style={{ color: \'red\' }} '
+     'className="text-step--1 text-muted">', "own"),
 
     # --- canary: is the pin's own walker awake? ---------------------------------------------------------
     # The sameness half of R30's pin cannot be falsified from production code - the cause of an identity

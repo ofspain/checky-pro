@@ -120,15 +120,19 @@ function lowercaseJsxTags(code: string): string[] {
     .map((match) => match[1] as string);
 }
 
-async function productionFilesUnder(...dirs: string[]): Promise<string[]> {
-  const found: string[] = [];
-  for (const dir of dirs) {
-    const entries = await readdir(join(srcDir, dir), { withFileTypes: true, recursive: true });
-    for (const entry of entries) {
-      if (!entry.isFile() || !/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) continue;
-      found.push(relative(srcDir, join(entry.parentPath, entry.name)));
-    }
-  }
+/**
+ * Every non-test source file in `src/`, at any depth.
+ *
+ * SCOPED TO THE WHOLE TREE, NOT TO `app/` AND `auth/` (phase 11, F2). It read two directories until that
+ * review pointed out the obvious: §6e's intent is *every* screen, and a later domain directory - a
+ * `src/profile/` - would have been invisible to the sweep AND absent from the pinned list, so the
+ * cross-check would have passed by knowing about neither. `src/main.tsx` is already outside the old scope.
+ */
+async function productionFiles(): Promise<string[]> {
+  const entries = await readdir(srcDir, { withFileTypes: true, recursive: true });
+  const found = entries
+    .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name))
+    .map((entry) => relative(srcDir, join(entry.parentPath, entry.name)));
   expect(found.length).toBeGreaterThan(0);
   return found.sort();
 }
@@ -189,8 +193,8 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     expect(both, 'a file is in both lists, so the sweep below cannot say which rule applies').toEqual([]);
   });
 
-  it('finds exactly the eight primitives bearing a lowercase tag — not thirteen (§6e(2), phase 8 I7)', async () => {
-    const files = await productionFilesUnder('app', 'auth');
+  it('finds exactly seven files bearing a lowercase tag, in all of src/ — not thirteen (§6e(2), I7, F2)', async () => {
+    const files = await productionFiles();
     const bearing: string[] = [];
     for (const file of files) {
       if (lowercaseJsxTags(await read(file)).length > 0) bearing.push(file);
@@ -294,6 +298,16 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     }
   });
 
+  it('CONTROL: a string literal holding a tag IS counted — the known limit of a text scan (F11)', () => {
+    // Recorded as a limitation rather than fixed. The scan reads source text, not an AST, so a file holding
+    // the STRING "<div>" would be reported as rendering one. No file in the package does, and the honest
+    // move is to pin the behaviour so the next person meets it as a documented edge rather than a mystery -
+    // narrowing the pattern further to exclude strings is how a sweep goes blind (see the generic control).
+    expect(lowercaseJsxTags('export const sample = "<div>";'),
+      'the scan silently started ignoring string contents, which is a wider hole than the one it closes')
+      .toEqual(['div']);
+  });
+
   it('CONTROL: a TypeScript generic is not a tag, in either direction', () => {
     // The hole this closes was real, not hypothetical: `Promise<string>` and `Set<string>` put two files with
     // no JSX into the derived set before the lookbehind was added.
@@ -344,6 +358,17 @@ describe('T173 AC4: no primitive accepts a class or a style', () => {
     }
   });
 
+  it('forbids a hardcoded inline style in any primitive body (phase 11, F6)', async () => {
+    // Symmetric to the newline check, and not covered by the prop-type scan: a primitive could write
+    // `style={{ color: 'red' }}` without ACCEPTING a style prop, and every type assertion above would pass.
+    // The R30 pin would see it only on the five identity-failure screens.
+    for (const file of PRIMITIVE_FILES) {
+      const code = withoutComments(await read(file));
+      expect(code, `${file} hardcodes an inline style, which is styling outside the token system`)
+        .not.toMatch(/\bstyle\s*=\s*\{/);
+    }
+  });
+
   it('CONTROL: a planted className prop is caught, in the type and not merely in the body', () => {
     const planted = [
       "import { forwardRef, type ReactNode } from 'react';",
@@ -365,6 +390,70 @@ describe('T173 AC4: no primitive accepts a class or a style', () => {
       .toContain('stops build at lint, so tsc and Vite never run on a violation');
     expect(gate, 'the build case no longer asserts that today\'s sources build cleanly')
       .toContain('const clean = await build();');
+  });
+});
+
+// ==========================================================================================================
+// AC1 — each primitive carries the design system it exists to apply (phase 11, F1 and F4)
+// ==========================================================================================================
+
+/**
+ * WHAT THE SUITE DID NOT MEASURE UNTIL PHASE 11 ASKED. Every case before this one checked tags, attributes,
+ * refs, the token block and the emitted CSS - and not one of them checked that a primitive carries the
+ * utilities it exists to carry. Kimi's F1: remove `bg-accent` from `ActionButton` and the sign-in screen
+ * still renders a button, AC9 still finds the token, AC14 still finds other utilities in the build, and the
+ * R30 pin only asks that class attributes be identical across account states, never WHICH classes.
+ *
+ * The required set per primitive is deliberately NOT the exact class string. Spacing and radius are phase 5's
+ * to choose and a later task's to change; what this task owes is that the COLOUR TOKENS, the TYPE STEPS and
+ * the FOCUS INDICATOR are applied where they belong. Pinning the whole literal would turn every padding
+ * adjustment into a test edit, which is how a pin gets deleted rather than updated.
+ */
+const REQUIRED_UTILITIES: Record<(typeof PRIMITIVES)[number], readonly string[]> = {
+  Surface: ['min-h-dvh', 'bg-surface', 'text-text'],
+  Screen: ['mx-auto', 'max-w-prose'],
+  Heading: ['text-step-1', 'text-text'],
+  Text: ['text-step-0', 'text-text'],
+  ActionButton: ['bg-accent', 'text-text-inverse', 'text-step-0'],
+  TextLink: ['text-accent', 'underline'],
+  StatusRegion: ['text-step--1', 'text-muted'],
+  FocusHolder: [],
+};
+
+/** The three a keyboard user has to see a ring on: the only control, the only link, and the focus holder. */
+const FOCUSABLE = ['ActionButton', 'TextLink', 'FocusHolder'] as const;
+
+function classesOf(code: string): string[] {
+  return [...withoutComments(code).matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)]
+    .flatMap((match) => (match[1] ?? match[2] ?? '').split(/\s+/))
+    .filter(Boolean);
+}
+
+describe('T173 AC1: every primitive applies the tokens it exists to apply', () => {
+  it.each(PRIMITIVES)('gives %s the colour and type utilities it owns', async (name) => {
+    const classes = classesOf(await read(`app/ui/${name}.tsx`));
+    for (const utility of REQUIRED_UTILITIES[name]) {
+      expect(classes, `${name} no longer applies ${utility}, so the design system is not reaching it`)
+        .toContain(utility);
+    }
+  });
+
+  it.each(FOCUSABLE)('gives %s a visible focus ring (L11, WCAG 2.4.7)', async (name) => {
+    const classes = classesOf(await read(`app/ui/${name}.tsx`));
+    // Without these a keyboard user has no indicator on the application's only control and only link - and
+    // `--color-focus` is the one token whose contrast threshold exists for exactly this (§6d, 1.4.11).
+    expect(classes, `${name} has no focus ring width`).toContain('focus-visible:outline-2');
+    expect(classes, `${name} has no focus ring colour, so the ring is the browser default`)
+      .toContain('focus-visible:outline-focus');
+  });
+
+  it('CONTROL: the utility check is not vacuous — a missing class is caught, a present one is seen', () => {
+    const stripped = 'export const X = () => <button className="self-start px-4 py-2">x</button>;';
+    expect(classesOf(stripped), 'the accent was removed and the check did not notice')
+      .not.toContain('bg-accent');
+    expect(classesOf(stripped)).toEqual(['self-start', 'px-4', 'py-2']);
+    expect(classesOf('<div className={`a ${x} b`}>'), 'a template literal hides its static utilities')
+      .toContain('a');
   });
 });
 
@@ -486,6 +575,19 @@ describe('T173 AC6: every primitive forwards its ref to the element it renders',
     }
   });
 
+  it('names the case that measures the control\'s busy state, so the citation cannot rot (F7)', async () => {
+    // F7 asked this suite to click the button and assert `aria-disabled`/`aria-busy` flip to "true".
+    // Declined for the reason phase 7's F5 recorded: `signInStartsAuthorizationCodeFlowWithPkce…` already
+    // asserts both, on both edges, including the return to "false" after a failure. A second copy here
+    // would measure the same claim through a click that also reaches PKCE and `location.assign`, and would
+    // be a worse instrument for being noisier. What this task owes is that the citation cannot rot.
+    const owner = await read('auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx');
+    expect(owner, 'the case that measures the busy state was renamed or removed')
+      .toContain("expect(button(container).getAttribute('aria-disabled')).toBe('true');");
+    expect(owner, 'that case no longer asserts the busy flag alongside the disabled one')
+      .toContain("expect(button(container).getAttribute('aria-busy')).toBe('true');");
+  });
+
   it('names the case that measures the focus move itself, so the citation cannot rot', async () => {
     const owner = await read('api/rateLimitedResponseShowsGenericCopyWithoutReplay.test.tsx');
     expect(owner, 'the focus case was renamed, so AC6 has no behavioural instrument behind it')
@@ -520,6 +622,21 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
     expect(text).toContain(en.signIn.action);
     expect(text).toContain('Continue to the secure sign-in page to enter your details.');
     expect(text, 'a key leaked into the DOM').not.toMatch(/signIn\./);
+  });
+
+  it('renders the callback screen\'s copy, as literal English (phase 11, F5)', async () => {
+    globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.state, STATE);
+    globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.nonce, 'a-nonce');
+    globalThis.sessionStorage.setItem(AUTHORIZE_STORAGE_KEYS.codeVerifier, 'a-verifier');
+    const text = (await mount(<CallbackScreen />, `/callback?state=${STATE}&code=a-code`)).textContent ?? '';
+
+    expect(text).toContain(en.callback.heading);
+    expect(text).toContain(en.callback.working);
+    expect(text).toContain('Finishing sign-in');
+    expect(text, 'a key leaked into the DOM, so the catalogue lookup failed').not.toMatch(/callback\./);
+    // It says what is happening and never that sign-in has succeeded: the flow is not finished until the
+    // exchange, which this file stubs to a promise that never settles.
+    expect(text.toLowerCase(), 'the transient screen claims success it cannot know').not.toContain('success');
   });
 
   it('keeps the catalogue\'s key set exactly as it was (AC11)', () => {
@@ -563,14 +680,22 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
 // ==========================================================================================================
 
 describe('T173 AC10: the primitive layer added no side effect', () => {
-  it('writes no storage and makes no request while the two static screens render', async () => {
+  it.each([
+    ['SignedOutScreen', <SignedOutScreen />],
+    ['SignInScreen', <SignInScreen />],
+    ['RateLimitNotice', <RateLimitNotice notice={createRateLimitNotice()} />],
+  ] as const)('writes no storage and makes no request while %s renders (phase 11, F12)', async (_name, element) => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-    await mount(<SignedOutScreen />);
+    await mount(element);
+
     expect(setItem).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  // `CallbackScreen` is deliberately absent: its whole job is an effect that reads storage and calls the
+  // token endpoint, so including it would mean asserting it does not do the thing it exists to do.
 
   it('declares no storage key and no endpoint in any primitive', async () => {
     for (const file of PRIMITIVE_FILES) {
@@ -676,15 +801,32 @@ describe('T173 AC14/AC15: the stylesheet reaches the built output', () => {
       for (const token of ['--color-surface', '--color-accent', '--text-step-0']) {
         expect(css, `the @theme token ${token} did not reach the build`).toContain(token);
       }
-      for (const utility of ['min-h-dvh', 'max-w-prose', 'text-step-1']) {
-        expect(css, `the utility ${utility} emitted no rule, so it is a typo rather than a class`)
+      // EVERY required utility, not a sample: a typo'd Tailwind class emits NOTHING and fails silently, and
+      // jsdom can never see it. Backslashes are stripped because the emitted selector escapes the colon -
+      // `.focus-visible\:outline-2` - so a literal match would fail on exactly the classes F4 cares about.
+      const flat = css.replaceAll('\\', '');
+      const required = [...new Set([
+        ...Object.values(REQUIRED_UTILITIES).flat(),
+        'focus-visible:outline-2',
+        'focus-visible:outline-focus',
+      ])];
+      expect(required.length, 'the required-utility table emptied, so this case asserts nothing')
+        .toBeGreaterThan(8);
+      for (const utility of required) {
+        expect(flat, `the utility ${utility} emitted no rule, so it is a typo rather than a class`)
           .toContain(utility);
       }
 
       const html = await readFile(join(outDir, 'index.html'), 'utf8');
-      const hrefs = [...html.matchAll(/<link\b[^>]*\bhref="([^"]+\.css)"/g)].map((match) => match[1]);
-      expect(hrefs, 'index.html links no stylesheet, so the CSS asset is emitted but never loaded')
-        .toEqual([`/app/assets/${stylesheets[0]}`]);
+      // `rel="stylesheet"` IS PART OF THE CLAIM (phase 11, F3). `<link href="...css">` with no rel is not a
+      // stylesheet to a browser; it is an unused resource hint. The old pattern accepted it, so the case
+      // could have passed on a build that shipped the CSS and never applied it.
+      const links = [...html.matchAll(/<link\b[^>]*>/g)].map((match) => match[0]);
+      const sheets = links.filter((tag) => /\brel="stylesheet"/.test(tag) && /\.css"/.test(tag));
+      expect(sheets, 'index.html has no rel="stylesheet" link, so the CSS is emitted but never applied')
+        .toHaveLength(1);
+      expect(sheets[0], 'the stylesheet link does not point at the emitted asset')
+        .toContain(`href="/app/assets/${stylesheets[0]}"`);
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }
