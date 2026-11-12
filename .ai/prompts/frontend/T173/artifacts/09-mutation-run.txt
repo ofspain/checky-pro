@@ -1,0 +1,103 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 1 failed of 1781, exit 1
+baseline failing cases (excluded from every attribution below): ["passes today's frontend/src through the lint script, running only the two L6 rules (AC4)"]
+
+  KILLED    own            RD01 the Screen primitive renders a div, so no screen has a landmark  (21 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/auth/callbackValidatesNonce.test.tsx', 'src/auth/callbackWithMismatchedStateIsDiscarded.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx']
+            └ renders the signed-out screen at its declared path
+            └ renders the same under StrictMode double-invocation
+            └ renders with no token held and nothing in storage, and leaves both that way
+            └ renders exactly the three catalogue strings
+            └ contains none of the words that would disclose why the session ended
+            └ offers a link to sign-in and no other interactive element
+            └ renders byte-identical output for every way it can be arrived at
+            └ renders no address, no identifier and no token-shaped string
+            └ CONTROL: the container-scoped sweep sees what a main-scoped one cannot
+            └ is one landmark holding a level-one heading, a paragraph and the way back, in that order
+            └ renders and stays put rather than redirecting
+            └ renders byte-identical output whether or not a token is held
+            └ routes each state to the sign-in start with the discarded copy and no token
+  KILLED    own            RD02 the Heading primitive renders an h2, so no screen has a level-one heading  (18 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/auth/callbackValidatesNonce.test.tsx', 'src/auth/callbackWithMismatchedStateIsDiscarded.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
+            └ renders the signed-out screen at its declared path
+            └ renders the same under StrictMode double-invocation
+            └ renders exactly the three catalogue strings
+            └ is one landmark holding a level-one heading, a paragraph and the way back, in that order
+            └ routes each state to the sign-in start with the discarded copy and no token
+  KILLED    own            RD03 TextLink renders a bare anchor instead of the router's Link (D3)  (3 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx']
+            └ offers a link to sign-in and no other interactive element
+            └ is a real anchor, not a button wired to navigate
+  KILLED    own            RD04 every primitive on the sign-in screen loses its class: the design system is reverted  (2 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx']
+            └ renders no class and no style attribute, for any of the five states
+  KILLED    own            RD05 the stylesheet is never imported, so no CSS is emitted at all  (2 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/bundleContainsNoSecretEnvKeys.test.ts']
+            └ contains exactly the enumerated vendor URLs and no others
+  KILLED    own            RD06 the Tailwind build plugin is dropped, so the utilities compile to nothing  (2 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/bundleContainsNoSecretEnvKeys.test.ts']
+            └ contains exactly the enumerated vendor URLs and no others
+  SURVIVED  -              RD07 the accent token is deleted, so bg-accent silently emits nothing  (1 failed of 1781, exit 1)
+  KILLED    inherited      RD08 FocusHolder stops forwarding its ref: focus falls to <body> on dismiss (L11)  (2 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/api/rateLimitedResponseShowsGenericCopyWithoutReplay.test.tsx']
+            └ keeps keyboard focus on the notice when the dismiss button is activated (AC4, L11; phase 9)
+  KILLED    inherited      RD09 ActionButton stops forwarding its ref, so the notice cannot tell if its button had focus  (2 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/api/rateLimitedResponseShowsGenericCopyWithoutReplay.test.tsx']
+            └ keeps keyboard focus on the notice when the dismiss button is activated (AC4, L11; phase 9)
+  KILLED    own            RD10 StatusRegion loses aria-live, so nothing it holds is ever announced (L11)  (8 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/api/rateLimitedResponseShowsGenericCopyWithoutReplay.test.tsx', 'src/auth/callbackWithMismatchedStateIsDiscarded.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx']
+            └ routes each state to the sign-in start with the discarded copy and no token
+  KILLED    inherited      RD11 StatusRegion renders only when it has something to say, which is the announcement bug  (12 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/api/rateLimitedResponseShowsGenericCopyWithoutReplay.test.tsx']
+            └ shows the generic copy for a 429 on a protected operation (AC1, R23)
+            └ stays shown across an hour and later 200s, clears only on dismiss, re-shows, and notifies once per burst (AC4)
+            └ puts the copy in a role="status" region that exists and is empty before the 429 (AC5, L11)
+            └ shows nothing for a 200 (AC7)
+            └ shows nothing for a 400 (AC7)
+            └ shows nothing for a 403 (AC7)
+            └ shows nothing for a 503 (AC7)
+            └ shows nothing for a 401, renewed or final (AC7)
+            └ leaves createAuthApi(boundary) behaving as in T05 when no notice is passed (AC7, L12)
+            └ clears on a direct dismiss() call, and shows again on a 429 after a 200 (AC4, phase 11 gaps 2 and 6)
+            └ re-sends nothing when a POST 401 and the renewal fails (AC3, phase 11 gap 5)
+  KILLED    inherited      RD12 Surface drops the data-testid, so the shell is unfindable  (4 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/app/shellBuildsAndMounts.test.tsx', 'src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx']
+            └ mounts the empty shell into the container (L13, L11)
+            └ renders at /app/sign-in, and the shell outside /app still renders nothing
+            └ sends an unmatched /app path through the catch-all to the sign-in start (AC4, L11, R28)
+  SURVIVED  -              RD13 AppShell goes back to a bare div, bypassing the primitive layer (AC2)  (1 failed of 1781, exit 1)
+  SURVIVED  -              RD14 SignInScreen renders a bare main instead of the Screen primitive (AC2)  (1 failed of 1781, exit 1)
+  SURVIVED  -              RD15 a className is wrapped across lines, putting a literal newline in the attribute (D4)  (1 failed of 1781, exit 1)
+  KILLED    inherited      RD16 a screen styles itself through Surface, escaping the primitive layer (AC4)  (2 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts']
+            └ stops build at lint, so tsc and Vite never run on a violation (AC2, end to end)
+  KILLED    own            RD17 CANARY: the pin's walker stops reporting inline styles  (2 failed of 1781, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx']
+            └ CONTROL: an inline style is caught too, and the walker reaches the root itself
+
+regressions: 12/16 killed
+canaries:    ['RD17'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
+survivors:   ['RD07', 'RD13', 'RD14', 'RD15']
+broken:      none
+
+--- expectation vs outcome ---
+  RD01   expected own           got KILLED/own       as expected
+  RD02   expected own           got KILLED/own       as expected
+  RD03   expected own           got KILLED/own       as expected
+  RD04   expected own           got KILLED/own       as expected
+  RD05   expected own           got KILLED/own       as expected
+  RD06   expected own           got KILLED/own       as expected
+  RD07   expected phase 10      got SURVIVED         as expected
+  RD08   expected inherited     got KILLED/inherited as expected
+  RD09   expected inherited     got KILLED/inherited as expected
+  RD10   expected inherited     got KILLED/own       DISAGREES - this task's own files caught it too (stronger than claimed)
+  RD11   expected inherited     got KILLED/inherited as expected
+  RD12   expected inherited     got KILLED/inherited as expected
+  RD13   expected phase 10      got SURVIVED         as expected
+  RD14   expected phase 10      got SURVIVED         as expected
+  RD15   expected phase 10      got SURVIVED         as expected
+  RD16   expected phase 10      got KILLED/inherited DISAGREES - already killed (KILLED/inherited)
+  RD17   expected own           got KILLED/own       as expected
+
+disagreements: ['RD10', 'RD16']
