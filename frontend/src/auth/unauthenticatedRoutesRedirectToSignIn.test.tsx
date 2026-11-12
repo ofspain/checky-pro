@@ -65,7 +65,9 @@ function routerAt(path: string) {
   return createMemoryRouter(appRoutes, { basename: APP_BASENAME, initialEntries: [path] });
 }
 
-/** Mounts the REAL table at an `/app` location. No `AppShell`: it is a bare div task 16's suite wraps. */
+/** Mounts the REAL table at an `/app` location. No `AppShell`: it renders the `Surface` primitive that
+ *  task 16's suite wraps, and nothing here mounts it, so its class never reaches this container. The
+ *  comment read "a bare div" until task 173 made that false (phase 8, I8). */
 async function arrive(path: string, options: { strict?: boolean } = {}) {
   const router = routerAt(path);
   const container = document.createElement('div');

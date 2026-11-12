@@ -258,9 +258,12 @@ function withProbes(gate: ReactElement): RouteObject[] {
 /**
  * Mounts a table at an `/app` location, WITHOUT `AppShell`.
  *
- * The shell is not part of the route table - `AppShell.tsx` is a bare `<div>` that task 16's suite wraps
- * around the provider - so this container IS the outlet's subtree, and `container.innerHTML === ''` is the
- * exact claim AC8 makes with no scoping to get wrong. The i18n provider is here so that an arm which renders
+ * The shell is not part of the route table - `AppShell.tsx` renders the `Surface` primitive that task 16's
+ * suite wraps around the provider - so this container IS the outlet's subtree, and
+ * `container.innerHTML === ''` is the exact claim AC8 makes with no scoping to get wrong. It said "a bare
+ * `<div>`" until task 173, which is no longer true: `Surface` renders a `<div>` carrying the page's
+ * background and text colour. The claim is unaffected BECAUSE THE SHELL IS NOT MOUNTED HERE - its class
+ * never reaches this container - and that is the sentence's real load-bearing half (phase 8, I8). The i18n provider is here so that an arm which renders
  * a real screen is not a second variable; the probes themselves hold no copy.
  */
 async function arriveWithTable(table: RouteObject[], path: string, options: { strict?: boolean } = {}) {

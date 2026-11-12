@@ -155,9 +155,19 @@ closed task's test may be edited; it is not the forbidden case of "incomplete fo
 
 ### D4 — Three primitives had multi-line `className` strings
 
-Prettier-style wrapping puts a literal newline into the DOM attribute. That is invisible in a browser and very
-visible to the R30 pin, which compares attribute strings across five states. All three were collapsed to one
-line each, with a comment saying why the line is long on purpose.
+Prettier-style wrapping puts a literal newline into the DOM attribute. All three were collapsed to one line
+each, with a comment saying why the line is long on purpose.
+
+> **CORRECTED by phase 7's F6 and confirmed by phase 8's I5.** This entry first said the newline was
+> *"invisible in a browser and very visible to the R30 pin, which compares attribute strings across five
+> states."* **It is invisible to the pin too.** RD15 wraps `Screen`'s `className` across three lines and
+> survives the whole suite: the newline lands *identically in all five states*, so sameness holds,
+> non-emptiness holds, and the classes-only regex `/^[a-z0-9]+\[class=/` anchors only the start. The
+> inference ran from *"the pin compares attribute strings"* to *"the pin catches any attribute change"*,
+> which does not hold for a change that is the same everywhere — **the exact mistake AC13's non-emptiness
+> half exists to prevent, made in the same breath as making it.** No criterion in AC1–AC15 covers it either,
+> so phase 10 adds one source-scan row: no `className` literal contains a newline. The collapse itself was
+> right; only the reason given for it was wrong.
 
 ### D5 — A one-off flake, recorded and not attributed
 

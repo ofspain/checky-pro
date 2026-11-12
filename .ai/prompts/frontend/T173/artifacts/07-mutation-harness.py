@@ -91,6 +91,12 @@ REVERT_PATHS = ["frontend/src/", "frontend/vite.config.ts"]
 EXPECTED_BASELINE_FAILURES = 1
 KNOWN_ENVIRONMENTAL_FAILURES = {
     # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass.
+    # USED ONLY FOR THE BASELINE REFUSAL CHECK. Attribution no longer subtracts this file, because only ONE
+    # of its 33 cases is environmental and the other 32 include the repository's only end-to-end build gate
+    # - the one that runs a real `pnpm run build` and asserts today's sources compile. Subtracting the file
+    # printed `killed in: []` for RD16's genuine tsc kill, hiding the strongest instrument the harness
+    # consults (phase 7 F3, phase 8 I3). What is excluded now is the set of case names that fail AT
+    # BASELINE, measured rather than listed, so a mutant that breaks any OTHER case in that file is a kill.
     "src/api/lintRejectsHandWrittenBackendFetch.test.ts",
 }
 
@@ -102,6 +108,8 @@ H_CLOSE = "      </h1>"
 T_OPEN = '      <p ref={ref} id={id} className="text-step-0 leading-relaxed text-text">'
 ST_OPEN = '      <div ref={ref} role="status" aria-live="polite" className="text-step--1 text-muted">'
 ST_CLOSE = "      </div>"
+ST_RETURN = ("    return (\n"
+             '      <div ref={ref} role="status" aria-live="polite" className="text-step--1 text-muted">')
 B_CLASS = ('      className="self-start rounded-md bg-accent px-4 py-2 text-step-0 font-medium '
            'text-text-inverse outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus '
            'aria-disabled:opacity-70"')
@@ -188,11 +196,19 @@ MUTANTS = [
 
     # The rule the primitive exists to centralise: a live region mounted at the same moment its text
     # arrives is a new element with content already in it, and a screen reader announces nothing.
+    # REWRITTEN AFTER PHASE 7 SCORED IT AS A KILL IT NEVER EARNED. The old form spliced a ternary into an
+    # expression position - `return ( { ... } )` - where `{` opens an object literal, not a JSX expression.
+    # The file could not be parsed, 23 suites failed to LOAD, and the raised count was credited as a kill
+    # (F2, I2). An early return says the same thing and compiles.
+    #
+    # ONE ASYMMETRY, STATED BECAUSE IT BOUNDS WHAT THE ROW MEASURES: `children === null` is true only where
+    # the consumer passes a single expression, which is `RateLimitNotice`. `SignInScreen` passes three
+    # ternaries, so its children are an ARRAY of nulls and the guard never fires there. That is the right
+    # place for the row to bite - the notice is the component whose header argues the rule - but this mutant
+    # does not cover the sign-in screen's region, and no row does.
     ("RD11 StatusRegion renders only when it has something to say, which is the announcement bug",
-     STATUS, (ST_OPEN, ST_CLOSE),
-     ('      {children === null ? null : (\n        <div ref={ref} role="status" aria-live="polite" '
-      'className="text-step--1 text-muted">',
-      "        </div>\n      )}"), "inherited"),
+     STATUS, ST_RETURN,
+     "    if (children === null) return null;\n" + ST_RETURN, "inherited"),
 
     ("RD12 Surface drops the data-testid, so the shell is unfindable",
      SURFACE, " data-testid={testId}", "", "inherited"),
@@ -266,7 +282,9 @@ def run(files, verbose=False):
             failed = int(body.split("failed")[0].strip()) if "failed" in body else 0
             if "(" in body:
                 total = int(body.split("(")[-1].rstrip(")"))
-        match = re.search(r"\bFAIL\b\s+(\S+\.(?:ts|tsx))", stripped)
+        # `(?:ts|tsx)` tried `ts` FIRST and nothing anchored the end, so every `.tsx` path was recorded
+        # as `.ts` - a file that does not exist. Nine copies printed corrupt file lists (phase 8, I4).
+        match = re.search(r"\bFAIL\b\s+(\S+\.tsx?)\b", stripped)
         if match:
             files_failed.add(match.group(1))
         if verbose and stripped.startswith("× "):
@@ -314,26 +332,40 @@ def preflight():
     return True
 
 
-def score(label, base_failed):
-    code, failed, total = run(FILES)[:3]
+def score(label, base):
+    """`base` is (failed, total, cases) from the unmutated run. Two guards phase 7 did not have:
+
+    A MUTANT THAT STOPS A FILE FROM LOADING IS BROKEN, NOT KILLED. RD11 was a syntax error; 23 suites
+    failed to PARSE and the raised failure count was credited as a kill, with `broken: none` printed
+    underneath (F2, I2). A file that cannot be loaded contributes NO tests, so the total drops - and that
+    is the one signal which separates "a case caught it" from "nothing ran". T36 lost the same way.
+
+    ATTRIBUTION IS BY CASE NAME, NOT BY FILE. Subtracting the whole known-environmental FILE hid RD16's
+    real kill inside it and printed `killed in: []` (F3, I3). What is subtracted now is the set of case
+    names that already fail at baseline, so the other 32 cases in that file - including the only
+    end-to-end build gate in the repository - can kill a mutant and be seen doing it."""
+    base_failed, base_total, base_cases = base
+    code, failed, total, files_failed, names = run(FILES, verbose=True)
     if failed is None:
-        print(f"  BROKEN    -              {label}")
+        print(f"  BROKEN    no summary     {label}")
         return None, True, None, False
-    if failed > base_failed:
-        _, own_failed, _, _, names = run(OWN_TESTS, verbose=True)
-        by_own = (own_failed or 0) > 0
-        own = "own" if by_own else "inherited"
-        print(f"  KILLED    {own:<14} {label}  ({failed} failed of {total}, exit {code})")
-        for name in names:
-            print(f"            └ {name}")
-        if not by_own:
-            _, _, _, where, elsewhere = run(FILES, verbose=True)
-            print(f"            └ killed in: {sorted(where - KNOWN_ENVIRONMENTAL_FAILURES)}")
-            for name in elsewhere[:4]:
-                print(f"            └ {name}")
-        return None, False, names, by_own
-    print(f"  SURVIVED  -              {label}  ({failed} failed of {total}, exit {code})")
-    return label, False, None, False
+    if total is not None and base_total is not None and total < base_total:
+        print(f"  BROKEN    {total} of {base_total} ran  {label}  "
+              f"-> {base_total - total} tests never ran: a file did not LOAD, so nothing measured it")
+        return None, True, None, False
+    new = [name for name in names if name not in base_cases]
+    if not new:
+        print(f"  SURVIVED  -              {label}  ({failed} failed of {total}, exit {code})")
+        return label, False, None, False
+    _, _, _, _, own_names = run(OWN_TESTS, verbose=True)
+    own_new = [name for name in own_names if name not in base_cases]
+    by_own = bool(own_new)
+    own = "own" if by_own else "inherited"
+    print(f"  KILLED    {own:<14} {label}  ({failed} failed of {total}, exit {code})")
+    print(f"            └ in: {sorted(files_failed)}")
+    for name in (own_new if by_own else new):
+        print(f"            └ {name}")
+    return None, False, new, by_own
 
 
 def main():
@@ -343,8 +375,9 @@ def main():
     if not preflight():
         return 1
 
-    code, failed, total, files_failed, _ = run(FILES)
-    print(f"baseline whole suite: {failed} failed of {total}, exit {code}\n")
+    code, failed, total, files_failed, base_cases = run(FILES, verbose=True)
+    print(f"baseline whole suite: {failed} failed of {total}, exit {code}")
+    print(f"baseline failing cases (excluded from every attribution below): {base_cases}\n")
     if not files_failed <= KNOWN_ENVIRONMENTAL_FAILURES:
         print("REFUSING TO RUN: a file outside the known environmental set is failing.\n"
               f"  unexpectedly failing: {sorted(files_failed - KNOWN_ENVIRONMENTAL_FAILURES)}")
@@ -352,7 +385,7 @@ def main():
     if failed != EXPECTED_BASELINE_FAILURES:
         print(f"NOTE: baseline is {failed}, not the recorded {EXPECTED_BASELINE_FAILURES}; all are in the\n"
               "known environmental set, so the measured floor is sound.\n")
-    base_failed = failed
+    base = (failed, total, set(base_cases))
 
     survivors, broken, outcomes = [], [], {}
     for label, path, old, new, expect in MUTANTS:
@@ -363,7 +396,7 @@ def main():
             broken.append(label)
             revert()
             continue
-        lost, was_broken, _names, by_own = score(label, base_failed)
+        lost, was_broken, _names, by_own = score(label, base)
         outcomes[label.split()[0]] = (
             "SURVIVED" if lost else ("KILLED/own" if by_own else "KILLED/inherited"), expect)
         if lost:
