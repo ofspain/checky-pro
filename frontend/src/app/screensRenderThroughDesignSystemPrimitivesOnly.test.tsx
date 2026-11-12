@@ -14,6 +14,18 @@
  * render-site half of the claim. Three assertions keep both halves: the derived set equals the primitive list,
  * its intersection with the render sites is empty, and the union is thirteen.
  *
+ * TASK 174 MADE THE UNION FOURTEEN, and found a hole in the cross-check while doing it. The sweep's
+ * `for (const file of bearing)` clause only reaches files the sweep FINDS, and the sweep finds files by
+ * lowercase JSX tag. `HomeScreen.tsx` renders entirely through primitives - which is this suite's whole
+ * point - so it contains no such tag, and when it was added the sweep said nothing. A screen could be
+ * written correctly and never enter `RENDER_SITES`, and the instrument that exists to pin the render sites
+ * would have been the last to notice. The clause measured the files least likely to be missing.
+ *
+ * What closes it is a SECOND derivation that does not go through tags at all: every production file outside
+ * `app/ui/` that imports from the barrel is a render site, by definition, because the barrel is the only
+ * place the primitives come from. That set is checked against `RENDER_SITES` in both directions below, so a
+ * new screen is caught whether or not it ever writes a `<div>`.
+ *
  * WHAT ENFORCES AC4 IS `tsc`, NOT THIS FILE (phase 7 F5). `className` and `style` are absent from all eight
  * primitive types, so a screen that styles itself is a compile error - and that is not a developer's
  * discipline, it is measured: `lintRejectsHandWrittenBackendFetch.test.ts`'s end-to-end case runs a real
@@ -62,6 +74,8 @@ const frontendDir = dirname(srcDir);
 /** §6e(1), first pinned list: the five files that render a screen. A sixth must be added deliberately. */
 const RENDER_SITES = [
   'app/AppShell.tsx',
+  // TASK 174 - the home screen, the sixth render site and the first behind the auth gate.
+  'app/HomeScreen.tsx',
   'app/RateLimitNotice.tsx',
   'auth/CallbackScreen.tsx',
   'auth/SignInScreen.tsx',
@@ -184,7 +198,9 @@ afterEach(async () => {
 
 describe('T173 AC2/AC3: only the primitives render bare elements', () => {
   it('pins both lists at the sizes the brief froze, with nothing in both (§6e(1))', () => {
-    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(5);
+    // SIX SINCE TASK 174. The number is pinned rather than derived on purpose - a list that counted itself
+    // would accept any edit - so each task that adds a screen moves it here, deliberately, once.
+    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(6);
     expect(PRIMITIVES, 'the primitive list changed size without the brief changing').toHaveLength(8);
     expect(new Set(PRIMITIVES).size).toBe(PRIMITIVES.length);
     expect(PRIMITIVES, 'the primitive list is not sorted, so a duplicate is easy to miss')
@@ -219,7 +235,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // through it writing the case that disarms the first - thirteen is a statement about what the two lists
     // DECLARE, never about what the sweep FINDS.
     expect(new Set([...PRIMITIVE_FILES, ...RENDER_SITES]).size,
-      'the union of the two pinned lists is no longer thirteen').toBe(13);
+      'the union of the two pinned lists is no longer fourteen').toBe(14);
     // and every file the sweep found is in one of them, which is the cross-check §6e(2) actually asks for.
     for (const file of bearing) {
       expect([...PRIMITIVE_FILES, ...RENDER_SITES], `${file} renders an element and is in neither list`)
@@ -227,7 +243,33 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     }
   });
 
-  it('renders no lowercase JSX tag in any of the five render sites (§6e(3))', async () => {
+  it('names every file that imports the primitive barrel, tags or not (task 174)', async () => {
+    // THE HOLE THE TAG SWEEP LEFT. Nothing here counts tags: a file that consumes the design system imports
+    // it, and that import is visible whether the file renders `<div>` or nothing but primitives. Both
+    // directions are asserted, because each catches a different mistake - a screen added without being
+    // pinned, and a pin left behind after a screen is deleted.
+    const candidates = (await productionFiles()).filter((file) => !file.startsWith('app/ui/'));
+    const importers: string[] = [];
+    for (const file of candidates) {
+      // The barrel is reached as './ui' from `app/` and '../app/ui' from anywhere else. A deep import of a
+      // single primitive would be a different shape, and is not matched on purpose: `index.ts` is the
+      // published surface and a file that went around it is a violation this suite already pins elsewhere.
+      if (/from '(\.\/ui|\.\.\/app\/ui)'/.test(withoutComments(await read(file)))) importers.push(file);
+    }
+
+    expect(importers.sort(), 'a file consumes the design system and is not a pinned render site')
+      .toEqual([...RENDER_SITES].sort());
+
+    // CONTROL. The assertion above is an equality between two lists, and an equality passes just as well
+    // when the left side is empty and the right one is too - so it has to be shown that this derivation
+    // finds anything at all, and that it is not simply reproducing the pinned list by accident.
+    expect(importers.length, 'the import scan found nothing, so the equality above is vacuous')
+      .toBeGreaterThan(0);
+    expect(importers, 'the scan cannot see a screen that renders only primitives - the hole it exists to close')
+      .toContain('app/HomeScreen.tsx');
+  });
+
+  it('renders no lowercase JSX tag in any of the six render sites (§6e(3))', async () => {
     for (const site of RENDER_SITES) {
       const tags = lowercaseJsxTags(await read(site));
       expect(tags, `${site} renders ${tags.join(', ')} itself instead of a primitive`).toEqual([]);
@@ -659,7 +701,14 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
       'signedOut.action',
       'signedOut.explanation',
       'signedOut.heading',
-    ]);
+      // TASK 174's two, and they are the first entries this pin has ever ADMITTED. Its claim is that T173
+      // changed no words, and that claim is unharmed: a later task adding its own screen's copy is not the
+      // design system rewriting anyone's. What the pin still forbids is the thing it was built for - a
+      // primitive, or a restyling, quietly editing or dropping a string. Sorted, so 'home.*' lands here
+      // rather than in route order.
+      'home.explanation',
+      'home.heading',
+    ].sort());
   });
 
   it('holds no user-facing copy in any primitive (L11)', async () => {

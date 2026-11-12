@@ -3,7 +3,7 @@ import { forwardRef, type ReactNode } from 'react';
 /**
  * The `<main>` landmark, which is every screen's outermost element.
  *
- * THREE CONSUMERS: the sign-in, callback and signed-out screens. The landmark is what a screen-reader user
+ * FOUR CONSUMERS since task 174: the sign-in, callback, signed-out and home screens. The landmark is what a screen-reader user
  * navigates to, so it is set here and cannot be overridden - `publicRouteSetIsExactlyTheDeclaredSet.test.tsx`
  * pins "one landmark holding a level-one heading, a paragraph and the way back, in that order", and this
  * primitive is what keeps the first word of that sentence true.

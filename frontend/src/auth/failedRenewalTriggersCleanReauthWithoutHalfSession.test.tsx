@@ -9,7 +9,7 @@ import { createI18n } from '../i18n/i18n';
 import { createAuthApi } from '../api/client';
 import { SiblingRenewalFailedError } from '../api/crossTabRenewal';
 import { createSessionBoundary, type SessionTokens } from '../api/sessionBoundary';
-import { APP_BASENAME, AUTHENTICATED_ROUTE_PATHS, appRoutes, PUBLIC_ROUTE_PATHS, SIGN_IN_PATH } from '../app/routes';
+import { APP_BASENAME, AUTHENTICATED_ROUTE_PATHS, appRoutes, HOME_PATH, PUBLIC_ROUTE_PATHS, SIGN_IN_PATH } from '../app/routes';
 import { en } from '../i18n/catalogue';
 import { accessToken, clearAccessToken, retainAccessToken } from './accessToken';
 import { createRenewalFailureHandler, inAppPath } from './cleanReauth';
@@ -527,6 +527,18 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       // is not an element on an authenticated path and this pin still reads zero - which is the point. A
       // SCREEN on one of these paths remains task 42's to attach, and this case is still what will stop it
       // from landing unnoticed.
+      // GROWN AGAIN BY TASK 174, and this is the day the paragraph above was written for: "a SCREEN on one
+      // of these paths remains task 42's to attach, and this case is still what will stop it from landing
+      // unnoticed." It landed, and this case stopped it. The attribution was off by one task - the home
+      // screen is 174's, not 42's - but the instrument did exactly its job.
+      //
+      // WHAT CHANGED IS THE CLAIM, not the tolerance. "No authenticated route renders anything" was never
+      // the requirement; it was a stand-in for R22, and it held for free while the route table was empty. It
+      // cannot hold any more, so the pin now states the real thing: `home` is the ONE authenticated path
+      // with an element, every other one still has none, and - the part that matters for R22 - the screen it
+      // renders sits behind the guard, so a failed renewal reaches the redirect and not a half-session.
+      // Loosening this to "zero or more" would have been the easy edit and would have measured nothing; an
+      // exact list fails the next time a screen is attached, which is what a handoff is.
       type Node = { path?: string; element?: unknown; children?: Node[] };
       const walk = (routes: readonly Node[]): Node[] =>
         routes.flatMap((route) => [route, ...walk(route.children ?? [])]);
@@ -536,9 +548,9 @@ describe('failedRenewalTriggersCleanReauthWithoutHalfSession', () => {
       );
       expect(
         withElements,
-        'An authenticated route now renders a screen, so "no half-authenticated render" is no longer true by '
-          + 'accident of an empty route table. T40 owns the route guard; this task cannot cover it.',
-      ).toEqual([]);
+        'The set of authenticated routes carrying a screen changed. R22 is no longer held by an empty route '
+          + 'table, so whoever attached this one must show the guard still covers it (T40 owns the guard).',
+      ).toEqual([HOME_PATH]);
       // Lower bound: the paths really are in the table, so the check is not passing over an empty list.
       expect(everyRoute.map((route) => route.path)).toEqual(expect.arrayContaining([...AUTHENTICATED_ROUTE_PATHS]));
     });

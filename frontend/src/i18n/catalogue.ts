@@ -48,4 +48,24 @@ export const en = {
     // server-hosted flow. This only returns the visitor to the sign-in screen, whose heading it matches.
     action: 'Sign in',
   },
+  // The first screen behind the gate (task 174). Two strings, and the shortness is the decision: nothing in
+  // the package specifies this copy, so the brief froze the minimum that is not blank and put it here, where
+  // the owner can rewrite it without touching a component or a test that asserts behaviour (D7, OQ-T174-1).
+  //
+  // NOTHING HERE MAY DEPEND ON WHO IS READING IT. No name, no greeting, no account state, no counts - R22
+  // forbids a half-authenticated screen, and a screen that greeted a visitor by name would have to get that
+  // name from somewhere. The only places it could come from are the access token, which R20 forbids reading,
+  // and `/userinfo` or `/accounts/me`, which are task 42's and which this screen makes no call to. So the
+  // copy is written for a reader this screen knows nothing about, and AC6 enforces that in both the DOM and
+  // the import list.
+  home: {
+    // A label for the place, not a welcome. 'Welcome back' was considered and rejected: it claims the visitor
+    // has been here before, which this screen cannot know, and it is the kind of string that invites a name
+    // after it.
+    heading: 'Home',
+    // Says what is true and what is coming, without promising a date or naming a feature. This is the one
+    // string most likely to be replaced the moment there is something to show, which is why it is the only
+    // sentence here.
+    explanation: 'You are signed in. There is nothing here yet.',
+  },
 } as const;

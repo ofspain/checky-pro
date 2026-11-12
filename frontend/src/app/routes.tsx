@@ -12,6 +12,7 @@ import { SignedOutScreen } from '../auth/SignedOutScreen';
 import { SignInScreen } from '../auth/SignInScreen';
 import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
+import { HomeScreen } from './HomeScreen';
 
 /** Every SPA route lives under this prefix, which is disjoint from the backend prefixes the edge sends to the services (L14). */
 export const APP_BASENAME = '/app';
@@ -81,7 +82,17 @@ export const appRoutes: RouteObject[] = [
       // there is a single place the question is asked and a screen attached later nests inside the gate
       // rather than replacing it. Pathless deliberately: `path: ''` would be a string in the route tree and
       // would change what the bare `/app/` matches.
-      { element: <RequireSession />, children: AUTHENTICATED_ROUTE_PATHS.map((path) => ({ path })) },
+      // TASK 174 attached the FIRST element behind the gate. The other ten paths still carry none, and
+      // leaving them that way is deliberate: each is its own task's to fill, and attaching a placeholder
+      // would make the screen-count pins stop meaning anything. The conditional mirrors the public branch
+      // above rather than inventing a second shape for the same job.
+      {
+        element: <RequireSession />,
+        children: AUTHENTICATED_ROUTE_PATHS.map((path) => {
+          if (path === HOME_PATH) return { path, element: <HomeScreen /> };
+          return { path };
+        }),
+      },
       // STILL OUTSIDE the gate, and task 41 is why that mattered. It carries the redirect now, and a
       // catch-all behind the gate could not have redirected the visitor with no session - the only visitor it
       // is for. It is the one redirect of the three that sits on a route WITH a path, so it is the one the

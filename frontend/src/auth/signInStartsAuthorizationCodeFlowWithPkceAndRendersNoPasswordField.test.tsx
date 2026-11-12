@@ -170,7 +170,16 @@ describe('signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField', (
     // unexpected link would satisfy every other case in this file.
     it('offers exactly one interactive control, and it is the action', () => {
       const container = renderSignIn();
-      const controls = container.querySelectorAll('button, a, input, select, textarea, [tabindex]');
+      // NARROWED BY TASK 174, and the narrowing is the selector catching up with the claim rather than the
+      // claim giving ground. `[tabindex]` matched any value, including `-1` - and `-1` means the exact
+      // opposite of interactive: focusable only by code, never by Tab, never by click-to-tab-order. Task 174
+      // put `tabIndex={-1}` inside `Heading` so a screen can move focus to its own title on arrival, and
+      // this case started counting the `<h1>` as a second control. The heading is not a control and never
+      // was; what makes an element reachable by keyboard is a NON-NEGATIVE tabindex, so that is what is
+      // matched now. A stray `tabindex="0"` on a div - the thing this clause is really guarding against -
+      // still fails this case.
+      const controls = container.querySelectorAll(
+        'button, a, input, select, textarea, [tabindex]:not([tabindex^="-"])');
       expect(controls).toHaveLength(1);
       expect(controls[0]).toBe(button(container));
     });

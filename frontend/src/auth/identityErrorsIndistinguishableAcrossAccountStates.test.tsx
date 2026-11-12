@@ -1237,9 +1237,13 @@ describe('AC2: five account states, one outcome', () => {
     const success = await measure(`?code=${CODE}&state=${STATE}`, tokenEndpointAnswers());
     expect(success).not.toEqual(failure);
     // Named rather than left to `not.toEqual`, which would also pass if only one field differed. Measured: a
-    // success lands on /app/home with no copy, no live region and no stored items.
+    // success lands on /app/home with no live region and no stored items - and, SINCE TASK 174, with the
+    // landing screen's own copy. It used to read `''`, because that route had no element and a successful
+    // sign-in ended on a blank document. The empty string was never the claim; what this control needs is
+    // that a success differs from a failure, and copy that is demonstrably NOT a failure message is a
+    // stronger form of that than no copy at all.
     expect(success.destination).toBe('/app/home');
-    expect(success.text).toBe('');
+    expect(success.text).toBe(`${en.home.heading}${en.home.explanation}`);
     expect(success.liveRegions).toBe(0);
     expect(success.storedKeys).toEqual([]);
     expect(failure.storedKeys.length).toBeGreaterThan(0);

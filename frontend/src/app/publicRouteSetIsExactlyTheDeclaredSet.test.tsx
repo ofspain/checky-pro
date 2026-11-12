@@ -684,8 +684,8 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
   });
 
-  describe('AC9 exactly three screens are attached', () => {
-    it('attaches an element to sign-in, callback and signed-out, and to nothing else', () => {
+  describe('AC9 exactly four screens are attached', () => {
+    it('attaches an element to sign-in, callback, signed-out and home, and to nothing else', () => {
       // A deliberate COUNT PIN, and it will fail the day the next screen is attached - which is the handoff
       // working, exactly as task 16's did for this task. Whoever attaches the next one extends this list and
       // task 16's SCREENS_ATTACHED_SO_FAR together.
@@ -709,8 +709,13 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // would have to guess which was which. Task 41's other two redirects hang on routes with no `path`,
       // and `walk` records a route only when it has one - which is the hole T40's AC13 below exists for,
       // and the reason the number here went up by one rather than by three.
+      // GROWN BY TASK 174, which is the day the comment above predicted: "it will fail the day the next
+      // screen is attached - which is the handoff working". It did, and nothing else in this file moved.
+      // `HOME_PATH` sits before the catch-all because `walk` reads the table in order and the gate's
+      // children come before it; it is the first attached route in this list that is NOT public, and the
+      // first element of any kind behind the gate.
       const attached = appRoutes.flatMap(walk);
-      expect(attached).toEqual(['sign-in', 'callback', SIGNED_OUT_PATH, '*']);
+      expect(attached).toEqual(['sign-in', 'callback', SIGNED_OUT_PATH, HOME_PATH, '*']);
 
       // CONTROL, the one task 16's case has and this one was missing: `walk` must COUNT, rather than return a
       // list that happens to match. Given two attached routes - one nested, one carrying an errorElement

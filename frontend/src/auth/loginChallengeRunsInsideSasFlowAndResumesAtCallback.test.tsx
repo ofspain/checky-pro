@@ -1468,40 +1468,38 @@ describe('the resumption announces its status, and its focus obligation is unmet
   });
 
   /**
-   * THE PIN, AND IT RECORDS A GAP RATHER THAN A SATISFACTION (T27-D1).
+   * THE PIN IS DISCHARGED (T27-D1 closed by task 174), and this is what it asked to become.
    *
-   * L11 says "managed focus across redirect and MFA steps". Measured in Phase 6 and held here: at the
-   * COMPLETED resumption the document renders NOTHING, holds ZERO live regions, and leaves focus on
-   * `<body>`. The cause is not in the auth package at all - the success path navigates to `/app/home`, which
-   * `routes.tsx` registers with NO ELEMENT (T24-D11), so there is nothing to render and nothing to focus.
+   * It used to record a gap: at the completed resumption the document rendered NOTHING, held zero live
+   * regions and left focus on `<body>`, because the success path navigates to `/app/home` and `routes.tsx`
+   * registered that path with no element (T24-D11). Its instruction to whoever closed the gap was exact -
+   * *"delete this pin and assert the real focus target"* - and task 174 is that task.
    *
-   * This file does not fix that. Fixing it means building a home screen and moving focus into it, which is
-   * production work T27 has ruled out, and guessing at a focus target would pin the wrong one. So the gap is
-   * recorded in a form that fails the day it is closed:
+   * SO THIS IS NOW THE END-TO-END CASE, and it is worth saying why that matters. T41 recorded OQ-T41-2: the
+   * post-sign-in landing could only be proved by composing two suites, and it was deferred to task 42.
+   * T174's own freeze deferred it again for the same reason. Both were wrong, and this case is the evidence:
+   * the composition was never needed, because this file ALREADY drives the real flow end to end - a real
+   * callback with a real code and state, a real token exchange, the real router - and it already landed on
+   * `/app/home`. The only thing missing was a screen to arrive at. Nothing here is mocked into place for
+   * task 174's benefit; the three assertions below simply read what the completed flow now does.
    *
-   *   - task 135 (`phase1ScreensPassAccessibilityChecks`, tasks.md:217) owns L11's accessibility gate;
-   *   - T24-D11's unbuilt `/app/home` screen owns the empty destination.
-   *
-   * WHEN EITHER LANDS, THIS CASE FAILS, and the failure is the instruction: delete the pin, assert the real
-   * focus target. A pin that passed quietly after the gap was closed would be worse than no pin at all.
+   * What it proves that `homeRouteRendersLandingScreenAndManagesFocus` cannot: that suite mounts the home
+   * screen directly, so it measures the screen. This measures the ARRIVAL - that a sign-in which began at
+   * the authorization endpoint ends with focus inside the landing screen rather than on `<body>`.
    */
-  it('PIN (T27-D1): the completed resumption renders nothing, announces nothing and strands focus on <body>', async () => {
+  it('T27-D1 DISCHARGED: the completed resumption lands on the home screen and focuses its heading', async () => {
     seedPkceItems();
     const arrival = await arriveAt(`?code=${CODE}&state=${STATE}`, tokenEndpointAnswers(TWO_FACTORS));
 
     expect(arrival.router.state.location.pathname).toBe('/app/home');
-    const measured = {
-      renderedHtml: arrival.container.innerHTML,
-      liveRegions: document.querySelectorAll('[aria-live]').length,
-      focusIsOnBody: document.activeElement === document.body,
-    };
-    expect(measured, [
-      'T27-D1: this case PINS an unmet obligation, so a change here is progress, not a regression.',
-      'L11 requires managed focus across the redirect; the completed resumption manages none.',
-      'Owners: task 135 (phase1ScreensPassAccessibilityChecks, tasks.md:217) for the focus obligation,',
-      'and the unbuilt /app/home screen (T24-D11) for the empty destination.',
-      'If this failed because a home screen now renders: delete this pin and assert the real focus target.',
-    ].join(' ')).toEqual({ renderedHtml: '', liveRegions: 0, focusIsOnBody: true });
+
+    const heading = arrival.container.querySelector('main h1');
+    expect(heading, 'the landing is blank again, which is the gap T27-D1 recorded').not.toBeNull();
+    expect(heading?.textContent).toBe(en.home.heading);
+    // THE DISCHARGE ITSELF. `<body>` was what this case pinned for eleven tasks; the heading is the target
+    // task 174 chose, and choosing `<main>` or a wrapper instead would fail here rather than pass quietly.
+    expect(document.activeElement, 'focus was not moved into the screen the sign-in landed on (L11)')
+      .toBe(heading);
 
     arrival.unmount();
   });

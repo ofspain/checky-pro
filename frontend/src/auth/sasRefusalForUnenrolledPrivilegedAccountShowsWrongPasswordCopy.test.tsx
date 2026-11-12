@@ -856,9 +856,11 @@ describe('AC2: four failure kinds, one outcome', () => {
     expect(success).not.toEqual(failure);
     // Named rather than left to `not.toEqual`, which would also pass if only one field differed. A struct
     // comparison is only as strong as the number of fields that actually move, so the four that move are
-    // asserted: measured in Phase 6, a success lands on /app/home with no copy, no live region and no items.
+    // asserted: a success lands on /app/home with no live region and no items, and SINCE TASK 174 with the
+    // landing screen's copy. `''` was what an element-less route rendered, never what this control claimed;
+    // copy that is plainly not a refusal message separates success from failure more strongly than silence.
     expect(success.destination).toBe('/app/home');
-    expect(success.text).toBe('');
+    expect(success.text).toBe(`${en.home.heading}${en.home.explanation}`);
     expect(success.liveRegions).toBe(0);
     expect(success.storedKeys).toEqual([]);
     expect(failure.storedKeys.length).toBeGreaterThan(0);

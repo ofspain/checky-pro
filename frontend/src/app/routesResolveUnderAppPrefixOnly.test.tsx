@@ -17,6 +17,14 @@ const DECLARED_PATHS: readonly string[] = [...PUBLIC_ROUTE_PATHS, ...AUTHENTICAT
 /** The screens attached so far, in route order. A task that attaches one adds it here deliberately (T16: sign-in). */
 const SCREENS_ATTACHED_SO_FAR = ['sign-in', 'callback',
   'signed-out', // TASK 37 - the signed-out landing. Additive; every case below is task 16's, unchanged.
+  // TASK 174 - the home screen, and the FIRST entry here that is not a public route. It goes last because
+  // this list is in ROUTE ORDER and the authenticated paths sit after the public ones in the table, under
+  // the gate. Still additive: no case below changed.
+  //
+  // This constant belongs to TASK 16 and always has. T174's design challenge asserted that task 173
+  // introduced it; that is false, and the correction is recorded here because a comment is where the next
+  // reader will look. T173 touched neither this list nor this file.
+  'home',
 ] as const;
 
 /**
