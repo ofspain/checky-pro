@@ -36,6 +36,12 @@ it did not touch at all. So each row predicts one of four outcomes, and the four
                   DISAGREEMENT, which would have been exactly backwards here.
   `phase 10`      nothing can kill it until the named suite exists; a kill here is a
                   DISAGREEMENT worth reading, because an instrument covers more than I thought.
+                  AFTER PHASE 10 NO ROW CARRIES THIS LABEL. Eight did, and the named suite killed
+                  every one - which is the label doing its job, not failing at it. It was a
+                  prediction about a file that did not exist, and the file now exists. Each updated
+                  row keeps its ORIGINAL prediction in a trailing comment, because an expectation
+                  edited to match an outcome is how a harness quietly stops measuring anything: the
+                  edit is defensible only while what it replaced is still readable beside it.
   `unfalsifiable` no observable effect of any kind, in the DOM or in the file; scored apart.
 
 WHY `inherited` IS NOT A LOOPHOLE. It is only legitimate where phase 6 named the inherited
@@ -183,20 +189,20 @@ MUTANTS = [
     # Nothing reads `styles.css` today. AC9's contrast arithmetic and AC14's built-asset check are
     # phase 10's, and this row is what says they are worth writing.
     ("RD07 the accent token is deleted, so bg-accent silently emits nothing",
-     STYLES, ACCENT + "\n", "", "phase 10"),
+     STYLES, ACCENT + "\n", "", "own"),  # was "phase 10" until phase 10: AC9 recomputes the pairs from the declarations and AC14 reads the built asset
 
     # --- obligations the primitives INHERITED from other tasks' screens ---------------------------------
     # Phase 6's one real behavioural risk, named in the plan's risk table and in RateLimitNotice's
     # header: if the holder stops forwarding its ref, `wrapper.current` is null, `?.focus()` is a no-op,
     # and a keyboard user is dropped to <body> with the button they pressed gone.
     ("RD08 FocusHolder stops forwarding its ref: focus falls to <body> on dismiss (L11)",
-     HOLDER, "<div ref={ref} tabIndex={-1}", "<div tabIndex={-1}", "inherited"),
+     HOLDER, "<div ref={ref} tabIndex={-1}", "<div tabIndex={-1}", "own"),  # was "inherited" until phase 10: AC6 asserts every primitive forwards its ref; predicted in phase 10's commit
 
     ("RD09 ActionButton stops forwarding its ref, so the notice cannot tell if its button had focus",
-     BUTTON, B_REF, "      type=\"button\"", "inherited"),
+     BUTTON, B_REF, "      type=\"button\"", "own"),  # was "inherited" until phase 10: AC6, the same case
 
     ("RD10 StatusRegion loses aria-live, so nothing it holds is ever announced (L11)",
-     STATUS, ' role="status" aria-live="polite"', ' role="status"', "inherited"),
+     STATUS, ' role="status" aria-live="polite"', ' role="status"', "own"),  # was "inherited" until phase 10: AC5 asserts aria-live on every region; it was ALREADY own at phases 7 and 9
 
     # The rule the primitive exists to centralise: a live region mounted at the same moment its text
     # arrives is a new element with content already in it, and a screen reader announces nothing.
@@ -212,7 +218,7 @@ MUTANTS = [
     # does not cover the sign-in screen's region, and no row does.
     ("RD11 StatusRegion renders only when it has something to say, which is the announcement bug",
      STATUS, ST_RETURN,
-     "    if (children === null) return null;\n" + ST_RETURN, "inherited"),
+     "    if (children === null) return null;\n" + ST_RETURN, "own"),  # was "inherited" until phase 10: AC5 asserts the region is present and empty before any text
 
     ("RD12 Surface drops the data-testid, so the shell is unfindable",
      SURFACE, " data-testid={testId}", "", "inherited"),
@@ -222,10 +228,10 @@ MUTANTS = [
     # which is the regression AC2/AC3's sweep is for - and neither changes anything any current
     # instrument reads. They are the argument for writing that sweep.
     ("RD13 AppShell goes back to a bare div, bypassing the primitive layer (AC2)",
-     SHELL, SHELL_RENDER, '  return <div data-testid="app-shell">{children}</div>;', "phase 10"),
+     SHELL, SHELL_RENDER, '  return <div data-testid="app-shell">{children}</div>;', "own"),  # was "phase 10" until phase 10: AC2's sweep - this row is why it was written
 
     ("RD14 SignInScreen renders a bare main instead of the Screen primitive (AC2)",
-     SIGNIN, (SIGNIN_SCREEN, SIGNIN_CLOSE), ("    <main>", "    </main>"), "phase 10"),
+     SIGNIN, (SIGNIN_SCREEN, SIGNIN_CLOSE), ("    <main>", "    </main>"), "own"),  # was "phase 10" until phase 10: AC2's sweep, from the other direction
 
     # PHASE 6'S D4 CLAIMED THIS IS "very visible to the R30 pin". This row is that claim under
     # measurement, and I expect it to be WRONG: a literal newline lands identically in all five states,
@@ -233,7 +239,7 @@ MUTANTS = [
     ("RD15 a className is wrapped across lines, putting a literal newline in the attribute (D4)",
      SCREEN, S_MAIN,
      '      <main\n        ref={ref}\n        className="mx-auto flex max-w-prose\n          flex-col gap-4'
-     ' px-6 py-12"\n      >', "phase 10"),
+     ' px-6 py-12"\n      >', "own"),  # was "phase 10" until phase 10: AC4's no-newline row, which no criterion owned until phase 10 added it
 
     # The type-level guarantee is AC4's real instrument - `className` is absent from all eight types, so
     # a screen that styles itself is a compile error. But THE HARNESS DOES NOT RUN TSC and vitest strips
@@ -248,7 +254,7 @@ MUTANTS = [
       '      <div ref={ref} data-testid={testId} className={`min-h-dvh bg-surface text-text '
       '${extra ?? \'\'}`}>',
       '  return <Surface data-testid="app-shell" className="bg-red-500">{children}</Surface>;'),
-     "phase 10"),
+     "inherited"),  # was "phase 10" until phase 10: still tsc via the build gate; only the TIMING prediction was wrong
 
     # --- canary: is the pin's own walker awake? ---------------------------------------------------------
     # The sameness half of R30's pin cannot be falsified from production code - the cause of an identity

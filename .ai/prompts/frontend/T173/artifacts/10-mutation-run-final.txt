@@ -1,0 +1,122 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 1 failed of 1815, exit 1
+baseline failing cases (excluded from every attribution below): ["passes today's frontend/src through the lint script, running only the two L6 rules (AC4)"]
+
+  KILLED    own            RD01 the Screen primitive renders a div, so no screen has a landmark  (25 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/auth/callbackValidatesNonce.test.tsx', 'src/auth/callbackWithMismatchedStateIsDiscarded.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx']
+            └ renders the signed-out screen at its declared path
+            └ renders the same under StrictMode double-invocation
+            └ renders with no token held and nothing in storage, and leaves both that way
+            └ renders exactly the three catalogue strings
+            └ contains none of the words that would disclose why the session ended
+            └ offers a link to sign-in and no other interactive element
+            └ renders byte-identical output for every way it can be arrived at
+            └ renders no address, no identifier and no token-shaped string
+            └ CONTROL: the container-scoped sweep sees what a main-scoped one cannot
+            └ is one landmark holding a level-one heading, a paragraph and the way back, in that order
+            └ renders and stays put rather than redirecting
+            └ renders byte-identical output whether or not a token is held
+            └ routes each state to the sign-in start with the discarded copy and no token
+            └ renders the signed-out screen as one main holding one h1, a paragraph and a router link
+            └ renders the sign-in screen with a described, idle, non-busy control and one live region
+            └ renders the callback screen as one main, one h1 and one announced region
+            └ hands back the real DOM node for all eight
+  KILLED    own            RD02 the Heading primitive renders an h2, so no screen has a level-one heading  (23 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/auth/callbackValidatesNonce.test.tsx', 'src/auth/callbackWithMismatchedStateIsDiscarded.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
+            └ renders the signed-out screen at its declared path
+            └ renders the same under StrictMode double-invocation
+            └ renders exactly the three catalogue strings
+            └ is one landmark holding a level-one heading, a paragraph and the way back, in that order
+            └ routes each state to the sign-in start with the discarded copy and no token
+            └ renders the signed-out screen as one main holding one h1, a paragraph and a router link
+            └ renders the sign-in screen with a described, idle, non-busy control and one live region
+            └ renders the callback screen as one main, one h1 and one announced region
+            └ hands back the real DOM node for all eight
+  KILLED    own            RD03 TextLink renders a bare anchor instead of the router's Link (D3)  (5 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ offers a link to sign-in and no other interactive element
+            └ is a real anchor, not a button wired to navigate
+            └ finds exactly the eight primitives bearing a lowercase tag — not thirteen (§6e(2), phase 8 I7)
+            └ gives each primitive exactly one element to render, which is its whole job
+  KILLED    own            RD04 every primitive on the sign-in screen loses its class: the design system is reverted  (3 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx']
+            └ renders no class and no style attribute, for any of the five states
+            └ keeps every className literal on one line (phase 7 F6, phase 8 I5)
+  KILLED    own            RD05 the stylesheet is never imported, so no CSS is emitted at all  (3 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/bundleContainsNoSecretEnvKeys.test.ts', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ contains exactly the enumerated vendor URLs and no others
+            └ emits a non-empty CSS asset, links it from index.html, and compiles the tokens into it
+  KILLED    own            RD06 the Tailwind build plugin is dropped, so the utilities compile to nothing  (3 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/bundleContainsNoSecretEnvKeys.test.ts', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ contains exactly the enumerated vendor URLs and no others
+            └ emits a non-empty CSS asset, links it from index.html, and compiles the tokens into it
+  KILLED    own            RD07 the accent token is deleted, so bg-accent silently emits nothing  (5 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ declares the six colour tokens the brief froze, and no more
+            └ clears 4.5:1 for --color-text-inverse on --color-accent (the one control's label)
+            └ states each ratio correctly in the stylesheet's own comments (phase 7 F1)
+            └ emits a non-empty CSS asset, links it from index.html, and compiles the tokens into it
+  KILLED    own            RD08 FocusHolder stops forwarding its ref: focus falls to <body> on dismiss (L11)  (3 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/api/rateLimitedResponseShowsGenericCopyWithoutReplay.test.tsx', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ hands back the real DOM node for all eight
+  KILLED    own            RD09 ActionButton stops forwarding its ref, so the notice cannot tell if its button had focus  (3 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/api/rateLimitedResponseShowsGenericCopyWithoutReplay.test.tsx', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ hands back the real DOM node for all eight
+  KILLED    own            RD10 StatusRegion loses aria-live, so nothing it holds is ever announced (L11)  (11 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/api/rateLimitedResponseShowsGenericCopyWithoutReplay.test.tsx', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/auth/callbackWithMismatchedStateIsDiscarded.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx']
+            └ routes each state to the sign-in start with the discarded copy and no token
+            └ renders the sign-in screen with a described, idle, non-busy control and one live region
+            └ renders the callback screen as one main, one h1 and one announced region
+            └ gives the notice a programmatically focusable holder and an always-present region (L11)
+  KILLED    own            RD11 StatusRegion renders only when it has something to say, which is the announcement bug  (13 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/api/rateLimitedResponseShowsGenericCopyWithoutReplay.test.tsx', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ gives the notice a programmatically focusable holder and an always-present region (L11)
+  KILLED    inherited      RD12 Surface drops the data-testid, so the shell is unfindable  (4 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/app/shellBuildsAndMounts.test.tsx', 'src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx']
+            └ mounts the empty shell into the container (L13, L11)
+            └ renders at /app/sign-in, and the shell outside /app still renders nothing
+            └ sends an unmatched /app path through the catch-all to the sign-in start (AC4, L11, R28)
+  KILLED    own            RD13 AppShell goes back to a bare div, bypassing the primitive layer (AC2)  (3 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ finds exactly the eight primitives bearing a lowercase tag — not thirteen (§6e(2), phase 8 I7)
+            └ renders no lowercase JSX tag in any of the five render sites (§6e(3))
+  KILLED    own            RD14 SignInScreen renders a bare main instead of the Screen primitive (AC2)  (3 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ finds exactly the eight primitives bearing a lowercase tag — not thirteen (§6e(2), phase 8 I7)
+            └ renders no lowercase JSX tag in any of the five render sites (§6e(3))
+  KILLED    own            RD15 a className is wrapped across lines, putting a literal newline in the attribute (D4)  (2 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ keeps every className literal on one line (phase 7 F6, phase 8 I5)
+  KILLED    inherited      RD16 a screen styles itself through Surface, escaping the primitive layer (AC4)  (2 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts']
+            └ stops build at lint, so tsc and Vite never run on a violation (AC2, end to end)
+  KILLED    own            RD17 CANARY: the pin's walker stops reporting inline styles  (2 failed of 1815, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx']
+            └ CONTROL: an inline style is caught too, and the walker reaches the root itself
+
+regressions: 16/16 killed
+canaries:    ['RD17'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
+survivors:   none
+broken:      none
+
+--- expectation vs outcome ---
+  RD01   expected own           got KILLED/own       as expected
+  RD02   expected own           got KILLED/own       as expected
+  RD03   expected own           got KILLED/own       as expected
+  RD04   expected own           got KILLED/own       as expected
+  RD05   expected own           got KILLED/own       as expected
+  RD06   expected own           got KILLED/own       as expected
+  RD07   expected own           got KILLED/own       as expected
+  RD08   expected own           got KILLED/own       as expected
+  RD09   expected own           got KILLED/own       as expected
+  RD10   expected own           got KILLED/own       as expected
+  RD11   expected own           got KILLED/own       as expected
+  RD12   expected inherited     got KILLED/inherited as expected
+  RD13   expected own           got KILLED/own       as expected
+  RD14   expected own           got KILLED/own       as expected
+  RD15   expected own           got KILLED/own       as expected
+  RD16   expected inherited     got KILLED/inherited as expected
+  RD17   expected own           got KILLED/own       as expected
+
+disagreements: none
