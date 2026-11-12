@@ -70,6 +70,10 @@ R30 = "frontend/src/auth/identityErrorsIndistinguishableAcrossAccountStates.test
 # The three files phase 6 GREW. A kill in any of them is this task's own, because the growth is
 # this task's work. The named suite is phase 10's and is not here.
 OWN_TESTS = [
+    # PHASE 10 ADDED THE FIRST ONE, and it is the file `package.md` §8 names. The other three are instruments
+    # of closed tasks that phase 6 grew; a kill in any of them still counts as this task's, because the
+    # growth is this task's work.
+    "src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx",
     "src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx",
     "src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx",
     "src/app/bundleContainsNoSecretEnvKeys.test.ts",
@@ -88,7 +92,7 @@ FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 REVERT_PATHS = ["frontend/src/", "frontend/vite.config.ts"]
 
-EXPECTED_BASELINE_FAILURES = 1
+EXPECTED_BASELINE_FAILURES = 1  # of 1815 after phase 10's 34 cases; 1781 at phases 7 and 9
 KNOWN_ENVIRONMENTAL_FAILURES = {
     # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass.
     # USED ONLY FOR THE BASELINE REFUSAL CHECK. Attribution no longer subtracts this file, because only ONE
