@@ -66,7 +66,15 @@ vi.mock('../auth/codeExchange', () => ({
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-// This file is frontend/src/app/<name>; `import.meta.url` is not a file: URL under jsdom (T41 phase 10).
+// This file is frontend/src/app/<name>. `expect.getState().testPath` is used here and works; the REASON
+// recorded for it was false, and task 174 measured that rather than inheriting it (phase 8 I5). T41's
+// phase 10 wrote that "`import.meta.url` is not a `file:` URL under vitest's jsdom environment, so
+// `readFile` rejects it", quoting the error "The URL must be of scheme file". Probed directly under this
+// exact config: `import.meta.url` IS `file:///Users/.../<name>`, and `readFile(import.meta.url)` fails
+// with ENOENT - it treats the string as a PATH, and no file is literally named `file:///...`. The cause
+// was passing a URL where a path was expected; `fileURLToPath(import.meta.url)` works, and
+// `homeRouteRendersLandingScreenAndManagesFocus.test.tsx` uses it. Both patterns are correct. The quoted
+// error message was never what happens, which is why the note is corrected rather than just dropped.
 const appDir = dirname(expect.getState().testPath as string);
 const srcDir = dirname(appDir);
 const frontendDir = dirname(srcDir);

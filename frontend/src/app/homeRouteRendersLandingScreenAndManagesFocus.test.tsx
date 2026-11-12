@@ -35,7 +35,16 @@ import { createRoot, type Root } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// `CallbackScreen` starts an exchange on mount; stubbed to a promise that never settles so it stays on its
+// working state and the focus question below is about the screen rather than about a navigation.
+vi.mock('../auth/codeExchange', () => ({
+  exchangeAuthorizationCode: () => new Promise(() => {}),
+}));
 import { accessToken, clearAccessToken, retainAccessToken } from '../auth/accessToken';
+import { CallbackScreen } from '../auth/CallbackScreen';
+import { SignedOutScreen } from '../auth/SignedOutScreen';
+import { SignInScreen } from '../auth/SignInScreen';
 import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
 import { HomeScreen } from './HomeScreen';
@@ -128,6 +137,17 @@ describe('AC1 the screen renders through T173 primitives', () => {
     expect(container.querySelectorAll('main'), 'the landmark a screen-reader user navigates by').toHaveLength(1);
     expect(container.querySelectorAll('h1'), 'the document outline L11 requires has one top level').toHaveLength(1);
     expect(container.querySelector('main h1'), 'the heading is outside the landmark').not.toBeNull();
+  });
+
+  it('puts the heading BEFORE the paragraph, which is the order a screen is read in (phase 8 I4)', async () => {
+    // The landmark check above passes just as well for `<Text>` then `<Heading>` - a screen that explains
+    // itself before it names itself. `publicRouteSetIsExactlyTheDeclaredSet.test.tsx:829` pins exactly this
+    // for the signed-out screen ("a level-one heading, a paragraph and the way back, in that order"), so
+    // the precedent and the wording are both inherited rather than invented here.
+    const main = (await mountScreen()).querySelector('main');
+    const elements = [...(main?.children ?? [])].map((child) => child.tagName);
+
+    expect(elements, 'the explanation comes before the screen name').toEqual(['H1', 'P']);
   });
 
   it('writes no lowercase JSX tag of its own (§6e(3))', async () => {
@@ -364,6 +384,41 @@ describe('AC9 tabIndex is set inside the primitive, not accepted from a consumer
     expect(await read('app/ui/index.ts'), 'rule 2 was edited away rather than observed')
       .toMatch(/No primitive accepts the attribute that is its own contract/);
   });
+});
+
+describe('phase 8 I9: no OTHER screen takes focus, now that every heading can', () => {
+  // THIS TASK OPENED THE HOLE AND SO MUST CLOSE IT. Before task 174 a `.focus()` added to any screen was
+  // inert, because no `<h1>` was focusable; `Heading` now makes all of them focusable, so the same edit
+  // would silently start moving a screen-reader user's focus on mount. The guard lives HERE, in the suite
+  // of the task that created the risk, rather than as three edits to three closed tasks' files.
+  //
+  // `<body>` is the correct expectation for all three: none of them is an arrival from a redirect, and the
+  // sign-in screen in particular must NOT grab focus - a visitor who tabbed to its button and came back
+  // would be thrown out of position.
+  for (const [name, element, path] of [
+    ['SignInScreen', <SignInScreen />, '/'],
+    ['SignedOutScreen', <SignedOutScreen />, '/'],
+    ['CallbackScreen', <CallbackScreen />, `/callback?state=a-state&code=a-code`],
+  ] as const) {
+    it(`${name} leaves focus on <body> when it mounts`, async () => {
+      const container = document.createElement('div');
+      document.body.append(container);
+      const router = createMemoryRouter([{ path: '*', element }], { initialEntries: [path] });
+      const root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <I18nextProvider i18n={createI18n()}>
+            <RouterProvider router={router} />
+          </I18nextProvider>,
+        );
+      });
+      mounted = { root, container };
+
+      expect(container.querySelector('h1'), `${name} rendered no heading, so this measures nothing`).not.toBeNull();
+      expect(document.activeElement, `${name} took focus on mount, which only task 174's screen may do`)
+        .toBe(document.body);
+    });
+  }
 });
 
 describe('AC10 the focus move survives StrictMode double invocation', () => {

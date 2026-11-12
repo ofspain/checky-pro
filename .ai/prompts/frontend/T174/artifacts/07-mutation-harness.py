@@ -105,7 +105,7 @@ FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 REVERT_PATHS = ["frontend/src/", "frontend/vite.config.ts"]
 
-EXPECTED_BASELINE_FAILURES = 1  # of 1858 after phase 6; 1834 before the named suite's 24 cases
+EXPECTED_BASELINE_FAILURES = 1  # of 1862 after phase 9 added I4's order case and I9's three
 KNOWN_ENVIRONMENTAL_FAILURES = {
     # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass.
     # USED ONLY FOR THE BASELINE REFUSAL CHECK. Attribution no longer subtracts this file, because only ONE
@@ -124,6 +124,7 @@ ROUTES = "frontend/src/app/routes.tsx"
 CAT = "frontend/src/i18n/catalogue.ts"
 ONLY = "frontend/src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx"
 RESOLVE = "frontend/src/app/routesResolveUnderAppPrefixOnly.test.tsx"
+SIGNIN = "frontend/src/auth/SignInScreen.tsx"
 
 EFFECT = ("  useEffect(() => {\n"
           "    headingRef.current?.focus();\n"
@@ -241,6 +242,30 @@ MUTANTS = [
     # only ever shrinks would look just as healthy.
     ("RE19 CONTROL: a file that does not import the barrel is pinned as a render site",
      ONLY, SITE, SITE + "\n  'app/mountShell.tsx',", "inherited"),
+
+    # --- phase 9: the two findings from the independent review that needed code ---------------------------
+    # I4. The landmark checks pass for a screen that explains itself before it names itself, so the order
+    # was unmeasured until phase 9. This row is the one that says the new case is not decoration.
+    ("RE20 the paragraph is rendered before the heading (I4)",
+     HOME, HOME_HEADING + "\n" + HOME_TEXT, HOME_TEXT + "\n" + HOME_HEADING, "own"),
+    # I9. THE HOLE THIS TASK OPENED. Before task 174 a `.focus()` on another screen was inert, because no
+    # `<h1>` was focusable. `Heading` changed that for every screen at once, so the guard has to be shown
+    # working rather than assumed: this plants exactly the regression it was written for.
+    # THREE EDITS, because fewer would not compile or would not fire. `SignInScreen` imports no
+    # `useEffect`, and its `<Heading>` carries no ref - so a one-line effect would either break `tsc` or
+    # call `focus()` on null and survive for a reason that has nothing to do with the guard. A mutant must
+    # measure its own description.
+    ("RE21 SignInScreen grabs focus on mount, which Heading now makes possible (I9)",
+     SIGNIN,
+     ("import { useRef, useState } from 'react';",
+      "export function SignInScreen() {",
+      "      <Heading>{t('signIn.heading')}</Heading>"),
+     ("import { useEffect, useRef, useState } from 'react';",
+      ("export function SignInScreen() {\n"
+       "  const stolen = useRef<HTMLHeadingElement>(null);\n"
+       "  useEffect(() => { stolen.current?.focus(); }, []);"),
+      "      <Heading ref={stolen}>{t('signIn.heading')}</Heading>"),
+     "own"),
 ]
 
 def as_tuple(value):
