@@ -8,6 +8,11 @@
 | **Consumes** | `artifacts/01-specification-extraction.md` |
 | **Produces** | `artifacts/02-task-implementation-brief.md` — **the only specification phases 5–13 use** |
 
+> **AMENDED 2026-11-14, before the Phase 3 gate.** The owner answered **OQ-T42-2: yes — this task wires the
+> dormant sign-out path.** Sections `Scope`, `Business Rules`, `Dependencies`, `Files to Modify`,
+> `Acceptance Criteria`, `Constraints` and `Open Questions` carry that decision; every amended line is marked
+> **(owner, OQ-T42-2)**. Nothing frozen was deleted — the brief had not reached the Phase 4 gate.
+
 ## Task
 
 `spec/frontend/tasks.md:85` (task 42): *"**Authenticated shell.** A session renders the shell and the
@@ -31,7 +36,17 @@ than nothing: *"attaching a placeholder would make the screen-count pins stop me
 
 **In:** one authenticated layout component · its attachment as the element of a pathless layout route inside
 `RequireSession`'s children · its catalogue entries · the growth of the six instruments that will see it ·
-the named test's extension under the describe-prefix convention T41 reserved for this task.
+the named test's extension under the describe-prefix convention T41 reserved for this task · **(owner,
+OQ-T42-2)** a sign-out affordance in that layout, calling `endSession()`, plus the app-level cross-tab
+sign-out listener so a sibling tab learns of it.
+
+**The second item is the owner's decision, and this is the reading of it.** The question answered was
+*"does T42 wire it, or do those four tasks stay unreachable"*, and the four were **35** (clear memory), **36**
+(end the SAS session), **37** (the signed-out landing) and **39** (propagate to every tab). A button alone
+makes the first three reachable and leaves the fourth exactly as dormant as before, because
+`api/signOutPropagatesToAllTabs.test.ts:9-12` records that *"nothing installs the listener in production …
+no module owns app-level listeners"*. So both halves are in scope. **Phase 3 may challenge where the listener
+lives and how a receiving tab leaves the page — not whether.**
 
 **Out:** any screen for the other ten paths · any new route, path, endpoint, contract, config key or storage
 key · any data fetch (OQ-T33-2) · anything identity-dependent (a name, an email, a role, an account state) ·
@@ -49,7 +64,9 @@ Questions.
 | **R28** | While a visitor is unauthenticated, only the §4c public routes are served and anything else redirects to the sign-in start. Both clauses are built (T40, T41); this task owns the **positive** half its statement asserts — that a session renders the authenticated routes. |
 | **R22** | The SPA shall never show a half-authenticated screen. A held token proves only that a token is held — not that the account is usable (a SUSPENDED account keeps a working token, T31). |
 | **R20** | Profile data comes from `/userinfo` and `GET /accounts/me`, never from the access token. |
-| **R19 / R57** | Sign-out clears memory and ends the SAS session through the end-session endpoint; that navigation is served by SAS, never by the SPA shell. |
+| **R19** **(owner, OQ-T42-2)** | When the user signs out, the SPA clears in-memory token state and ends the SAS session through the end-session endpoint with an allowlisted `post_logout_redirect_uri`. `endSession()` already does all of it; this task supplies the *"when the user signs out"* that R19 is conditional on. |
+| **R22's last clause** **(owner, OQ-T42-2)** | Sign-out shall propagate to every open tab. The mechanism is built (`api/crossTabSignOut.ts`, T39) and has no installer. |
+| **R57** | The end-session navigation is served by SAS, never by the SPA shell — which is why the layout calls `endSession()` and never builds a URL or touches `globalThis.location` itself. |
 | **R29 / L16** | Nothing is stored client-side beyond the L16 carve-out. |
 
 ## Locked Decisions
@@ -63,8 +80,10 @@ Questions.
 ## Dependencies
 
 `app/ui/` (T173's eight primitives) · `react-router`'s `Outlet` · `react-i18next` · `i18n/catalogue.ts` ·
-the path constants in `app/routes.tsx` · `auth/RequireSession.tsx` (read only). **No endpoint, no contract,
-no config key, no generated-client call.**
+the path constants in `app/routes.tsx` · `auth/RequireSession.tsx` (read only) · **(owner, OQ-T42-2)** exactly
+two auth modules: `endSession` from `auth/endSession` and `listenForSignOut` from `api/crossTabSignOut`.
+**No endpoint, no contract, no config key, no generated-client call** — nothing calls `createAuthApi`,
+`readAccount` or `readProfile` today (OQ-T33-2) and this task does not change that.
 
 ## Inputs
 
@@ -98,6 +117,18 @@ added or renamed.
 - `src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx` — only where the nesting makes an
   assertion **false** or requires it to **admit new state** (the one-`<h1>` count, `main.children`, and the
   I9 focus guard are the three candidates)
+- **(owner, OQ-T42-2)** `src/auth/signOutClearsMemoryAndEndsSasSession.test.tsx:1745-1761` — its
+  `PERMITTED_IMPORTERS` list is **empty on purpose** and carries the handoff in its own failure message:
+  *"If you are wiring the sign-out affordance, that is the right thing to do — add the module to
+  `PERMITTED_IMPORTERS` here, and note that OQ-T36-5 can then be closed."* A pin written for this day, as
+  T27-D1 was for T174. The layout goes in that list and nowhere else; the `END_SESSION_PATH` literal stays
+  forbidden to it.
+- **(owner, OQ-T42-2)** `src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx:866` — the comment *"the only
+  way anyone can reach this screen today: nothing in the SPA calls `endSession()`"* becomes **false**, which
+  is the permitted reason to edit a closed task's instrument. Its assertion is unaffected.
+- **(owner, OQ-T42-2)** `src/api/signOutPropagatesToAllTabs.test.ts:9-12` — the same, for *"nothing installs
+  the listener in production"*. Whether its cases can now assert the journey rather than the mechanism is
+  **phase 10's** question, not an edit to make in passing.
 - `src/app/shellBuildsAndMounts.test.tsx` · `src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx` ·
   `src/app/routesResolveUnderAppPrefixOnly.test.tsx` — **only if** measurement shows they fire. The last two
   are structurally blind to a pathless element, so a prediction that they do **not** fire must be measured
@@ -124,6 +155,10 @@ added or renamed.
 | **AC9** | The layout is a landmark distinct from the screen's `<main>`, and every interactive element in it is keyboard-reachable with a visible focus ring | **L11** |
 | **AC10** | Nothing the layout renders depends on identity: no name, email, role or account state, no token read, no `auth/` import | **R22**, **R20**, **L3** |
 | **AC11** | `app-shell`'s `innerHTML` is still `''` when no route matches, and the layout makes no network call and writes no storage | T01, **R29**, **L16** |
+| **AC12** **(owner, OQ-T42-2)** | The layout renders a sign-out control: an `ActionButton`, keyboard-reachable, its label from the catalogue, outside the screen's `<main>`, present on every authenticated path | **R19**, **L11** |
+| **AC13** **(owner, OQ-T42-2)** | Activating it calls `endSession()` **exactly once**, and the layout's own source reaches none of the pieces `endSession()` composes: no `signOut`, no `takeIdToken`, no `broadcastSignOut`, no `END_SESSION_PATH`, no `globalThis.location`, no hand-built URL | **R19**, **R57**, T36's own sweep |
+| **AC14** **(owner, OQ-T42-2)** | The layout installs the cross-tab sign-out listener once per mount and removes it on unmount, and a broadcast from a sibling tab leaves this tab with no session and off the authenticated surface | **R22**, **L18**, T39 |
+| **AC15** **(owner, OQ-T42-2)** | Nothing of the sign-out affordance is reachable without a session: with no token the layout does not render, so neither does the control | **R28**, T40 |
 
 ## Required Tests
 
@@ -137,10 +172,13 @@ prose may edit the prose.
 
 ## Constraints
 
-- **Module boundaries:** the layout may import from `app/ui`, `react-router` (`Outlet`) and `react-i18next`,
-  and from `app/routes` if it needs the path constants. It must not import from `auth/`, must not read
-  `accessToken`, and must not reach `globalThis.location`, `history`, `document.cookie`, `indexedDB` or any
-  storage.
+- **Module boundaries (amended — owner, OQ-T42-2):** the layout may import from `app/ui`, `react-router`,
+  `react-i18next`, `app/routes` for the path constants, and **exactly two auth modules**: `endSession` from
+  `auth/endSession` and `listenForSignOut` from `api/crossTabSignOut`. It must **not** read `accessToken`,
+  must not call `signOut()` or `takeIdToken()` directly — `endSession()` composes those and the order is its
+  criterion (`auth/endSession.ts:89-96`) — and must not reach `globalThis.location`, `history`,
+  `document.cookie`, `indexedDB` or any storage. The pre-amendment line said *"must not import from `auth/`"*;
+  that becomes two named exceptions and nothing else, enforced by the layout's own source sweep.
 - **Security:** no PII, no token, no account state, no role in the DOM or the source. A held token proves
   only that a token is held (R22, T31).
 - **Null handling:** the layout takes no input. `<Outlet />` renders nothing when the matched child has no
@@ -151,7 +189,12 @@ prose may edit the prose.
 
 ## Open Questions
 
-**One blocker, and it is Phase 3's target.**
+**OQ-T42-2 is CLOSED by the owner (2026-11-14): yes, this task wires the sign-out path.** With it,
+**OQ-T36-5** — *"nothing in the SPA can trigger sign-out … T36 joins tasks 5, 6, 30, 31, 33 and 35 as built
+and uncalled"* (`T36/02-task-implementation-brief.md:186`) — closes for its **sign-out** half. Its **data**
+half does not: tasks 5, 6, 30, 31 and 33 stay dormant, which is **OQ-T33-2**, and this task does not touch it.
+
+**One blocker remains, and it is Phase 3's target.**
 
 - **OQ-T42-1 — what the layout contains is not specified anywhere in the package.** Searching all five spec
   files for *shell*, *navigation*, *nav*, *header*, *menu*, *sign out*, *layout* and *chrome* returns six
@@ -161,17 +204,20 @@ prose may edit the prose.
   and an `<Outlet />`, with no link until a task owns each destination; **(c)** nothing new — the statement
   restating T40 plus T174, making the unit vacuous, which would then be **recorded as vacuous rather than
   padded** (T40's precedent: *"a criterion can be vacuously true and that is the task"*). Every AC above
-  holds under (a) and (b); AC6, AC7 and AC9 are empty under (c). **Phase 3 settles it.**
+  holds under (a) and (b); AC6, AC7 and AC9 would be empty under (c). **Reading (c) is eliminated by the
+  owner's decision** — a layout that must hold a sign-out control is not nothing — so Phase 3's question
+  narrows to **(a) versus (b): does the chrome also carry navigation to the ten routes no task has filled
+  yet?** A link to a path that renders an empty document is a worse answer than no link; a navigation surface
+  with no links does not navigate. **Phase 3 settles which.**
 
 **Three carried, none of which stops work:**
 
-- **OQ-T42-2 — the dormant sign-out path.** `signOut()` (T35), `endSession()` (T36), the signed-out landing
-  (T37) and cross-tab propagation (T39) are built, and **nothing in production source calls `endSession()`
-  or `signOut()`** (verified by grep over `src/`, tests excluded). R19 is conditional — *"WHEN the user signs
-  out"* — and commissions no affordance; task 38, the only other R19 unit, is still *"Blocked on Q15"*.
-  Authenticated chrome is the natural and only home for such a control, so the question arrives here. It is
-  **a scope decision for the owner**, carried into the Phase 4 approval gate rather than taken silently: the
-  alternative is that four closed tasks' work stays unreachable until a later unit.
+- **OQ-T42-4 — the one part of the owner's decision that is not settled by it.** A receiving tab must
+  *leave* the authenticated surface, and the gate is a **read at render, not a subscription** (OQ-T40-1):
+  clearing the token inside a listener changes nothing until something navigates. So the listener needs a
+  destination, and `RedirectToSignIn` owns that decision for every other blocked arrival. Whether the layout
+  navigates itself or re-renders into the gate's negative branch is **Phase 3's**, and it is the only part of
+  AC14 whose shape is open. Task 38 — the other R19 unit — stays *"Blocked on Q15"* and is untouched.
 - **OQ-T42-3** — ten of the eleven paths have no element and each belongs to a later unit; whether they must
   become observably different from nothing follows from OQ-T42-1, not from a separate decision.
 - **OQ-T33-2 · OQ-T40-1 · OQ-T173-5 · OQ-T173-4/OQ-T174-3** — the dormant data path, the gate as a read
