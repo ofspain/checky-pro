@@ -47,6 +47,7 @@ import { SignedOutScreen } from '../auth/SignedOutScreen';
 import { SignInScreen } from '../auth/SignInScreen';
 import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
+import { RegisterScreen } from '../features/account/RegisterScreen';
 import { HomeScreen } from './HomeScreen';
 import { APP_BASENAME, appRoutes, HOME_PATH, SIGN_IN_PATH } from './routes';
 
@@ -426,13 +427,22 @@ describe('phase 8 I9: no OTHER screen takes focus, now that every heading can', 
   // would silently start moving a screen-reader user's focus on mount. The guard lives HERE, in the suite
   // of the task that created the risk, rather than as three edits to three closed tasks' files.
   //
-  // `<body>` is the correct expectation for all three: none of them is an arrival from a redirect, and the
+  // `<body>` is the correct expectation for all four: none of them is an arrival from a redirect, and the
   // sign-in screen in particular must NOT grab focus - a visitor who tabbed to its button and came back
   // would be thrown out of position.
+  //
+  // GROWN BY TASK 43, AND THAT TASK'S OWN PLAN HAD SAID SO. Phase 6 grew the union pin in this file and
+  // missed this loop, which is the other half of the same row; phase 7's harness then reported the mutant
+  // "the screen focuses the first field on mount" as a SURVIVOR and recorded it as a hole in the suite. It
+  // was not a hole - it was this line, unwritten. Kimi's phase 8 I1 found it by reading the plan. The
+  // registration screen is the first entry here with INTERACTIVE CONTROLS, which is what makes the guard
+  // matter more than it did for three screens that only read: an autofocused email field is the single
+  // most likely well-meant edit to this screen, and it would move a screen-reader user's focus silently.
   for (const [name, element, path] of [
     ['SignInScreen', <SignInScreen />, '/'],
     ['SignedOutScreen', <SignedOutScreen />, '/'],
     ['CallbackScreen', <CallbackScreen />, `/callback?state=a-state&code=a-code`],
+    ['RegisterScreen', <RegisterScreen />, '/register'],
   ] as const) {
     it(`${name} leaves focus on <body> when it mounts`, async () => {
       const container = document.createElement('div');

@@ -126,6 +126,10 @@ const statusRegion = (container: HTMLElement) => container.querySelector<HTMLEle
  */
 async function type(input: HTMLInputElement, value: string): Promise<void> {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  // ASSERTED RATHER THAN OPTIONAL (phase 7, F7; phase 8, I11). `setter?.call` silently did nothing if the
+  // descriptor ever lacked a setter, and the failure would have surfaced as an empty request body three
+  // cases away from the cause.
+  expect(setter, 'HTMLInputElement has no value setter, so nothing below types anything').toBeTypeOf('function');
   await act(async () => {
     setter?.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -510,17 +514,35 @@ describe('AC9 every control is reachable by keyboard, and the control is a real 
 describe('AC10 the journey writes no storage and leaves no password in the document', () => {
   it('writes to neither storage across the whole journey (L3, R18)', async () => {
     installTransport(() => ACCEPTED);
-    const local = vi.spyOn(globalThis.localStorage, 'setItem');
-    const session = vi.spyOn(globalThis.sessionStorage, 'setItem');
+    // SPIED ON `Storage.prototype`, NOT ON THE TWO INSTANCES, AND THE CONTROL BELOW IS WHY (phase 7, F4;
+    // phase 8, I9). `vi.spyOn(globalThis.localStorage, 'setItem')` **does not intercept in jsdom**: measured
+    // with a probe, the instance spy saw 0 of 1 writes while a prototype spy saw 2 of 2 and
+    // `mock.instances` told the two storages apart. So the first version of this case asserted that a spy
+    // which never fires had not fired - vacuous in the exact shape its own control was written to catch,
+    // and the control failed on its first run. Carried as FU-T43-1 for the other suites that do this.
+    const writes = vi.spyOn(Storage.prototype, 'setItem');
+    const wroteTo = (store: Storage) => writes.mock.instances.filter((seen) => seen === store).length;
     const container = await renderScreen();
 
     await fillAndSubmit(container, 'visitor@example.test', 'a'.repeat(12));
     await settle();
 
-    expect(local, 'the registration journey wrote to localStorage').not.toHaveBeenCalled();
-    expect(session, 'the registration journey wrote to sessionStorage').not.toHaveBeenCalled();
+    expect(writes, 'the registration journey wrote to a web storage').not.toHaveBeenCalled();
     expect(Object.keys(globalThis.localStorage)).toEqual([]);
     expect(Object.keys(globalThis.sessionStorage)).toEqual([]);
+
+    // THE CONTROL, in the same case so the two cannot drift apart (phase 7, F4; phase 8, I9). A spy
+    // installed on the wrong object, or one that failed to intercept, reports exactly what a journey that
+    // writes nothing reports. Every spy mistake in this package has had that shape, and the `Object.keys`
+    // assertions above are weaker evidence than they look - they would miss a write followed by a remove.
+    globalThis.localStorage.setItem('control', 'seen');
+    globalThis.sessionStorage.setItem('control', 'seen');
+    expect(writes, 'the spy is not intercepting, so the assertion above was vacuous')
+      .toHaveBeenCalledWith('control', 'seen');
+    // And it tells the two apart, which is what one prototype spy has to prove to replace two instance
+    // spies: a write to one storage must not be reported as a write to the other.
+    expect(wroteTo(globalThis.localStorage), 'the spy cannot attribute a write to localStorage').toBe(1);
+    expect(wroteTo(globalThis.sessionStorage), 'the spy cannot attribute a write to sessionStorage').toBe(1);
   });
 
   it('leaves the password nowhere but the field that holds it, before or after the submit', async () => {

@@ -584,6 +584,26 @@ describe('T173 AC1: every primitive applies the tokens it exists to apply', () =
     }
   });
 
+  it('keeps the two buttons wearing ONE appearance, which is a pair claim and not two rows (task 43)', async () => {
+    // `SubmitButton.tsx`'s header says both files are "pinned to the same token list by the design-system
+    // suite, which is the pair pin task 42 learned to ask for: two literals that happen to agree are not the
+    // same claim as two that must". THAT WAS FALSE WHEN IT WAS WRITTEN (phase 7, F3; phase 8, I8): the table
+    // above holds two INDEPENDENT rows that happen to match, which is `Banner`'s `max-w-prose` coincidence
+    // exactly. This case is what makes the sentence true. Change `ActionButton`'s accent alone and it fails.
+    expect(REQUIRED_UTILITIES.SubmitButton, 'the two buttons no longer owe the same tokens')
+      .toEqual(REQUIRED_UTILITIES.ActionButton);
+    const action = classesOf(await read('app/ui/ActionButton.tsx'));
+    const submit = classesOf(await read('app/ui/SubmitButton.tsx'));
+    // And the FILES agree, not only the table: a row both files satisfy is still two literals until the
+    // literals are compared. Only the shared appearance is compared - layout is each file's own, and
+    // `ActionButton` has no form to sit in.
+    for (const utility of ['bg-accent', 'text-text-inverse', 'text-step-0', 'rounded-md', 'px-4', 'py-2',
+      'font-medium', 'focus-visible:outline-2', 'focus-visible:outline-focus']) {
+      expect(action, `ActionButton lost ${utility}`).toContain(utility);
+      expect(submit, `SubmitButton and ActionButton disagree about ${utility}`).toContain(utility);
+    }
+  });
+
   it.each(FOCUSABLE)('gives %s a visible focus ring (L11, WCAG 2.4.7)', async (name) => {
     const classes = classesOf(await read(`app/ui/${name}.tsx`));
     // Without these a keyboard user has no indicator on the application's only control and only link - and

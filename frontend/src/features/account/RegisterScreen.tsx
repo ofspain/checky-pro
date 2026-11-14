@@ -7,6 +7,19 @@ import { ADVISORY_MAXIMUM_CODE_POINTS, ADVISORY_MINIMUM_CODE_POINTS, countCodePo
 /**
  * The registration screen — R1, and the first screen in `features/`.
  *
+ * **A REJECTED SEND RETURNS THE FORM TO ITS IDLE STATE** (phase 8, I7; phase 7, F2). `openapi-fetch`
+ * RESOLVES for every HTTP answer, which is why a 202, a 409 and a 500 all reach the success branch - the
+ * response-agnostic design R2 and L4 require. It REJECTS when the transport itself throws: offline, DNS
+ * failure, a blocked request. The first version of this file had no handler for that, so the rejection
+ * escaped unhandled and the live region stayed on "Creating your account…" forever.
+ *
+ * `'idle'` is the state that needs no new word. It empties the live region, leaves both fields filled and
+ * the control usable, and claims nothing: a visitor can press the button again, which is the only thing
+ * that can help when the request never left the tab. The alternatives were worse - `'sent'` would report an
+ * account that was never requested, and a failure SENTENCE would be copy no owner has approved, while D7
+ * froze this screen's key set at six. The silence is the gap, it is carried as OQ-T43-9, and it is
+ * strictly better than a screen that hangs.
+ *
  * **WHERE THIS FILE LIVES, AND WHY NOT `auth/`.** `design.md:206` lays out `src/features/account/` for
  * "register, verify, reset, sessions", and nothing had created `features/` in 42 tasks. Registration is an
  * account operation, not part of the OIDC flow: it holds no token, starts no session, and is forbidden from
@@ -49,7 +62,7 @@ export function RegisterScreen(): ReactElement {
     setStatus('submitting');
     // The advisory result is deliberately NOT consulted here: R1 sends the form either way.
     void createPublicAuthApi().POST('/accounts', { body: { email, password } })
-      .then(() => setStatus('sent'));
+      .then(() => setStatus('sent'), () => setStatus('idle'));
   }
 
   return (

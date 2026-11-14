@@ -916,14 +916,27 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
     });
 
     it('AC11 writes no storage and makes no network call while rendering', async () => {
-      const setItem = vi.spyOn(globalThis.sessionStorage, 'setItem');
+      // CORRECTED BY TASK 43, AND THE HALF THAT WAS WRONG HAD ALWAYS BEEN WRONG. This case spied on
+      // `globalThis.sessionStorage` - an INSTANCE spy, which **does not intercept in jsdom**: measured with
+      // a probe, an instance spy saw 0 of 1 writes while a `Storage.prototype` spy saw 2 of 2. So the
+      // storage half of this case asserted that a spy which never fires had not fired, from the day it was
+      // written. The `fetch` half was always real (`globalThis.fetch` is an ordinary property), and the
+      // control below is what separates the two from now on. Task 43's registration suite found it when ITS
+      // equivalent case grew the control phases 7 and 8 both asked for.
+      const writes = vi.spyOn(Storage.prototype, 'setItem');
       const fetchSpy = vi.spyOn(globalThis, 'fetch');
       retainAccessToken('a-token-this-tab-holds');
       const { container } = await arrive(`${APP_BASENAME}/invoices`);
 
       expect(banner(container), 'nothing rendered, so the spies below prove nothing').not.toBeNull();
-      expect(setItem, 'the layout wrote storage on render').not.toHaveBeenCalled();
+      expect(writes, 'the layout wrote storage on render').not.toHaveBeenCalled();
       expect(fetchSpy, 'the layout called the network on render').not.toHaveBeenCalled();
+
+      // THE CONTROL. A spy that cannot see a write reports exactly what a render that writes nothing
+      // reports, and this one did for two phases.
+      globalThis.sessionStorage.setItem('control', 'seen');
+      expect(writes, 'the storage spy is not intercepting, so the assertion above was vacuous')
+        .toHaveBeenCalledWith('control', 'seen');
     });
 
     it('AC7 names the layout and the ninth primitive in the lists that pin them', async () => {
