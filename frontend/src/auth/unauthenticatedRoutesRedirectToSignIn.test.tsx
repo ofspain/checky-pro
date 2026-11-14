@@ -932,9 +932,12 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       const only = await srcFile('app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx');
       expect(only, 'the render-site list does not name the layout').toContain("'app/AuthenticatedLayout.tsx',");
       expect(only, 'the primitive list does not name Banner').toContain("'Banner',");
-      expect(only, 'the render-site count still says six').toMatch(/toHaveLength\(7\)/);
-      expect(only, 'the primitive count still says eight').toMatch(/toHaveLength\(9\)/);
-      expect(only, 'the union pin no longer says sixteen').toMatch(/\.toBe\(16\)/);
+      // GROWN BY TASK 43, which added one render site and four primitives. The numbers follow the two lists
+      // rather than being frozen at what task 42 saw: this case's interest is that the layout and `Banner`
+      // are PINNED somewhere the counts are exact, and a count that stopped moving would stop being exact.
+      expect(only, 'the render-site count still says seven').toMatch(/toHaveLength\(8\)/);
+      expect(only, 'the primitive count still says nine').toMatch(/toHaveLength\(13\)/);
+      expect(only, 'the union pin no longer says twenty-one').toMatch(/\.toBe\(21\)/);
     });
 
     it('OQ-T36-5: the end-session suite names this layout as its first permitted importer', async () => {

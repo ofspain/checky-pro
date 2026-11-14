@@ -263,6 +263,73 @@ const CREDENTIAL_SOURCE_PATTERNS: ReadonlyArray<{ pattern: RegExp; what: string 
   { pattern: /<\s*form\b/gi, what: 'a form element' },
 ];
 
+/**
+ * Every credential-shaped hit production is allowed to carry, with the reason — task 43's, and the first
+ * entries this table has ever had.
+ *
+ * **THE FRICTION WORKED, WHICH IS WHY THIS TABLE EXISTS AT ALL.** The `<form>` pattern above says it is
+ * "broad ON PURPOSE, and it will fire on a future search or preferences form … a production form is a thing
+ * somebody should have to justify in this table rather than add quietly". Task 43 is the task that had to
+ * pay it: three hits appeared the moment the registration screen was written, in a suite that is not task
+ * 43's and that no document told it to grow.
+ *
+ * **AND L2 IS NOT RELAXED BY ANY ROW HERE.** L2 is about interactive LOGIN - "Password, TOTP, and
+ * recovery-code steps run in the Spring Authorization Server flow". Account CREATION is R1, and R1 names
+ * the registration form itself: the SPA checks the password advisorily and submits it to `POST /accounts`
+ * through the generated client. So the SPA collects a password exactly once, to create an account, and
+ * never to authenticate one. That distinction is the whole content of this table, and it is the reason the
+ * rows name their files individually rather than excusing a directory: a password field appearing in
+ * `auth/` would still fail, which is precisely what L2 forbids.
+ */
+const PERMITTED_CREDENTIAL_HITS: ReadonlyArray<{ file: string; what: string; count: number; why: string }> = [
+  {
+    file: 'app/ui/Form.tsx',
+    what: 'a form element',
+    count: 1,
+    why: "The design system's `<form>`, which exists because §6e(3) forbids a screen from rendering one "
+      + 'itself. It submits nothing on its own: it calls back, and the callback is the screen\'s.',
+  },
+  {
+    file: 'app/ui/PasswordField.tsx',
+    what: 'a password input',
+    count: 1,
+    why: "`type=\"password\"` set INSIDE the primitive (rule 2), so no consumer can ask for it and no other "
+      + 'file in the bundle spells it. R1: the registration form submits a password to `POST /accounts`.',
+  },
+  {
+    file: 'features/account/RegisterScreen.tsx',
+    what: 'a form element',
+    count: 1,
+    why: 'The `<Form>` RENDER SITE, not a second `<form>`: the pattern is case-insensitive, so a screen '
+      + 'using the primitive is counted too. That is the better behaviour and is left alone - every place a '
+      + 'form is mounted has to be named here, not only the place one is declared.',
+  },
+];
+
+function unexplainedCredentialHits(hits: ReadonlyArray<{ file: string; what: string }>): string[] {
+  const budget = new Map<string, number>();
+  for (const row of PERMITTED_CREDENTIAL_HITS) budget.set(`${row.file}|${row.what}`, row.count);
+  const unexplained: string[] = [];
+  for (const hit of hits) {
+    const key = `${hit.file}|${hit.what}`;
+    const left = budget.get(key);
+    if (left === undefined || left <= 0) unexplained.push(`${hit.file}: ${hit.what}`);
+    else budget.set(key, left - 1);
+  }
+  return unexplained;
+}
+
+/** Every credential-shaped hit in production, as `{ file, what }` pairs. */
+async function credentialHits(): Promise<Array<{ file: string; what: string }>> {
+  const targets = await productionSources();
+  expect(targets.length).toBeGreaterThan(0);
+  const found: Array<{ file: string; what: string }> = [];
+  for (const { pattern, what } of CREDENTIAL_SOURCE_PATTERNS) {
+    for (const hit of hitsOf(targets, pattern)) found.push({ file: hit.file, what });
+  }
+  return found;
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // Instrument 1 — the hand-over counter
 // ---------------------------------------------------------------------------------------------------------
@@ -792,18 +859,45 @@ describe('the sign-in start hands over to the SAS flow and keeps nothing of the 
 // =========================================================================================================
 
 describe('no credential input and no second-factor logic ship in the SPA (AC2, AC3, L2, L5)', () => {
-  it('no production module carries a credential-collecting shape', async () => {
-    const targets = await productionSources();
-    expect(targets.length).toBeGreaterThan(0);
-
-    const found: string[] = [];
-    for (const { pattern, what } of CREDENTIAL_SOURCE_PATTERNS) {
-      for (const hit of hitsOf(targets, pattern)) found.push(`${hit.file}: ${what}`);
-    }
+  it('no production module carries a credential-collecting shape, beyond registration\'s three', async () => {
     // Not "the sign-in screen renders none" - that is T16's claim and this one is wider. A one-time-code
-    // field on an account screen, a password field in a dialog, a form anywhere: L2 puts every one of them on
+    // field on an account screen, a password field in a dialog, a form anywhere: L2 puts every LOGIN step on
     // the server, and this scan is the only thing in the package that looks at all of production at once.
-    expect(found).toEqual([]);
+    //
+    // NARROWED ONCE, BY TASK 43, from `toEqual([])` to a table of three named hits. The narrowing is as
+    // small as it can be: by file, by shape and BY COUNT, so a second password input in
+    // `PasswordField.tsx` is as much a failure as one in `auth/`.
+    expect(unexplainedCredentialHits(await credentialHits())).toEqual([]);
+  });
+
+  it('the permitted credential table is exact: every row is still real, and none is spare', async () => {
+    const actual = new Map<string, number>();
+    for (const hit of await credentialHits()) {
+      const key = `${hit.file}|${hit.what}`;
+      actual.set(key, (actual.get(key) ?? 0) + 1);
+    }
+    // The same claim the MFA table gets below, for the same reason: a row describing a tree that no longer
+    // exists reads as though it excuses something, and the next reader trusts it. If the registration screen
+    // is deleted or renamed, this fails - and that is correct, because the excuse goes with it.
+    const stale = PERMITTED_CREDENTIAL_HITS
+      .filter((row) => actual.get(`${row.file}|${row.what}`) !== row.count)
+      .map((row) => `${row.file}: expected ${row.count} x ${row.what}, found ${actual.get(`${row.file}|${row.what}`) ?? 0}`);
+    expect(stale).toEqual([]);
+    expect(PERMITTED_CREDENTIAL_HITS, 'the credential exception table changed size').toHaveLength(3);
+  });
+
+  it('excuses no autofill hint and no one-time-code anywhere, which is the half L2 owns', async () => {
+    // THE ROWS THAT ARE NOT THERE, asserted rather than left to inspection. Two of the four patterns have no
+    // permitted row at all: an `autoComplete="one-time-code"` input is a second factor, and
+    // `current-password`/`new-password` is the browser being told to fill a LOGIN credential. Registration
+    // needs neither, so the table must not grow one quietly - a row added here is a different claim from a
+    // row added for `<form>`, and this case is what makes adding one a visible edit.
+    const excusedShapes = new Set(PERMITTED_CREDENTIAL_HITS.map((row) => row.what));
+    expect([...excusedShapes].sort(), 'the credential table now excuses a login-credential shape')
+      .toEqual(['a form element', 'a password input']);
+    // And no production file carries either shape today, which is what the empty rows are claiming.
+    const hits = (await credentialHits()).filter((hit) => !excusedShapes.has(hit.what));
+    expect(hits).toEqual([]);
   });
 
   it('no production module names a second factor, beyond the one route path that has no element', async () => {

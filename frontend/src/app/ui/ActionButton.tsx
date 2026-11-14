@@ -10,8 +10,11 @@ import { forwardRef, type ReactNode } from 'react';
  * attribute. A primitive that accepted `disabled`, or helpfully translated `aria-disabled` into it, would
  * reintroduce exactly that defect; the type is what prevents it.
  *
- * `type="button"` is set here and is not a prop: there is no `<form>` in this bundle, and a button that
- * defaulted to `submit` inside one later would navigate.
+ * `type="button"` is set here and is not a prop. This used to read "there is no `<form>` in this bundle, and
+ * a button that defaulted to `submit` inside one later would navigate" - TASK 43 BUILT THAT FORM, so the
+ * first clause is false and the second is now the live reason. The form's own control is `SubmitButton`,
+ * which sets `type="submit"` inside itself for the same rule-2 reason this file sets `button`: a consumer who
+ * could pass `type` could turn an action into a navigation, or a submit into a dead control.
  */
 export const ActionButton = forwardRef<HTMLButtonElement, {
   children: ReactNode;

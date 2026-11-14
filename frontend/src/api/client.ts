@@ -39,6 +39,31 @@ export function createAuthApi(boundary: SessionBoundary, rateLimit?: RateLimitNo
   return client;
 }
 
+/**
+ * The auth-service client for a PUBLIC surface: no session boundary, because there is no session.
+ *
+ * **WHY THIS EXISTS AT ALL** (task 43, D4). `createAuthApi` needs a `SessionBoundary`, and a boundary is the
+ * tab's single in-flight renewal (R21, L18) - "one per tab", built from the tab's tokens and its re-auth
+ * hook. A registration screen has neither: `POST /accounts` is in `AUTH_PUBLIC_OPERATIONS`, so it is sent
+ * with no bearer and its 401 never renews, which means the boundary's entire contribution to such a call is
+ * to do nothing. Nothing in production constructs a boundary yet either (`auth/cleanReauth.ts` says so in
+ * its own words, OQ-T33-2), so the alternative was a screen hand-writing an inert implementation of a
+ * security interface and a reader having to compare it with the real one to see that it was inert.
+ *
+ * The rate-limit notice is still installed, because a public operation is exactly the kind that gets a 429
+ * (R23) and that copy is the visitor's only explanation.
+ *
+ * It is NOT for protected operations. A caller that reaches a `security`-bearing path through this client
+ * sends it without a token and gets a 401 that nothing renews - which is why the one line of middleware here
+ * is the rate-limit notice and the public-operations set is not passed to anything: there is no boundary to
+ * pass it to, and every operation on this client is treated as public by construction.
+ */
+export function createPublicAuthApi(rateLimit?: RateLimitNoticeState): AuthApi {
+  const client = createAuthClient();
+  if (rateLimit) client.use(rateLimit.middleware);
+  return client;
+}
+
 /** The SAS protocol client behind the same session boundary, for the one protocol operation that needs a bearer.
  *
  * A deliberate mirror of `createAuthApi`, down to the middleware order, and mirrored rather than generalised on

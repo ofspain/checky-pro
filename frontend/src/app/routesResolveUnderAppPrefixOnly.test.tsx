@@ -16,6 +16,10 @@ const DECLARED_PATHS: readonly string[] = [...PUBLIC_ROUTE_PATHS, ...AUTHENTICAT
 
 /** The screens attached so far, in route order. A task that attaches one adds it here deliberately (T16: sign-in). */
 const SCREENS_ATTACHED_SO_FAR = ['sign-in', 'callback',
+  // TASK 43 - the registration screen. It goes HERE rather than at the end, because this list is in route
+  // order and `register` is the third entry in `PUBLIC_ROUTE_PATHS`: the walker reads the table, so a list
+  // in task order would fail while nothing was wrong. Still additive; no case below changed.
+  'register',
   'signed-out', // TASK 37 - the signed-out landing. Additive; every case below is task 16's, unchanged.
   // TASK 174 - the home screen, and the FIRST entry here that is not a public route. It goes last because
   // this list is in ROUTE ORDER and the authenticated paths sit after the public ones in the table, under

@@ -341,11 +341,12 @@ describe('AC7 the instruments this task was obliged to grow', () => {
     const source = await read('app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx');
     expect(source).toContain("'app/HomeScreen.tsx',");
     // GROWN BY T42, which added the seventh render site AND the ninth primitive, so the union moved by two.
+    // GROWN AGAIN BY T43, which added one render site and FOUR primitives, so it moved by five to 21.
     // The number is this task's only interest in it - that HomeScreen.tsx is PINNED somewhere the union
     // counts - so the claim is kept and the count follows the two lists rather than being frozen at a
     // figure task 174 happened to see.
-    expect(source, 'the union pin no longer says sixteen, so a render site or a primitive is unpinned')
-      .toMatch(/\.toBe\(16\)/);
+    expect(source, 'the union pin no longer says twenty-one, so a render site or a primitive is unpinned')
+      .toMatch(/\.toBe\(21\)/);
   });
 
   it('names home in the attached-element pin, which is read from the route table itself', () => {

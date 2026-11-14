@@ -55,7 +55,10 @@ import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
 import { createRateLimitNotice } from '../api/rateLimitNotice';
 import { RateLimitNotice } from './RateLimitNotice';
-import { ActionButton, Banner, FocusHolder, Heading, Screen, StatusRegion, Surface, Text, TextLink } from './ui';
+import {
+  ActionButton, Banner, EmailField, FocusHolder, Form, Heading, PasswordField, Screen, StatusRegion,
+  SubmitButton, Surface, Text, TextLink,
+} from './ui';
 
 // The exchange is stubbed to a promise that never settles, so `CallbackScreen` STAYS on its working state and
 // its own DOM can be read. Without this it discards and navigates, and the structure under test is gone
@@ -90,6 +93,12 @@ const RENDER_SITES = [
   'auth/CallbackScreen.tsx',
   'auth/SignInScreen.tsx',
   'auth/SignedOutScreen.tsx',
+  // TASK 43 - the registration screen, the eighth render site and the FIRST under `features/`. It is also
+  // the first render site at a third directory level, which is what broke the barrel-import scan below:
+  // that scan matched './ui' and '../app/ui' and nothing deeper, so this file was invisible to it while
+  // being perfectly visible to the tag sweep. Adding it here is what surfaced that, because the scan's
+  // equality is against THIS list.
+  'features/account/RegisterScreen.tsx',
 ] as const;
 
 /**
@@ -106,10 +115,21 @@ const PRIMITIVES = [
   // must hold a sign-out control a keyboard user can FIND, and rule 2 of this layer sets `role` inside a
   // primitive and never accepts it from a consumer: a landmark can therefore exist only inside one.
   'Banner',
+  // TASK 43 - FOUR AT ONCE, which no task before this one has done, and the reason is rule 2 rather than
+  // convenience: `type="password"`, `type="submit"` and the `<form>`'s own submit handling are each a
+  // contract this layer sets INSIDE a primitive and never accepts from a consumer. A registration screen
+  // built out of the nine that existed would have had to render `<form>`, `<label>` and `<input>` itself,
+  // which §6e(3) forbids outright - so the alternative to these four files was not a cheaper form, it was
+  // no form. `EmailField` and `PasswordField` are two files rather than one parameterised field for the
+  // same reason: the type is the contract, and a `type` prop would hand it back to the caller.
+  'EmailField',
   'FocusHolder',
+  'Form',
   'Heading',
+  'PasswordField',
   'Screen',
   'StatusRegion',
+  'SubmitButton',
   'Surface',
   'Text',
   'TextLink',
@@ -119,6 +139,25 @@ const PRIMITIVE_FILES = PRIMITIVES.map((name) => `app/ui/${name}.tsx`);
 
 /** The one primitive that delegates its element to react-router instead of rendering one (see above). */
 const DELEGATES_ITS_ELEMENT = 'app/ui/TextLink.tsx';
+
+/**
+ * How many DISTINCT lowercase elements a primitive renders, wherever that is not one (task 43, D3).
+ *
+ * THE CHALLENGE THAT ADDED THE FIELDS MISSED THIS, and the freeze caught it: a labelled control is two
+ * elements, not one. `<input>` alone is a control a screen reader announces without a name, and the
+ * association is `<label htmlFor>` - which rule 2 keeps INSIDE the primitive, exactly as it keeps `role`
+ * inside `Banner` and `type` inside `ActionButton`. So the field files render two, and the number is pinned
+ * per file rather than loosened to "one or two": a third element appearing in either is a change somebody
+ * should have to come here and justify.
+ *
+ * The table's SIZE is pinned too. Three rows is the whole set of primitives that are not one element, and a
+ * fourth is a deliberate edit rather than a quiet one.
+ */
+const ELEMENT_COUNT_EXCEPTIONS: Readonly<Record<string, number>> = {
+  [DELEGATES_ITS_ELEMENT]: 0,
+  'app/ui/EmailField.tsx': 2,
+  'app/ui/PasswordField.tsx': 2,
+};
 
 /**
  * Comments stripped BEFORE any tag is counted, because four of the five render sites discuss `<div>`,
@@ -214,8 +253,8 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
   it('pins both lists at the sizes the brief froze, with nothing in both (§6e(1))', () => {
     // SIX SINCE TASK 174. The number is pinned rather than derived on purpose - a list that counted itself
     // would accept any edit - so each task that adds a screen moves it here, deliberately, once.
-    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(7);
-    expect(PRIMITIVES, 'the primitive list changed size without the brief changing').toHaveLength(9);
+    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(8);
+    expect(PRIMITIVES, 'the primitive list changed size without the brief changing').toHaveLength(13);
     expect(new Set(PRIMITIVES).size).toBe(PRIMITIVES.length);
     expect(PRIMITIVES, 'the primitive list is not sorted, so a duplicate is easy to miss')
       .toEqual([...PRIMITIVES].sort());
@@ -223,7 +262,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     expect(both, 'a file is in both lists, so the sweep below cannot say which rule applies').toEqual([]);
   });
 
-  it('finds exactly eight files bearing a lowercase tag, in all of src/ — not fifteen (§6e(2), I7, F2)', async () => {
+  it('finds exactly twelve files bearing a lowercase tag, in all of src/ — not twenty-one (§6e(2), I7, F2)', async () => {
     const files = await productionFiles();
     const bearing: string[] = [];
     for (const file of files) {
@@ -234,7 +273,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // primitive, or a helper anywhere under app/ or auth/ that renders a bare element, fails here.
     const expectedBearers = PRIMITIVE_FILES.filter((file) => file !== DELEGATES_ITS_ELEMENT);
     expect(expectedBearers, 'the exception list grew: more than one primitive renders no element of its own')
-      .toHaveLength(8);
+      .toHaveLength(12);
     expect(bearing.sort(), 'a file outside app/ui/ renders a bare element, or a primitive stopped rendering one')
       .toEqual([...expectedBearers].sort());
     // and the exception is the one named, for the reason named: a component tag, not a bare element.
@@ -249,7 +288,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // through it writing the case that disarms the first - thirteen is a statement about what the two lists
     // DECLARE, never about what the sweep FINDS.
     expect(new Set([...PRIMITIVE_FILES, ...RENDER_SITES]).size,
-      'the union of the two pinned lists is no longer sixteen').toBe(16);
+      'the union of the two pinned lists is no longer twenty-one').toBe(21);
     // and every file the sweep found is in one of them, which is the cross-check §6e(2) actually asks for.
     for (const file of bearing) {
       expect([...PRIMITIVE_FILES, ...RENDER_SITES], `${file} renders an element and is in neither list`)
@@ -268,7 +307,12 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
       // The barrel is reached as './ui' from `app/` and '../app/ui' from anywhere else. A deep import of a
       // single primitive would be a different shape, and is not matched on purpose: `index.ts` is the
       // published surface and a file that went around it is a violation this suite already pins elsewhere.
-      if (/from '(\.\/ui|\.\.\/app\/ui)'/.test(withoutComments(await read(file)))) importers.push(file);
+      // `(?:\.\.\/)+` RATHER THAN ONE `../`, FOUND BY MEASUREMENT IN TASK 43. The old pattern named exactly
+      // two depths - `./ui` from `app/` and `../app/ui` from `auth/` - so the first screen one level deeper
+      // (`features/account/`) imported the barrel as '../../app/ui' and this scan could not see it. It was
+      // not a failing case: the equality passed while silently measuring one file fewer, which is the
+      // direction that trains nobody. Any depth now matches.
+      if (/from '(\.\/ui|(?:\.\.\/)+app\/ui)'/.test(withoutComments(await read(file)))) importers.push(file);
     }
 
     expect(importers.sort(), 'a file consumes the design system and is not a pinned render site')
@@ -348,9 +392,23 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
   it('gives each primitive exactly one element to render, which is its whole job', async () => {
     for (const file of PRIMITIVE_FILES) {
       const tags = new Set(lowercaseJsxTags(await read(file)));
-      const expected = file === DELEGATES_ITS_ELEMENT ? 0 : 1;
+      const expected = ELEMENT_COUNT_EXCEPTIONS[file] ?? 1;
       expect([...tags], `${file} renders ${[...tags].join(', ') || 'nothing'} rather than `
-        + `${expected === 0 ? 'delegating to a component' : 'exactly one element'}`).toHaveLength(expected);
+        + `${expected === 0 ? 'delegating to a component' : `exactly ${expected} element(s)`}`)
+        .toHaveLength(expected);
+    }
+    // The table is exact in both directions: every row names a real primitive, and its size is the pin that
+    // makes a fourth exception deliberate. A row for a file that no longer exists would silently excuse
+    // nothing while reading as though it excused something.
+    expect(Object.keys(ELEMENT_COUNT_EXCEPTIONS).sort(), 'the exception table names a file that is not a primitive')
+      .toEqual(Object.keys(ELEMENT_COUNT_EXCEPTIONS).filter((file) => PRIMITIVE_FILES.includes(file)).sort());
+    expect(Object.keys(ELEMENT_COUNT_EXCEPTIONS), 'the one-element exception table changed size').toHaveLength(3);
+    // And the two field rows are the LABELLED pair specifically, which is what makes the number two rather
+    // than an arbitrary loosening: each renders its own `<label>` and its own control.
+    for (const field of ['app/ui/EmailField.tsx', 'app/ui/PasswordField.tsx']) {
+      const tags = new Set(lowercaseJsxTags(await read(field)));
+      expect([...tags].sort(), `${field} is excused two elements but they are not a label and a control`)
+        .toEqual(['input', 'label']);
     }
   });
 
@@ -479,10 +537,37 @@ const REQUIRED_UTILITIES: Record<(typeof PRIMITIVES)[number], readonly string[]>
   TextLink: ['text-accent', 'underline'],
   StatusRegion: ['text-step--1', 'text-muted'],
   FocusHolder: [],
+  // TASK 43's four. The fields own a type step, the body text colour and the surface they sit on - an
+  // `<input>` with no background inherits the browser's, which is white in a dark theme. `SubmitButton`
+  // owes what `ActionButton` owes, because it IS that button with `type="submit"`: if the two rows ever
+  // disagree, two controls that look alike have stopped being alike. `Form` carries layout only, and an
+  // empty row says so rather than inventing a token for it to own.
+  EmailField: ['text-step-0', 'text-text', 'bg-surface'],
+  PasswordField: ['text-step-0', 'text-text', 'bg-surface'],
+  SubmitButton: ['bg-accent', 'text-text-inverse', 'text-step-0'],
+  Form: [],
 };
 
-/** The three a keyboard user has to see a ring on: the only control, the only link, and the focus holder. */
-const FOCUSABLE = ['ActionButton', 'TextLink', 'FocusHolder'] as const;
+/**
+ * The six a keyboard user has to see a ring on: the two controls, the link, the focus holder, and - added by
+ * task 43 - the two text fields.
+ *
+ * AN INSTRUMENT THE FREEZE DID NOT NAME. D11 listed eleven rows to grow and this was not among them; it was
+ * found by asking what an `<input>` owes that a `<div>` does not. A field is focusable by default, so it is
+ * exactly the kind of element whose ring is easy to leave to the browser's - and the browser's is what
+ * `focus-visible:outline-*` replaces. Three of the six rows here are task 43's.
+ */
+const FOCUSABLE = ['ActionButton', 'EmailField', 'FocusHolder', 'PasswordField', 'SubmitButton',
+  'TextLink'] as const;
+
+/**
+ * A catalogue sentence as it would appear if a primitive SPELLED it: between quotes, or as JSX text. Never as
+ * part of a longer identifier - see the control beside the case that uses this.
+ */
+function spelledOut(sentence: string): RegExp {
+  const escaped = sentence.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`);
+}
 
 function classesOf(code: string): string[] {
   return [...withoutComments(code).matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)]
@@ -601,7 +686,7 @@ describe('T173 AC5: one landmark, one level-one heading, and announced regions',
  * outside this task's files.
  */
 describe('T173 AC6: every primitive forwards its ref to the element it renders', () => {
-  it('hands back the real DOM node for all nine', async () => {
+  it('hands back the real DOM node for all thirteen', async () => {
     const refs = Object.fromEntries(PRIMITIVES.map((name) => [name, createRef<HTMLElement>()])) as
       Record<(typeof PRIMITIVES)[number], React.RefObject<HTMLElement | null>>;
 
@@ -616,6 +701,21 @@ describe('T173 AC6: every primitive forwards its ref to the element it renders',
         <StatusRegion ref={refs.StatusRegion as React.Ref<HTMLDivElement>}>status</StatusRegion>
         <FocusHolder ref={refs.FocusHolder as React.Ref<HTMLDivElement>}>holder</FocusHolder>
         <Banner ref={refs.Banner as React.Ref<HTMLElement>}>banner</Banner>
+        <Form ref={refs.Form as React.Ref<HTMLFormElement>} onSubmit={() => undefined}>
+          <EmailField
+            ref={refs.EmailField as React.Ref<HTMLInputElement>}
+            label="email"
+            value=""
+            onChange={() => undefined}
+          />
+          <PasswordField
+            ref={refs.PasswordField as React.Ref<HTMLInputElement>}
+            label="password"
+            value=""
+            onChange={() => undefined}
+          />
+          <SubmitButton ref={refs.SubmitButton as React.Ref<HTMLButtonElement>}>submit</SubmitButton>
+        </Form>
       </>,
     );
 
@@ -631,6 +731,13 @@ describe('T173 AC6: every primitive forwards its ref to the element it renders',
       Surface: 'DIV',
       Text: 'P',
       TextLink: 'A',
+      // TASK 43. The two fields forward to the CONTROL, never to the `<label>` and never to a wrapper -
+      // which is the only answer that lets a caller focus a field, and is why they render a fragment
+      // instead of a `<div>` around the pair. `Form` forwards to the `<form>` itself.
+      EmailField: 'INPUT',
+      Form: 'FORM',
+      PasswordField: 'INPUT',
+      SubmitButton: 'BUTTON',
     };
     for (const name of PRIMITIVES) {
       // A primitive that drops `forwardRef` leaves this null, `?.focus()` becomes a no-op, and a keyboard
@@ -731,6 +838,14 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
       // rather than in route order.
       'home.explanation',
       'home.heading',
+      // TASK 43's six, on the same terms as task 174's two and task 42's one: a screen's own words, not a
+      // primitive's. The pin's claim - that T173 changed no words - is untouched.
+      'register.emailLabel',
+      'register.heading',
+      'register.passwordLabel',
+      'register.submit',
+      'register.submitting',
+      'register.success',
       // TASK 42's one, admitted for the same reason and on the same terms: it is the authenticated chrome's
       // own word, not a primitive's. `Banner` carries no copy - the case below this one is what says so.
       'shell.signOut',
@@ -742,11 +857,30 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
     for (const file of PRIMITIVE_FILES) {
       const code = withoutComments(await read(file));
       for (const sentence of copy) {
-        expect(code, `${file} spells "${sentence}" instead of taking it as children`).not.toContain(sentence);
+        expect(code, `${file} spells "${sentence}" instead of taking it as children`)
+          .not.toMatch(spelledOut(sentence));
       }
       expect(code, `${file} reads the catalogue, so a primitive decides what a screen says`)
         .not.toMatch(/useTranslation|\bt\(/);
     }
+  });
+
+  it('CONTROL: the copy scan reads words, not identifiers that contain them (task 43)', () => {
+    // CORRECTED BY MEASUREMENT, NOT BY REVIEW. The scan was a plain `toContain`, and task 43 added the
+    // first catalogue string that is a single WORD - 'Password'. `PasswordField.tsx` was then reported as
+    // spelling its own screen's copy, because the word is a substring of the component's name. The claim
+    // was never about substrings: it is that a primitive must not SPELL a sentence it should take as
+    // children, and a sentence is spelled in a string literal or as JSX text. Both directions are pinned
+    // here, because loosening a scan is exactly the edit that needs a control beside it.
+    expect("export const PasswordField = forwardRef(function PasswordField() {})")
+      .not.toMatch(spelledOut('Password'));
+    expect('<label>Password</label>', 'JSX text is how copy is spelled, and the scan must see it')
+      .toMatch(spelledOut('Password'));
+    expect("const label = 'Password';", 'a string literal is the other way, and the scan must see it')
+      .toMatch(spelledOut('Password'));
+    // And a multi-word sentence is unaffected by the change: it was caught before and still is.
+    expect('<p>Check your email to finish creating your account.</p>')
+      .toMatch(spelledOut('Check your email to finish creating your account.'));
   });
 });
 

@@ -12,6 +12,7 @@ import { SignedOutScreen } from '../auth/SignedOutScreen';
 import { SignInScreen } from '../auth/SignInScreen';
 import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
+import { RegisterScreen } from '../features/account/RegisterScreen';
 import { AuthenticatedLayout } from './AuthenticatedLayout';
 import { HomeScreen } from './HomeScreen';
 
@@ -27,6 +28,10 @@ export const CALLBACK_PATH = 'callback';
 /** Where a completed sign-in lands when no allowlisted return target was remembered (L1, T24). One spelling. */
 export const HOME_PATH = 'home';
 
+/** Where a visitor creates an account (R1, task 43). Published for the same reason as the four above: the
+ * screen, the route table and the suites that pin the set all need one spelling of it. */
+export const REGISTER_PATH = 'register';
+
 /** Where SAS returns the browser after the end-session call (R19, task 36). Published in task 37, which is why
  * `endSession.ts` no longer declares it privately: one spelling, and `post_logout_redirect_uri` is built from it. */
 export const SIGNED_OUT_PATH = 'signed-out';
@@ -36,7 +41,7 @@ export const SIGNED_OUT_PATH = 'signed-out';
 export const PUBLIC_ROUTE_PATHS = [
   SIGN_IN_PATH,
   CALLBACK_PATH,
-  'register',
+  REGISTER_PATH,
   'register/sent',
   'verify',
   'resend-verification',
@@ -77,6 +82,10 @@ export const appRoutes: RouteObject[] = [
         if (path === SIGN_IN_PATH) return { path, element: <SignInScreen /> };
         if (path === CALLBACK_PATH) return { path, element: <CallbackScreen /> };
         if (path === SIGNED_OUT_PATH) return { path, element: <SignedOutScreen /> };
+        // TASK 43 - the registration screen, the fourth public path to get an element. The conditional is
+        // the one that was already here: a path is attached by matching its constant, never by adding one
+        // (L14), and `register/sent` stays element-less because task 47 owns the acknowledgement.
+        if (path === REGISTER_PATH) return { path, element: <RegisterScreen /> };
         return { path };
       }),
       // TASK 40 - the auth gate (R28's first clause). ONE pathless layout route decides for all eleven, so

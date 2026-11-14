@@ -76,6 +76,19 @@ export const en = {
   // string for a header, and a product name invented in a component is copy the owner cannot change without
   // a code edit - the thing `home` above was put here to avoid. A brand line, if it is ever wanted, is one
   // key here and one `Text` in the layout.
+  register: {
+    heading: 'Create your account',
+    emailLabel: 'Email address',
+    passwordLabel: 'Password',
+    submit: 'Create account',
+    // The two things the screen says after the submit, and ONLY these two (task 43, D7). There is no
+    // advisory, rejection, strength or hint copy here: task 45 owns the guidance shown when the 12-to-128
+    // check fails, and it should choose those words rather than inherit them from the task that wrote the
+    // check. `sent` says nothing about whether the address was already registered - R2 and L4 require the
+    // same words either way, and task 47's acknowledgement screen is where that claim gets its own suite.
+    submitting: 'Creating your account…',
+    success: 'Check your email to finish creating your account.',
+  },
   shell: {
     // Not invented either: the mirror of `signedOut.action`'s 'Sign in', so the two directions of the same
     // journey are spelled the same way. Not 'Log out' - nothing in this catalogue says 'log'.
