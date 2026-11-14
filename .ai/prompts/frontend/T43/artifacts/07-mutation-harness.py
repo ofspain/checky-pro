@@ -27,9 +27,24 @@ NEW IN THIS COPY - TWO ROWS WHOSE PREDICTION THE FREEZE GOT WRONG, AND THEY ARE 
   validation, so the attribute's whole effect is invisible here - which is the honest unfalsifiable row
   and names a real limit of this suite instead of inventing one.
 
-THREE ROWS ARE PREDICTED TO SURVIVE AND ARE MARKED `phase 10`. Each is a hole this phase found and
-phase 10 closes: copy hardcoded in the screen (TR09), focus moved on mount (TR21), and the submit
-promise's rejection path (TR26, which is F2 in the self-review and has no case at all yet).
+THREE ROWS WERE PREDICTED TO SURVIVE IN PHASE 7 AND ALL THREE ARE NOW `own`. What closed each one is
+worth keeping, because only one of the three was what phase 7 thought it was:
+
+  TR09 (copy hardcoded in the screen) was a real hole: no DOM assertion can tell a catalogue lookup from a
+  byte-identical literal. Phase 10 added the source scan that can.
+
+  TR21 (focus moved on mount) WAS NOT A HOLE AT ALL. Kimi's phase 8 I1 read the plan against the diff and
+  found that `homeRouteRendersLandingScreenAndManagesFocus.test.tsx`'s guard loop - which the plan's own
+  Files-to-modify row said to grow to FOUR screens - had never been grown. The instrument existed and the
+  line was unwritten; the survivor was an omission wearing a hole's clothes.
+
+  TR26 measured nothing and has been REPLACED rather than re-aimed. The old row swapped the whole send for
+  a rejecting promise, so thirteen cases failed for a MISSING request rather than a rejected one. The
+  precise row is now the one that deletes the REJECTION HANDLER phase 9 added, which only a
+  throwing-transport case can see.
+
+TR27 is new in this run: it changes `ActionButton`'s accent alone, which is the pair pin phase 9 added
+after `SubmitButton`'s own header claimed a pin that did not exist.
 
 FOUR OUTCOMES, AND EVERY ROW PREDICTS ONE:
 
@@ -89,7 +104,7 @@ FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 REVERT_PATHS = ["frontend/src/", "frontend/vite.config.ts"]
 
-EXPECTED_BASELINE_FAILURES = 1  # of 1931: 34 new cases in phase 6, 6 instruments grown
+EXPECTED_BASELINE_FAILURES = 1  # of 1938: 39 in the named suite, 8 instruments grown or corrected
 KNOWN_ENVIRONMENTAL_FAILURES = {
     # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass.
     # USED ONLY FOR THE BASELINE REFUSAL CHECK. Attribution subtracts baseline-failing CASE NAMES, not
@@ -106,8 +121,16 @@ ADVISORY_STATE = ("  const [advisory, setAdvisory] = useState<'unchecked' | 'in-
                   "'out-of-range'>('unchecked');")
 ADVISORY_CHECK = """    setAdvisory(length >= ADVISORY_MINIMUM_CODE_POINTS && length <= ADVISORY_MAXIMUM_CODE_POINTS
       ? 'in-range' : 'out-of-range');"""
+# PHASE 9 ADDED THE SECOND ARGUMENT (I7): a rejected send returns the form to idle. Every row that
+# replaces this block keeps that handler, so each changes only the thing it names - and TR26 is the row
+# that measures the handler itself by deleting it.
 SEND = """    void createPublicAuthApi().POST('/accounts', { body: { email, password } })
-      .then(() => setStatus('sent'));"""
+      .then(() => setStatus('sent'), () => setStatus('idle'));"""
+REJECTION_HANDLER = ", () => setStatus('idle')"
+ACTION_CLASSES = ('      className="self-start rounded-md bg-accent px-4 py-2 text-step-0 font-medium '
+                  'text-text-inverse outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus '
+                  'aria-disabled:opacity-70"')
+ACTION_BUTTON = "frontend/src/app/ui/ActionButton.tsx"
 SUBMITTING = "    setStatus('submitting');"
 FORM_OPEN = "      <Form onSubmit={submit}>"
 FORM_CLOSE = "      </Form>"
@@ -192,13 +215,13 @@ MUTANTS = [
      SCREEN, SEND,
      "    if (length >= ADVISORY_MINIMUM_CODE_POINTS && length <= ADVISORY_MAXIMUM_CODE_POINTS) {\n"
      "      void createPublicAuthApi().POST('/accounts', { body: { email, password } })\n"
-     "        .then(() => setStatus('sent'));\n    }", "own"),
+     "        .then(() => setStatus('sent'), () => setStatus('idle'));\n    }", "own"),
 
     # --- AC5: through the generated client, with no bearer ---------------------------------------------
     ("TR07 the call is replaced by a hand-written fetch",
      SCREEN, SEND,
      "    void fetch('/accounts', { method: 'POST', body: JSON.stringify({ email, password }) })\n"
-     "      .then(() => setStatus('sent'));", "own"),
+     "      .then(() => setStatus('sent'), () => setStatus('idle'));", "own"),
 
     # --- AC6: every word comes from the catalogue ------------------------------------------------------
     # The key renamed, which is what a missing key looks like: the DOM shows `register.emailLabel`.
@@ -208,9 +231,12 @@ MUTANTS = [
     # holds, so every copy assertion in the suite passes: comparing the DOM with the catalogue cannot
     # distinguish a lookup from a literal. Phase 10 owes a source assertion that the screen reaches `t()`
     # for all five strings.
+    # RE-AIMED TO `own` AFTER PHASE 10 ADDED THE SOURCE SCAN. It survived in phase 7 because hardcoded
+    # English is byte-for-byte the catalogue's, so every DOM assertion passed; the scan asserts both
+    # directions - every key reached, no sentence spelled - and is the only instrument that can tell.
     ("TR09 the email label is hardcoded in English in the screen",
      SCREEN, EMAIL_FIELD,
-     '        <EmailField label="Email address" value={email} onChange={setEmail} />', "phase 10"),
+     '        <EmailField label="Email address" value={email} onChange={setEmail} />', "own"),
 
     # --- AC7: the screen renders no element of its own, and the lists say so ---------------------------
     # The whole point of §6e(3), and three instruments should see it: the screen's tag scan, the bearer
@@ -259,7 +285,8 @@ MUTANTS = [
     ("TR19 the handler branches on the response status",
      SCREEN, SEND,
      "    void createPublicAuthApi().POST('/accounts', { body: { email, password } })\n"
-     "      .then((reply) => setStatus(reply.response.status === 202 ? 'sent' : 'idle'));", "own"),
+     "      .then((reply) => setStatus(reply.response.status === 202 ? 'sent' : 'idle'),\n"
+     "        () => setStatus('idle'));", "own"),
 
     # --- D1: the live region is pre-mounted ----------------------------------------------------------
     # The regression D1 exists to prevent, and it is INVISIBLE to a case that only reads the text after
@@ -278,7 +305,7 @@ MUTANTS = [
      SCREEN, (REACT_IMPORT, ADVISORY_STATE),
      ("import { useEffect, useState, type ReactElement } from 'react';",
       ADVISORY_STATE + "\n\n  useEffect(() => {\n"
-      "    document.querySelector<HTMLInputElement>('input')?.focus();\n  }, []);"), "phase 10"),
+      "    document.querySelector<HTMLInputElement>('input')?.focus();\n  }, []);"), "own"),
 
     # --- D13: preventDefault lives in the primitive ---------------------------------------------------
     ("TR22 Form stops calling preventDefault, so a browser leaves the SPA",
@@ -301,15 +328,22 @@ MUTANTS = [
      TABLE_LAST_ROW + "\n  { name: 'CANARY', password: 'a'.repeat(11), codePoints: 11, inRange: true },",
      "own"),
 
-    # --- F2, the self-review's finding, measured as a row -------------------------------------------
-    # PREDICTED TO SURVIVE, and it is the only row here that mutates nothing: a THROWING transport is a
-    # path the production code never handles, so there is no handler to delete. The mutant stands in for
-    # it by making the send reject, and no case exists to see the live region stay on "Creating your
-    # account..." forever. Phase 9 decides the fix; phase 10 owes the case either way.
-    ("TR26 the send rejects, as it does offline, and nothing handles it",
-     SCREEN, SEND,
-     "    void Promise.reject(new TypeError('Failed to fetch'))\n"
-     "      .then(() => setStatus('sent'));", "phase 10"),
+    # --- F2 / I7, now that there is a handler to delete ----------------------------------------------
+    # THE ROW PHASE 7 SHOULD HAVE WRITTEN. Its predecessor replaced the whole send with a rejecting
+    # promise, so thirteen cases failed because NO REQUEST WAS SENT - a kill that measured the absence of
+    # a send, not the absence of a handler. This deletes the handler alone, leaves the real call in place,
+    # and can only be seen by a case whose transport throws. Everything else in the suite still passes.
+    ("TR26 the rejection handler is deleted, so an offline submit hangs on the in-flight copy",
+     SCREEN, REJECTION_HANDLER, "", "own"),
+
+    # --- the pair pin phase 9 added (F3 / I8) --------------------------------------------------------
+    # `SubmitButton`'s header claimed the two buttons were pinned to ONE appearance when nothing compared
+    # them. This changes `ActionButton`'s accent alone: both files still satisfy their own rows, every
+    # other case passes, and only a pin on the PAIR can tell that the application now has two button
+    # appearances. It is the row that makes a comment true.
+    ("TR27 ActionButton's accent is changed, so the two buttons stop matching",
+     ACTION_BUTTON, ACTION_CLASSES,
+     ACTION_CLASSES.replace("bg-accent", "bg-surface"), "own"),
 ]
 
 def as_tuple(value):
