@@ -7,6 +7,15 @@
 | **Service** | `frontend` · **Consumes** `artifacts/01-specification-extraction.md` |
 | **Produces** | `artifacts/02-task-implementation-brief.md` |
 
+> **AMENDED 2026-11-14, before the Phase 3 gate.** The owner closed both blockers:
+> **OQ-T43-1 → reading (a)** — this task builds the form, the advisory check **and** the real
+> `POST /accounts` submit through the generated client, which makes it the **first caller of the dormant
+> data path** (`createAuthApi`, OQ-T33-2), as T42 was of the sign-out path.
+> **OQ-T43-2 → our own primitives** — a field layer written like the nine, no new runtime dependency.
+> Every clause the amendment touches is marked **(owner, OQ-T43-1)** or **(owner, OQ-T43-2)**. Nothing
+> frozen was deleted: the brief had not reached the Phase 4 gate. One consequence of (a) is a **new**
+> question the amendment creates, **OQ-T43-5**, and it is Phase 3's target.
+
 ## Task
 
 **T43 — Registration accepts 12 characters.** *"A 12-character password is accepted client-side as advisory.
@@ -33,7 +42,10 @@ reading this paragraph."* T173 guessed MFA enrollment; registration arrived firs
   each programmatically labelled, and one submit control
 - the advisory length check at its **accepting** boundary: exactly 12 **code points** passes, and passes for
   astral characters too (24 UTF-16 units, 12 code points)
-- the field layer this needs — the subject of **OQ-T43-2**, not pre-decided here
+- **(owner, OQ-T43-1)** the submit: one `POST /accounts` through `createAuthApi`, the **first production
+  caller** the generated auth client has ever had
+- **(owner, OQ-T43-2)** the field layer, as **new primitives of our own** in `app/ui/`, written under the
+  same three rules as the nine — no `className`/`style`, the contract attribute set inside, no copy
 - the catalogue group for the screen's copy
 - growing the inherited pinned lists that name screens, primitives, render sites and catalogue keys
 - the named suite `registrationAcceptsTwelveAndOneTwentyEightCodePoints`, built to hold task 44's end too
@@ -70,11 +82,11 @@ pinned and a new primitive is added deliberately) · `agents.md`'s catalogue and
 ## Dependencies
 
 `react` · `react-router` (the route element only) · `react-i18next` · `app/ui/` (nine primitives) ·
-`i18n/catalogue.ts` · `api/client.ts` → `createAuthApi`, and `AUTH_PUBLIC_OPERATIONS`, which **already names
-`POST /accounts`** · `@themistra/api-client`'s `registerAccount` · `contracts/api/auth.yaml` —
+`i18n/catalogue.ts` · **(owner, OQ-T43-1)** `api/client.ts` → `createAuthApi`, and `AUTH_PUBLIC_OPERATIONS`, which **already
+names `POST /accounts`** — so the call carries **no bearer** and a 401 on it is never renewed · `@themistra/api-client`'s `registerAccount` · `contracts/api/auth.yaml` —
 `RegisterAccountRequest` **`required: [email, password]`**, `email` `format: email` `maxLength: 254`,
 `password` a bare `type: string` with **no bounds**, and a **202 always**. **No new config key.** Any new npm
-dependency is OQ-T43-2's to justify.
+dependency is **excluded** by the owner's answer to OQ-T43-2.
 
 ## Inputs
 
@@ -82,7 +94,8 @@ What the visitor types: an email and a password. Nothing else — no props, no q
 
 ## Outputs
 
-Rendered DOM, and (subject to **OQ-T43-1**) one `POST /accounts` request through the generated client.
+Rendered DOM, and **(owner, OQ-T43-1)** exactly one `POST /accounts` request through the generated client
+per submission — no second path to the backend, no retry of its own.
 
 ## State Changes
 
@@ -95,7 +108,9 @@ path added. The form's own transient state lives for the life of the screen (**O
   precedents (`auth/SignInScreen.tsx`, `app/HomeScreen.tsx`)
 - `src/.../registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx` — the named suite, which **does not
   exist**: the three registration named tests appear only in `package.md` and `tasks.md`
-- the field layer's file(s), per OQ-T43-2
+- **(owner, OQ-T43-2)** the new primitive file(s) in `app/ui/` — a labelled text field at minimum, and
+  whatever holds the form element; written like the nine, exported from the barrel, added to the pinned list
+  deliberately
 - a code-point length helper, if the count is not inline (task 46 will own its general claim)
 
 ## Files to Modify
@@ -166,20 +181,26 @@ task's) · anything under `spec/` · any other task's named suite **except** the
 
 ## Open Questions
 
-1. **OQ-T43-1 — does this task build the form *and* the submit, or less?** R1 names a form, a check and a
-   submit in one sentence; `tasks.md` has no *"build the registration form"* task. **(a)** Form + check +
-   `POST /accounts` — this becomes the **first caller of the data path** (OQ-T33-2), as T42 was of the
-   sign-out path. **(b)** Form + check, submit deferred to 47 — leaves R1's third clause unbuilt and 47
-   owning a submit for a form it did not write. **(c)** The check alone as a pure function — makes
-   `registrationAccepts…` measure a helper rather than the behaviour its name claims. **Blocker for phase 4**;
-   phase 3's first target.
-2. **OQ-T43-2 — how is the field layer built?** New primitives of our own · Q7's headless library installed
-   **with this real consumer**, which changes `package.json` for the first runtime dependency any task has
-   added · lowercase tags in the screen as the first exception to §6e, *"whose entire value is that it has
-   none"*. **Blocker for phase 4**; phase 3's second target.
-3. **OQ-T43-3 — is advisory *copy* in scope?** Task 45 owns the rejection. Writing the guidance string here
-   means 45 inherits copy it did not choose; omitting it means a form with nothing to show when its own rule
-   fails. **Not a blocker for implementation**, but phase 4 must freeze a side.
-4. **OQ-T43-4 — L13 names TanStack Query and Zustand; neither is installed after 42 tasks.** A submit has
-   pending, success and failure states. Either this task introduces one of them or it records why local state
-   is enough. **Not a blocker.**
+**OQ-T43-1 is CLOSED by the owner (2026-11-14): reading (a)** — form, check and submit. **OQ-T43-2 is CLOSED
+by the owner: our own primitives**, no new runtime dependency. With them, **OQ-T33-2** — *"nothing calls
+`createAuthApi`, `readAccount` or `readProfile`, so the whole authenticated data path is dormant"* — closes
+for its **registration** half. Its authenticated half does **not**: tasks 5, 6, 30, 31 and 33 stay dormant,
+and this task does not touch them.
+
+1. **OQ-T43-5 — what does a SUCCESSFUL submit do, when task 47 owns the acknowledgement?** Created by the
+   owner's answer, not inherited. `POST /accounts` always returns **202** (`auth.yaml`, *"regardless of
+   whether the email was already registered"*), task 47 owns *"Registration acknowledgement is identical"*
+   and `register/sent` is a declared path with no element. So this task can submit and has nowhere
+   sanctioned to land. Readings: **(i)** navigate to `register/sent`, which renders an empty document today —
+   a visitor would see a blank page, which is worse than the form; **(ii)** announce a neutral result in a
+   `StatusRegion` on the form itself, satisfying L11's *"live regions for async results"* with copy task 47
+   may then supersede; **(iii)** leave the submit's result invisible, which fails L11 outright. **Phase 3's
+   target**, and the one question that must be settled before phase 4 freezes.
+2. **OQ-T43-3 — is advisory *copy* in scope?** Task 45 owns the rejection. **Standing recommendation, for
+   phase 4 to freeze:** no guidance string here. A key written but never rendered is unused code of exactly
+   the kind `app/ui/index.ts` refuses to ship, and 45 should choose the words it shows. **Not a blocker.**
+3. **OQ-T43-4 — L13 names TanStack Query and Zustand; neither is installed after 42 tasks**, and the owner's
+   answer to OQ-T43-2 makes it clear no dependency is being added for this task. A one-shot public mutation
+   has no cache to invalidate and no state to share across screens, which is what both libraries exist for,
+   so local state is the likely answer — **but it should be recorded as a decision, not a default**, because
+   the next form inherits it. **Not a blocker.**
