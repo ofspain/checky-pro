@@ -1,0 +1,319 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 1 failed of 1945, exit 1
+baseline failing cases (excluded from every attribution below): ["passes today's frontend/src through the lint script, running only the two L6 rules (AC4)"]
+
+  KILLED    own            TR01 Form renders a div, so there is no form element and nothing submits  (28 failed of 1945, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ renders exactly one form holding one email input, one password input and one submit control
+            └ sends 12 ASCII characters, the lower bound it… to the server either way
+            └ sends 13 ASCII characters, just inside to the server either way
+            └ sends 12 astral code points, which are 24 UTF… to the server either way
+            └ sends 128 ASCII characters, the upper bound i… to the server either way
+            └ sends 128 astral code points, which are 256 U… to the server either way
+            └ sends 11 ASCII characters, one short to the server either way
+            └ sends 7 emoji, which `.length` would call 14 to the server either way
+            └ sends 129 ASCII characters, one past the uppe… to the server either way
+            └ sends the empty string, which must not crash … to the server either way
+            └ T44 AC2 — 128 emoji are 256 UTF-16 units in the DOM and 128 code points to the check
+            └ submits with BOTH fields empty, because the server is the authority on an empty address too
+            └ sends exactly one POST to /accounts, as JSON, with no Authorization header
+            └ renders the success sentence from the catalogue after the submit, as literal English
+            └ renders with no session and reads no token
+            └ arrives at /app/register through the REAL route table, with no session (phase 8, I2)
+            └ submits through the control, and the form prevents the document navigation
+            └ keeps `preventDefault` inside the primitive, where no screen can forget it (D13)
+            └ renders the same success state for a 202 accepted
+            └ renders the same success state for a 409 conflict, which the server does not send and this screen would not read
+            └ renders the same success state for a 500 with no body at all
+            └ returns the form to its idle state when the send rejects, and claims nothing
+            └ mounts the live region before the submit, empty, so the fill is an announcement (D1)
+            └ shows the submitting word while the request is in flight, then the success one (D7)
+            └ does not navigate: the location is still the registration path (D1, OQ-T43-5)
+            └ hands back the real DOM node for all thirteen
+  KILLED    own            TR02 EmailField renders type=text, so the email field is an ordinary text box  (28 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ renders exactly one form holding one email input, one password input and one submit control
+            └ gives each field a programmatic label, not a placeholder and not an adjacent word
+            └ sends 12 ASCII characters, the lower bound it… to the server either way
+            └ sends 13 ASCII characters, just inside to the server either way
+            └ sends 12 astral code points, which are 24 UTF… to the server either way
+            └ sends 128 ASCII characters, the upper bound i… to the server either way
+            └ sends 128 astral code points, which are 256 U… to the server either way
+            └ sends 11 ASCII characters, one short to the server either way
+            └ sends 7 emoji, which `.length` would call 14 to the server either way
+            └ sends 129 ASCII characters, one past the uppe… to the server either way
+            └ sends the empty string, which must not crash … to the server either way
+            └ T44 AC2 — 128 emoji are 256 UTF-16 units in the DOM and 128 code points to the check
+            └ T44 AC4 — neither field caps its own length, which would count the wrong unit and truncate
+            └ submits with BOTH fields empty, because the server is the authority on an empty address too
+            └ sends exactly one POST to /accounts, as JSON, with no Authorization header
+            └ renders the success sentence from the catalogue after the submit, as literal English
+            └ puts no control out of the tab order
+            └ submits through the control, and the form prevents the document navigation
+            └ writes to neither storage across the whole journey (L3, R18)
+            └ leaves the password nowhere but the field that holds it, before or after the submit
+            └ renders the same success state for a 202 accepted
+            └ renders the same success state for a 409 conflict, which the server does not send and this screen would not read
+            └ renders the same success state for a 500 with no body at all
+            └ returns the form to its idle state when the send rejects, and claims nothing
+            └ mounts the live region before the submit, empty, so the fill is an announcement (D1)
+            └ shows the submitting word while the request is in flight, then the success one (D7)
+            └ does not navigate: the location is still the registration path (D1, OQ-T43-5)
+  KILLED    own            TR03 PasswordField renders type=text, so the password is not masked  (31 failed of 1945, exit 1)
+            └ in: ['src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ renders exactly one form holding one email input, one password input and one submit control
+            └ gives each field a programmatic label, not a placeholder and not an adjacent word
+            └ sends 12 ASCII characters, the lower bound it… to the server either way
+            └ sends 13 ASCII characters, just inside to the server either way
+            └ sends 12 astral code points, which are 24 UTF… to the server either way
+            └ sends 128 ASCII characters, the upper bound i… to the server either way
+            └ sends 128 astral code points, which are 256 U… to the server either way
+            └ sends 11 ASCII characters, one short to the server either way
+            └ sends 7 emoji, which `.length` would call 14 to the server either way
+            └ sends 129 ASCII characters, one past the uppe… to the server either way
+            └ sends the empty string, which must not crash … to the server either way
+            └ counts astral code points the way R1 says, which `String.length` does not
+            └ T44 AC2 — 128 emoji are 256 UTF-16 units in the DOM and 128 code points to the check
+            └ T44 AC4 — neither field caps its own length, which would count the wrong unit and truncate
+            └ submits with BOTH fields empty, because the server is the authority on an empty address too
+            └ marks nothing before the first submit, because the check is a submit-time one
+            └ sends exactly one POST to /accounts, as JSON, with no Authorization header
+            └ renders the success sentence from the catalogue after the submit, as literal English
+            └ puts no control out of the tab order
+            └ submits through the control, and the form prevents the document navigation
+            └ writes to neither storage across the whole journey (L3, R18)
+            └ leaves the password nowhere but the field that holds it, before or after the submit
+            └ renders the same success state for a 202 accepted
+            └ renders the same success state for a 409 conflict, which the server does not send and this screen would not read
+            └ renders the same success state for a 500 with no body at all
+            └ returns the form to its idle state when the send rejects, and claims nothing
+            └ mounts the live region before the submit, empty, so the fill is an announcement (D1)
+            └ shows the submitting word while the request is in flight, then the success one (D7)
+            └ does not navigate: the location is still the registration path (D1, OQ-T43-5)
+  KILLED    own            TR04 EmailField labels with a span, so the control has no accessible name  (3 failed of 1945, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ gives each field a programmatic label, not a placeholder and not an adjacent word
+            └ gives each primitive exactly one element to render, which is its whole job
+  KILLED    own            TR05 the count becomes String.length, so emoji count twice  (7 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends 12 astral code points, which are 24 UTF… to the server either way
+            └ sends 128 astral code points, which are 256 U… to the server either way
+            └ sends 7 emoji, which `.length` would call 14 to the server either way
+            └ counts astral code points the way R1 says, which `String.length` does not
+            └ T44 AC2 — 128 emoji are 256 UTF-16 units in the DOM and 128 code points to the check
+            └ counts a total function: empty, astral, and a lone surrogate all return a number (D16)
+  KILLED    own            TR06 the submit is blocked unless the count is in range  (6 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends 11 ASCII characters, one short to the server either way
+            └ sends 7 emoji, which `.length` would call 14 to the server either way
+            └ sends 129 ASCII characters, one past the uppe… to the server either way
+            └ sends the empty string, which must not crash … to the server either way
+            └ submits with BOTH fields empty, because the server is the authority on an empty address too
+  KILLED    own            TR07 the call is replaced by a hand-written fetch  (22 failed of 1945, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends 12 ASCII characters, the lower bound it… to the server either way
+            └ sends 13 ASCII characters, just inside to the server either way
+            └ sends 12 astral code points, which are 24 UTF… to the server either way
+            └ sends 128 ASCII characters, the upper bound i… to the server either way
+            └ sends 128 astral code points, which are 256 U… to the server either way
+            └ sends 11 ASCII characters, one short to the server either way
+            └ sends 7 emoji, which `.length` would call 14 to the server either way
+            └ sends 129 ASCII characters, one past the uppe… to the server either way
+            └ sends the empty string, which must not crash … to the server either way
+            └ T44 AC2 — 128 emoji are 256 UTF-16 units in the DOM and 128 code points to the check
+            └ submits with BOTH fields empty, because the server is the authority on an empty address too
+            └ sends exactly one POST to /accounts, as JSON, with no Authorization header
+            └ builds no URL and calls no transport of its own
+            └ renders the success sentence from the catalogue after the submit, as literal English
+            └ renders the same success state for a 202 accepted
+            └ renders the same success state for a 409 conflict, which the server does not send and this screen would not read
+            └ renders the same success state for a 500 with no body at all
+            └ returns the form to its idle state when the send rejects, and claims nothing
+            └ mounts the live region before the submit, empty, so the fill is an announcement (D1)
+            └ shows the submitting word while the request is in flight, then the success one (D7)
+  KILLED    own            TR08 the catalogue key is renamed, so the label resolves to the key itself  (5 failed of 1945, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ gives each field a programmatic label, not a placeholder and not an adjacent word
+            └ renders the heading, both labels and the control from the catalogue, as literal English
+            └ keeps the catalogue's key set exactly as it was (AC11)
+  KILLED    own            TR09 the email label is hardcoded in English in the screen  (2 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ reaches the catalogue for every word it renders, which the DOM cannot tell from a literal
+  KILLED    own            TR10 the screen renders a lowercase form tag of its own  (5 failed of 1945, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ bears no lowercase JSX tag
+            └ submits through the control, and the form prevents the document navigation
+            └ finds exactly twelve files bearing a lowercase tag, in all of src/ — not twenty-one (§6e(2), I7, F2)
+            └ renders no lowercase JSX tag in any of the seven render sites (§6e(3))
+  KILLED    own            TR11 RegisterScreen.tsx is dropped from the render-site list  (5 failed of 1945, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ is named in the render-site list, and the four primitives in the primitive list (task 174's shape)
+            └ pins both lists at the sizes the brief froze, with nothing in both (§6e(1))
+            └ finds exactly twelve files bearing a lowercase tag, in all of src/ — not twenty-one (§6e(2), I7, F2)
+            └ names every file that imports the primitive barrel, tags or not (task 174)
+  KILLED    own            TR12 Form is renamed in the primitive list, so the layer has an unpinned primitive  (12 failed of 1945, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ is named in the render-site list, and the four primitives in the primitive list (task 174's shape)
+            └ finds exactly twelve files bearing a lowercase tag, in all of src/ — not twenty-one (§6e(2), I7, F2)
+            └ gives each primitive exactly one element to render, which is its whole job
+            └ declares neither className nor style in any of the eight prop types
+            └ keeps every className literal on one line (phase 7 F6, phase 8 I5)
+            └ forbids a hardcoded inline style in any primitive body (phase 11, F6)
+            └ gives Forme the colour and type utilities it owns
+            └ hands back the real DOM node for all thirteen
+            └ holds no user-facing copy in any primitive (L11)
+            └ declares no storage key and no endpoint in any primitive
+  KILLED    own            TR13 the primitive count is reverted to nine  (3 failed of 1945, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
+            └ pins both lists at the sizes the brief froze, with nothing in both (§6e(1))
+  KILLED    own            TR14 the screen's row is deleted from the credential table  (4 failed of 1945, exit 1)
+            └ in: ['src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ is named in the credential table that task 16 built, with the reason
+  KILLED    own            TR15 register is added to the authenticated route set  (11 failed of 1947, exit 1)
+            └ in: ['src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/auth/failedRenewalTriggersCleanReauthWithoutHalfSession.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ changes neither declared path set: `register` was already there, with no element
+  KILLED    own            TR16 SubmitButton becomes type=button, so Enter in a field submits nothing  (27 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ renders exactly one form holding one email input, one password input and one submit control
+            └ names the submit control with the catalogue word and types it as a submit
+            └ sends 12 ASCII characters, the lower bound it… to the server either way
+            └ sends 13 ASCII characters, just inside to the server either way
+            └ sends 12 astral code points, which are 24 UTF… to the server either way
+            └ sends 128 ASCII characters, the upper bound i… to the server either way
+            └ sends 128 astral code points, which are 256 U… to the server either way
+            └ sends 11 ASCII characters, one short to the server either way
+            └ sends 7 emoji, which `.length` would call 14 to the server either way
+            └ sends 129 ASCII characters, one past the uppe… to the server either way
+            └ sends the empty string, which must not crash … to the server either way
+            └ T44 AC2 — 128 emoji are 256 UTF-16 units in the DOM and 128 code points to the check
+            └ submits with BOTH fields empty, because the server is the authority on an empty address too
+            └ sends exactly one POST to /accounts, as JSON, with no Authorization header
+            └ renders the success sentence from the catalogue after the submit, as literal English
+            └ puts no control out of the tab order
+            └ submits through the control, and the form prevents the document navigation
+            └ writes to neither storage across the whole journey (L3, R18)
+            └ leaves the password nowhere but the field that holds it, before or after the submit
+            └ renders the same success state for a 202 accepted
+            └ renders the same success state for a 409 conflict, which the server does not send and this screen would not read
+            └ renders the same success state for a 500 with no body at all
+            └ returns the form to its idle state when the send rejects, and claims nothing
+            └ mounts the live region before the submit, empty, so the fill is an announcement (D1)
+            └ shows the submitting word while the request is in flight, then the success one (D7)
+            └ does not navigate: the location is still the registration path (D1, OQ-T43-5)
+  KILLED    own            TR17 SubmitButton loses its focus ring  (3 failed of 1945, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ keeps the two buttons wearing ONE appearance, which is a pair claim and not two rows (task 43)
+            └ gives SubmitButton a visible focus ring (L11, WCAG 2.4.7)
+  KILLED    own            TR18 the email is written to sessionStorage  (7 failed of 1945, exit 1)
+            └ in: ['src/auth/sessionStorageHoldsOnlyTheL16Items.test.tsx', 'src/auth/tokensAreNeverWrittenToAnyStorage.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ writes to neither storage across the whole journey (L3, R18)
+            └ reaches no console and no storage in its own source (D14)
+  KILLED    own            TR19 the handler branches on the response status  (4 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ renders the same success state for a 409 conflict, which the server does not send and this screen would not read
+            └ renders the same success state for a 500 with no body at all
+            └ reads neither the body nor the status, and sets no timer
+  KILLED    own            TR20 the status region is rendered conditionally instead of pre-mounted  (3 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ returns the form to its idle state when the send rejects, and claims nothing
+            └ mounts the live region before the submit, empty, so the fill is an announcement (D1)
+  KILLED    inherited      TR21 the screen focuses the first field on mount  (2 failed of 1945, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx']
+            └ RegisterScreen leaves focus on <body> when it mounts
+  KILLED    own            TR22 Form stops calling preventDefault, so a browser leaves the SPA  (3 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ submits through the control, and the form prevents the document navigation
+            └ keeps `preventDefault` inside the primitive, where no screen can forget it (D13)
+  KILLED    own            TR23 the advisory check always reports in range  (6 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends 11 ASCII characters, one short to the server either way
+            └ sends 7 emoji, which `.length` would call 14 to the server either way
+            └ sends 129 ASCII characters, one past the uppe… to the server either way
+            └ sends the empty string, which must not crash … to the server either way
+            └ submits with BOTH fields empty, because the server is the authority on an empty address too
+  KILLED    inherited      TR24 Form drops noValidate, so the browser validates before the handler runs  (3 failed of 1945, exit 1)
+            └ in: ['src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx']
+            └ re-arms the attempt itself: a second click after a failure succeeds
+            └ writes exactly the three items T15 writes, and calls no console method
+  KILLED    own            TR25 CANARY an 11-code-point row claims to be in range  (2 failed of 1946, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends CANARY to the server either way
+  KILLED    own            TR26 the rejection handler is deleted, so an offline submit hangs on the in-flight copy  (2 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ returns the form to its idle state when the send rejects, and claims nothing
+  KILLED    own            TR27 ActionButton's accent is changed, so the two buttons stop matching  (3 failed of 1945, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ gives ActionButton the colour and type utilities it owns
+            └ keeps the two buttons wearing ONE appearance, which is a pair claim and not two rows (task 43)
+  KILLED    own            TR28 SubmitButton is restyled AND its utility row is updated with it, so only the pair pin can tell  (2 failed of 1945, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ keeps the two buttons wearing ONE appearance, which is a pair claim and not two rows (task 43)
+  KILLED    own            TR29 the advisory maximum is widened to 999, so 128 stops being the maximum  (4 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends 129 ASCII characters, one past the uppe… to the server either way
+            └ counts astral code points the way R1 says, which `String.length` does not
+            └ CONTROL: the table measures something — the two ends disagree about the mark
+  KILLED    own            TR30 the upper half of the comparison is deleted, so there is no maximum at all  (2 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends 129 ASCII characters, one past the uppe… to the server either way
+  KILLED    own            TR31 the maximum becomes exclusive, so the bound itself is rejected  (4 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends 128 ASCII characters, the upper bound i… to the server either way
+            └ sends 128 astral code points, which are 256 U… to the server either way
+            └ T44 AC2 — 128 emoji are 256 UTF-16 units in the DOM and 128 code points to the check
+  KILLED    own            TR32 PasswordField caps its own length at 128 UTF-16 units, which truncates a valid password  (3 failed of 1945, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ T44 AC4 — neither field caps its own length, which would count the wrong unit and truncate
+            └ gives neither field a length cap of its own, because the attribute counts the wrong unit (T44)
+  KILLED    own            TR33 the upper comparison counts UTF-16 units, so a valid astral password is marked too long  (3 failed of 1945, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends 128 astral code points, which are 256 U… to the server either way
+            └ T44 AC2 — 128 emoji are 256 UTF-16 units in the DOM and 128 code points to the check
+  KILLED    own            TR34 CANARY a 129-code-point row claims to be in range  (2 failed of 1946, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends CANARY to the server either way
+
+regressions: 31/31 killed
+canaries:    ['TR25', 'TR34'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
+unfalsifiable: ['TR24'] - no observable effect to detect
+survivors:   none
+broken:      none
+
+--- expectation vs outcome ---
+  TR01   expected own           got KILLED/own       as expected
+  TR02   expected own           got KILLED/own       as expected
+  TR03   expected own           got KILLED/own       as expected
+  TR04   expected own           got KILLED/own       as expected
+  TR05   expected own           got KILLED/own       as expected
+  TR06   expected own           got KILLED/own       as expected
+  TR07   expected own           got KILLED/own       as expected
+  TR08   expected own           got KILLED/own       as expected
+  TR09   expected own           got KILLED/own       as expected
+  TR10   expected own           got KILLED/own       as expected
+  TR11   expected own           got KILLED/own       as expected
+  TR12   expected own           got KILLED/own       as expected
+  TR13   expected own           got KILLED/own       as expected
+  TR14   expected own           got KILLED/own       as expected
+  TR15   expected own           got KILLED/own       as expected
+  TR16   expected own           got KILLED/own       as expected
+  TR17   expected own           got KILLED/own       as expected
+  TR18   expected own           got KILLED/own       as expected
+  TR19   expected own           got KILLED/own       as expected
+  TR20   expected own           got KILLED/own       as expected
+  TR21   expected own           got KILLED/inherited DISAGREES - killed only OUTSIDE this task's files
+  TR22   expected own           got KILLED/own       as expected
+  TR23   expected own           got KILLED/own       as expected
+  TR24   expected unfalsifiable got KILLED/inherited DISAGREES - it has an observable effect
+  TR25   expected own           got KILLED/own       as expected
+  TR26   expected own           got KILLED/own       as expected
+  TR27   expected own           got KILLED/own       as expected
+  TR28   expected own           got KILLED/own       as expected
+  TR29   expected own           got KILLED/own       as expected
+  TR30   expected own           got KILLED/own       as expected
+  TR31   expected own           got KILLED/own       as expected
+  TR32   expected own           got KILLED/own       as expected
+  TR33   expected own           got KILLED/own       as expected
+  TR34   expected own           got KILLED/own       as expected
+
+disagreements: ['TR21', 'TR24']
