@@ -65,9 +65,16 @@ export function AuthenticatedLayout(): ReactElement {
   const [siblingSignedOut, setSiblingSignedOut] = useState(false);
 
   useEffect(() => {
-    // `signOut()` first, so this tab is clean before anything re-renders, and the flag second. The listener
-    // is closed on unmount: `listenForSignOut` hands back `{ close() }`, it is idempotent, and it closes
-    // only a channel it opened itself.
+    // `signOut()` is called before the flag is set, which is the conventional order - clear the local state,
+    // then reveal the redirect - AND NOT A CRITERION. Measured: the harness inverted these two lines and
+    // nothing in 1886 cases could tell (phase 10, TE28), because React batches the update, so both run to
+    // completion before any re-render either way. The sentence that used to be here said `signOut()` went
+    // first "so this tab is clean before anything re-renders", which reads as load-bearing and is not:
+    // `endSession()`'s own ordering IS load-bearing (`endSession.ts:111-113` - a message posted and then
+    // closed by the navigation reaches nobody) and this comment was borrowing that weight.
+    //
+    // The listener is closed on unmount: `listenForSignOut` hands back `{ close() }`, it is idempotent, and
+    // it closes only a channel it opened itself.
     const listening = listenForSignOut(() => {
       signOut();
       setSiblingSignedOut(true);

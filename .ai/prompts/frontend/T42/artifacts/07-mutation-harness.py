@@ -83,7 +83,7 @@ FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 REVERT_PATHS = ["frontend/src/", "frontend/vite.config.ts"]
 
-EXPECTED_BASELINE_FAILURES = 1  # of 1886: sixteen cases in phase 6, one in phase 9, five in phase 10
+EXPECTED_BASELINE_FAILURES = 1  # of 1887: 16 in phase 6, 1 in phase 9, 5 in phase 10, 1 in phase 11
 KNOWN_ENVIRONMENTAL_FAILURES = {
     # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass.
     # USED ONLY FOR THE BASELINE REFUSAL CHECK. Attribution subtracts baseline-failing CASE NAMES, not
@@ -300,6 +300,29 @@ MUTANTS = [
      LAYOUT, LISTENER,
      ("    const listening = listenForSignOut(() => {\n      setSiblingSignedOut(true);\n"
       "      signOut();\n    });\n    return () => listening.close();"), "own"),
+
+    # --- PHASE 11: three rows for the three findings that asked for a case ---------------------------
+    # The chrome rendered AFTER the screen. Outside `<main>` is still true, AC9 still holds, and the only
+    # thing that changes is the order a keyboard user meets them in. F1 said nothing would catch it; the
+    # row is here to name who does, because two grown instruments pin the signed-in document's TEXT and
+    # text is ordered.
+    ("TE29 the chrome renders after the screen instead of above it",
+     LAYOUT,
+     ("      <Banner>\n" + CONTROL_LINE + "\n      </Banner>\n" + OUTLET),
+     (OUTLET + "\n      <Banner>\n" + CONTROL_LINE + "\n      </Banner>"), "own"),
+    # The ring clipped by a WRAPPER rather than by the primitive (F4). `Banner.tsx` stays clean, which is
+    # exactly the hole the finding described, so a scan that reads only the primitive would survive this.
+    ("TE30 the layout wraps the banner in a div that clips the focus ring",
+     LAYOUT,
+     ("      <Banner>\n" + CONTROL_LINE + "\n      </Banner>"),
+     ('      <div className="overflow-hidden">\n      <Banner>\n' + CONTROL_LINE
+      + "\n      </Banner>\n      </div>"), "own"),
+    # The landmark NAMED (F5). This mutant is not a defect - it may one day be the right thing - and the case
+    # it trips exists so that change is a decision rather than a drift. A survivor would mean the chrome can
+    # grow copy with no catalogue key and nothing would say so.
+    ("TE31 the banner is given an accessible name with no catalogue key",
+     BANNER, HEADER_LINE, HEADER_LINE.replace("<header ref={ref}", '<header aria-label="Checky" ref={ref}'),
+     "own"),
 
     # --- a canary and an unfalsifiable row, scored apart --------------------------------------------
     # CONTROL for TE11. The derivation task 174 added claims BOTH directions; dropping an entry tests one,

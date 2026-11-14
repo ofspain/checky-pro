@@ -675,6 +675,15 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       expect([...(main?.children ?? [])].map((child) => child.tagName)).toEqual(['H1', 'P']);
       expect(main?.contains(banner(container)), 'the chrome rendered inside the screen\'s landmark')
         .toBe(false);
+      // PHASE 11 F1. "Outside `<main>`" is satisfied by chrome rendered BELOW the screen, and the finding
+      // said nothing would catch that. Two grown instruments do - `identityErrors…:1250` and
+      // `sasRefusal…:866` pin the signed-in document's text as `signOut + heading + explanation`, which is
+      // DOM order - but they hold it incidentally, in suites about something else entirely. The direct
+      // claim belongs here, and a keyboard user is the reason: chrome that renders last is reached last.
+      expect(main && (main.compareDocumentPosition(banner(container) as Node)
+        & Node.DOCUMENT_POSITION_PRECEDING) !== 0,
+        'the chrome renders after the screen, so a keyboard user reaches the sign-out control last')
+        .toBe(true);
     });
 
     it('AC3 leaves focus on the screen\'s heading, which the chrome must not take', async () => {
@@ -1013,8 +1022,9 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
         sibling.close();
       }
 
-      expect(accessToken.current(), 'a public-path tab now reacts: an app-level listener exists, so OQ-T42-5 '
-        + 'is closed and this case is the one that has to change').toBe('a-token-this-tab-holds');
+      expect(accessToken.current(), 'a public-path tab now reacts, so SOMETHING outside the authenticated '
+        + 'layout is listening - an app-level installer exists, OQ-T42-5 is closed, and this case is the one '
+        + 'that has to change').toBe('a-token-this-tab-holds');
       expect(router.state.location.pathname, 'the public tab navigated on a sibling broadcast')
         .toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
     });
@@ -1025,16 +1035,40 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       // a wrapper that clips it, and `outline` is drawn OUTSIDE the box: `overflow-hidden` on the chrome would
       // cut the ring off the only control in it. A computed-style assertion cannot stand in - jsdom loads no
       // stylesheet, so every element's `outline` is the empty string (phase 9, I6).
-      const code = await srcFile('app/ui/Banner.tsx');
-      for (const clipping of [/\boverflow-/, /\bclip-/, /\bcontain-/, /\bmask-/]) {
-        expect(code, `the banner declares ${String(clipping)}, which can clip the control's focus ring`)
-          .not.toMatch(clipping);
+      // PHASE 11 F4: THE WRAPPER COUNTS TOO. `Banner.tsx` can be clean and the ring still clipped, by a
+      // `<div className="overflow-hidden">` around `<Banner>` in the layout. The layout renders a fragment
+      // today and declares no class at all, so this half of the scan passes trivially - which is the point:
+      // it is a guard on a file that has nothing to guard yet.
+      for (const file of ['app/ui/Banner.tsx', 'app/AuthenticatedLayout.tsx']) {
+        const code = await srcFile(file);
+        for (const clipping of [/\boverflow-/, /\bclip-/, /\bcontain-/, /\bmask-/]) {
+          expect(code, `${file} declares ${String(clipping)}, which can clip the control's focus ring`)
+            .not.toMatch(clipping);
+        }
       }
       // The control is inside the banner, so the ring that must survive is ActionButton's. Named here so a
       // rename of the pin cannot leave this case guarding nothing.
       const only = await srcFile('app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx');
       expect(only, 'the focus-ring pin this case leans on is gone')
         .toContain("gives %s a visible focus ring (L11, WCAG 2.4.7)");
+    });
+
+    it('the banner landmark has NO accessible name, which is a decision and not an oversight (F5)', async () => {
+      // PINS A DECISION, SO CHANGING IT HAS TO BE ONE (phase 8 I7, phase 11 F5). A screen reader navigating
+      // by landmark hears "banner" with no name. That is correct while there is exactly one banner in the
+      // document - a name distinguishes a landmark from its siblings - and naming it means copy, a catalogue
+      // key and an owner's call, which D1 deliberately did not make. If the chrome should identify the
+      // application, THIS CASE IS THE ONE TO CHANGE, and that is the whole reason it exists.
+      retainAccessToken('a-token-this-tab-holds');
+      const { container } = await arrive(`${APP_BASENAME}/${HOME_PATH}`);
+      const header = banner(container);
+
+      expect(header, 'nothing rendered, so the absences below prove nothing').not.toBeNull();
+      expect(header?.getAttribute('aria-label'), 'the banner grew a name without a catalogue key').toBeNull();
+      expect(header?.getAttribute('aria-labelledby'), 'the banner grew a name by reference').toBeNull();
+      expect(header?.querySelectorAll('h1, h2, h3, h4, h5, h6'),
+        'the chrome grew a heading, which names the landmark and adds copy the catalogue does not hold')
+        .toHaveLength(0);
     });
 
     it('the banner and the screen share one content column, which was a coincidence of two literals (I9)', async () => {
