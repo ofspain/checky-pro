@@ -1,0 +1,148 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 1 failed of 1863, exit 1
+baseline failing cases (excluded from every attribution below): ["passes today's frontend/src through the lint script, running only the two L6 rules (AC4)"]
+
+  KILLED    own            RE01 the arrival focus effect is removed entirely  (7 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx']
+            └ focuses the heading itself, and it is the heading that carries the screen name
+            └ distinguishes the three candidates the freeze weighed: not body, not main, not a wrapper
+            └ renders the screen when there IS a session, so the case above measures the gate and not a broken route
+            └ lands on the same heading through the REAL route table, under StrictMode (AC4 + AC10)
+            └ lands on the same heading when the effect runs twice
+            └ T27-D1 DISCHARGED: the completed resumption lands on the home screen and focuses its heading
+  KILLED    own            RE02 Heading stops making its h1 focusable (D1 undone)  (9 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx']
+            └ focuses the heading itself, and it is the heading that carries the screen name
+            └ distinguishes the three candidates the freeze weighed: not body, not main, not a wrapper
+            └ renders the screen when there IS a session, so the case above measures the gate and not a broken route
+            └ gives the focus target a negative tabindex, so it is reachable by code and not by Tab
+            └ renders tabindex="-1" from Heading, for every consumer and not only this screen
+            └ lands on the same heading through the REAL route table, under StrictMode (AC4 + AC10)
+            └ lands on the same heading when the effect runs twice
+            └ T27-D1 DISCHARGED: the completed resumption lands on the home screen and focuses its heading
+  KILLED    own            RE03 focus moves to <main> instead of the heading  (7 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx']
+            └ focuses the heading itself, and it is the heading that carries the screen name
+            └ distinguishes the three candidates the freeze weighed: not body, not main, not a wrapper
+            └ renders the screen when there IS a session, so the case above measures the gate and not a broken route
+            └ lands on the same heading through the REAL route table, under StrictMode (AC4 + AC10)
+            └ lands on the same heading when the effect runs twice
+            └ T27-D1 DISCHARGED: the completed resumption lands on the home screen and focuses its heading
+  KILLED    own            RE04 the focus target is put into the tab order (-1 -> 0)  (5 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx']
+            └ gives the focus target a negative tabindex, so it is reachable by code and not by Tab
+            └ renders no element with a non-negative tabindex, which is what actually captures keyboard navigation
+            └ renders tabindex="-1" from Heading, for every consumer and not only this screen
+  KILLED    own            RE05 tabIndex becomes a prop on Heading (the freeze's rejected design)  (3 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx']
+            └ renders tabindex="-1" from Heading, for every consumer and not only this screen
+            └ keeps the props type at { children }, so ui/index.ts rule 2 holds literally
+  KILLED    own            RE06 the screen writes a bare <span> of its own  (5 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ puts the heading BEFORE the paragraph, which is the order a screen is read in (phase 8 I4)
+            └ writes no lowercase JSX tag of its own (§6e(3))
+            └ finds exactly seven files bearing a lowercase tag, in all of src/ — not thirteen (§6e(2), I7, F2)
+            └ renders no lowercase JSX tag in any of the six render sites (§6e(3))
+  KILLED    own            RE07 the heading is hardcoded in the component  (2 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx']
+            └ holds no user-facing string in its own source
+  KILLED    own            RE08 the catalogue heading becomes something else  (2 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx']
+            └ renders the catalogue entries, as literal English, with no key left in the DOM
+  KILLED    own            RE09 an unpinned catalogue key is added to the home group  (2 failed of 1863, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ keeps the catalogue's key set exactly as it was (AC11)
+  KILLED    own            RE10 the home route loses its element again  (10 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/auth/failedRenewalTriggersCleanReauthWithoutHalfSession.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/sasRefusalForUnenrolledPrivilegedAccountShowsWrongPasswordCopy.test.tsx']
+            └ attaches a screen only to the routes whose task has run (L11, L12)
+            └ pins that every authenticated path has no element - a T41 obligation when it changes
+            └ renders the screen when there IS a session, so the case above measures the gate and not a broken route
+            └ names home in the attached-element pin, which is read from the route table itself
+            └ lands on the same heading through the REAL route table, under StrictMode (AC4 + AC10)
+            └ attaches an element to sign-in, callback, signed-out and home, and to nothing else
+            └ T27-D1 DISCHARGED: the completed resumption lands on the home screen and focuses its heading
+  KILLED    own            RE11 the screen is attached to all eleven authenticated paths  (4 failed of 1863, exit 1)
+            └ in: ['src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/auth/failedRenewalTriggersCleanReauthWithoutHalfSession.test.tsx']
+            └ attaches a screen only to the routes whose task has run (L11, L12)
+            └ pins that every authenticated path has no element - a T41 obligation when it changes
+            └ attaches an element to sign-in, callback, signed-out and home, and to nothing else
+  KILLED    own            RE12 the screen calls an endpoint on mount  (15 failed of 1863, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/callbackValidatesNonceAndKeepsAccessTokenInMemory.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/stateSurvivesRedirectAndIsConsumedOnce.test.tsx', 'src/profile/profileIsReadFromUserinfoAndAccountStatusFromMe.test.tsx']
+            └ makes no network call and writes no storage
+            └ reaches no identity source, named one by one rather than by the list above
+            └ the request the SPA sends is the same whatever the server did behind the redirect
+            └ nothing from an MFA-marked response reaches a request, the router location or either store
+            └ the SPA RECEIVED every sentinel, so the sweep above searched for values that were really there
+  KILLED    own            RE13 the screen imports the access token  (3 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx']
+            └ imports only react, react-i18next and the primitive barrel
+            └ reaches no identity source, named one by one rather than by the list above
+  KILLED    own            RE14 the catalogue greets the reader by implication  (3 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx']
+            └ renders the catalogue entries, as literal English, with no key left in the DOM
+            └ renders no identity-shaped text
+  KILLED    own            RE15 HomeScreen.tsx is dropped from the render-site list  (5 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ names HomeScreen.tsx in the render-site list and counts the union at fourteen
+            └ pins both lists at the sizes the brief froze, with nothing in both (§6e(1))
+            └ finds exactly seven files bearing a lowercase tag, in all of src/ — not thirteen (§6e(2), I7, F2)
+            └ names every file that imports the primitive barrel, tags or not (task 174)
+  KILLED    own            RE16 the union pin goes back to thirteen  (3 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ names HomeScreen.tsx in the render-site list and counts the union at fourteen
+            └ finds exactly seven files bearing a lowercase tag, in all of src/ — not thirteen (§6e(2), I7, F2)
+  KILLED    own            RE17 task 16's screen-count pin forgets the fourth screen  (2 failed of 1863, exit 1)
+            └ in: ['src/app/routesResolveUnderAppPrefixOnly.test.tsx']
+            └ attaches a screen only to the routes whose task has run (L11, L12)
+  SURVIVED  -              RE18 CANARY: the focus effect runs on every render, not once  (1 failed of 1863, exit 1)
+  KILLED    own            RE19 CONTROL: a file that does not import the barrel is pinned as a render site  (4 failed of 1863, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx']
+            └ pins both lists at the sizes the brief froze, with nothing in both (§6e(1))
+            └ finds exactly seven files bearing a lowercase tag, in all of src/ — not thirteen (§6e(2), I7, F2)
+            └ names every file that imports the primitive barrel, tags or not (task 174)
+  KILLED    own            RE20 the paragraph is rendered before the heading (I4)  (4 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/sasRefusalForUnenrolledPrivilegedAccountShowsWrongPasswordCopy.test.tsx']
+            └ puts the heading BEFORE the paragraph, which is the order a screen is read in (phase 8 I4)
+  KILLED    own            RE21 SignInScreen grabs focus on mount, which Heading now makes possible (I9)  (3 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx']
+            └ SignInScreen leaves focus on <body> when it mounts
+  KILLED    own            RE22 the screen swallows keydown, the trap AC8's third clause forbids (F3)  (2 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx']
+            └ installs no key handler and declares no modal, the two other ways a screen holds focus
+  KILLED    own            RE23 the screen reaches globalThis.history, which the freeze forbids (F12)  (2 failed of 1863, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx']
+            └ reaches no identity source, named one by one rather than by the list above
+
+regressions: 21/21 killed
+canaries:    ['RE19'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
+unfalsifiable: ['RE18'] - no observable effect to detect
+survivors:   ['RE18']
+broken:      none
+
+--- expectation vs outcome ---
+  RE01   expected own           got KILLED/own       as expected
+  RE02   expected own           got KILLED/own       as expected
+  RE03   expected own           got KILLED/own       as expected
+  RE04   expected own           got KILLED/own       as expected
+  RE05   expected own           got KILLED/own       as expected
+  RE06   expected own           got KILLED/own       as expected
+  RE07   expected own           got KILLED/own       as expected
+  RE08   expected own           got KILLED/own       as expected
+  RE09   expected inherited     got KILLED/own       DISAGREES - this task's own files caught it too (stronger than claimed)
+  RE10   expected own           got KILLED/own       as expected
+  RE11   expected own           got KILLED/own       as expected
+  RE12   expected own           got KILLED/own       as expected
+  RE13   expected own           got KILLED/own       as expected
+  RE14   expected own           got KILLED/own       as expected
+  RE15   expected inherited     got KILLED/own       DISAGREES - this task's own files caught it too (stronger than claimed)
+  RE16   expected inherited     got KILLED/own       DISAGREES - this task's own files caught it too (stronger than claimed)
+  RE17   expected inherited     got KILLED/own       DISAGREES - this task's own files caught it too (stronger than claimed)
+  RE18   expected unfalsifiable got SURVIVED         as expected
+  RE19   expected inherited     got KILLED/own       DISAGREES - this task's own files caught it too (stronger than claimed)
+  RE20   expected own           got KILLED/own       as expected
+  RE21   expected own           got KILLED/own       as expected
+  RE22   expected own           got KILLED/own       as expected
+  RE23   expected own           got KILLED/own       as expected
+
+disagreements: ['RE09', 'RE15', 'RE16', 'RE17', 'RE19']
