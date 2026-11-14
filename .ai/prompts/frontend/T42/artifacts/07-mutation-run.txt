@@ -19,7 +19,17 @@ baseline failing cases (excluded from every attribution below): ["passes today's
             └ AC11 writes no storage and makes no network call while rendering
             └ CONTROL: the comparison fails on a successful callback, so it is not blind
             └ CONTROL: the comparison fails on a successful callback, so it is not blind
-  BROKEN    530 of 1880 ran  TE02 Banner renders a div instead of a header (the landmark is gone)  -> 1350 tests never ran: a file did not LOAD, so nothing measured it
+  KILLED    own            TE02 Banner renders a div instead of a header (the landmark is gone)  (10 failed of 1880, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
+            └ AC1 renders the layout on every one of the eleven, including the two parameterised ones
+            └ AC2 nests the home screen INSIDE the layout rather than replacing it
+            └ AC8 renders exactly one h1, and takes no focus where there is no screen at all
+            └ AC9 is a <header> banner outside every landmark that would demote it
+            └ AC12 holds one keyboard-reachable control, labelled from the catalogue
+            └ AC13 hands over to SAS exactly once when the control is activated, through endSession
+            └ AC14 signs this tab out and redirects it when a SIBLING tab signs out
+            └ AC11 writes no storage and makes no network call while rendering
+            └ hands back the real DOM node for all nine
   KILLED    own            TE03 the outlet is dropped, so the matched screen never renders  (8 failed of 1880, exit 1)
             └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/sasRefusalForUnenrolledPrivilegedAccountShowsWrongPasswordCopy.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
             └ renders the screen when there IS a session, so the case above measures the gate and not a broken route
@@ -28,7 +38,10 @@ baseline failing cases (excluded from every attribution below): ["passes today's
             └ AC3 leaves focus on the screen's heading, which the chrome must not take
             └ CONTROL: the comparison fails on a successful callback, so it is not blind
             └ CONTROL: the comparison fails on a successful callback, so it is not blind
-  BROKEN    530 of 1880 ran  TE04 the banner is wrapped in a <section>, which demotes it to a group  -> 1350 tests never ran: a file did not LOAD, so nothing measured it
+  KILLED    own            TE04 the banner is wrapped in a <section>, which demotes it to a group  (3 failed of 1880, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
+            └ AC9 is a <header> banner outside every landmark that would demote it
+            └ gives each primitive exactly one element to render, which is its whole job
   KILLED    own            TE05 the chrome focuses its own control on mount  (6 failed of 1880, exit 1)
             └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
             └ renders the screen when there IS a session, so the case above measures the gate and not a broken route
@@ -39,6 +52,7 @@ baseline failing cases (excluded from every attribution below): ["passes today's
             └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/sasRefusalForUnenrolledPrivilegedAccountShowsWrongPasswordCopy.test.tsx', 'src/auth/tokensAreNeverWrittenToAnyStorage.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
             └ renders the screen when there IS a session, so the case above measures the gate and not a broken route
             └ lands on the same heading through the REAL route table, under StrictMode (AC4 + AC10)
+            └ CONTROL: the comparison fails on a successful callback, so it is not blind
             └ AC1 renders the layout on every one of the eleven, including the two parameterised ones
             └ AC2 nests the home screen INSIDE the layout rather than replacing it
             └ AC3 leaves focus on the screen's heading, which the chrome must not take
@@ -49,7 +63,6 @@ baseline failing cases (excluded from every attribution below): ["passes today's
             └ AC14 signs this tab out and redirects it when a SIBLING tab signs out
             └ AC6, AC10 says one word, takes it from the catalogue, and says nothing about who is reading
             └ AC11 writes no storage and makes no network call while rendering
-            └ CONTROL: the comparison fails on a successful callback, so it is not blind
             └ CONTROL: the comparison fails on a successful callback, so it is not blind
   KILLED    own            TE07 the layout wraps the gate instead of nesting inside it  (4 failed of 1880, exit 1)
             └ in: ['src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
@@ -95,9 +108,20 @@ baseline failing cases (excluded from every attribution below): ["passes today's
             └ pins both lists at the sizes the brief froze, with nothing in both (§6e(1))
             └ finds exactly eight files bearing a lowercase tag, in all of src/ — not fifteen (§6e(2), I7, F2)
             └ names every file that imports the primitive barrel, tags or not (task 174)
-  BROKEN    1879 of 1880 ran  TE12 Banner is dropped from the primitive list  -> 1 tests never ran: a file did not LOAD, so nothing measured it
-  KILLED    own            TE13 the sign-out control becomes a link  (21 failed of 1880, exit 1)
-            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/sasRefusalForUnenrolledPrivilegedAccountShowsWrongPasswordCopy.test.tsx', 'src/auth/tokensAreNeverWrittenToAnyStorage.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
+  KILLED    own            TE12 Banner is renamed in the primitive list, so the list names a file that does not exist  (12 failed of 1880, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
+            └ AC7 names the layout and the ninth primitive in the lists that pin them
+            └ finds exactly eight files bearing a lowercase tag, in all of src/ — not fifteen (§6e(2), I7, F2)
+            └ gives each primitive exactly one element to render, which is its whole job
+            └ declares neither className nor style in any of the eight prop types
+            └ keeps every className literal on one line (phase 7 F6, phase 8 I5)
+            └ forbids a hardcoded inline style in any primitive body (phase 11, F6)
+            └ gives Bannerr the colour and type utilities it owns
+            └ hands back the real DOM node for all nine
+            └ holds no user-facing copy in any primitive (L11)
+            └ declares no storage key and no endpoint in any primitive
+  KILLED    own            TE13 the sign-out control becomes a link  (23 failed of 1880, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/sasRefusalForUnenrolledPrivilegedAccountShowsWrongPasswordCopy.test.tsx', 'src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx', 'src/auth/tokensAreNeverWrittenToAnyStorage.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
             └ renders the screen when there IS a session, so the case above measures the gate and not a broken route
             └ lands on the same heading through the REAL route table, under StrictMode (AC4 + AC10)
             └ AC1 renders the layout on every one of the eleven, including the two parameterised ones
@@ -120,9 +144,9 @@ baseline failing cases (excluded from every attribution below): ["passes today's
             └ in: ['src/auth/callbackWithMismatchedStateIsDiscarded.test.tsx', 'src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/auth/returnTargetOutsideAllowlistFallsBackToHome.test.tsx', 'src/auth/sasRefusalForUnenrolledPrivilegedAccountShowsWrongPasswordCopy.test.tsx', 'src/auth/sessionStorageHoldsOnlyTheL16Items.test.tsx', 'src/auth/signOutClearsMemoryAndEndsSasSession.test.tsx', 'src/auth/stateSurvivesRedirectAndIsConsumedOnce.test.tsx', 'src/auth/tokensAreNeverWrittenToAnyStorage.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx']
             └ AC13 reaches for none of the pieces endSession composes, by source
             └ CONTROL: the forbidden sweep above sees a planted reach, and does not already trip
-            └ CONTROL: the comparison fails on a successful callback, so it is not blind
             └ accounts for every themistra. literal in production source
             └ CONTROL: a key outside the inventory is caught
+            └ CONTROL: the comparison fails on a successful callback, so it is not blind
             └ CONTROL: the comparison fails on a successful callback, so it is not blind
             └ adds one key and no secret to a flow that remembers a target
             └ an absolute URL on another origin
@@ -168,17 +192,17 @@ baseline failing cases (excluded from every attribution below): ["passes today's
             └ names every file that imports the primitive barrel, tags or not (task 174)
   SURVIVED  -              TE21 the banner's padding changes  (1 failed of 1880, exit 1)
 
-regressions: 16/19 killed  (3 BROKEN, not counted as killed)
+regressions: 19/19 killed
 canaries:    ['TE20'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
 unfalsifiable: ['TE21'] - no observable effect to detect
 survivors:   ['TE21']
-broken:      ['TE02 Banner renders a div instead of a header (the landmark is gone)', 'TE04 the banner is wrapped in a <section>, which demotes it to a group', 'TE12 Banner is dropped from the primitive list']
+broken:      none
 
 --- expectation vs outcome ---
   TE01   expected own           got KILLED/own       as expected
-  TE02   expected own           got KILLED/inherited DISAGREES - killed only OUTSIDE this task's files
+  TE02   expected own           got KILLED/own       as expected
   TE03   expected own           got KILLED/own       as expected
-  TE04   expected own           got KILLED/inherited DISAGREES - killed only OUTSIDE this task's files
+  TE04   expected own           got KILLED/own       as expected
   TE05   expected own           got KILLED/own       as expected
   TE06   expected own           got KILLED/own       as expected
   TE07   expected own           got KILLED/own       as expected
@@ -186,7 +210,7 @@ broken:      ['TE02 Banner renders a div instead of a header (the landmark is go
   TE09   expected own           got KILLED/own       as expected
   TE10   expected own           got KILLED/own       as expected
   TE11   expected inherited     got KILLED/own       DISAGREES - this task's own files caught it too (stronger than claimed)
-  TE12   expected inherited     got KILLED/inherited as expected
+  TE12   expected inherited     got KILLED/own       DISAGREES - this task's own files caught it too (stronger than claimed)
   TE13   expected own           got KILLED/own       as expected
   TE14   expected own           got KILLED/own       as expected
   TE15   expected own           got KILLED/own       as expected
@@ -197,4 +221,4 @@ broken:      ['TE02 Banner renders a div instead of a header (the landmark is go
   TE20   expected inherited     got KILLED/own       DISAGREES - this task's own files caught it too (stronger than claimed)
   TE21   expected unfalsifiable got SURVIVED         as expected
 
-disagreements: ['TE02', 'TE04', 'TE11', 'TE20']
+disagreements: ['TE11', 'TE12', 'TE20']
