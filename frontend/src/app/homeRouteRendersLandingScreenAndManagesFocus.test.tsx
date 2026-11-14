@@ -144,6 +144,12 @@ describe('AC1 the screen renders through T173 primitives', () => {
     // itself before it names itself. `publicRouteSetIsExactlyTheDeclaredSet.test.tsx:829` pins exactly this
     // for the signed-out screen ("a level-one heading, a paragraph and the way back, in that order"), so
     // the precedent and the wording are both inherited rather than invented here.
+    //
+    // THE EXACT CHILD LIST IS DELIBERATE (phase 11 F4, declined). It is strictly stronger than "the
+    // heading comes first": it also fails when a THIRD element appears inside `<main>`, which no other
+    // case here would see. `Screen` growing a wrapper or a skip link SHOULD fail this test - that is a
+    // task deciding what the landmark holds, and it belongs in a diff, not in a tolerance written here
+    // in advance for a change nobody has made.
     const main = (await mountScreen()).querySelector('main');
     const elements = [...(main?.children ?? [])].map((child) => child.tagName);
 
@@ -286,10 +292,18 @@ describe('AC6 nothing it renders depends on identity (R22)', () => {
   });
 
   it('reaches no identity source, named one by one rather than by the list above', async () => {
+    // WHAT THIS LIST IS FOR, given the whitelist above (phase 11 F12). Every module a screen could import
+    // to reach auth, routing or storage is ALREADY impossible: the previous case pins the import set to
+    // exactly three. What a whitelist cannot catch is a GLOBAL, which needs no import - so this list is
+    // the globals, and it answers to the freeze's own constraint: "must not reach `globalThis.location`,
+    // `history`, `document.cookie` or any storage". `history` and `indexedDB` were missing from it until
+    // phase 11. Mirroring T40's module-shaped forbidden list, which F12 suggested, would have added
+    // neither of them - the gap was in the half a whitelist cannot cover.
     const source = withoutComments(await read('app/HomeScreen.tsx'));
 
     for (const forbidden of [/\bauth\//, /accessToken/, /idToken/, /userinfo/i, /accounts\/me/,
-      /sessionStorage/, /localStorage/, /document\.cookie/, /\bfetch\s*\(/, /globalThis\.location/]) {
+      /sessionStorage/, /localStorage/, /indexedDB/i, /document\.cookie/, /\bhistory\b/,
+      /\bfetch\s*\(/, /globalThis\.location/]) {
       expect(source, `the screen reaches ${String(forbidden)}`).not.toMatch(forbidden);
     }
   });
@@ -375,7 +389,12 @@ describe('AC9 tabIndex is set inside the primitive, not accepted from a consumer
   it('keeps the props type at { children }, so ui/index.ts rule 2 holds literally', async () => {
     const source = withoutComments(await read('app/ui/Heading.tsx'));
 
-    expect(source, "Heading's props type was widened - rule 2 forbids accepting the attribute it sets")
+    // THIS REGEX IS LITERAL AND CAN FIRE FOR TWO DIFFERENT REASONS (phase 11 F2). Extracting the same
+    // shape to a named `Props` alias breaks it while rule 2 still holds, so the message says so rather
+    // than accusing the next engineer of widening a type they only moved.
+    expect(source, "Heading's props type is no longer the literal `{ children: ReactNode }` - either it "
+      + 'was widened, which rule 2 forbids, or it was moved to a named alias, which rule 2 permits and '
+      + 'this assertion cannot tell apart. The next assertion and `tsc` decide which happened.')
       .toMatch(/forwardRef<HTMLHeadingElement,\s*\{\s*children:\s*ReactNode\s*\}>/);
     expect(source, 'tabIndex became a prop, which is what the freeze rejected').not.toMatch(/tabIndex\?\s*:/);
     // The ENFORCEMENT is `tsc`, not the two assertions above: a consumer passing `tabIndex` fails the real

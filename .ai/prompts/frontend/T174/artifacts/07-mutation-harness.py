@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""T173 mutation harness - the design system.
+"""T174 mutation harness - the home screen. ELEVENTH COPY of the machinery, inherited from T173;
+the paragraphs below that still speak of RD rows and the design system are T173's record of where the
+two multi-file/revert-path changes came from, kept because the machinery is unchanged.
 
 WHAT THIS IS. Each mutant is a regression this task exists to prevent, applied to real source,
 measured against a real baseline, and reverted. A case that cannot tell the mutant from the
@@ -21,6 +23,10 @@ THE MACHINERY IS T37'S - TENTH COPY, OQ-T32-4 - with two changes this task force
      Every previous copy reverted `frontend/src/` alone, so those two mutants would have been
      left in the tree - and every row after them would have been measured against a mutated
      build config, silently.
+
+THE FOUR LABELS BELOW ARE T173'S AND THIS COPY USES THREE OF THEM. T174's named suite was written in
+phase 6, so NO ROW HERE CARRIES `phase 10` - the label survives only in the scoring code. T173's reason
+for inventing it is kept verbatim:
 
 T173'S NAMED TEST DOES NOT EXIST YET: `package.md` §8 calls it
 `screensRenderThroughDesignSystemPrimitivesOnly`, phase 10 writes it, and at phase 7 the only
@@ -50,8 +56,8 @@ instrument in advance. RD11's kill, for instance, must land in
 header cites as the evidence for AC6 - and the run prints the failing case names, so a kill by
 something else is visible rather than absorbed.
 
-    python3 -I .ai/prompts/frontend/T173/artifacts/07-mutation-harness.py        # all
-    python3 -I .ai/prompts/frontend/T173/artifacts/07-mutation-harness.py RD04   # one
+    python3 -I .ai/prompts/frontend/T174/artifacts/07-mutation-harness.py        # all
+    python3 -I .ai/prompts/frontend/T174/artifacts/07-mutation-harness.py RE04   # one
 """
 
 import re
@@ -105,7 +111,7 @@ FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 REVERT_PATHS = ["frontend/src/", "frontend/vite.config.ts"]
 
-EXPECTED_BASELINE_FAILURES = 1  # of 1862 after phase 9 added I4's order case and I9's three
+EXPECTED_BASELINE_FAILURES = 1  # of 1863 after phase 10 added the StrictMode-through-the-table case
 KNOWN_ENVIRONMENTAL_FAILURES = {
     # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass.
     # USED ONLY FOR THE BASELINE REFUSAL CHECK. Attribution no longer subtracts this file, because only ONE
@@ -266,6 +272,24 @@ MUTANTS = [
        "  useEffect(() => { stolen.current?.focus(); }, []);"),
       "      <Heading ref={stolen}>{t('signIn.heading')}</Heading>"),
      "own"),
+
+    # --- phase 11: two assertions that existed with no row aimed at them --------------------------------
+    # F3. AC8's no-key-handler clause had a case and nothing planting a handler, so phase 10 recorded its
+    # precision as a GAP rather than counting it as covered. This closes that: a listener that swallows
+    # keydown is the realistic trap, it compiles, and NOTHING BEHAVIOURAL CAN SEE IT HERE - jsdom has no
+    # sequential focus navigation, so no Tab can be pressed to notice the swallowing. The source scan is
+    # the only instrument, which is exactly why it had to be shown awake.
+    ("RE22 the screen swallows keydown, the trap AC8's third clause forbids (F3)",
+     HOME, "    headingRef.current?.focus();",
+     ("    headingRef.current?.focus();\n"
+      "    document.addEventListener('keydown', (event) => event.preventDefault());"), "own"),
+    # F12, found by declining it. The freeze's constraint names `history` among the things this screen may
+    # not reach and the forbidden list omitted it, so the clause was unenforced rather than weakly
+    # enforced. The import whitelist cannot cover a global.
+    ("RE23 the screen reaches globalThis.history, which the freeze forbids (F12)",
+     HOME, "    headingRef.current?.focus();",
+     ("    headingRef.current?.focus();\n"
+      "    globalThis.history.replaceState(null, '', '/app/home');"), "own"),
 ]
 
 def as_tuple(value):
