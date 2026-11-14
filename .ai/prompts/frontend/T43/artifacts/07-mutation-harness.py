@@ -131,6 +131,7 @@ ACTION_CLASSES = ('      className="self-start rounded-md bg-accent px-4 py-2 te
                   'text-text-inverse outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus '
                   'aria-disabled:opacity-70"')
 ACTION_BUTTON = "frontend/src/app/ui/ActionButton.tsx"
+SUBMIT_UTILITIES = "  SubmitButton: ['bg-accent', 'text-text-inverse', 'text-step-0'],"
 SUBMITTING = "    setStatus('submitting');"
 FORM_OPEN = "      <Form onSubmit={submit}>"
 FORM_CLOSE = "      </Form>"
@@ -344,6 +345,19 @@ MUTANTS = [
     ("TR27 ActionButton's accent is changed, so the two buttons stop matching",
      ACTION_BUTTON, ACTION_CLASSES,
      ACTION_CLASSES.replace("bg-accent", "bg-surface"), "own"),
+
+    # TR27 WAS KILLED AND DID NOT ISOLATE ITS CLAIM - the same defect the old TR26 had, found by reading
+    # WHICH cases died rather than how many. T173's own `gives ActionButton the colour and type utilities
+    # it owns` fails on that mutant too, so the pair pin was never the only thing that could see it.
+    #
+    # This is the row that isolates it: `SubmitButton`'s accent AND its row in `REQUIRED_UTILITIES` change
+    # together, which is what a well-meant restyle of one button looks like. Every per-file row still
+    # passes - each file satisfies its own, now different, row - and the ONLY instrument left that can say
+    # the application has two button appearances is the pin on the PAIR.
+    ("TR28 SubmitButton is restyled AND its utility row is updated with it, so only the pair pin can tell",
+     (SUBMIT, ONLY), (SUBMIT_CLASSES, SUBMIT_UTILITIES),
+     (SUBMIT_CLASSES.replace("bg-accent", "bg-surface"),
+      SUBMIT_UTILITIES.replace("bg-accent", "bg-surface")), "own"),
 ]
 
 def as_tuple(value):

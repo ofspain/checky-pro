@@ -289,6 +289,13 @@ describe('AC2/AC3/AC4 the advisory range marks and never blocks', () => {
     // `passwordLength.ts`'s header claims this and nothing asserted it. R1 makes the check ADVISORY, so a
     // count that could throw would be a client-side gate - which is the one thing R1 forbids the client to
     // be. A lone surrogate is included because the spread iterates CODE POINTS and a half pair is one.
+    //
+    // NOT TASK 46'S WORK DONE EARLY, and the line between them is worth naming because every other
+    // boundary in this package is. Task 46 (`passwordLengthCountsCodePoints`) owns the claim that length IS
+    // counted in code points, in its own suite. What this case owns is TOTALITY - that the count returns a
+    // number for every input this screen can hand it - which task 43 needs because D16 froze it and because
+    // an advisory check that throws stops being advisory. The 128 assertion is a count, not an acceptance:
+    // task 44 owns whether a 128-code-point password is accepted, and adds a row to the table above for it.
     expect(countCodePoints('')).toBe(0);
     expect(countCodePoints('\uD83D')).toBe(1);
     expect(countCodePoints('a\uD83Db')).toBe(3);
@@ -591,7 +598,15 @@ describe('AC10 the journey writes no storage and leaves no password in the docum
     // with a probe, the instance spy saw 0 of 1 writes while a prototype spy saw 2 of 2 and
     // `mock.instances` told the two storages apart. So the first version of this case asserted that a spy
     // which never fires had not fired - vacuous in the exact shape its own control was written to catch,
-    // and the control failed on its first run. Carried as FU-T43-1 for the other suites that do this.
+    // and the control failed on its first run.
+    //
+    // AND IT IS ONE CASE, NOT A PATTERN. This comment first said the finding was "carried for the other
+    // suites that do this"; a sweep of every `vi.spyOn` target in `src/` says there are none - 80 uses of
+    // `Storage.prototype` across 18 files, 8 on `globalThis` (`fetch`, `setTimeout`, `setInterval`, all
+    // plain writable properties), and exactly ONE on a storage instance: task 42's AC11, now fixed. So the
+    // correct pattern was the norm all along and one case deviated from it, surviving two review phases
+    // because its assertion was NEGATIVE - the one direction in which a dead instrument and a clean result
+    // are indistinguishable. FU-T43-1 is closed.
     const writes = vi.spyOn(Storage.prototype, 'setItem');
     const wroteTo = (store: Storage) => writes.mock.instances.filter((seen) => seen === store).length;
     const container = await renderScreen();
