@@ -283,7 +283,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
       .toContain('app/HomeScreen.tsx');
   });
 
-  it('renders no lowercase JSX tag in any of the six render sites (§6e(3))', async () => {
+  it('renders no lowercase JSX tag in any of the seven render sites (§6e(3))', async () => {
     for (const site of RENDER_SITES) {
       const tags = lowercaseJsxTags(await read(site));
       expect(tags, `${site} renders ${tags.join(', ')} itself instead of a primitive`).toEqual([]);

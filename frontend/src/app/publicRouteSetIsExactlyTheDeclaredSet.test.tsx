@@ -886,8 +886,12 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
 
   describe('AC12 direct arrival, with no sign-out having happened', () => {
     it('renders and stays put rather than redirecting', async () => {
-      // The only way anyone can reach this screen today: nothing in the SPA calls `endSession()` (OQ-T36-5),
-      // so every real arrival is someone typing the URL.
+      // HOW ANYONE REACHES THIS SCREEN, CORRECTED BY TASK 42. This comment said "nothing in the SPA calls
+      // `endSession()` (OQ-T36-5), so every real arrival is someone typing the URL". That stopped being true
+      // on 2026-11-14: `app/AuthenticatedLayout.tsx` calls `endSession()` from the chrome's sign-out control,
+      // so a real arrival here is now a real sign-out returning from SAS. What this case measures is
+      // unchanged - a DIRECT arrival, with no sign-out having happened, must render and stay put - and that
+      // is still worth measuring, because it is the state a bookmark or a back button produces.
       const { main, router } = await arriveAt();
 
       expect(main!.textContent).toContain(COPY.heading);

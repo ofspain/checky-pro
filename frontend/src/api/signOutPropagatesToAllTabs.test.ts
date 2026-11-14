@@ -6,10 +6,14 @@
  * beside the hazard case it replaced, because that is where the handoff was written. That `endSession()`
  * broadcasts is task 36's suite's, for the same reason.
  *
- * **NOTHING INSTALLS THE LISTENER IN PRODUCTION.** `endSession()` has no caller (OQ-T36-5) and no module
- * owns app-level listeners - `mountShell.tsx` is unowned. So every case here installs the listener itself,
- * and "signing out in one tab signs out all open tabs" is verified as a mechanism rather than as a journey.
- * Task 39 is the ninth consecutive task in this position.
+ * **THE LISTENER NOW HAS AN INSTALLER, AS OF TASK 42 (2026-11-14).** This header used to say "NOTHING
+ * INSTALLS THE LISTENER IN PRODUCTION … verified as a mechanism rather than as a journey. Task 39 is the
+ * ninth consecutive task in this position". `app/AuthenticatedLayout.tsx:78-82` installs it, once per mount
+ * and closed on unmount, and `auth/unauthenticatedRoutesRedirectToSignIn.test.tsx` measures the JOURNEY four
+ * times over: a sibling's broadcast, the unmount, the same under StrictMode, and where the return target
+ * ends up. Every case here still installs its own listener, deliberately - this file owns the MECHANISM, and
+ * a mechanism test that depended on the one component that happens to install it today would be measuring
+ * two things. R22's last clause is now held in both places, for the first time.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
