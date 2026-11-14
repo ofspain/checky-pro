@@ -301,11 +301,15 @@ MUTANTS = [
     # PREDICTED TO SURVIVE. D5 froze "no focus move on mount" and the suite has no case for it: AC9
     # focuses each control deliberately, so a screen that stole focus on arrival would pass every row.
     # Phase 10 owes the case - the shape task 174 wrote for the opposite claim.
+    # RE-AIMED FOR T44, NOT RELABELLED (phase 7 F2). Task 43 predicted `own` and was right for itself: the
+    # guard that catches this lives in `homeRouteRendersLandingScreenAndManagesFocus`, which task 43 grew.
+    # Task 44 grew two files and that is not one of them, so the SAME kill is `inherited` here. The row's
+    # text is unchanged; only the prediction moved, and this comment is why.
     ("TR21 the screen focuses the first field on mount",
      SCREEN, (REACT_IMPORT, ADVISORY_STATE),
      ("import { useEffect, useState, type ReactElement } from 'react';",
       ADVISORY_STATE + "\n\n  useEffect(() => {\n"
-      "    document.querySelector<HTMLInputElement>('input')?.focus();\n  }, []);"), "own"),
+      "    document.querySelector<HTMLInputElement>('input')?.focus();\n  }, []);"), "inherited"),
 
     # --- D13: preventDefault lives in the primitive ---------------------------------------------------
     ("TR22 Form stops calling preventDefault, so a browser leaves the SPA",
@@ -401,6 +405,16 @@ MUTANTS = [
      SUITE, PASSWORD_ROW_129,
      PASSWORD_ROW_129 + "\n  { name: 'CANARY', password: 'a'.repeat(129), codePoints: 129, inRange: true },",
      "own"),
+
+    # PHASE 8's I2 AND PHASE 7's F4, IN ONE ROW. TR32 proved the two pins can see a cap on `PasswordField`;
+    # four of AC4's six assertions had nothing aimed at them - `EmailField`'s `maxLength`, and `minLength`
+    # on either field. This row crosses both axes at once: the OTHER file and the OTHER attribute. It is
+    # also the realistic mistake, which is why it is this row rather than a repeat of TR32 on the sibling -
+    # somebody expressing R1's LOWER bound as an attribute, on the field that does not even have a bound.
+    # Two instruments must see it: the widened primitive scan, and the rendered pin that reads `minlength`
+    # off both live fields.
+    ("TR35 EmailField floors its own length at 12 UTF-16 units, which is R1's bound on the wrong field",
+     EMAIL, EMAIL_TYPE, '        type="email"\n        minLength={12}', "own"),
 ]
 
 def as_tuple(value):
