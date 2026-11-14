@@ -55,7 +55,10 @@ export const en = {
   // NOTHING HERE MAY DEPEND ON WHO IS READING IT. No name, no greeting, no account state, no counts - R22
   // forbids a half-authenticated screen, and a screen that greeted a visitor by name would have to get that
   // name from somewhere. The only places it could come from are the access token, which R20 forbids reading,
-  // and `/userinfo` or `/accounts/me`, which are task 42's and which this screen makes no call to. So the
+  // and `/userinfo` or `/accounts/me` - whose READERS are tasks 30's and 31's and have never had a caller
+  // (OQ-T33-2); task 42 added the shell's chrome and did not change that. This comment said those two
+  // endpoints "are task 42's", which was wrong twice over and is corrected here rather than left to mislead
+  // the next reader (T42 deviation). What holds either way is that this screen makes no call at all. So the
   // copy is written for a reader this screen knows nothing about, and AC6 enforces that in both the DOM and
   // the import list.
   home: {
@@ -67,5 +70,15 @@ export const en = {
     // string most likely to be replaced the moment there is something to show, which is why it is the only
     // sentence here.
     explanation: 'You are signed in. There is nothing here yet.',
+  },
+  // The authenticated chrome (task 42). ONE KEY, and the one it is not is the reason this comment exists:
+  // phase 3's F8 proposed `shell.brand` with a product name in it. Declined. The package names no brand
+  // string for a header, and a product name invented in a component is copy the owner cannot change without
+  // a code edit - the thing `home` above was put here to avoid. A brand line, if it is ever wanted, is one
+  // key here and one `Text` in the layout.
+  shell: {
+    // Not invented either: the mirror of `signedOut.action`'s 'Sign in', so the two directions of the same
+    // journey are spelled the same way. Not 'Log out' - nothing in this catalogue says 'log'.
+    signOut: 'Sign out',
   },
 } as const;

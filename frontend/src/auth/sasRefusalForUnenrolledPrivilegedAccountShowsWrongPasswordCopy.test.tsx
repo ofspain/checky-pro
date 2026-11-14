@@ -860,7 +860,10 @@ describe('AC2: four failure kinds, one outcome', () => {
     // landing screen's copy. `''` was what an element-less route rendered, never what this control claimed;
     // copy that is plainly not a refusal message separates success from failure more strongly than silence.
     expect(success.destination).toBe('/app/home');
-    expect(success.text).toBe(`${en.home.heading}${en.home.explanation}`);
+    // GROWN AGAIN BY TASK 42: the authenticated chrome's sign-out label is the first text in the body on
+    // the success side, in DOM order. Exact, not `toContain`, for the reason named in
+    // `identityErrorsIndistinguishableAcrossAccountStates.test.tsx` beside the same assertion.
+    expect(success.text).toBe(`${en.shell.signOut}${en.home.heading}${en.home.explanation}`);
     expect(success.liveRegions).toBe(0);
     expect(success.storedKeys).toEqual([]);
     expect(failure.storedKeys.length).toBeGreaterThan(0);

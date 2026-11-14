@@ -1243,7 +1243,11 @@ describe('AC2: five account states, one outcome', () => {
     // that a success differs from a failure, and copy that is demonstrably NOT a failure message is a
     // stronger form of that than no copy at all.
     expect(success.destination).toBe('/app/home');
-    expect(success.text).toBe(`${en.home.heading}${en.home.explanation}`);
+    // GROWN AGAIN BY TASK 42, which put the authenticated chrome above the landing screen - so the body
+    // text of a SUCCESS now begins with the sign-out label, in DOM order. Grown to the exact string rather
+    // than loosened to a `toContain`: a `toContain` would also pass for chrome that had started leaking a
+    // name into the page, which is the one thing R22 and this file's own subject forbid.
+    expect(success.text).toBe(`${en.shell.signOut}${en.home.heading}${en.home.explanation}`);
     expect(success.liveRegions).toBe(0);
     expect(success.storedKeys).toEqual([]);
     expect(failure.storedKeys.length).toBeGreaterThan(0);

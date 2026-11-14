@@ -12,6 +12,7 @@ import { SignedOutScreen } from '../auth/SignedOutScreen';
 import { SignInScreen } from '../auth/SignInScreen';
 import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
+import { AuthenticatedLayout } from './AuthenticatedLayout';
 import { HomeScreen } from './HomeScreen';
 
 /** Every SPA route lives under this prefix, which is disjoint from the backend prefixes the edge sends to the services (L14). */
@@ -88,10 +89,20 @@ export const appRoutes: RouteObject[] = [
       // above rather than inventing a second shape for the same job.
       {
         element: <RequireSession />,
-        children: AUTHENTICATED_ROUTE_PATHS.map((path) => {
-          if (path === HOME_PATH) return { path, element: <HomeScreen /> };
-          return { path };
-        }),
+        children: [
+          // TASK 42 - the authenticated layout, one pathless route INSIDE the gate. Pathless for the same
+          // reason the gate is: a string path here would be a route in the tree and would change what the
+          // bare `/app/` matches. The eleven paths become its children, unchanged in spelling and order, so
+          // the screen-count pins see no new path-attached element - and a later task adding a navigation
+          // link to its own screen adds a link, not a restructure.
+          {
+            element: <AuthenticatedLayout />,
+            children: AUTHENTICATED_ROUTE_PATHS.map((path) => {
+              if (path === HOME_PATH) return { path, element: <HomeScreen /> };
+              return { path };
+            }),
+          },
+        ],
       },
       // STILL OUTSIDE the gate, and task 41 is why that mattered. It carries the redirect now, and a
       // catch-all behind the gate could not have redirected the visitor with no session - the only visitor it

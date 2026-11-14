@@ -1372,13 +1372,17 @@ describe('returnTargetOutsideAllowlistFallsBackToHome', () => {
         // measures, and a chain read with `.at(-1)` alone would stop noticing where the leaf sits. The
         // destination is unchanged - the leaf is still the authenticated path, and `pathname` still matches -
         // which is the whole reason T40's change is invisible to every other case in this file.
+        // GROWN AGAIN BY T42, one task after T40: the authenticated layout is a second pathless route
+        // inside the gate's, so the chain gained another level and `routerOutcomeFor` spells both the same
+        // way. The two '(index)' entries are, in order, the GATE and the LAYOUT - named here because the
+        // label cannot tell them apart and the next reader should not have to guess.
         expect(await routerOutcomeFor(`/${HOME_PATH}`)).toEqual({
           pathname: HOME_ROUTE,
-          matched: ['/', '(index)', HOME_PATH],
+          matched: ['/', '(index)', '(index)', HOME_PATH],
         });
         expect(await routerOutcomeFor(A_REAL_TARGET)).toEqual({
           pathname: A_REAL_TARGET_ROUTE,
-          matched: ['/', '(index)', 'account/sessions'],
+          matched: ['/', '(index)', '(index)', 'account/sessions'],
         });
       });
 

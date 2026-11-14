@@ -55,7 +55,7 @@ import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
 import { createRateLimitNotice } from '../api/rateLimitNotice';
 import { RateLimitNotice } from './RateLimitNotice';
-import { ActionButton, FocusHolder, Heading, Screen, StatusRegion, Surface, Text, TextLink } from './ui';
+import { ActionButton, Banner, FocusHolder, Heading, Screen, StatusRegion, Surface, Text, TextLink } from './ui';
 
 // The exchange is stubbed to a promise that never settles, so `CallbackScreen` STAYS on its working state and
 // its own DOM can be read. Without this it discards and navigates, and the structure under test is gone
@@ -82,6 +82,8 @@ const frontendDir = dirname(srcDir);
 /** §6e(1), first pinned list: the five files that render a screen. A sixth must be added deliberately. */
 const RENDER_SITES = [
   'app/AppShell.tsx',
+  // TASK 42 - the authenticated layout, the seventh render site and the second behind the auth gate.
+  'app/AuthenticatedLayout.tsx',
   // TASK 174 - the home screen, the sixth render site and the first behind the auth gate.
   'app/HomeScreen.tsx',
   'app/RateLimitNotice.tsx',
@@ -100,6 +102,10 @@ const RENDER_SITES = [
  */
 const PRIMITIVES = [
   'ActionButton',
+  // TASK 42 - the ninth primitive, the `<header>` banner landmark. Added because the authenticated layout
+  // must hold a sign-out control a keyboard user can FIND, and rule 2 of this layer sets `role` inside a
+  // primitive and never accepts it from a consumer: a landmark can therefore exist only inside one.
+  'Banner',
   'FocusHolder',
   'Heading',
   'Screen',
@@ -208,8 +214,8 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
   it('pins both lists at the sizes the brief froze, with nothing in both (§6e(1))', () => {
     // SIX SINCE TASK 174. The number is pinned rather than derived on purpose - a list that counted itself
     // would accept any edit - so each task that adds a screen moves it here, deliberately, once.
-    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(6);
-    expect(PRIMITIVES, 'the primitive list changed size without the brief changing').toHaveLength(8);
+    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(7);
+    expect(PRIMITIVES, 'the primitive list changed size without the brief changing').toHaveLength(9);
     expect(new Set(PRIMITIVES).size).toBe(PRIMITIVES.length);
     expect(PRIMITIVES, 'the primitive list is not sorted, so a duplicate is easy to miss')
       .toEqual([...PRIMITIVES].sort());
@@ -217,7 +223,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     expect(both, 'a file is in both lists, so the sweep below cannot say which rule applies').toEqual([]);
   });
 
-  it('finds exactly seven files bearing a lowercase tag, in all of src/ — not thirteen (§6e(2), I7, F2)', async () => {
+  it('finds exactly eight files bearing a lowercase tag, in all of src/ — not fifteen (§6e(2), I7, F2)', async () => {
     const files = await productionFiles();
     const bearing: string[] = [];
     for (const file of files) {
@@ -228,7 +234,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // primitive, or a helper anywhere under app/ or auth/ that renders a bare element, fails here.
     const expectedBearers = PRIMITIVE_FILES.filter((file) => file !== DELEGATES_ITS_ELEMENT);
     expect(expectedBearers, 'the exception list grew: more than one primitive renders no element of its own')
-      .toHaveLength(7);
+      .toHaveLength(8);
     expect(bearing.sort(), 'a file outside app/ui/ renders a bare element, or a primitive stopped rendering one')
       .toEqual([...expectedBearers].sort());
     // and the exception is the one named, for the reason named: a component tag, not a bare element.
@@ -243,7 +249,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // through it writing the case that disarms the first - thirteen is a statement about what the two lists
     // DECLARE, never about what the sweep FINDS.
     expect(new Set([...PRIMITIVE_FILES, ...RENDER_SITES]).size,
-      'the union of the two pinned lists is no longer fourteen').toBe(14);
+      'the union of the two pinned lists is no longer sixteen').toBe(16);
     // and every file the sweep found is in one of them, which is the cross-check §6e(2) actually asks for.
     for (const file of bearing) {
       expect([...PRIMITIVE_FILES, ...RENDER_SITES], `${file} renders an element and is in neither list`)
@@ -462,6 +468,11 @@ describe('T173 AC4: no primitive accepts a class or a style', () => {
 const REQUIRED_UTILITIES: Record<(typeof PRIMITIVES)[number], readonly string[]> = {
   Surface: ['min-h-dvh', 'bg-surface', 'text-text'],
   Screen: ['mx-auto', 'max-w-prose'],
+  // TASK 42. The banner owns no colour token and no type step - it holds a control that carries its own -
+  // so what it owes is the one visual claim its own header makes: the chrome and the screen below it share
+  // ONE content column. These two utilities are that claim, and `Screen`'s row above is the other half of
+  // it. An empty row here would have been the easy answer and would have measured nothing.
+  Banner: ['mx-auto', 'max-w-prose'],
   Heading: ['text-step-1', 'text-text'],
   Text: ['text-step-0', 'text-text'],
   ActionButton: ['bg-accent', 'text-text-inverse', 'text-step-0'],
@@ -590,7 +601,7 @@ describe('T173 AC5: one landmark, one level-one heading, and announced regions',
  * outside this task's files.
  */
 describe('T173 AC6: every primitive forwards its ref to the element it renders', () => {
-  it('hands back the real DOM node for all eight', async () => {
+  it('hands back the real DOM node for all nine', async () => {
     const refs = Object.fromEntries(PRIMITIVES.map((name) => [name, createRef<HTMLElement>()])) as
       Record<(typeof PRIMITIVES)[number], React.RefObject<HTMLElement | null>>;
 
@@ -604,11 +615,15 @@ describe('T173 AC6: every primitive forwards its ref to the element it renders',
         <TextLink ref={refs.TextLink as React.Ref<HTMLAnchorElement>} to="/sign-in">link</TextLink>
         <StatusRegion ref={refs.StatusRegion as React.Ref<HTMLDivElement>}>status</StatusRegion>
         <FocusHolder ref={refs.FocusHolder as React.Ref<HTMLDivElement>}>holder</FocusHolder>
+        <Banner ref={refs.Banner as React.Ref<HTMLElement>}>banner</Banner>
       </>,
     );
 
     const expected: Record<(typeof PRIMITIVES)[number], string> = {
       ActionButton: 'BUTTON',
+      // TASK 42. `HEADER` is the whole point of the ninth primitive: a `<div>` would have been one fewer
+      // file and no landmark at all.
+      Banner: 'HEADER',
       FocusHolder: 'DIV',
       Heading: 'H1',
       Screen: 'MAIN',
@@ -716,6 +731,9 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
       // rather than in route order.
       'home.explanation',
       'home.heading',
+      // TASK 42's one, admitted for the same reason and on the same terms: it is the authenticated chrome's
+      // own word, not a primitive's. `Banner` carries no copy - the case below this one is what says so.
+      'shell.signOut',
     ].sort());
   });
 

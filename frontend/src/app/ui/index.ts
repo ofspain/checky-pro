@@ -2,7 +2,7 @@
  * The design system's primitive layer — **the only place in this bundle that renders an HTML element.**
  *
  * Task 173 installed the design system O2 resolved on 2026-10-10 (Tailwind CSS plus unstyled accessible
- * primitives) after 27 units had shipped against an unstyled tree. These eight components are that layer, and
+ * primitives) after 27 units had shipped against an unstyled tree. These components are that layer, and
  * they are OURS rather than a vendor's: O2 says "headless/unstyled components (e.g. Radix UI)", and `e.g.` is
  * an example. No screen in this application renders a dialog, dropdown, popover, menu, tooltip, tab set, form
  * field or table - the composite controls such a library exists to make accessible - so installing one now
@@ -23,6 +23,7 @@
  * this layer to an element of its own.
  */
 export { ActionButton } from './ActionButton';
+export { Banner } from './Banner';
 export { FocusHolder } from './FocusHolder';
 export { Heading } from './Heading';
 export { Screen } from './Screen';

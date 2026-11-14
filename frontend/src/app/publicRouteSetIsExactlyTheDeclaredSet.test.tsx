@@ -30,6 +30,7 @@ import { accessToken, clearAccessToken, retainAccessToken } from '../auth/access
 import { retainIdToken, takeIdToken } from '../auth/idToken';
 import { createI18n } from '../i18n/i18n';
 import { en } from '../i18n/catalogue';
+import { AuthenticatedLayout } from './AuthenticatedLayout';
 import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
 import { APP_BASENAME, AUTHENTICATED_ROUTE_PATHS, HOME_PATH, PUBLIC_ROUTE_PATHS, SIGNED_OUT_PATH,
@@ -189,6 +190,7 @@ function withProbes(gate: ReactElement): RouteObject[] {
   let gatesFound = 0;
   let pathlessLeaves = 0;
   let probesAttached = 0;
+  let layoutsFound = 0;
 
   // The derivation copies THREE keys, so it states which three and fails if the real table ever grows a
   // fourth. A spread would have carried a `loader` or a `lazy` along silently; naming the keys means a later
@@ -231,6 +233,24 @@ function withProbes(gate: ReactElement): RouteObject[] {
             element: gate,
             children: (child.children ?? []).map((nested): RouteObject => {
               assertCopyable(nested);
+              // GROWN BY TASK 42, which put a pathless LAYOUT route between the gate and the eleven paths.
+              // Before this the gate's children WERE the eleven, so `nested.path` was always a string;
+              // afterwards there is one pathless child holding them, and the old derivation attached one
+              // probe instead of eleven - which failed this function's own baseline and took thirteen arms
+              // down with it. The level is DESCENDED THROUGH rather than carried: these arms measure the
+              // GATE's decision, and what the layout renders is task 42's claim, asserted in task 42's own
+              // cases. `layoutsFound` is why that is a growth and not a hole - a SECOND nested layout still
+              // breaks the baseline here, exactly as a second gate does.
+              if (nested.path === undefined) {
+                layoutsFound += 1;
+                return {
+                  children: (nested.children ?? []).map((leaf): RouteObject => {
+                    assertCopyable(leaf);
+                    probesAttached += 1;
+                    return { path: leaf.path, element: <Probe path={leaf.path as string} /> };
+                  }),
+                };
+              }
               probesAttached += 1;
               return { path: nested.path, element: <Probe path={nested.path as string} /> };
             }),
@@ -250,6 +270,9 @@ function withProbes(gate: ReactElement): RouteObject[] {
   // adds a second, every arm here would be measuring a table whose bare-path arrival had changed, and the
   // baseline is the only place that can say so.
   expect(pathlessLeaves, 'the derived table did not find exactly task 41\'s index route').toBe(1);
+  // TASK 42's layout, one level below the gate. One, for the same reason there is one gate: a second would
+  // mean the arms below were measuring a table whose authenticated side had a shape this function never saw.
+  expect(layoutsFound, 'the derived table did not find exactly task 42\'s authenticated layout').toBe(1);
   expect(probesAttached, 'the derived table did not probe every declared path and the catch-all')
     .toBe(PUBLIC_ROUTE_PATHS.length + AUTHENTICATED_ROUTE_PATHS.length + 1);
   return table;
@@ -1088,8 +1111,17 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       expect(pathless, 'the gate is not one pathless route').toHaveLength(1);
       expect((pathless[0].element as ReactElement).type,
         'the pathless route carries some other component').toBe(RequireSession);
-      expect((pathless[0].children ?? []).map((route) => route.path),
-        "the gate's children are not exactly the declared authenticated set").toEqual([...AUTHENTICATED_ROUTE_PATHS]);
+      // GROWN BY TASK 42. The gate's child is now its LAYOUT, and the eleven paths hang off that - so this
+      // reads one level further down than it did, and the level between is asserted rather than skipped.
+      // Loosening it to "the eleven are somewhere below the gate" would have passed for a table that put
+      // them behind a second gate, which is the one thing AC12 exists to refuse.
+      const gateChildren = pathless[0].children ?? [];
+      expect(gateChildren, "the gate's child is not exactly task 42's one layout route").toHaveLength(1);
+      expect(gateChildren[0].path, 'the layout between the gate and the eleven took a path').toBeUndefined();
+      expect((gateChildren[0].element as ReactElement).type,
+        "the gate's only child carries some other component").toBe(AuthenticatedLayout);
+      expect((gateChildren[0].children ?? []).map((route) => route.path),
+        "the layout's children are not exactly the declared authenticated set").toEqual([...AUTHENTICATED_ROUTE_PATHS]);
       expect(children.filter((route) => route.path !== undefined).map((route) => route.path),
         'the public nine and the catch-all are no longer siblings of the gate')
         .toEqual([...PUBLIC_ROUTE_PATHS, '*']);
@@ -1117,15 +1149,18 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       const carrying = pathless.filter((route) => route.element !== undefined
         || route.Component !== undefined || route.errorElement !== undefined);
 
-      expect(carrying, 'a pathless route beyond the gate and task 41\'s index redirect carries an element')
-        .toHaveLength(2);
+      // GROWN BY TASK 42, THE SECOND THING THIS CASE CAUGHT, and the freeze named it in advance this time
+      // (T42 D6). The authenticated layout is a third pathless route carrying an element, invisible to both
+      // screen-count pins and to `pathTree` for the same reason the other two are. Three, and each NAMED.
+      expect(carrying, 'a pathless route beyond the gate, task 41\'s index redirect and task 42\'s layout '
+        + 'carries an element').toHaveLength(3);
       // ORDER IS DELIBERATE HERE, and it is the one order claim in a case about counts (phase 7, F4). Naming
       // which pathless element is which is the difference between growing this pin and loosening it. If a
       // later task reorders the root's children, THIS case fails for a reason that has nothing to do with
       // elements - `pathTree` in `routesResolveUnderAppPrefixOnly.test.tsx` is the instrument that owns
       // order, and that is the failure to read first.
       expect(carrying.map((route) => (route.element as ReactElement).type))
-        .toEqual([RedirectToSignIn, RequireSession]);
+        .toEqual([RedirectToSignIn, RequireSession, AuthenticatedLayout]);
       for (const route of carrying) {
         expect(route.errorElement, 'a pathless route carries a second element the count pins cannot see')
           .toBeUndefined();

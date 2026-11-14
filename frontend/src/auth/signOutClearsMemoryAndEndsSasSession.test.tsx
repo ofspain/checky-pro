@@ -1743,9 +1743,15 @@ describe('signOutClearsMemoryAndEndsSasSession', () => {
       // constant is deliberately EXPORTED (AC16 compares it against the service-worker denylist), so the
       // export is the bypass. This scan closes it from the other side: who imports this module at all.
       const PERMITTED_IMPORTERS: readonly string[] = [
-        // Empty, and that is the honest state of the package: nothing may reach the end-session endpoint
-        // because nothing owns a sign-out affordance (OQ-T36-5). The day a task adds one, it adds itself
-        // here - which is the handoff, not an obstacle: the message below says so.
+        // THE DAY ARRIVED, and this list was written for it. It was empty from task 36 to task 42 because
+        // nothing owned a sign-out affordance (OQ-T36-5, carried for seven consecutive tasks); the owner
+        // closed that question on 2026-11-14 and task 42's authenticated layout is the affordance. It
+        // imports `endSession` and calls it - it does not reach `END_SESSION_PATH`, which the case above
+        // still forbids it, and it does not compose what `endSession()` composes.
+        //
+        // ONE ENTRY IS STILL THE CLAIM. A second importer is a second route to the endpoint and must come
+        // here and say so, exactly as this one did.
+        'app/AuthenticatedLayout.tsx',
       ];
       // Kimi phase 11 F6: a STATIC import is not the only route. `import('./endSession')` and
       // `require('./endSession')` reach the module without the word `from`, so the needle covers the module

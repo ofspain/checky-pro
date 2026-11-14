@@ -337,10 +337,15 @@ describe('AC7 the instruments this task was obliged to grow', () => {
     expect(source, "task 16's SCREENS_ATTACHED_SO_FAR did not learn about the fourth screen").toMatch(/'home',/);
   });
 
-  it('names HomeScreen.tsx in the render-site list and counts the union at fourteen', async () => {
+  it('names HomeScreen.tsx in the render-site list and counts the union at sixteen', async () => {
     const source = await read('app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx');
     expect(source).toContain("'app/HomeScreen.tsx',");
-    expect(source, 'the union pin still says thirteen, so a render site is unpinned').toMatch(/\.toBe\(14\)/);
+    // GROWN BY T42, which added the seventh render site AND the ninth primitive, so the union moved by two.
+    // The number is this task's only interest in it - that HomeScreen.tsx is PINNED somewhere the union
+    // counts - so the claim is kept and the count follows the two lists rather than being frozen at a
+    // figure task 174 happened to see.
+    expect(source, 'the union pin no longer says sixteen, so a render site or a primitive is unpinned')
+      .toMatch(/\.toBe\(16\)/);
   });
 
   it('names home in the attached-element pin, which is read from the route table itself', () => {

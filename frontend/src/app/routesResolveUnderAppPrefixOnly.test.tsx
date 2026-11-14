@@ -212,7 +212,11 @@ describe('routesResolveUnderAppPrefixOnly', () => {
       // intent is what a reader of the table needs.
       [undefined, []],
       ...PUBLIC_ROUTE_PATHS.map((path) => [path, []]),
-      [undefined, AUTHENTICATED_ROUTE_PATHS.map((path) => [path, []])],
+      // GROWN BY T42: a second pathless level inside the gate's, which is its layout. The nesting is
+      // written out rather than flattened for T41's reason one level up - the shape is the claim, and a
+      // reader of this table needs to see that the eleven sit under TWO pathless routes now: the gate that
+      // decides, and the layout that wraps.
+      [undefined, [[undefined, AUTHENTICATED_ROUTE_PATHS.map((path) => [path, []])]]],
       ['*', []],
     ]]]);
   });

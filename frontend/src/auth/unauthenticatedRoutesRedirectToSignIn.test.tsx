@@ -23,7 +23,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { StrictMode } from 'react';
+import { StrictMode, type ReactElement } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
@@ -35,6 +35,10 @@ import { createI18n } from '../i18n/i18n';
 import { en } from '../i18n/catalogue';
 import { APP_BASENAME, AUTHENTICATED_ROUTE_PATHS, CALLBACK_PATH, HOME_PATH, PUBLIC_ROUTE_PATHS,
   SIGNED_OUT_PATH, SIGN_IN_PATH, appRoutes } from '../app/routes';
+// TASK 42's four. `AuthenticatedLayout` is read as a component (the route table's element must BE it) and as
+// source (its import list is its contract); the channel constants are how a SIBLING tab is simulated.
+import { AuthenticatedLayout } from '../app/AuthenticatedLayout';
+import { SIGN_OUT_CHANNEL, SIGN_OUT_TYPE } from '../api/crossTabSignOut';
 
 /** A concrete stand-in for a parameterised segment, so `invoices/:id` can actually be arrived at. */
 const SAMPLE_ID = '9f1c2b7a-5d3e-4c8a-9b0f-21e6d4c7a8b3';
@@ -117,9 +121,13 @@ let redirectCode: string | undefined;
  * AC2 scan passed on prose its own phase-9 fix had written.
  */
 async function redirectSource(): Promise<string> {
-  // `expect.getState().testPath` rather than `import.meta.url`: under vitest's jsdom environment the module
-  // URL is not a `file:` URL, and `readFile` rejects it - measured at phase 10, where all seven source cases
-  // failed with "The URL must be of scheme file" while every behavioural case passed.
+  // `expect.getState().testPath` rather than `import.meta.url`. THE REASON RECORDED HERE WAS WRONG and is
+  // corrected rather than repeated (task 174 phase 9 measured it, and fixed the same sentence in
+  // `screensRenderThroughDesignSystemPrimitivesOnly.test.tsx:69`): under this config `import.meta.url` IS a
+  // `file:` URL, and the error quoted here - "The URL must be of scheme file" - never occurs. What actually
+  // happens is ENOENT, because `readFile` reads the string as a path rather than as a URL. `testPath` works,
+  // `fileURLToPath(import.meta.url)` would too, and the false reason mattered because it told the next
+  // reader a working pattern was broken.
   redirectCode ??= (await readFile(
     join(dirname(expect.getState().testPath as string), 'RedirectToSignIn.tsx'), 'utf8'))
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -586,6 +594,334 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       expect(REMEMBERABLE.length, 'every authenticated path became parameterised, so AC14 loops over nothing')
         .toBeGreaterThan(0);
       expect(REMEMBERABLE.length).toBeLessThan(AUTHENTICATED_ROUTE_PATHS.length);
+    });
+  });
+  /**
+   * TASK 42 — THE AUTHENTICATED LAYOUT. R28's POSITIVE CLAUSE.
+   *
+   * Prefixed, like every describe above it, because T41's header reserved that convention for this task:
+   * *"a failure naming 'AC1' must say whose AC1 it is."* These are task 42's AC1-AC15, and T41's are above.
+   *
+   * WHAT THIS BLOCK ADDS THAT NOTHING ELSE CAN SEE. T41's cases prove a blocked arrival is redirected; task
+   * 40's prove the gate splits the set. Neither can see what a visitor WITH a session is shown, because
+   * until this task ten of the eleven paths rendered an empty document and the eleventh hung straight off
+   * the gate. Every case here is about that side of the split.
+   */
+  describe('T42 the authenticated layout', () => {
+    /** Any file under `src/`, comments stripped. `testPath` is this file; the layout lives one dir over. */
+    async function srcFile(relative: string): Promise<string> {
+      const code = await readFile(
+        join(dirname(expect.getState().testPath as string), '..', relative), 'utf8');
+      return code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
+    }
+
+    const banner = (container: HTMLElement) => container.querySelector('header');
+    const signOutButton = (container: HTMLElement) => container.querySelector('header button');
+
+    /**
+     * Every navigation mechanism, watched rather than just `assign`.
+     *
+     * The SIXTH copy of this helper in the package (OQ-T32-4 counts them), kept rather than imported for the
+     * reason task 36's own version gives: the failure worth catching is an ADDITION, and a spy on `assign`
+     * alone reports one call while the SPA has grown two hand-overs.
+     */
+    function watchNavigation(): string[] {
+      const seen: string[] = [];
+      const fake = {
+        origin: 'https://app.example',
+        assign: (url: string) => void seen.push(`assign:${url}`),
+        replace: (url: string) => void seen.push(`replace:${url}`),
+      } as unknown as Location;
+      Object.defineProperty(fake, 'href', {
+        get: () => 'https://app.example/app/home',
+        set: (url: string) => void seen.push(`href:${url}`),
+        configurable: true,
+      });
+      vi.stubGlobal('location', fake);
+      vi.stubGlobal('open', (url?: string | URL) => {
+        seen.push(`open:${String(url)}`);
+        return null;
+      });
+      return seen;
+    }
+
+    it('AC1 renders the layout on every one of the eleven, including the two parameterised ones', async () => {
+      // THE CLAIM THE TASK STATEMENT MAKES AND NOTHING MEASURED: "a session renders the shell and the
+      // authenticated routes". Ten of these eleven still have no screen of their own, which is deliberate -
+      // each is a later unit's - so the layout is the whole of what a visitor is shown on ten of them, and
+      // the difference between "an empty document" and "the application" is this case.
+      for (const path of AUTHENTICATED_ROUTE_PATHS) {
+        retainAccessToken('a-token-this-tab-holds');
+        const { container, router } = await arrive(`${APP_BASENAME}/${concrete(path)}`);
+
+        expect(router.state.location.pathname, path).toBe(`${APP_BASENAME}/${concrete(path)}`);
+        expect(banner(container), `${path} rendered no chrome, so the visitor got an empty document`)
+          .not.toBeNull();
+        expect(banner(container)?.textContent, path).toBe(en.shell.signOut);
+        release();
+      }
+    });
+
+    it('AC2 nests the home screen INSIDE the layout rather than replacing it', async () => {
+      retainAccessToken('a-token-this-tab-holds');
+      const { container } = await arrive(`${APP_BASENAME}/${HOME_PATH}`);
+
+      const main = container.querySelector('main');
+      expect(banner(container), 'the chrome is missing on the one path that has a screen').not.toBeNull();
+      expect(main, 'the layout replaced the screen instead of wrapping it').not.toBeNull();
+      expect(main?.querySelector('h1')?.textContent).toBe(en.home.heading);
+      // Task 174's own pin, re-measured through the layout: the screen's landmark holds exactly its heading
+      // and its paragraph, so the chrome is OUTSIDE `<main>` and not merely elsewhere in the document.
+      expect([...(main?.children ?? [])].map((child) => child.tagName)).toEqual(['H1', 'P']);
+      expect(main?.contains(banner(container)), 'the chrome rendered inside the screen\'s landmark')
+        .toBe(false);
+    });
+
+    it('AC3 leaves focus on the screen\'s heading, which the chrome must not take', async () => {
+      // THE HOLE TASK 174 OPENED AND THIS TASK COULD HAVE FALLEN INTO. `Heading` makes every `<h1>`
+      // focusable, task 174 moves focus to it on arrival, and the discharged T27-D1 case in
+      // `loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx` asserts a real sign-in lands there.
+      // A layout that focused itself would have taken that away silently.
+      retainAccessToken('a-token-this-tab-holds');
+      const { container } = await arrive(`${APP_BASENAME}/${HOME_PATH}`);
+
+      expect(document.activeElement, 'the chrome took the focus the landing screen moved')
+        .toBe(container.querySelector('main h1'));
+    });
+
+    it('AC8 renders exactly one h1, and takes no focus where there is no screen at all', async () => {
+      // The second half is the one worth having: on the ten paths with no screen there is nothing to hold
+      // focus, so if the layout ever grabbed it this is where it would show. `<body>` is correct here.
+      retainAccessToken('a-token-this-tab-holds');
+      const { container } = await arrive(`${APP_BASENAME}/account`);
+
+      expect(banner(container), 'nothing rendered, so this measures nothing').not.toBeNull();
+      expect(container.querySelectorAll('h1'), 'the chrome rendered a heading of its own').toHaveLength(0);
+      expect(document.activeElement, 'the chrome took focus on a path with no screen').toBe(document.body);
+    });
+
+    it('AC9 is a <header> banner outside every landmark that would demote it', async () => {
+      // `<header>` maps to the `banner` role NATIVELY, but only while it is not inside `article`, `aside`,
+      // `main`, `nav` or `section`. That makes the ancestry part of the contract, not a detail of how the
+      // layout happens to be arranged today - so the ancestry is what this case reads. A task that nested
+      // the layout inside a screen would demote the landmark without editing one line of `Banner.tsx`.
+      retainAccessToken('a-token-this-tab-holds');
+      const { container } = await arrive(`${APP_BASENAME}/${HOME_PATH}`);
+      const header = banner(container);
+
+      expect(header?.tagName).toBe('HEADER');
+      expect(header?.getAttribute('role'), 'a redundant role was set on an element that carries it natively')
+        .toBeNull();
+      for (const demoting of ['article', 'aside', 'main', 'nav', 'section']) {
+        expect(header?.closest(demoting), `the banner sits inside <${demoting}>, which demotes it to a group`)
+          .toBeNull();
+      }
+    });
+
+    it('AC12 holds one keyboard-reachable control, labelled from the catalogue', async () => {
+      retainAccessToken('a-token-this-tab-holds');
+      const { container } = await arrive(`${APP_BASENAME}/${HOME_PATH}`);
+      const button = signOutButton(container);
+
+      expect(button?.tagName).toBe('BUTTON');
+      expect(button?.getAttribute('type'), 'a button that defaults to submit would navigate inside a form')
+        .toBe('button');
+      expect(button?.textContent).toBe(en.shell.signOut);
+      expect(button?.textContent, 'the label is a raw catalogue key, not English').toBe('Sign out');
+      // A negative tabindex would make it findable by code and NOT by Tab, which is the opposite of what a
+      // control needs - and it is the exact attribute task 174 set on the heading for the opposite reason.
+      expect(button?.getAttribute('tabindex'), 'the one control was taken out of the tab order').toBeNull();
+      expect(container.querySelectorAll('header button'), 'the chrome grew a second control').toHaveLength(1);
+    });
+
+    it('AC13 hands over to SAS exactly once when the control is activated, through endSession', async () => {
+      // THE FIRST CALLER THE SIGN-OUT PATH HAS EVER HAD (OQ-T36-5, carried for seven tasks). The assertion
+      // is on the REAL hand-over rather than on a mocked module: the button calls `endSession()`, which
+      // clears this tab, broadcasts, and leaves for the end-session endpoint - and R19 is only satisfied if
+      // all three happen, in that order, once.
+      retainAccessToken('a-token-this-tab-holds');
+      const { container } = await arrive(`${APP_BASENAME}/${HOME_PATH}`);
+      const navigations = watchNavigation();
+      try {
+        await act(async () => {
+          (signOutButton(container) as HTMLButtonElement).click();
+        });
+
+        expect(navigations, `expected one hand-over, saw: ${navigations.join(', ')}`).toHaveLength(1);
+        const [mechanism] = navigations;
+        expect(mechanism?.startsWith('assign:'), `the mechanism was ${String(mechanism)}`).toBe(true);
+        expect(mechanism, 'the hand-over did not go to the end-session endpoint (R19)')
+          .toContain('/connect/logout');
+        expect(accessToken.current(), 'the tab kept its token through its own sign-out').toBeNull();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('AC13 reaches for none of the pieces endSession composes, by source', async () => {
+      // `endSession()` takes the id token, signs out, broadcasts and navigates, and ITS OWN HEADER says the
+      // order is the criterion. A layout that composed any of that itself would be a second sign-out path
+      // that happened to look right today. The allowlist is the first assertion; the named reaches are the
+      // second, because an allowlist passes a file that imports nothing and reaches a global.
+      const code = await srcFile('app/AuthenticatedLayout.tsx');
+      const imports = [...code.matchAll(/from '([^']+)'/g)].map((match) => match[1]);
+
+      expect(imports.sort(), 'the layout reaches a module its contract does not allow').toEqual([
+        '../api/crossTabSignOut', '../auth/RedirectToSignIn', '../auth/endSession', '../auth/signOut',
+        './ui', 'react', 'react-i18next', 'react-router',
+      ].sort());
+      for (const forbidden of [/\btakeIdToken\b/, /\bretainIdToken\b/, /\bbroadcastSignOut\b/,
+        /\bmarkSignedOut\b/, /\bmarkSignedIn\b/, /\bhasSignedOut\b/, /\bEND_SESSION_PATH\b/,
+        /\baccessToken\b/, /\bglobalThis\.location\b/, /\bhistory\b/, /\bdocument\.cookie\b/,
+        /\bsessionStorage\b/, /\blocalStorage\b/, /indexedDB/i, /\bfetch\s*\(/, /XMLHttpRequest/,
+        /userinfo/i, /accounts\/me/, /\buseNavigate\b/]) {
+        expect(code, `the layout reaches ${String(forbidden)}`).not.toMatch(forbidden);
+      }
+    });
+
+    it('CONTROL: the forbidden sweep above sees a planted reach, and does not already trip', async () => {
+      // Without this, a typo in any pattern forbids nothing and the case above passes by accident - T40's
+      // AC7 shipped with two rows that were measuring their own probe.
+      const code = await srcFile('app/AuthenticatedLayout.tsx');
+      for (const [forbidden, probe] of [
+        [/\btakeIdToken\b/, 'takeIdToken();'], [/\bretainIdToken\b/, 'retainIdToken("x");'],
+        [/\bbroadcastSignOut\b/, 'broadcastSignOut();'], [/\bmarkSignedOut\b/, 'markSignedOut();'],
+        [/\bmarkSignedIn\b/, 'markSignedIn();'], [/\bhasSignedOut\b/, 'if (hasSignedOut()) return null;'],
+        [/\bEND_SESSION_PATH\b/, 'const to = END_SESSION_PATH;'],
+        [/\baccessToken\b/, 'accessToken.current();'],
+        [/\bglobalThis\.location\b/, 'globalThis.location.assign("/x");'],
+        [/\bhistory\b/, 'globalThis.history.back();'], [/\bdocument\.cookie\b/, 'document.cookie = "a=b";'],
+        [/\bsessionStorage\b/, 'globalThis.sessionStorage.setItem("k", "v");'],
+        [/\blocalStorage\b/, 'globalThis.localStorage.setItem("k", "v");'],
+        [/indexedDB/i, 'globalThis.indexedDB.open("db");'], [/\bfetch\s*\(/, 'await fetch("/accounts/me");'],
+        [/XMLHttpRequest/, 'new XMLHttpRequest();'], [/userinfo/i, 'const at = "/userinfo";'],
+        [/accounts\/me/, 'const at = "/accounts/me";'], [/\buseNavigate\b/, 'const go = useNavigate();'],
+      ] as [RegExp, string][]) {
+        expect(forbidden.test(probe), `the pattern ${String(forbidden)} cannot see its own probe`).toBe(true);
+        expect(forbidden.test(code), `the real source already trips ${String(forbidden)}`).toBe(false);
+      }
+    });
+
+    it('AC14 signs this tab out and redirects it when a SIBLING tab signs out', async () => {
+      // R22's last clause - "sign-out SHALL propagate to every open tab" - built in task 39 and never
+      // installed: `signOutPropagatesToAllTabs.test.ts` verified the mechanism and said so in its header,
+      // because no module owned an app-level listener. This is the installer, and this is the journey.
+      retainAccessToken('a-token-this-tab-holds');
+      const { container, router } = await arrive(`${APP_BASENAME}/${HOME_PATH}`);
+      expect(banner(container), 'nothing rendered, so the broadcast below proves nothing').not.toBeNull();
+
+      const sibling = new BroadcastChannel(SIGN_OUT_CHANNEL);
+      try {
+        await act(async () => {
+          sibling.postMessage({ type: SIGN_OUT_TYPE });
+          await Promise.resolve();
+        });
+      } finally {
+        sibling.close();
+      }
+
+      expect(accessToken.current(), 'the tab kept its token after a sibling signed out').toBeNull();
+      expect(router.state.location.pathname, 'the tab stayed on an authenticated screen with no session')
+        .toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+      expect(banner(container), 'the chrome is still rendered for a tab with no session').toBeNull();
+      expect(headingIn(container), 'the redirected tab shows something other than the sign-in screen')
+        .toBe(en.signIn.heading);
+    });
+
+    it('AC14 closes the listener on unmount, so an unmounted layout signs nothing out', async () => {
+      retainAccessToken('a-token-this-tab-holds');
+      await arrive(`${APP_BASENAME}/${HOME_PATH}`);
+      release();
+      retainAccessToken('a-token-a-later-screen-holds');
+
+      const sibling = new BroadcastChannel(SIGN_OUT_CHANNEL);
+      try {
+        await act(async () => {
+          sibling.postMessage({ type: SIGN_OUT_TYPE });
+          await Promise.resolve();
+        });
+      } finally {
+        sibling.close();
+      }
+
+      expect(accessToken.current(), 'an unmounted layout still listens and signed this tab out')
+        .toBe('a-token-a-later-screen-holds');
+    });
+
+    it('AC4, AC15 renders no part of the chrome without a session, nor for an empty-string token', async () => {
+      // The empty string is the case `RequireSession` exists to refuse (`retainAccessToken` assigns whatever
+      // it is given), and it matters more now than it did: what sits behind the gate is no longer nothing,
+      // it is a control that ends a session.
+      for (const token of [undefined, '']) {
+        if (token !== undefined) retainAccessToken(token);
+        const { container, router } = await arrive(`${APP_BASENAME}/account`);
+
+        expect(router.state.location.pathname, `token ${JSON.stringify(token)}`)
+          .toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+        expect(banner(container), `the chrome rendered for token ${JSON.stringify(token)}`).toBeNull();
+        expect(container.textContent, 'the sign-out control reached a visitor with no session')
+          .not.toContain(en.shell.signOut);
+        release();
+      }
+    });
+
+    it('AC5 adds no path: the layout is pathless and the two declared sets are untouched', () => {
+      const gate = (appRoutes[0]?.children ?? []).find(
+        (route) => route.path === undefined && route.children !== undefined);
+      const layouts = gate?.children ?? [];
+
+      expect(layouts, "the gate's children are not exactly one layout route").toHaveLength(1);
+      expect(layouts[0]?.path, 'the layout took a path, which changes what the bare /app/ matches')
+        .toBeUndefined();
+      expect((layouts[0]?.element as ReactElement).type).toBe(AuthenticatedLayout);
+      expect((layouts[0]?.children ?? []).map((route) => route.path))
+        .toEqual([...AUTHENTICATED_ROUTE_PATHS]);
+      expect(PUBLIC_ROUTE_PATHS).toHaveLength(9);
+      expect(AUTHENTICATED_ROUTE_PATHS).toHaveLength(11);
+    });
+
+    it('AC6, AC10 says one word, takes it from the catalogue, and says nothing about who is reading', async () => {
+      const code = await srcFile('app/AuthenticatedLayout.tsx');
+      retainAccessToken('a-token-this-tab-holds');
+      const { container } = await arrive(`${APP_BASENAME}/account`);
+
+      // (a) no copy in the component, and the one string it renders is the catalogue's.
+      for (const sentence of Object.values(en).flatMap((group) => Object.values(group))) {
+        expect(code, `the layout spells "${sentence}" instead of taking it from the catalogue`)
+          .not.toContain(sentence);
+      }
+      expect(container.textContent).toBe(en.shell.signOut);
+      // (b) no raw key leaked, which is what a missing catalogue entry looks like in the DOM (O3).
+      expect(container.textContent, 'a raw catalogue key reached the DOM').not.toMatch(/shell\./);
+      // (c) and nothing identity-shaped, on a path where the chrome is the whole page.
+      for (const word of ['@', 'name', 'email', 'account', 'admin', 'merchant', 'suspended', 'welcome']) {
+        expect(container.textContent?.toLowerCase(), `the chrome rendered "${word}"`).not.toContain(word);
+      }
+    });
+
+    it('AC11 writes no storage and makes no network call while rendering', async () => {
+      const setItem = vi.spyOn(globalThis.sessionStorage, 'setItem');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      retainAccessToken('a-token-this-tab-holds');
+      const { container } = await arrive(`${APP_BASENAME}/invoices`);
+
+      expect(banner(container), 'nothing rendered, so the spies below prove nothing').not.toBeNull();
+      expect(setItem, 'the layout wrote storage on render').not.toHaveBeenCalled();
+      expect(fetchSpy, 'the layout called the network on render').not.toHaveBeenCalled();
+    });
+
+    it('AC7 names the layout and the ninth primitive in the lists that pin them', async () => {
+      // Read from the instrument's SOURCE, the shape task 174 used: this task's obligation is that the two
+      // pinned lists name what it added, and a behavioural case cannot see a list.
+      const only = await srcFile('app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx');
+      expect(only, 'the render-site list does not name the layout').toContain("'app/AuthenticatedLayout.tsx',");
+      expect(only, 'the primitive list does not name Banner').toContain("'Banner',");
+      expect(only, 'the render-site count still says six').toMatch(/toHaveLength\(7\)/);
+      expect(only, 'the primitive count still says eight').toMatch(/toHaveLength\(9\)/);
+      expect(only, 'the union pin no longer says sixteen').toMatch(/\.toBe\(16\)/);
+      const permitted = await srcFile('auth/signOutClearsMemoryAndEndsSasSession.test.tsx');
+      expect(permitted, 'the end-session importer list does not name the layout, so OQ-T36-5 is still open')
+        .toContain("'app/AuthenticatedLayout.tsx',");
     });
   });
 });
