@@ -59,6 +59,24 @@ Editing T42's file is a deviation (**D-10** below). It is taken rather than defe
 never true, and a false instrument is worse than a missing one: this one said *"the layout wrote storage on
 render"* and could not have seen it.
 
+### Corrected after the fact: FU-T43-1 is closed, not carried
+
+The comment written into both fixed cases said the finding was *"carried as FU-T43-1 for the other suites
+that do this"*. **A sweep says there are none.** Every `vi.spyOn` target in `frontend/src` was inventoried:
+
+| target | uses | files | intercepts? |
+|---|---|---|---|
+| `Storage.prototype` | **80** | **18** | yes — the package's established pattern all along |
+| `globalThis` (`fetch`, `setTimeout`, `setInterval`) | 8 | 7 | yes — plain writable own properties |
+| `console`, module objects, `Request.prototype`, `crypto` | 27 | — | yes |
+| **a storage INSTANCE** | **1** | **1** | **no — T42's AC11, now fixed** |
+
+So this was not package-wide hygiene: it was **one case that deviated from an eighty-use convention** and
+went unnoticed because its assertion was **negative** — the direction in which a dead instrument and a clean
+result are indistinguishable. That is the transferable lesson, and it is narrower and more useful than the
+one the comment claimed. **FU-T43-1 is closed by measurement**; the two source comments that cite it as open
+are corrected in phase 10 (they could not be edited while the harness was reverting `frontend/src/`).
+
 ---
 
 ## Accepted and fixed
