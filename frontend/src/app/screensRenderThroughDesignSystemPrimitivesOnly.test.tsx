@@ -406,9 +406,14 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // And the two field rows are the LABELLED pair specifically, which is what makes the number two rather
     // than an arbitrary loosening: each renders its own `<label>` and its own control.
     for (const field of ['app/ui/EmailField.tsx', 'app/ui/PasswordField.tsx']) {
-      const tags = new Set(lowercaseJsxTags(await read(field)));
-      expect([...tags].sort(), `${field} is excused two elements but they are not a label and a control`)
+      const tags = lowercaseJsxTags(await read(field));
+      expect([...new Set(tags)].sort(), `${field} is excused two elements but they are not a label and a control`)
         .toEqual(['input', 'label']);
+      // AND IN THAT ORDER (phase 11, F6). `htmlFor`/`id` associates them whatever the order, so this is not
+      // the association being re-checked: it is that the visible order matches the reading order, which is
+      // what a sighted keyboard user tabbing down the form sees and what a label-after-control layout
+      // quietly inverts. `lowercaseJsxTags` returns them in source order, so the first is the claim.
+      expect(tags[0], `${field} renders its control before its label`).toBe('label');
     }
   });
 

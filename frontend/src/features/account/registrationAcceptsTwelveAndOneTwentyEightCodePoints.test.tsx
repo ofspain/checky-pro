@@ -285,6 +285,28 @@ describe('AC2/AC3/AC4 the advisory range marks and never blocks', () => {
     expect(ADVISORY_MAXIMUM_CODE_POINTS).toBe(128);
   });
 
+  it('submits with BOTH fields empty, because the server is the authority on an empty address too', async () => {
+    // PHASE 11, F7. The table's empty row covers an empty PASSWORD with a real address; this is the
+    // accident - a visitor pressing the button on an untouched form. R1 puts the authority on the server
+    // for both fields, and `noValidate` (D13) is what stops the browser from inventing a rejection of its
+    // own, so the request goes exactly as it does for an 11-code-point password.
+    const sent = installTransport(() => ACCEPTED);
+    const container = await renderScreen();
+
+    await act(async () => {
+      submitControl(container).click();
+    });
+    await settle();
+
+    expect(sent, 'an untouched form was blocked in the client').toHaveLength(1);
+    expect(JSON.parse(sent[0]!.body)).toEqual({ email: '', password: '' });
+    expect(passwordInput(container).getAttribute('aria-invalid'), 'zero code points is out of range')
+      .toBe('true');
+    // The email field is NOT marked: R1's advisory bound is the password's, and nothing in the client
+    // judges an address (phase 7, F8). A mark here would be a verdict no requirement grants.
+    expect(emailInput(container).getAttribute('aria-invalid')).toBeNull();
+  });
+
   it('counts a total function: empty, astral, and a lone surrogate all return a number (D16)', () => {
     // `passwordLength.ts`'s header claims this and nothing asserted it. R1 makes the check ADVISORY, so a
     // count that could throw would be a client-side gate - which is the one thing R1 forbids the client to
@@ -520,6 +542,15 @@ describe('AC8 the screen is public and declares no new route', () => {
     expect(container.textContent).toContain(en.register.heading);
     expect(router.state.location.pathname, 'the gate redirected a visitor with no session')
       .toBe(`${APP_BASENAME}/${REGISTER_PATH}`);
+
+    // AND OUTSIDE THE LAYOUT, NOT ONLY OUTSIDE THE GATE (phase 11, F5). `AuthenticatedLayout` renders the
+    // `Banner` - a `<header>` holding a sign-out control - and it sits INSIDE `RequireSession`, so a
+    // registration route that had drifted under either would hand a visitor with no session a control that
+    // ends one. The form rendering proves the gate let it through; this proves the chrome did not come with
+    // it, and the two together are what "public path" means in this route table.
+    expect(container.querySelector('header'), 'the authenticated chrome rendered on a public path').toBeNull();
+    expect(container.textContent, 'the sign-out control reached a visitor with no session')
+      .not.toContain(en.shell.signOut);
   });
 
   it('changes neither declared path set: `register` was already there, with no element', () => {
@@ -723,11 +754,22 @@ describe('the transport itself fails, which is not a response (phase 7 F2, phase
     // success branch - and REJECTS when the transport throws: offline, DNS failure, a blocked request. The
     // first version of this screen had no handler for that, so the rejection escaped and the live region
     // stayed on "Creating your account..." forever. This is the case that holds the fix.
+    // NOTHING MAY ESCAPE, and the listener is Node's rather than the DOM's because that is the one that
+    // fires (phase 11, F3; measured with a probe: `process.on('unhandledRejection')` saw the rejection
+    // within two turns, `globalThis.addEventListener('unhandledrejection')` saw nothing in jsdom). The
+    // original defect had TWO halves - a live region stuck on the in-flight copy, and a rejection nobody
+    // handled - and the assertions below the journey only ever covered the first.
+    const escaped: string[] = [];
+    const collect = (reason: unknown) => void escaped.push(String(reason));
+    process.on('unhandledRejection', collect);
+
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))));
     const container = await renderScreen();
 
     await fillAndSubmit(container, 'visitor@example.test', 'a'.repeat(12));
     await settle();
+
+    expect(escaped, 'the rejection escaped the handler, which is half of the original defect').toEqual([]);
 
     // NOTHING IS CLAIMED. Not success - no account was requested; and not a sentence, because D7 froze this
     // screen's key set at six and a failure word is an owner's decision (OQ-T43-9). The live region empties.
@@ -748,6 +790,16 @@ describe('the transport itself fails, which is not a response (phase 7 F2, phase
     await settle();
     expect(sent, 'the form was left in a state that cannot submit again').toHaveLength(1);
     expect(statusRegion(container).textContent).toBe(en.register.success);
+    expect(escaped, 'something escaped during the retry').toEqual([]);
+
+    // THE CONTROL, in the same case so the two cannot drift apart. An empty list means nothing until the
+    // collector is shown to collect: a listener registered on the wrong object, or one removed too early,
+    // reports exactly what a handled rejection reports.
+    void Promise.reject(new TypeError('control')).then(() => undefined);
+    await settle();
+    expect(escaped, 'the collector sees nothing, so the two assertions above were vacuous')
+      .toEqual(['TypeError: control']);
+    process.off('unhandledRejection', collect);
   });
 });
 

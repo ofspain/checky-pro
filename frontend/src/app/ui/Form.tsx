@@ -22,6 +22,12 @@ import { forwardRef, type ReactNode } from 'react';
  * a string we did not write and a gate the spec does not grant, so the attribute is set here, inside, where
  * no screen can lose it.
  *
+ * **AND NO TEST IN THIS REPOSITORY CAN SEE IT** (phase 11, F1). jsdom performs no interactive constraint
+ * validation, so a form with this attribute and one without behave identically in every case we can write:
+ * it is the registration harness's one `unfalsifiable` row, TR24, carried as a measured limit rather than
+ * as an assertion nobody checked. If this package ever gains a real browser (OQ-T174-5's dependency is the
+ * nearest candidate), TR24 is the first mutant to re-run there.
+ *
  * `onSubmit` is behaviour, not an ARIA contract, so accepting it is not rule 2's business - what rule 2
  * forbids is a consumer overriding what the ELEMENT means, and a form that did not submit would be the
  * override. It takes no arguments: the event is prevented and consumed here, and a handler that received it
