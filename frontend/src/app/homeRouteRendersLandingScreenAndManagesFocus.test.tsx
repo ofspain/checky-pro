@@ -50,6 +50,15 @@ import { createI18n } from '../i18n/i18n';
 import { HomeScreen } from './HomeScreen';
 import { APP_BASENAME, appRoutes, HOME_PATH, SIGN_IN_PATH } from './routes';
 
+// Lets act() flush React 19 renders synchronously, the shape eleven of the eighteen mounting suites use
+// (`routesResolveUnderAppPrefixOnly.test.tsx:10`). Added at phase 11, for a measured reason: without it this
+// file printed "The current testing environment is not configured to support act(...)" when run ALONE and
+// printed nothing in the whole-suite run, because another file in the same worker had already set the
+// global. The 29 cases pass either way - verified both ways before and after this line - but a suite whose
+// React environment depends on which files ran beside it is measuring something I cannot name.
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relativePath: string) => readFile(join(srcDir, relativePath), 'utf8');
 
