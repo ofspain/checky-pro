@@ -2,10 +2,11 @@
 /**
  * `registrationAcceptsTwelveAndOneTwentyEightCodePoints` (package.md §8) — task 43, the registration form.
  *
- * THE NAME IS HALF A PROMISE TODAY, deliberately. Task 43 owns the 12 end; **task 44 owns the 128 end**, and
- * the length cases below are a TABLE for that reason - a row, not a copied case, is what task 44 adds. The
- * file is named for both ends because the suite is one claim about one check, and splitting it across two
- * files would put the two halves of a range in two places.
+ * THE NAME IS FULLY EARNED AS OF TASK 44, and it was half a promise before that. Task 43 owned the 12 end
+ * and wrote the length cases as a TABLE precisely so the 128 end would arrive as rows rather than as copied
+ * cases; task 44 added them - 128 ASCII, 128 astral, 129 - and extended the control that keeps the column
+ * load-bearing at both ends. The two halves of the range live in one file because they are one claim about
+ * one check, and splitting a range across two files is how its halves drift apart.
  *
  * WHAT THIS FILE PROVES AND WHAT IT CANNOT:
  *
@@ -220,15 +221,17 @@ describe('AC1 the registration form renders a named email field, password field 
 });
 
 // ==========================================================================================================
-// AC2 / AC3 / AC4 — the advisory range, as a table task 44 extends with a row
+// AC2 / AC3 / AC4 — the advisory range, as a table: task 43 wrote the 12 end, task 44 added the 128 end
 // ==========================================================================================================
 
 /**
  * One row per password this task can speak for.
  *
- * TASK 44 ADDS ROWS AND NOTHING ELSE: `'a'.repeat(128)` in range, `'a'.repeat(129)` out of it. That is the
- * whole reason the length cases are a table - the 12 end and the 128 end are the same claim measured at two
- * boundaries, and a copied case is where the two would drift apart.
+ * TASK 44 ADDED ROWS AND NOTHING ELSE, which is the whole reason the length cases are a table: the 12 end
+ * and the 128 end are the same claim measured at two boundaries, and a copied case is where the two would
+ * drift apart. This paragraph named two rows - `'a'.repeat(128)` in range and `'a'.repeat(129)` out of it -
+ * and THREE landed. The third is astral, because at this end the counting bug rejects rather than accepts,
+ * and nobody had looked at which way it points at 128 when the prediction was written.
  */
 const PASSWORDS: ReadonlyArray<{ name: string; password: string; codePoints: number; inRange: boolean }> = [
   { name: '12 ASCII characters, the lower bound itself', password: 'a'.repeat(12), codePoints: 12, inRange: true },
@@ -237,8 +240,24 @@ const PASSWORDS: ReadonlyArray<{ name: string; password: string; codePoints: num
   // points. A check written with `.length` would call this 24 and accept it for the wrong reason - and would
   // call a 7-emoji password 14 and accept that too, which is the failure that matters.
   { name: '12 astral code points, which are 24 UTF-16 units', password: '👍'.repeat(12), codePoints: 12, inRange: true },
+  // TASK 44, THE UPPER BOUND, and the two rows below are what the header above promised - plus one it did
+  // not name. The header predicted `'a'.repeat(128)` and `'a'.repeat(129)`; the astral row is the third,
+  // because it is the only row that fails in the direction this END of the range fails in.
+  { name: '128 ASCII characters, the upper bound itself', password: 'a'.repeat(128), codePoints: 128, inRange: true },
+  // 128 code points, 256 UTF-16 units - and the SAME `.length` bug as the 12-astral row above, pointing the
+  // other way. At 12 the over-count pulls a short password INTO range and accepts what R1 excludes; at 128
+  // it pushes a valid password ABOVE the maximum, so `.length` reads 256 > 128 and marks a passphrase of
+  // emoji invalid. A false reject is the worse half: the visitor cannot see what the client counted.
+  // (The factor is two - one astral character is one code point and two units, 24 for the row above and 256
+  // for this one. Phases 0 to 3 all said 512 until phase 4 measured it.)
+  { name: '128 astral code points, which are 256 UTF-16 units', password: '👍'.repeat(128), codePoints: 128, inRange: true },
   { name: '11 ASCII characters, one short', password: 'a'.repeat(11), codePoints: 11, inRange: false },
   { name: '7 emoji, which `.length` would call 14', password: '👍'.repeat(7), codePoints: 7, inRange: false },
+  // One past the maximum, and MARKED ONLY - no sentence explains it, exactly as the 11-character row above
+  // explains nothing. Task 45 owns the advisory guidance for 11 and 129 and should choose its own words.
+  // Without this row the claim "128 is the maximum" is unfalsifiable: a bound of `<= 999` passes every
+  // other row in this table.
+  { name: '129 ASCII characters, one past the upper bound', password: 'a'.repeat(129), codePoints: 129, inRange: false },
   // D16's clause, and it was unmeasured until phase 10 (phase 7 F5, phase 8 I10): "the empty string must
   // not crash the count". Both fields empty is the most ordinary accidental submit there is, and the row
   // asserts what every other row asserts - the request still goes, because R1's check is advisory and the
@@ -283,6 +302,54 @@ describe('AC2/AC3/AC4 the advisory range marks and never blocks', () => {
     expect(countCodePoints(passwordInput(container).value)).toBe(12);
     expect(ADVISORY_MINIMUM_CODE_POINTS).toBe(12);
     expect(ADVISORY_MAXIMUM_CODE_POINTS).toBe(128);
+  });
+
+  it('T44 AC2 — 128 emoji are 256 UTF-16 units in the DOM and 128 code points to the check', async () => {
+    // THE MIRROR OF THE CASE ABOVE, AT THE OTHER END - the direction task 43 had no way to measure. The
+    // table row asserts the outcome; this case asserts the two NUMBERS that produce it, through the DOM's
+    // own value rather than through a unit test of `countCodePoints`, so that the disagreement between the
+    // units is shown where a browser would show it.
+    //
+    // NOT TASK 46'S WORK DONE EARLY: task 46 owns the claim that the counter counts code points in general.
+    // What this case owns is that the SCREEN accepts a password at the upper bound when the two units
+    // disagree about whether it is there.
+    const sent = installTransport(() => ACCEPTED);
+    const container = await renderScreen();
+
+    await fillAndSubmit(container, 'visitor@example.test', '👍'.repeat(128));
+    await settle();
+
+    expect(passwordInput(container).value.length, 'jsdom stopped measuring UTF-16 units').toBe(256);
+    expect(countCodePoints(passwordInput(container).value)).toBe(128);
+    // Accepted: not marked, and sent unaltered. Both are what `.length` would break here, and neither is
+    // broken by `.length` at the lower bound - which is why one end could not stand in for the other.
+    expect(passwordInput(container).getAttribute('aria-invalid'),
+      'a valid 128-code-point password was marked invalid').toBeNull();
+    expect(JSON.parse(sent[0]!.body) as { email: string; password: string }).toEqual({
+      email: 'visitor@example.test',
+      password: '👍'.repeat(128),
+    });
+  });
+
+  it('T44 AC4 — neither field caps its own length, which would count the wrong unit and truncate', async () => {
+    // `maxLength` IS COUNTED IN UTF-16 UNITS. A `maxLength={128}` on the password field would cut the row
+    // above in half - 64 emoji - and the advisory check would then count a value the visitor never typed
+    // and find it SHORT. It would also be a BLOCK rather than a mark, which is the one thing R1 forbids the
+    // client to be.
+    //
+    // THIS NEGATIVE CANNOT BE PROVED BY THE BODY-EQUALITY ASSERTIONS ABOVE, which is why it is its own
+    // case: `maxLength` constrains USER EDITING only, and every case in this file sets the value through
+    // `HTMLInputElement.prototype`'s setter, which is not an edit. Measured at the freeze - with
+    // `maxlength=128` on the element, a 256-unit value went in and 256 units came back, untouched.
+    //
+    // ITS POSITIVE CONTROL IS THE HARNESS: the `maxLength={128}` mutant must die. If this case and the
+    // source scan in `screensRenderThroughDesignSystemPrimitivesOnly` both survive it, both are vacuous.
+    const container = await renderScreen();
+
+    for (const field of [passwordInput(container), emailInput(container)]) {
+      expect(field.hasAttribute('maxlength'), 'a field caps its length, in UTF-16 units').toBe(false);
+      expect(field.hasAttribute('minlength'), 'a field floors its length, in UTF-16 units').toBe(false);
+    }
   });
 
   it('submits with BOTH fields empty, because the server is the authority on an empty address too', async () => {
@@ -341,6 +408,13 @@ describe('AC2/AC3/AC4 the advisory range marks and never blocks', () => {
     expect(PASSWORDS.some((row) => !row.inRange), 'no row is out of range').toBe(true);
     expect(PASSWORDS.filter((row) => row.codePoints === ADVISORY_MINIMUM_CODE_POINTS),
       'no row sits ON the lower bound, which is the one this task is named for').not.toEqual([]);
+    // TASK 44 PINS THE OTHER END, and the asymmetry was the hole: a control that names only the minimum
+    // cannot see a maximum silently widened to 999, because every row under 128 passes under either number.
+    // The three assertions together are what make `inRange` measure R1's RANGE rather than R1's floor.
+    expect(PASSWORDS.filter((row) => row.codePoints === ADVISORY_MAXIMUM_CODE_POINTS),
+      'no row sits ON the upper bound, which is the one task 44 is named for').not.toEqual([]);
+    expect(PASSWORDS.some((row) => row.codePoints > ADVISORY_MAXIMUM_CODE_POINTS),
+      'no row is above the maximum, so a widened maximum would pass unseen').toBe(true);
   });
 });
 

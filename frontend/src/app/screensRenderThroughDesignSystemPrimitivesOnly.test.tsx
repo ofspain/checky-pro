@@ -417,6 +417,26 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     }
   });
 
+  it('gives neither field a length cap of its own, because the attribute counts the wrong unit (T44)', async () => {
+    // R1's bound is TWELVE TO 128 CODE POINTS and `maxLength` is counted in UTF-16 UNITS, so the attribute
+    // cannot express the rule it looks like it expresses: `maxLength={128}` truncates a valid 128-code-point
+    // passphrase of emoji to 64 characters, and it does so BEFORE any handler runs, so the advisory check
+    // would then measure a value the visitor never typed. It would also BLOCK, and R1 makes the client's
+    // check advisory - the server is the authority.
+    //
+    // PINNED ON THE PRIMITIVE AND NOT ONLY ON THE SCREEN. The registration suite asserts the rendered field
+    // carries no `maxlength`; this scan is what stops the attribute being added to a primitive no screen in
+    // that suite renders, or to a field a later task adds. `withoutComments` is what lets the paragraph
+    // above exist in a primitive's own header without tripping the scan (its control is above).
+    for (const field of ['app/ui/EmailField.tsx', 'app/ui/PasswordField.tsx']) {
+      const code = withoutComments(await read(field));
+      expect(code, `${field} caps its own length, in UTF-16 units rather than code points`)
+        .not.toMatch(/maxLength/i);
+      expect(code, `${field} floors its own length, in UTF-16 units rather than code points`)
+        .not.toMatch(/minLength/i);
+    }
+  });
+
   it('CONTROL: a string literal holding a tag IS counted — the known limit of a text scan (F11)', () => {
     // Recorded as a limitation rather than fixed. The scan reads source text, not an AST, so a file holding
     // the STRING "<div>" would be reported as rendering one. No file in the package does, and the honest
