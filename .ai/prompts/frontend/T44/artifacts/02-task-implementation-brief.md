@@ -19,7 +19,7 @@ code points, and deleting `&& length <= ADVISORY_MAXIMUM_CODE_POINTS` today brea
 this task is to make that clause falsifiable, in the unit R1 names.
 
 The upper bound is not a mirror of the lower one. At 12, a `.length` implementation **over**-counts an
-astral password *into* range (false accept); at 128, 128 astral code points are **512 UTF-16 units**, so the
+astral password *into* range (false accept); at 128, 128 astral code points are **256 UTF-16 units**, so the
 same bug **rejects a valid password** (false reject). The bound also has a hazard the lower bound does not:
 an HTML `maxLength` attribute counts UTF-16 units and truncates **before any handler runs**.
 
@@ -28,7 +28,7 @@ an HTML `maxLength` attribute counts UTF-16 units and truncates **before any han
 **In**
 
 - Extend `registrationAcceptsTwelveAndOneTwentyEightCodePoints` with the upper end of the bound: **128 ASCII
-  (in), 128 astral = 512 UTF-16 units (in), 129 (out)**.
+  (in), 128 astral = 256 UTF-16 units (in), 129 (out)**.
 - Pin that **neither field primitive carries `maxLength` or `minLength`** (today neither does; the whole
   `src/` tree contains no occurrence of either word).
 - A mutation harness re-aimed at the upper bound.
@@ -61,7 +61,7 @@ measured by T43; this task must not disturb it.
 |---|---|
 | **L12** | Phase additivity. T43 built the suite as a table *"so task 44 adds the 128 end without restructuring"*. Rows are added; the table's shape, the screen and `passwordLength.ts` are left alone. |
 | **L11** | WCAG AA, keyboard, live regions, **catalogue-only strings**. The 128 end adds **no word**: it is marked exactly as the 12 end is marked, with `aria-invalid` and nothing else. |
-| **L6** | Generated client only. A 512-UTF-16-unit password must reach the transport through `createPublicAuthApi()` byte-for-byte as typed. |
+| **L6** | Generated client only. A 256-UTF-16-unit password must reach the transport through `createPublicAuthApi()` byte-for-byte as typed. |
 | **L4** | Enumeration-safe, identical timing. A long password takes the same path as a short one — no extra branch, no delay. |
 | **L2** | Interactive login stays SAS-hosted. No new credential surface; T16's credential table stays at three rows. |
 | **L3** | Tokens in memory only. No storage write, and no cached copy of the password. |
@@ -119,7 +119,7 @@ would mean the upper bound was mis-implemented by T43, which is a finding.
 | AC | claim | R |
 |---|---|---|
 | **AC1** | A **128-code-point ASCII** password is accepted: the request goes through the generated client, the body carries exactly the 128 characters typed, nothing is disabled, and the field is **not** marked `aria-invalid`. |
-| **AC2** | A **128-code-point astral** password (`'👍'.repeat(128)`, **512 UTF-16 units**) is accepted on the same terms, and the count reports **128** where `String.length` reports **512** — the `.length` bug's false **reject**. | R1 |
+| **AC2** | A **128-code-point astral** password (`'👍'.repeat(128)`, **256 UTF-16 units**) is accepted on the same terms, and the count reports **128** where `String.length` reports **256** — the `.length` bug's false **reject**. | R1 |
 | **AC3** | **129 code points is out of range**: the field is marked `aria-invalid` **and the request is still sent**, because R1 is advisory. Without this row the claim *"128 is the maximum"* is unfalsifiable — a bound of `<= 999` satisfies AC1 and AC2. | R1 |
 | **AC4** | Neither `EmailField` nor `PasswordField` carries `maxLength` or `minLength`. `maxLength={128}` counts **UTF-16 units**, so it would truncate a valid astral password to **64 characters before the handler ran**, and the advisory check would then see a value the user never typed. | R1 |
 | **AC5** | Everything T43 proved still holds **by extension, not by rewrite** (L12): the table's control still shows the `inRange` column is load-bearing in both directions, the whole suite stays green, `tsc` exits 0, `oxlint` exits 0. | L12 |
@@ -131,7 +131,7 @@ AC1 carries R1 as well. No AC introduces a word, a delay, a guard or a route.
 | | |
 |---|---|
 | **Named** | `registrationAcceptsTwelveAndOneTwentyEightCodePoints` — **extended**. After this task its name is fully earned. |
-| **Rows** | 128 ASCII (in) · 128 astral / 512 units (in) · 129 ASCII (out) — joining T43's 12, 13, 12-astral, 11, 7-emoji, empty |
+| **Rows** | 128 ASCII (in) · 128 astral / 256 units (in) · 129 ASCII (out) — joining T43's 12, 13, 12-astral, 11, 7-emoji, empty |
 | **Structural** | the `maxLength`/`minLength` absence pin (AC4) |
 | **Harness** | a fresh copy of T43's 28-row harness, re-aimed. The rows that must now behave differently: `countCodePoints` → `.length` (must die at the **upper** bound as well as the lower), `ADVISORY_MAXIMUM_CODE_POINTS` 128 → a larger number, the `<=` comparison deleted, and a `maxLength={128}` added to `PasswordField`. Every row predicts own / inherited / unfalsifiable, a BROKEN mutant is **not** a kill, and the baseline is asserted. |
 | **Not written here** | task 45's rejection-guidance test, task 46's counting test |

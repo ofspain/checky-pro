@@ -67,7 +67,7 @@ misread.
 | AC | claim | R |
 |---|---|---|
 | **AC1** | A **128-code-point ASCII** password is accepted: the request goes, the body carries exactly what was typed, nothing is disabled, and the field is **not** marked `aria-invalid` | R1 |
-| **AC2** | A **128-code-point astral** password — `'👍'.repeat(128)`, **512 UTF-16 units** — is accepted on the same terms, and `countCodePoints` reports 128 where `String.length` reports 512 | R1 |
+| **AC2** | A **128-code-point astral** password — `'👍'.repeat(128)`, **256 UTF-16 units** — is accepted on the same terms, and `countCodePoints` reports 128 where `String.length` reports 256 | R1 |
 | **AC3** | **129 code points is out of range**: marked `aria-invalid`, and the request still goes (advisory). Without this the claim *"128 is the maximum"* is unfalsifiable — a bound of `<= 999` satisfies AC1 and AC2. **Scope question below** | R1 |
 | **AC4** | Neither field carries `maxLength` or `minLength`. A `maxLength={128}` would truncate at 128 **UTF-16 units** — 64 astral characters — **before the count ever ran**, so a valid password would be silently halved | R1 |
 | **AC5** | Everything T43 proved still holds, **by extension and not by rewrite**: the table's control still shows the `inRange` column is load-bearing in both directions, and the whole suite stays green | L12 |
@@ -80,7 +80,7 @@ is task 45's.
 | | |
 |---|---|
 | **Named test** | `registrationAcceptsTwelveAndOneTwentyEightCodePoints` (`package.md:182`) — **extended**, not replaced. This is the second and last task that verifies it, so after this task its name is fully earned |
-| **Boundary rows implied** | 128 ASCII (in), 128 astral = 512 UTF-16 units (in), 129 (out, pending the scope answer). The existing rows already cover the lower bound: 11 out, 12 in, 13 in, 12-astral in, 7-emoji out, empty out |
+| **Boundary rows implied** | 128 ASCII (in), 128 astral = 256 UTF-16 units (in), 129 (out, pending the scope answer). The existing rows already cover the lower bound: 11 out, 12 in, 13 in, 12-astral in, 7-emoji out, empty out |
 | **Structural** | the absence of `maxLength`/`minLength` on both field primitives (AC4) |
 | **Harness** | a fresh copy of the 28-row harness, re-aimed: the rows that matter here are `countCodePoints` → `.length` (which must now die at the **upper** bound too), the bound itself changed from 128 to a larger number, and a `maxLength` attribute added to a field |
 | **Not written here** | `registrationRejectsPasswordsOutsideTwelveToOneTwentyEightCodePoints` (task 45) and `passwordLengthCountsCodePoints` (task 46) |
