@@ -51,6 +51,7 @@ BANNER = "frontend/src/app/ui/Banner.tsx"
 ROUTES = "frontend/src/app/routes.tsx"
 ONLY = "frontend/src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx"
 CATALOGUE = "frontend/src/i18n/catalogue.ts"
+SCREEN = "frontend/src/app/ui/Screen.tsx"
 
 # THIS TASK'S OWN FILES: the named suite it extended, and the instruments phase 6 grew. A kill in any of
 # them is task 42's, because the case that did the killing is task 42's work - including the nine grown
@@ -82,7 +83,7 @@ FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 REVERT_PATHS = ["frontend/src/", "frontend/vite.config.ts"]
 
-EXPECTED_BASELINE_FAILURES = 1  # of 1881: phase 6 added sixteen cases, phase 9 a seventeenth
+EXPECTED_BASELINE_FAILURES = 1  # of 1886: sixteen cases in phase 6, one in phase 9, five in phase 10
 KNOWN_ENVIRONMENTAL_FAILURES = {
     # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass.
     # USED ONLY FOR THE BASELINE REFUSAL CHECK. Attribution subtracts baseline-failing CASE NAMES, not
@@ -120,6 +121,10 @@ BANNER_BLOCK = HEADER_LINE + "\n        {children}\n      </header>"
 SITE = "  'app/AuthenticatedLayout.tsx',"
 PRIMITIVE = "  'Banner',"
 SIGNOUT_KEY = "    signOut: 'Sign out',"
+PUBLIC_MAP = "      ...PUBLIC_ROUTE_PATHS.map((path) => {"
+PUBLIC_MAP_END = "        return { path };\n      }),"
+SCREEN_LINE = ('      <main ref={ref} className="mx-auto flex max-w-prose flex-col gap-4 '
+               'px-6 py-12">')
 
 MUTANTS = [
     # --- AC1: a session renders the shell, which is the half of R28 nothing measured --------------------
@@ -252,6 +257,49 @@ MUTANTS = [
     ("TE22 the handler goes back to a bare reference, so React would hand endSession the click event",
      LAYOUT, CONTROL_LINE,
      "        <ActionButton onClick={endSession}>{t('shell.signOut')}</ActionButton>", "own"),
+
+    # --- PHASE 10: the five cases the reviews asked for, each with the row that measures it -----------
+    # The listener hoisted to module scope. React mounts, cleans up and mounts again under StrictMode, so a
+    # subscription that is not per-mount is closed by the first cleanup and the second mount is deaf. IT
+    # CANNOT ISOLATE STRICTMODE: module state outlives every case in the file, so the first `release()` makes
+    # every later mount deaf too and the non-strict journey dies beside the strict one. The row is kept
+    # because the regression is real; the uniqueness is not claimed (T174's F2, same limit).
+    ("TE23 the listener is hoisted to module scope, so it is not per-mount",
+     LAYOUT,
+     ("export function AuthenticatedLayout(): ReactElement {", LISTENER),
+     ("let sharedListening: { close(): void } | undefined;\n\n"
+      "export function AuthenticatedLayout(): ReactElement {",
+      ("    sharedListening ??= listenForSignOut(() => {\n      signOut();\n"
+       "      setSiblingSignedOut(true);\n    });\n    const listening = sharedListening;\n"
+       "    return () => listening.close();")),
+     "own"),
+    # The layout mounted on the PUBLIC branch as well. Every criterion about the authenticated tree still
+    # holds; what changes is that a tab on `/app/sign-in` grows chrome and a cross-tab listener - the exact
+    # state OQ-T42-5's case pins as absent.
+    ("TE24 the public routes are wrapped in the layout too",
+     ROUTES, (PUBLIC_MAP, PUBLIC_MAP_END),
+     ("      { element: <AuthenticatedLayout />, children: PUBLIC_ROUTE_PATHS.map((path) => {",
+      "        return { path };\n      }) },"), "own"),
+    # The ring clipped by the chrome around it. `outline` is drawn outside the box, so this is the one way the
+    # banner can take away a ring the primitive layer pins - and jsdom cannot see it computed.
+    ("TE25 the banner gains overflow-hidden, which clips the control's focus ring",
+     BANNER, HEADER_LINE, HEADER_LINE.replace("mx-auto flex", "mx-auto overflow-hidden flex"), "own"),
+    # The content column widened on ONE side of the pair. Phase 7's F4 and phase 8's I9 both said this would
+    # pass every case; the row is here to find out, because T173's REQUIRED_UTILITIES pins `max-w-prose` on
+    # `Screen` AND on `Banner` in two rows, which may already make the drift impossible.
+    ("TE26 Screen's content column is widened, so the chrome no longer lines up",
+     SCREEN, SCREEN_LINE, SCREEN_LINE.replace("max-w-prose", "max-w-4xl"), "inherited"),
+    # The GUTTER, which neither pinned row names. If TE26 is caught by an inherited pin and this one is caught
+    # only by the new pair case, then the gap F4 and I9 described was real but mislocated.
+    ("TE27 Screen's gutter changes, so the chrome and the screen have different edges",
+     SCREEN, SCREEN_LINE, SCREEN_LINE.replace("px-6 py-12", "px-10 py-12"), "own"),
+    # The receiving tab's order inverted: the flag first, `signOut()` second. The layout's own comment says
+    # the order is deliberate ("so this tab is clean before anything re-renders"). Predicted `own` because the
+    # return-target case now measures the net effect; a SURVIVOR would say the order claim is undefended.
+    ("TE28 the receiving tab sets the flag before it signs out",
+     LAYOUT, LISTENER,
+     ("    const listening = listenForSignOut(() => {\n      setSiblingSignedOut(true);\n"
+      "      signOut();\n    });\n    return () => listening.close();"), "own"),
 
     # --- a canary and an unfalsifiable row, scored apart --------------------------------------------
     # CONTROL for TE11. The derivation task 174 added claims BOTH directions; dropping an entry tests one,

@@ -937,5 +937,128 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       expect(permitted, 'the end-session importer list does not name the layout, so OQ-T36-5 is still open')
         .toContain("'app/AuthenticatedLayout.tsx',");
     });
+
+    // ===== PHASE 10 - the five gaps phases 7 and 8 named, each now an instrument =====================
+    // Grouped together deliberately: every case below exists because a REVIEW said it was missing, and three
+    // of them pin a LIMIT rather than a feature. A limit with no case is indistinguishable from an oversight.
+
+    it('AC14 under StrictMode: the sibling journey still works when the effect is double-invoked (I5)', async () => {
+      // The risk is not the double subscribe; it is the CLEANUP in between. React mounts, cleans up, mounts
+      // again, so a listener keyed on anything shared - a module-level channel, a count - could be closed by
+      // the first cleanup and leave the second mount deaf. That failure is silent: the chrome renders, the
+      // control works, and only a sibling's broadcast can tell. The non-strict case next door cannot see it.
+      retainAccessToken('a-token-this-tab-holds');
+      const { container, router } = await arrive(`${APP_BASENAME}/${HOME_PATH}`, { strict: true });
+      expect(banner(container), 'nothing rendered under StrictMode, so the broadcast proves nothing')
+        .not.toBeNull();
+
+      const sibling = new BroadcastChannel(SIGN_OUT_CHANNEL);
+      try {
+        await act(async () => {
+          sibling.postMessage({ type: SIGN_OUT_TYPE });
+          await Promise.resolve();
+        });
+      } finally {
+        sibling.close();
+      }
+
+      expect(accessToken.current(), 'the double-invoked effect left no live listener, so the tab kept its token')
+        .toBeNull();
+      expect(router.state.location.pathname, 'the tab stayed put under StrictMode')
+        .toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+    });
+
+    it('AC14 leaves the return target pointing at where THIS tab was when the sibling signed out', async () => {
+      // D11's accepted consequence, measured instead of described: `signOut()` clears the return target (T35)
+      // and `RedirectToSignIn` then remembers the path this tab was on - so a visitor who signs out in tab A
+      // and signs back in from tab B lands on tab B's screen, not tab A's. Nothing measured which of the two
+      // wins, in either direction, which is exactly how a documented consequence becomes a surprise.
+      retainAccessToken('a-token-this-tab-holds');
+      const { router } = await arrive(`${APP_BASENAME}/${HOME_PATH}`);
+
+      const sibling = new BroadcastChannel(SIGN_OUT_CHANNEL);
+      try {
+        await act(async () => {
+          sibling.postMessage({ type: SIGN_OUT_TYPE });
+          await Promise.resolve();
+        });
+      } finally {
+        sibling.close();
+      }
+
+      expect(router.state.location.pathname, 'the tab did not reach sign-in, so the value below is not D11\'s')
+        .toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+      expect(stored(), 'the redirect remembered something other than the path this tab was on')
+        .toBe(`/${HOME_PATH}`);
+    });
+
+    it('A TAB ON A PUBLIC PATH DOES NOT REACT to a sibling signing out, and that is a measured limit', async () => {
+      // THIS CASE PINS A HOLE, NOT A FEATURE (OQ-T42-5). The listener is installed by this layout, which is
+      // mounted only behind the gate, so a signed-in tab parked on `/app/sign-in` keeps its in-memory token
+      // until it navigates - and R22's "every open tab" is satisfied only in the sense that the token is dead
+      // at SAS. Closing it means an app-level listener, which is `AppShell`'s ground and L12 keeps this task
+      // off it (D9, D10). If a later task installs one, THIS CASE MUST FAIL - that is the point of writing it.
+      retainAccessToken('a-token-this-tab-holds');
+      const { container, router } = await arrive(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+      expect(banner(container), 'the chrome rendered on a PUBLIC path, so this measures the wrong tree')
+        .toBeNull();
+
+      const sibling = new BroadcastChannel(SIGN_OUT_CHANNEL);
+      try {
+        await act(async () => {
+          sibling.postMessage({ type: SIGN_OUT_TYPE });
+          await Promise.resolve();
+        });
+      } finally {
+        sibling.close();
+      }
+
+      expect(accessToken.current(), 'a public-path tab now reacts: an app-level listener exists, so OQ-T42-5 '
+        + 'is closed and this case is the one that has to change').toBe('a-token-this-tab-holds');
+      expect(router.state.location.pathname, 'the public tab navigated on a sibling broadcast')
+        .toBe(`${APP_BASENAME}/${SIGN_IN_PATH}`);
+    });
+
+    it('the banner declares no utility that could clip the focus ring the primitives pin (I6)', async () => {
+      // The ring itself is measured twice in T173's suite - as `focus-visible:outline-2` and
+      // `focus-visible:outline-focus` on each focusable primitive, and again in the BUILT css. Neither can see
+      // a wrapper that clips it, and `outline` is drawn OUTSIDE the box: `overflow-hidden` on the chrome would
+      // cut the ring off the only control in it. A computed-style assertion cannot stand in - jsdom loads no
+      // stylesheet, so every element's `outline` is the empty string (phase 9, I6).
+      const code = await srcFile('app/ui/Banner.tsx');
+      for (const clipping of [/\boverflow-/, /\bclip-/, /\bcontain-/, /\bmask-/]) {
+        expect(code, `the banner declares ${String(clipping)}, which can clip the control's focus ring`)
+          .not.toMatch(clipping);
+      }
+      // The control is inside the banner, so the ring that must survive is ActionButton's. Named here so a
+      // rename of the pin cannot leave this case guarding nothing.
+      const only = await srcFile('app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx');
+      expect(only, 'the focus-ring pin this case leans on is gone')
+        .toContain("gives %s a visible focus ring (L11, WCAG 2.4.7)");
+    });
+
+    it('the banner and the screen share one content column, which was a coincidence of two literals (I9)', async () => {
+      // PHASE 7 F4 AND PHASE 8 I9. `Banner` mirrors `Screen`'s width, gutter and centring so the chrome lines
+      // up with the screen below it - and nothing asserted that. Change `Screen` to a wider column and the
+      // banner stays at `max-w-prose`: every case passes and the control sits off the content edge. Each
+      // primitive owns its own width (rule 1), so the pin is on the PAIR, not on either literal.
+      const column = ['mx-auto', 'max-w-prose', 'px-6'];
+      const sources = {
+        Banner: await srcFile('app/ui/Banner.tsx'),
+        Screen: await srcFile('app/ui/Screen.tsx'),
+      };
+      for (const [name, code] of Object.entries(sources)) {
+        const classes = [...code.matchAll(/className="([^"]+)"/g)].flatMap((match) =>
+          (match[1] ?? '').split(/\s+/));
+        // A CONTROL ON THE COMPARISON ITSELF: two empty lists agree about everything, and a regex that stops
+        // matching is how a sameness assertion starts passing for free (T173's R30 pin, five empty lists).
+        expect(classes.length, `no className literal was found in ${name}, so the comparison is vacuous`)
+          .toBeGreaterThan(3);
+        for (const utility of column) {
+          expect(classes, `${name} no longer carries ${utility}, so the chrome and the screen have drifted`)
+            .toContain(utility);
+        }
+      }
+    });
   });
 });
