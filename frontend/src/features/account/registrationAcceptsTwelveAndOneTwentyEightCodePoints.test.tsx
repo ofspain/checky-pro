@@ -28,7 +28,8 @@ import { I18nextProvider } from 'react-i18next';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { accessToken } from '../../auth/accessToken';
-import { AUTHENTICATED_ROUTE_PATHS, PUBLIC_ROUTE_PATHS, REGISTER_PATH } from '../../app/routes';
+import { APP_BASENAME, appRoutes, AUTHENTICATED_ROUTE_PATHS, PUBLIC_ROUTE_PATHS,
+  REGISTER_PATH } from '../../app/routes';
 import { en } from '../../i18n/catalogue';
 import { createI18n } from '../../i18n/i18n';
 import { ADVISORY_MAXIMUM_CODE_POINTS, ADVISORY_MINIMUM_CODE_POINTS, countCodePoints } from './passwordLength';
@@ -238,6 +239,11 @@ const PASSWORDS: ReadonlyArray<{ name: string; password: string; codePoints: num
   { name: '12 astral code points, which are 24 UTF-16 units', password: '👍'.repeat(12), codePoints: 12, inRange: true },
   { name: '11 ASCII characters, one short', password: 'a'.repeat(11), codePoints: 11, inRange: false },
   { name: '7 emoji, which `.length` would call 14', password: '👍'.repeat(7), codePoints: 7, inRange: false },
+  // D16's clause, and it was unmeasured until phase 10 (phase 7 F5, phase 8 I10): "the empty string must
+  // not crash the count". Both fields empty is the most ordinary accidental submit there is, and the row
+  // asserts what every other row asserts - the request still goes, because R1's check is advisory and the
+  // server is the authority on an empty password as much as on a short one.
+  { name: 'the empty string, which must not crash the count', password: '', codePoints: 0, inRange: false },
 ];
 
 describe('AC2/AC3/AC4 the advisory range marks and never blocks', () => {
@@ -277,6 +283,17 @@ describe('AC2/AC3/AC4 the advisory range marks and never blocks', () => {
     expect(countCodePoints(passwordInput(container).value)).toBe(12);
     expect(ADVISORY_MINIMUM_CODE_POINTS).toBe(12);
     expect(ADVISORY_MAXIMUM_CODE_POINTS).toBe(128);
+  });
+
+  it('counts a total function: empty, astral, and a lone surrogate all return a number (D16)', () => {
+    // `passwordLength.ts`'s header claims this and nothing asserted it. R1 makes the check ADVISORY, so a
+    // count that could throw would be a client-side gate - which is the one thing R1 forbids the client to
+    // be. A lone surrogate is included because the spread iterates CODE POINTS and a half pair is one.
+    expect(countCodePoints('')).toBe(0);
+    expect(countCodePoints('\uD83D')).toBe(1);
+    expect(countCodePoints('a\uD83Db')).toBe(3);
+    expect(countCodePoints('👍')).toBe(1);
+    expect(countCodePoints('👍'.repeat(128))).toBe(128);
   });
 
   it('marks nothing before the first submit, because the check is a submit-time one', async () => {
@@ -367,6 +384,31 @@ describe('AC6 the screen says what the catalogue says, and never a key', () => {
     expect(text, 'a key leaked into the DOM, so the catalogue lookup failed').not.toMatch(/register\./);
   });
 
+  it('reaches the catalogue for every word it renders, which the DOM cannot tell from a literal', async () => {
+    const code = (await read('features/account/RegisterScreen.tsx'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
+
+    // THE HOLE THE HARNESS FOUND (TR09, a survivor). Hardcoded English is BYTE-FOR-BYTE what the catalogue
+    // holds, so every assertion above passes against a screen that spells its own words: comparing the DOM
+    // with the catalogue cannot distinguish a lookup from a literal. Only the source can, and it is
+    // asserted in both directions - every key is reached, and no sentence is spelled.
+    for (const key of ['register.heading', 'register.emailLabel', 'register.passwordLabel',
+      'register.submit', 'register.submitting', 'register.success']) {
+      expect(code, `the screen does not reach the catalogue for ${key}`).toContain(`'${key}'`);
+    }
+    // A WORD-BOUNDARY MATCH, NOT A SUBSTRING, AND THE TRAP BIT A SECOND TIME TO TEACH IT. Written as a
+    // plain `toContain` this failed instantly: 'Password' is the catalogue's one single-word string and it
+    // is a substring of `PasswordField` in this screen's own import. T173's copy scan was corrected for
+    // exactly this in phase 6 - the same mistake, in a different file, because the matcher lives in two
+    // suites and not in a shared module (FU-T43-2). A sentence is SPELLED in a string literal or as JSX
+    // text; inside an identifier it is a name.
+    for (const sentence of Object.values(en.register)) {
+      const escaped = sentence.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      expect(code, `the screen spells "${sentence}" instead of looking it up`)
+        .not.toMatch(new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`));
+    }
+  });
+
   it('renders the success sentence from the catalogue after the submit, as literal English', async () => {
     installTransport(() => ACCEPTED);
     const container = await renderScreen();
@@ -441,6 +483,36 @@ describe('AC8 the screen is public and declares no new route', () => {
     // It imports nothing from `auth/` AT ALL, which is stronger than "does not read a token" and is the
     // reason the screen lives in `features/account/` rather than beside the three OIDC screens.
     expect(code, 'the registration screen reaches into the auth flow').not.toMatch(/from '\.\.\/\.\.\/auth\//);
+  });
+
+  it('arrives at /app/register through the REAL route table, with no session (phase 8, I2)', async () => {
+    // EVERY OTHER CASE IN THIS FILE MOUNTS THE SCREEN UNDER A PROBE ROUTE, which measures the screen and
+    // not the journey to it. `routesResolveUnderAppPrefixOnly` resolves this path with `matchRoutes` -
+    // resolution, not rendering - and `publicRouteSetIsExactlyTheDeclaredSet` walks the table for an
+    // element. Neither RENDERS it, and T41 and T42 both proved their composition this way.
+    const container = document.createElement('div');
+    document.body.append(container);
+    const router = createMemoryRouter(appRoutes, {
+      basename: APP_BASENAME,
+      initialEntries: [`${APP_BASENAME}/${REGISTER_PATH}`],
+    });
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <I18nextProvider i18n={createI18n()}>
+          <RouterProvider router={router} />
+        </I18nextProvider>,
+      );
+    });
+    mounted = { root, container, router };
+
+    // THE CLAIM IS THAT IT IS OUTSIDE THE GATE, and no token was retained before this mount. A screen
+    // attached inside `RequireSession` would have redirected to sign-in instead of rendering a form.
+    expect(accessToken.current(), 'a token was present, so this proves nothing about a public path').toBeNull();
+    expect(container.querySelector('form'), 'the real table did not render the registration form').not.toBeNull();
+    expect(container.textContent).toContain(en.register.heading);
+    expect(router.state.location.pathname, 'the gate redirected a visitor with no session')
+      .toBe(`${APP_BASENAME}/${REGISTER_PATH}`);
   });
 
   it('changes neither declared path set: `register` was already there, with no element', () => {
@@ -629,6 +701,40 @@ describe('AC11 the same result is rendered whatever the server answers (R2, L4)'
 // ==========================================================================================================
 // D1 / D7 — the status region is pre-mounted, filled, and the screen never navigates
 // ==========================================================================================================
+
+describe('the transport itself fails, which is not a response (phase 7 F2, phase 8 I7)', () => {
+  it('returns the form to its idle state when the send rejects, and claims nothing', async () => {
+    // `openapi-fetch` RESOLVES for every HTTP answer - which is why the three AC11 rows above all reach the
+    // success branch - and REJECTS when the transport throws: offline, DNS failure, a blocked request. The
+    // first version of this screen had no handler for that, so the rejection escaped and the live region
+    // stayed on "Creating your account..." forever. This is the case that holds the fix.
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))));
+    const container = await renderScreen();
+
+    await fillAndSubmit(container, 'visitor@example.test', 'a'.repeat(12));
+    await settle();
+
+    // NOTHING IS CLAIMED. Not success - no account was requested; and not a sentence, because D7 froze this
+    // screen's key set at six and a failure word is an owner's decision (OQ-T43-9). The live region empties.
+    expect(statusRegion(container).textContent, 'the screen reported an outcome it cannot know').toBe('');
+    expect(container.textContent, 'a transport error leaked into the copy').not.toMatch(/fetch|error|failed/i);
+
+    // AND THE FORM IS STILL USABLE, which is the only thing that can help when the request never left the
+    // tab: both values are still there and the control is still live, so pressing it again retries.
+    expect(emailInput(container).value).toBe('visitor@example.test');
+    expect(passwordInput(container).value).toBe('a'.repeat(12));
+    expect(submitControl(container).hasAttribute('disabled')).toBe(false);
+
+    // The retry really is a retry: a second submit reaches the transport again.
+    const sent = installTransport(() => ACCEPTED);
+    await act(async () => {
+      submitControl(container).click();
+    });
+    await settle();
+    expect(sent, 'the form was left in a state that cannot submit again').toHaveLength(1);
+    expect(statusRegion(container).textContent).toBe(en.register.success);
+  });
+});
 
 describe('D1/D7 the result is announced in place, and the screen does not navigate', () => {
   it('mounts the live region before the submit, empty, so the fill is an announcement (D1)', async () => {
