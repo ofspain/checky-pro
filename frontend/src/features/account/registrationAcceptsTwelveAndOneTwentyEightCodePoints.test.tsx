@@ -350,6 +350,23 @@ describe('AC2/AC3/AC4 the advisory range marks and never blocks', () => {
       expect(field.hasAttribute('maxlength'), 'a field caps its length, in UTF-16 units').toBe(false);
       expect(field.hasAttribute('minlength'), 'a field floors its length, in UTF-16 units').toBe(false);
     }
+
+    // CONTROL, IN THE SAME CASE because it is the same predicate: an input that DOES carry the attributes
+    // answers true. Without it, the four assertions above would pass identically if `hasAttribute` were
+    // handed a name no element ever carries, and the pin would be vacuous in the way T42's AC11 was.
+    const probe = container.ownerDocument.createElement('input');
+    probe.setAttribute('maxlength', '128');
+    probe.setAttribute('minlength', '12');
+    expect(probe.hasAttribute('maxlength'), 'the predicate cannot see a cap that is there').toBe(true);
+    expect(probe.hasAttribute('minlength'), 'the predicate cannot see a floor that is there').toBe(true);
+    // MEASURED, AND IT CORRECTS WHAT THIS COMMENT FIRST CLAIMED. The spelling risk here is not the casing:
+    // `hasAttribute` is ASCII-case-insensitive on an HTML element, so the camelCase React prop name answers
+    // for the lowercase DOM attribute and CANNOT make the pin vacuous. What can is a name that is simply
+    // wrong, which is the assertion below - and which is why the control exists at all.
+    expect(probe.hasAttribute('maxLength'), 'hasAttribute stopped being case-insensitive on an HTML element')
+      .toBe(true);
+    expect(probe.hasAttribute('maxlenght'), 'the predicate answers true for an attribute nobody set')
+      .toBe(false);
   });
 
   it('submits with BOTH fields empty, because the server is the authority on an empty address too', async () => {

@@ -446,6 +446,26 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     }
   });
 
+  it('CONTROL: the length-cap scan can SEE a cap — the negative above is not self-proving (T44)', () => {
+    // THIRTEEN FILES ASSERTING THAT SOMETHING IS ABSENT, and until this case existed the only thing that
+    // could tell a live scan from a dead one was a mutation run. T42's AC11 was vacuous from the day it was
+    // written for exactly that reason: a negative assertion with no positive proof passes whether the
+    // instrument works or not. The harness's TR32 and TR35 are the end-to-end proof; this is the one that
+    // travels with the file, and it fails the moment somebody "tidies" the regexes into something narrower.
+    const capped = 'export function F() {\n  return <input type="text" maxLength={128} minLength={12} />;\n}';
+    expect(withoutComments(capped)).toMatch(/maxLength/i);
+    expect(withoutComments(capped)).toMatch(/minLength/i);
+    // AND THE BREADTH IS THE POINT (phase 7 F5, phase 8 I4, declined deliberately). A narrower
+    // `\bmaxLength\s*=` matches the JSX attribute above and MISSES both shapes below, each of which caps a
+    // field just as effectively. That is why the scan matches the bare word.
+    expect(withoutComments('const extra = { maxLength: 128 };\nexport const F = () => <input {...extra} />;'))
+      .toMatch(/maxLength/i);
+    expect(withoutComments('export const F = ({ maxLength }: Props) => <input maxLength={maxLength} />;'))
+      .toMatch(/maxLength/i);
+    // The other direction, so the scan is not simply matching everything: a file with no cap does not match.
+    expect(withoutComments('export const F = () => <input type="text" />;')).not.toMatch(/maxLength|minLength/i);
+  });
+
   it('CONTROL: a string literal holding a tag IS counted — the known limit of a text scan (F11)', () => {
     // Recorded as a limitation rather than fixed. The scan reads source text, not an AST, so a file holding
     // the STRING "<div>" would be reported as rendering one. No file in the package does, and the honest
