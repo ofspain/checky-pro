@@ -144,3 +144,53 @@ primitive that accepted a mark nothing computes would be a prop with no caller.
 | **Idempotency** | the request carries exactly what was typed and is sent once per submit (F6 is about two submits, not one) |
 | **Transaction boundaries / money types / thread-safety** | no counterpart in a browser bundle |
 | **`agents.md`** | no spec file touched; no new route path; no state library; flat catalogue keys |
+
+---
+
+## Measured after the review — the thirteenth harness copy
+
+`python3 -I .ai/prompts/frontend/T43/artifacts/07-mutation-harness.py` → **26 rows, 22/24 regressions
+killed, 0 BROKEN, 1 canary killed, 3 survivors, 1 disagreement.** Full output in
+`artifacts/07-mutation-run.txt`; baseline 1 failed of **1931**, the documented host `oxlint` case, with
+attribution subtracting that case **by name**.
+
+| row | expected | got | |
+|---|---|---|---|
+| TR01–TR08, TR10–TR20, TR22, TR23 | `own` | **KILLED/own** | every one killed inside this task's files |
+| **TR09** copy hardcoded in English | survive | **SURVIVED** | the hole: hardcoded English is byte-for-byte the catalogue's, so no copy assertion can tell a lookup from a literal |
+| **TR21** focus moved on mount | survive | **SURVIVED** | D5 has no case; AC9 focuses each control deliberately, so a screen that stole focus on arrival passes every row |
+| **TR24** `noValidate` removed | `unfalsifiable` | **SURVIVED** | as predicted, and the limit is jsdom's: it performs no interactive constraint validation |
+| **TR25** canary (an 11-code-point row claiming to be in range) | killed | **KILLED/own** | the length table's assertions are awake, not merely generated |
+| **TR26** the send rejects | survive | **KILLED/own**, 13 cases | **the disagreement, and the mutant is what was wrong** |
+
+### TR23 confirms phase 6's deviation was the right call
+
+The freeze named the advisory check **unfalsifiable**. With `aria-invalid` consumed, replacing the whole
+check with `setAdvisory('in-range')` is caught by every out-of-range row in the table. Had the check been
+left with no consumer, this row would have survived and the task would have shipped dead code with a green
+harness — which is what D16/D17 were predicting without naming it as a cost.
+
+### TR26 — a mutant that dies can still measure nothing (T36's lesson, again)
+
+TR26 replaced the whole send with a rejecting promise, so **thirteen** cases failed — five of them
+*"sends … to the server either way"*, which fail because **no request was sent at all**, not because one
+rejected. The row measured a *missing send*, not a *rejected* one: it did not isolate the hole it records.
+
+What this says about **F2** is precise, and it is not what F2 claimed:
+
+- **The suite can see the symptom.** A send that never resolves leaves the live region on
+  *"Creating your account…"*, and thirteen cases notice.
+- **F2's defect stands on inspection and is unchanged**: production attaches no rejection handler, so an
+  offline submit leaves an unhandled rejection and a visitor stuck on the in-flight copy forever.
+- **F2's sentence *"no mutant can"* was wrong in its reasoning.** The reachable mutation is in the
+  **transport**, which is test-controlled, so a source row cannot isolate it. The instrument that can is a
+  case with a throwing transport — **phase 10 owes it**, and TR26 is withdrawn as evidence for F2 rather
+  than counted as having measured it.
+
+### What the three survivors oblige
+
+| | |
+|---|---|
+| **TR09** | phase 10: a source assertion that the screen reaches `t()` for all five strings — the only thing that distinguishes a lookup from an identical literal |
+| **TR21** | phase 10: D5's case — mount the screen and assert `document.activeElement` is still `<body>`, the shape task 174 wrote for the opposite claim |
+| **TR26** | phase 10: a throwing-transport case, after phase 9 decides F2's fix |
