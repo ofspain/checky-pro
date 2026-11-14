@@ -43,6 +43,13 @@ import { ActionButton, Banner } from './ui';
  * replace-vs-push decision all stay with the component task 41 built to own them. A `useNavigate` here
  * would have been a second copy of three decisions that already have a home.
  *
+ * **THE HANDLER IS A CALL, NOT A REFERENCE** (phase 8 I4, phase 7 F3). `onClick={endSession}` type-checks
+ * today, because `ActionButton` declares `onClick?: () => void` and `endSession(): void` takes nothing, and
+ * React would simply hand it a `MouseEvent` that the signature drops. It stops being harmless the moment
+ * `endSession` grows an OPTIONAL first parameter - `endSession(hint?: string)` is still assignable to
+ * `() => void`, so `tsc` would stay silent while the click event arrived as the hint. The closure costs one
+ * allocation per render and removes the whole class of bug; AC13's source case pins the shape.
+ *
  * It renders no `Screen` and no `Heading`: `Screen` is the `<main>` landmark and nests nowhere, and the
  * matched screen below already renders the page's only `<h1>` (phase 3 F3). It takes no focus, holds no ref
  * and renders no non-negative `tabIndex` (F4) - task 174 made every `<h1>` focusable and wrote the guard
@@ -50,6 +57,11 @@ import { ActionButton, Banner } from './ui';
  */
 export function AuthenticatedLayout(): ReactElement {
   const { t } = useTranslation();
+  // ONE-WAY, AND SAFE ONLY BECAUSE THE REDIRECT UNMOUNTS THIS LAYOUT (phase 8 I10, phase 7 F7). Nothing
+  // clears the latch: `RedirectToSignIn` navigates, the tree remounts under the gate with no session, and
+  // this component is gone. A later flow that re-mounted the layout WITHOUT a tree remount - signing in
+  // again in place - would arrive with the latch still set and redirect straight back out. Whoever builds
+  // that clears it here; today there is no such path, and a reset with no caller is a reset nothing holds.
   const [siblingSignedOut, setSiblingSignedOut] = useState(false);
 
   useEffect(() => {
@@ -68,7 +80,7 @@ export function AuthenticatedLayout(): ReactElement {
   return (
     <>
       <Banner>
-        <ActionButton onClick={endSession}>{t('shell.signOut')}</ActionButton>
+        <ActionButton onClick={() => endSession()}>{t('shell.signOut')}</ActionButton>
       </Banner>
       <Outlet />
     </>

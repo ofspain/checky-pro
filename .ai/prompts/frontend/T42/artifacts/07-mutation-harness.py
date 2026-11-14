@@ -21,6 +21,9 @@ file still parses; and a mutant on a list that FEEDS `it.each` renames instead o
 deleting an entry deletes a generated case and the drop in the total is indistinguishable from a file
 that never loaded.
 
+PHASE 9 ADDED TE22 and moved every CONTROL_LINE row onto the closure form, so each of them changes only
+the thing it names.
+
 FOUR OUTCOMES, AND EVERY ROW PREDICTS ONE:
 
   `own`           killed, AND with a named failure in a file this task owns or grew.
@@ -79,7 +82,7 @@ FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
 REVERT_PATHS = ["frontend/src/", "frontend/vite.config.ts"]
 
-EXPECTED_BASELINE_FAILURES = 1  # of 1880 after phase 6 added task 42's sixteen cases
+EXPECTED_BASELINE_FAILURES = 1  # of 1881: phase 6 added sixteen cases, phase 9 a seventeenth
 KNOWN_ENVIRONMENTAL_FAILURES = {
     # This host's oxlint@1.87.0 prints no summary line, so the assertion that parses it cannot pass.
     # USED ONLY FOR THE BASELINE REFUSAL CHECK. Attribution subtracts baseline-failing CASE NAMES, not
@@ -99,7 +102,10 @@ LISTENER = """    const listening = listenForSignOut(() => {
     return () => listening.close();"""
 CLEANUP = "    return () => listening.close();"
 REDIRECT = "  if (siblingSignedOut) return <RedirectToSignIn />;"
-CONTROL_LINE = "        <ActionButton onClick={endSession}>{t('shell.signOut')}</ActionButton>"
+# PHASE 9 (I4): the handler is now a closure, not a bare reference. Every row that replaces this line
+# keeps the closure so the only thing it changes is the thing it names - and TE22 is the row that measures
+# the change itself by reverting it.
+CONTROL_LINE = "        <ActionButton onClick={() => endSession()}>{t('shell.signOut')}</ActionButton>"
 OUTLET = "      <Outlet />"
 BANNER_OPEN = "      <Banner>"
 HEADER_LINE = ('      <header ref={ref} className="mx-auto flex w-full max-w-prose '
@@ -176,7 +182,7 @@ MUTANTS = [
     # --- AC6: the one word comes from the catalogue ----------------------------------------------------
     ("TE09 the label is hardcoded in the component",
      LAYOUT, CONTROL_LINE,
-     "        <ActionButton onClick={endSession}>Sign out</ActionButton>", "own"),
+     "        <ActionButton onClick={() => endSession()}>Sign out</ActionButton>", "own"),
     # The catalogue entry renamed. The DOM would show nothing where the label was, which is what a missing
     # key looks like (O3) - and T173's key-set pin should see it too.
     ("TE10 the catalogue key is renamed, so the label resolves to nothing",
@@ -218,7 +224,7 @@ MUTANTS = [
     # every local assertion still passes. Both functions are already imported, so it is a one-word change.
     ("TE16 the control calls signOut() instead of endSession(), so SAS keeps the session",
      LAYOUT, CONTROL_LINE,
-     "        <ActionButton onClick={signOut}>{t('shell.signOut')}</ActionButton>", "own"),
+     "        <ActionButton onClick={() => signOut()}>{t('shell.signOut')}</ActionButton>", "own"),
     # Two hand-overs where R19 allows one. A spy that only asserted "assign was called" would pass.
     ("TE17 the control hands over twice",
      LAYOUT, CONTROL_LINE,
@@ -236,6 +242,16 @@ MUTANTS = [
     ("TE19 the receiving tab redirects without signing out locally",
      LAYOUT, "      signOut();\n      setSiblingSignedOut(true);", "      setSiblingSignedOut(true);",
      "own"),
+
+    # --- AC13, added in phase 9 for the fix phase 8's I4 asked for ----------------------------------
+    # The handler back to a bare reference. NOTHING BEHAVIOURAL CAN SEE THIS: `endSession(): void` drops the
+    # `MouseEvent` React would hand it, and `tsc` cannot object because a function with an optional first
+    # parameter is still assignable to `() => void`. That is precisely why the fix came with a shape
+    # assertion rather than a spy - and why this row exists to prove the assertion is awake. If it survives,
+    # the fix is a comment.
+    ("TE22 the handler goes back to a bare reference, so React would hand endSession the click event",
+     LAYOUT, CONTROL_LINE,
+     "        <ActionButton onClick={endSession}>{t('shell.signOut')}</ActionButton>", "own"),
 
     # --- a canary and an unfalsifiable row, scored apart --------------------------------------------
     # CONTROL for TE11. The derivation task 174 added claims BOTH directions; dropping an entry tests one,

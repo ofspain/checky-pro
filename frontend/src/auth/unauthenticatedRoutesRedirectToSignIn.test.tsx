@@ -770,6 +770,13 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
         '../api/crossTabSignOut', '../auth/RedirectToSignIn', '../auth/endSession', '../auth/signOut',
         './ui', 'react', 'react-i18next', 'react-router',
       ].sort());
+      // PHASE 8 I4. A bare `onClick={endSession}` hands the handler React's `MouseEvent`, which the current
+      // signature drops and `tsc` cannot object to - `(hint?: string) => void` is assignable to `() => void`,
+      // so the day someone adds an optional parameter the click event arrives as the hint. Nothing
+      // BEHAVIOURAL can see that today, which is why this is a shape assertion and sits here rather than in
+      // the case above: `endSession` is not mocked there, deliberately, and the hazard has no effect yet.
+      expect(code, 'the handler is a bare reference, so React hands endSession the click event')
+        .toMatch(/onClick=\{\(\) => endSession\(\)\}/);
       for (const forbidden of [/\btakeIdToken\b/, /\bretainIdToken\b/, /\bbroadcastSignOut\b/,
         /\bmarkSignedOut\b/, /\bmarkSignedIn\b/, /\bhasSignedOut\b/, /\bEND_SESSION_PATH\b/,
         /\baccessToken\b/, /\bglobalThis\.location\b/, /\bhistory\b/, /\bdocument\.cookie\b/,
@@ -919,6 +926,13 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       expect(only, 'the render-site count still says six').toMatch(/toHaveLength\(7\)/);
       expect(only, 'the primitive count still says eight').toMatch(/toHaveLength\(9\)/);
       expect(only, 'the union pin no longer says sixteen').toMatch(/\.toBe\(16\)/);
+    });
+
+    it('OQ-T36-5: the end-session suite names this layout as its first permitted importer', async () => {
+      // SPLIT OUT OF THE AC7 CASE (phase 8 I8). It was a third list, in another file, about an open question
+      // rather than about AC7's two pins - and an open question with no case named after it is an open
+      // question nobody can find. T36 wrote `PERMITTED_IMPORTERS` empty with the instructions in its own
+      // failure message, for whichever task first called the sign-out path. This is that task.
       const permitted = await srcFile('auth/signOutClearsMemoryAndEndsSasSession.test.tsx');
       expect(permitted, 'the end-session importer list does not name the layout, so OQ-T36-5 is still open')
         .toContain("'app/AuthenticatedLayout.tsx',");

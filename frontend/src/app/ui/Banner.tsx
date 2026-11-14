@@ -21,7 +21,17 @@ import { forwardRef, type ReactNode } from 'react';
  * task that nests the layout inside a screen would demote this landmark without changing one line here.
  *
  * It carries no copy (rule 3) and accepts no `className` or `style` (rule 1). The width, gutter and centring
- * mirror `Screen`'s so the chrome and the screen below it share one content column.
+ * mirror `Screen`'s so the chrome and the screen below it share one content column - and that is a
+ * COINCIDENCE OF TWO LITERALS, not an enforced relationship (phase 8 I9, phase 7 F4). Change `Screen` to a
+ * wider column and the banner stays at `max-w-prose`, every case passes, and the control sits off the
+ * content edge. Each primitive owns its own width, so neither pin is wrong; what is missing is a pin on the
+ * pair, and task 42's phase 10 adds one.
+ *
+ * **IT HAS NO ACCESSIBLE NAME, DELIBERATELY** (phase 8 I7). A landmark's name is what distinguishes it from
+ * its siblings, and there is exactly one banner in the document (`Screen` is the one `<main>`, and nothing
+ * else here is a landmark), so a screen reader announcing "banner" is unambiguous. Naming it would mean
+ * copy - the application's name - which is a catalogue key and an owner's decision, and D1 froze this chrome
+ * as a sign-out control and nothing else. The task that adds navigation to it should revisit this.
  */
 export const Banner = forwardRef<HTMLElement, { children: ReactNode }>(
   function Banner({ children }, ref) {
