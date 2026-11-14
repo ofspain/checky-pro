@@ -18,9 +18,9 @@
 | `tsc --noEmit` | **exit 0** |
 | `oxlint src` | **exit 0** |
 | `vitest run` | **1945 / 1946 passed** — 1 known environmental `lintRejectsHandWrittenBackendFetch.test.ts` |
-| `python3 -I .ai/prompts/frontend/T44/artifacts/07-mutation-harness.py` | **pending** — running in background |
+| `python3 -I .ai/prompts/frontend/T44/artifacts/07-mutation-harness.py` | **32/32 regressions killed**, 2 canaries killed, **1 expected survivor** (TR24), **0 broken**, **0 disagreements** |
 
-The named suite count and whole-suite count match the Phase 10 manifest. Harness results will be appended when the background run completes.
+The named suite count, whole-suite count, and harness outcome all match the Phase 10 manifest exactly.
 
 ---
 
@@ -62,11 +62,11 @@ The named suite count and whole-suite count match the Phase 10 manifest. Harness
 · **Assessment:** A `.length`-based check would pass ASCII rows at both ends, so this is not a falsifiable claim for 128 ASCII. The 128-astral case and the table's astral rows catch the false reject. Not a defect.
 · **Recommendation:** None.
 
-### F7 — The harness is still the same flaky machinery
+### F7 — This harness run was clean, but the machinery has shown flakiness before
 · **Severity:** **Minor/Major**
-· **Evidence:** Phase 8 I1 documented non-deterministic outcomes (TR18/TR20 BROKEN in one run, killed in another; self-review's TR24 flake).
-· **Assessment:** Phase 10 did not change the harness machinery; it only added rows TR29-TR35. The flakiness observed in Phase 8 could still occur. Phase 11 verification will show whether the current run is stable.
-· **Recommendation:** Re-run the harness at least twice for this phase and report all runs. Any BROKEN or DISAGREES row must be re-run in isolation before acceptance.
+· **Evidence:** This run: **32/32 regressions killed**, 0 broken, 0 disagreements. Phase 8 I1 documented non-deterministic outcomes (TR18/TR20 BROKEN in one run, killed in another; the self-review's TR24 flake).
+· **Assessment:** Phase 10 did not change the harness machinery; it only added rows TR29-TR35. This run was stable, but the machinery has previously produced false BROKEN and false DISAGREES verdicts. One clean run does not erase that history.
+· **Recommendation:** For closure, re-run the harness at least once more and report both runs. Any BROKEN or DISAGREES row in any run must be re-run in isolation before acceptance.
 
 ### F8 — The `PASSWORDS` table comment still documents the 256-unit correction
 · **Severity:** **Positive**
@@ -98,6 +98,6 @@ The named suite count and whole-suite count match the Phase 10 manifest. Harness
 
 Phase 10 closed all the major holes from Phases 7–8: the length-cap scan now covers every primitive and carries a control (**F1**), the rendered AC4 case has a positive control for `hasAttribute` (**F2**), and TR35 falsifies the `EmailField`/`minLength` assertions (**F3**). The remaining concerns are minor: the optional 129-astral row (**F5**), the already-documented harness flakiness (**F7**), and the absence of a redundant DOM-length assertion for ASCII rows (**F6**). The acceptance criteria are fully mapped to tests and mutants (**F10**), and no production code was touched (**F11**).
 
-The main action item for Phase 11 closure is to confirm the harness runs cleanly and stably; the tests themselves are strong.
+This harness run was clean (32/32 killed, 0 broken, 0 disagreements), matching the Phase 10 manifest. Because the same machinery produced flaky verdicts in Phase 8, one more clean run would strengthen closure.
 
 **Phase 11 complete.** Eleven findings returned; no code changed.
