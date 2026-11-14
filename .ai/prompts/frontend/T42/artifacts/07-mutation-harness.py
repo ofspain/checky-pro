@@ -310,8 +310,14 @@ MUTANTS = [
     # UNFALSIFIABLE by design, and the design is T173's: spacing is not pinned anywhere, deliberately, so a
     # padding change should be invisible. A kill would mean some case is pinning a class string it has no
     # business pinning - which is the failure mode this row exists to detect, in either direction.
-    ("TE21 the banner's padding changes",
-     BANNER, HEADER_LINE, HEADER_LINE.replace("px-6 pt-6", "px-8 pt-10"), "unfalsifiable"),
+    #
+    # PHASE 10 NARROWED IT, AND THE FIRST VERSION'S KILL IS WHY. This row changed `px-6 pt-6` to `px-8 pt-10`
+    # and was killed by phase 10's own new case, which pins `px-6` on BOTH `Banner` and `Screen` as the
+    # shared content column. That kill is correct and the row was wrong: the GUTTER is now pinned on purpose,
+    # narrowly and on the pair, so a gutter change must move both files together. What stays unpinned is the
+    # vertical padding, and that is what this row now mutates - the part T173's decision was actually about.
+    ("TE21 the banner's vertical padding changes, which is the part no case pins",
+     BANNER, HEADER_LINE, HEADER_LINE.replace("pt-6", "pt-10"), "unfalsifiable"),
 ]
 
 def as_tuple(value):
