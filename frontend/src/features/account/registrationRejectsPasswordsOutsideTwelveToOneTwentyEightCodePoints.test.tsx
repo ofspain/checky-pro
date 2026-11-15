@@ -305,7 +305,13 @@ describe('AC4 the guidance is attached to the password field', () => {
 
     const id = passwordInput(container).getAttribute('aria-describedby');
     expect(id, 'the field describes itself with nothing, so the sentence is visual only (L11)').not.toBeNull();
-    const described = container.ownerDocument.getElementById(id!);
+    // THE WALK IS SPELLED OUT HERE, not delegated to `describedElement`, because this case is what proves
+    // that walk is the right one - a case that used the helper would be testing the helper's opinion. But
+    // the LOOKUP is scoped to the container exactly as the helper's is: phase 9 fixed the helper and left
+    // this copy document-wide, and phase 11's F1 found the copy. Half of that finding was already false
+    // when it was written - the helper had been fixed two phases earlier - and the half that was true is
+    // the one a fix in one place and not its duplicate always leaves behind.
+    const described = container.querySelector<HTMLElement>(`#${CSS.escape(id!)}`);
     expect(described, `aria-describedby names "${id}" and no element has that id`).not.toBeNull();
     expect(described?.textContent).toBe(GUIDANCE);
     // ONE id, not a list. `aria-describedby` takes space-separated ids and a screen that accumulated them
