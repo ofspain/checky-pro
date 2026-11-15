@@ -184,11 +184,14 @@ afterEach(async () => {
 const OUT_OF_RANGE: ReadonlyArray<{ name: string; password: string; codePoints: number }> = [
   { name: '11 ASCII characters, one short of the lower bound', password: 'a'.repeat(11), codePoints: 11 },
   { name: '129 ASCII characters, one past the upper bound', password: 'a'.repeat(129), codePoints: 129 },
-  // 129 CODE POINTS, 258 UTF-16 UNITS. Task 44 measured that the counting bug points a different way at
-  // each end, so an astral row belongs on the side of the range where the bug REJECTS: if the screen ever
-  // counted units, this password would be out of range for the wrong reason and the guidance would be
-  // right by accident. The case below asserts the count as well as the sentence, so the two cannot agree
-  // by coincidence.
+  // 129 CODE POINTS, 258 UTF-16 UNITS - AND THIS ROW DISCRIMINATES NOTHING, which phase 10 measured and
+  // this comment used to deny. It was half right: it said a unit-counting screen would find this password
+  // "out of range for the wrong reason and the guidance would be right by accident", which is exactly so,
+  // 258 being outside 12-to-128 on either count. What it then claimed is false - that the case below
+  // "asserts the count as well as the sentence, so the two cannot agree by coincidence". The count
+  // assertion is `countCodePoints(password) === 129`, a claim about the HELPER; it says nothing about
+  // which unit the SCREEN compared, and cannot tell the two apart. The row that can is the last one in
+  // this table, at the end where the same bug falls SILENT.
   { name: '129 astral code points, which are 258 UTF-16 units', password: '\u{1F44D}'.repeat(129), codePoints: 129 },
   // D16's clause and the freeze's F11: zero is out of range, the count is total, and an untouched form is
   // the most ordinary accidental submit there is. It gets the same sentence as every other row because the
