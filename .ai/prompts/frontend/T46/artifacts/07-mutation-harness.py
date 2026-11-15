@@ -373,7 +373,7 @@ MUTANTS = [
     ("TR25 CANARY an 11-code-point row claims to be in range",
      SUITE, TABLE_LAST_ROW,
      TABLE_LAST_ROW + "\n  { name: 'CANARY', password: 'a'.repeat(11), codePoints: 11, inRange: true },",
-     "own"),
+     "inherited"),
 
     # --- F2 / I7, now that there is a handler to delete ----------------------------------------------
     # THE ROW PHASE 7 SHOULD HAVE WRITTEN. Its predecessor replaced the whole send with a rejecting
@@ -447,7 +447,7 @@ MUTANTS = [
     ("TR34 CANARY a 129-code-point row claims to be in range",
      SUITE, PASSWORD_ROW_129,
      PASSWORD_ROW_129 + "\n  { name: 'CANARY', password: 'a'.repeat(129), codePoints: 129, inRange: true },",
-     "own"),
+     "inherited"),
 
     # PHASE 8's I2 AND PHASE 7's F4, IN ONE ROW. TR32 proved the two pins can see a cap on `PasswordField`;
     # four of AC4's six assertions had nothing aimed at them - `EmailField`'s `maxLength`, and `minLength`
