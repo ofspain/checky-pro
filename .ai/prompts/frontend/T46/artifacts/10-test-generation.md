@@ -162,4 +162,12 @@ the second since the `dirty()` startup guard went in. It refused nothing, becaus
 | **OQ-T32-4** | Sixteen copies of the harness machinery; phase 8's I11 is the newest sighting. |
 | **FU-T42-1** | Quiet again, stack stopped. Fifth sighting remains the last. |
 
+## One record correction
+
+The commit that carries this artifact is titled **`docs(frontend/T46): Phase 9 - 49/49 again, and the
+guard that would have caught the crash`** — phase 9's subject line, pasted by mistake. Its body is phase
+10's and its content is this artifact, `artifacts/10-mutation-run.txt` and TR57–TR59. The title was not
+corrected because that would mean rewriting pushed history; it is written down here instead, because the
+commit titles are how this pipeline's phases get read back later and a wrong one is a wrong record.
+
 **Phase 10 complete.** Two cases and one clause added, three harness rows, no production file changed.
