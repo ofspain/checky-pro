@@ -34,6 +34,11 @@ NEW: SEVEN ROWS ON THE GUIDANCE PATH, AND TWO OF THEM ARE INVISIBLE ON SCREEN.
                                             move with it); what dies is the pin on the actual words, the
                                             number extraction, and the verdict scan.
   TR43  CANARY an in-range password claims to be out of range.
+  TR44  the SCREEN interpolates literals - phase 7 measured this surviving all 126 cases in the
+                                            three files this task owns. Only a source scan sees it.
+  TR45  the template's bounds swapped - the mutant the digit-identity assertion never had.
+  TR46  the sentence after the submit control - the reading-order claim the screen's comment made
+                                            and nothing held until phase 9.
 
 FOUR OUTCOMES, AND EVERY ROW PREDICTS ONE:
 
@@ -182,6 +187,9 @@ GUIDANCE_LOOKUP = """  const guidance = t('register.passwordGuidance', {
     max: ADVISORY_MAXIMUM_CODE_POINTS,
   });"""
 GUIDANCE_STRING = "    passwordGuidance: 'Use a password of {{min}} to {{max}} characters.',"
+# The two adjacent lines whose ORDER is the claim (TR46). A reorder of adjacent lines is ONE edit (T36).
+GUIDANCE_THEN_SUBMIT = (GUIDANCE_ELEMENT
+                        + "\n        <SubmitButton>{t('register.submit')}</SubmitButton>")
 REJECT_SUITE = ("frontend/src/features/account/"
                 "registrationRejectsPasswordsOutsideTwelveToOneTwentyEightCodePoints.test.tsx")
 OUT_OF_RANGE_LAST_ROW = ("  { name: 'the empty string, which is zero code points', password: '', "
@@ -475,6 +483,32 @@ MUTANTS = [
     ("TR43 CANARY a 12-code-point row claims to be out of range",
      REJECT_SUITE, OUT_OF_RANGE_LAST_ROW,
      OUT_OF_RANGE_LAST_ROW + "\n  { name: 'CANARY', password: 'a'.repeat(12), codePoints: 12 },", "own"),
+
+    # --- phase 9: the three rows the reviews asked for ------------------------------------------------
+    # THE HOLE PHASE 7 MEASURED. The screen interpolates the literals instead of the constants: the
+    # sentence is byte-identical, the catalogue's template is untouched, and the digit identity passes
+    # because 12 and 128 ARE the constants. Before phase 9 this survived all 126 cases in the three files
+    # this task owns. The only instrument that can see it is a scan of the SCREEN's source, which is why
+    # TR40's lesson had to be learnt twice: provenance is invisible to the DOM at BOTH ends of the wire.
+    ("TR44 the screen interpolates literal bounds, so the catalogue's template is fed from nowhere",
+     SCREEN, GUIDANCE_LOOKUP,
+     "  const guidance = t('register.passwordGuidance', {\n    min: 12,\n    max: 128,\n  });", "own"),
+
+    # THE BOUNDS SWAPPED IN THE TEMPLATE: "Use a password of 128 to 12 characters." Nothing in the source
+    # moves - the catalogue still interpolates, the screen still names the constants - and the sentence
+    # still carries both numbers. What sees it is the digit identity, which asserts the ORDER of the
+    # rendered numbers against the constants, and this row is the mutant it never had (phase 8's I3).
+    ("TR45 the template names the bounds in the wrong order, so the sentence states an empty range",
+     CATALOGUE, GUIDANCE_STRING,
+     "    passwordGuidance: 'Use a password of {{max}} to {{min}} characters.',", "own"),
+
+    # THE SENTENCE AFTER THE BUTTON. The association still holds, every equality still passes, and the
+    # screen's own comment - "between the field and the control so the reading order matches the visual
+    # one" - becomes false. It was false-able for a whole phase: this row and the assertion it answers
+    # both arrived in phase 9, because the claim was stated in production prose and held by nothing.
+    ("TR46 the guidance is rendered after the submit control, so it informs a decision already made",
+     SCREEN, GUIDANCE_THEN_SUBMIT,
+     "        <SubmitButton>{t('register.submit')}</SubmitButton>\n" + GUIDANCE_ELEMENT, "own"),
 ]
 
 def as_tuple(value):

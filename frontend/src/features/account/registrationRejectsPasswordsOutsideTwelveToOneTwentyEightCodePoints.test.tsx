@@ -122,7 +122,12 @@ const submitControl = (container: HTMLElement) =>
  */
 function describedElement(container: HTMLElement): HTMLElement | null {
   const id = passwordInput(container).getAttribute('aria-describedby');
-  return id === null ? null : container.ownerDocument.getElementById(id);
+  // SCOPED TO THE CONTAINER, not to the document (phase 7's F6, phase 8's I5). `GUIDANCE_ID` is a module
+  // constant rather than a `useId()` value, so a second mount - or one container this file forgot to
+  // remove - would make `document.getElementById` return whichever copy comes first in document order,
+  // and a case could then assert against a screen it did not render. The walk is unchanged: the id still
+  // comes off the field, which is what makes finding the sentence here evidence of the association.
+  return id === null ? null : container.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
 }
 
 /** The sentence as the catalogue renders it once the bounds are interpolated. */
@@ -281,6 +286,18 @@ describe('AC4 the guidance is attached to the password field', () => {
     // The mark and the sentence are one decision (phase 6's comment says so in the screen): a field marked
     // invalid with nothing to read is what task 43 shipped and what this task finishes.
     expect(passwordInput(container).getAttribute('aria-invalid')).toBe('true');
+    // THE READING ORDER THE SCREEN'S OWN COMMENT CLAIMS, measured (phase 7's F7, phase 8's I4). The screen
+    // says the sentence sits "between the field and the control so the reading order matches the visual
+    // one", and nothing held it: the whole suite stayed green with the element moved after the submit
+    // control. `aria-describedby` makes the association order-independent for anyone whose software
+    // follows it, but a visitor reading or tabbing linearly meets the sentence where the DOM puts it, and
+    // guidance that arrives after the button it should have informed is guidance arriving too late.
+    const precedes = (first: Element, second: Element) =>
+      (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(precedes(passwordInput(container), described!),
+      'the sentence is rendered before the field it explains').toBe(true);
+    expect(precedes(described!, submitControl(container)),
+      'the sentence is rendered after the control it is meant to come before').toBe(true);
   });
 
   it('removes both the mark and the sentence when a later submit is in range', async () => {
@@ -335,6 +352,16 @@ describe('AC5 the guidance is a submit-time answer, not a running commentary', (
 // AC7 — the words come from the catalogue, name the bounds, and deliver no verdict
 // ==========================================================================================================
 
+/**
+ * The words that would make this sentence a verdict, in ONE place.
+ *
+ * The scan below and the control below it both read this list (phase 7's F5, phase 8's I6). They used to
+ * hold a copy each, which meant the control proved something about its own copy: a word added to the scan
+ * was uncontrolled, and a word added to the control was unenforced. A control has to measure the thing it
+ * controls, not a sibling of it.
+ */
+const VERDICT_WORDS = ['short', 'long', 'invalid', 'wrong', 'error', 'failed'];
+
 describe('AC7 the sentence names the rule, from the catalogue, with the real bounds', () => {
   it('renders the two bounds, and they ARE the constants the check uses', async () => {
     installTransport(() => ACCEPTED);
@@ -343,11 +370,18 @@ describe('AC7 the sentence names the rule, from the catalogue, with the real bou
     await settle();
     const sentence = describedElement(container)?.textContent ?? '';
 
-    // THE ONLY ASSERTION THAT CAN KILL THE LITERAL-BOUNDS MUTANT (freeze, §3). A catalogue string with
-    // "12 to 128" typed into it renders a byte-identical sentence, so no amount of comparing the DOM with
-    // the DOM can tell them apart. What separates them is that THESE numbers came from `passwordLength.ts`
-    // - so the assertion is written as an identity against the constants, and the numbers are extracted
-    // from the rendered text rather than assumed.
+    // TWO ASSERTIONS, TWO DIFFERENT MUTANTS, and the first draft of this comment credited the wrong one.
+    // It said the digit identity below was "the only assertion that can kill the literal-bounds mutant",
+    // which the freeze also said. It is not: a catalogue reading 'Use a password of 12 to 128 characters.'
+    // renders 12 and 128, and 12 and 128 ARE the constants, so the identity passes. What kills that mutant
+    // is the `{{min}}`/`{{max}}` pin on the catalogue, two assertions down.
+    //
+    // The identity earns its place against a different mistake: bounds SWAPPED or RENAMED in the template.
+    // Measured - `{{max}} to {{min}}` fails here and nowhere else in the file but the literal pin.
+    //
+    // And NEITHER of them sees the third mistake, because the DOM cannot: a screen interpolating the
+    // literals 12 and 128 renders the same sentence with the same numbers from the same template. That one
+    // is pinned in SOURCE, in the case below, at the only end of the wire where provenance is visible.
     expect(sentence.match(/\d+/g), 'the sentence names no numbers, so it cannot be naming the rule')
       .toEqual([String(ADVISORY_MINIMUM_CODE_POINTS), String(ADVISORY_MAXIMUM_CODE_POINTS)]);
     expect(en.register.passwordGuidance,
@@ -363,6 +397,17 @@ describe('AC7 the sentence names the rule, from the catalogue, with the real bou
 
     expect(code, 'the screen does not reach the catalogue for register.passwordGuidance')
       .toContain("'register.passwordGuidance'");
+    // THE SCREEN END OF THE PROVENANCE WIRE (phase 7's F1, phase 8's I1). Reaching the catalogue is not
+    // enough: the bounds it interpolates must be the ones `passwordLength.ts` enforces. A screen passing
+    // `{ min: 12, max: 128 }` renders a byte-identical sentence, leaves the catalogue's template intact and
+    // satisfies the digit identity in the case above by arithmetic - measured at 126 of 126 cases passing,
+    // which is how this hole was found rather than argued. Provenance is invisible to the DOM at BOTH ends,
+    // so both ends are pinned in source: the catalogue must interpolate, and the screen must interpolate
+    // THESE TWO NAMES.
+    expect(code, 'the screen interpolates a literal minimum instead of the constant that enforces it')
+      .toMatch(/min:\s*ADVISORY_MINIMUM_CODE_POINTS\b/);
+    expect(code, 'the screen interpolates a literal maximum instead of the constant that enforces it')
+      .toMatch(/max:\s*ADVISORY_MAXIMUM_CODE_POINTS\b/);
     // THE SENTENCE, NOT ITS WORDS, and the first draft of this case got that wrong and failed immediately.
     // It looped over every word longer than three characters and flagged `password` - which this screen
     // holds as a state variable, a prop name and a catalogue key fragment. The claim was never that the
@@ -380,7 +425,7 @@ describe('AC7 the sentence names the rule, from the catalogue, with the real bou
     // THE COPY DECISION, PINNED. R1 makes the client's check advisory and the server the authority, so the
     // client has no standing to tell a visitor their password is wrong - it can only name the rule. This
     // is the one case in this package that polices prose, and it is deliberately short.
-    for (const verdict of ['short', 'long', 'invalid', 'wrong', 'error', 'failed']) {
+    for (const verdict of VERDICT_WORDS) {
       expect(GUIDANCE.toLowerCase(), `the guidance delivers a verdict: "${verdict}"`)
         .not.toMatch(new RegExp(`\\b${verdict}`));
     }
@@ -391,8 +436,7 @@ describe('AC7 the sentence names the rule, from the catalogue, with the real bou
     // BOTH DIRECTIONS, because a forbidden-word scan fails in two ways and only one of them is loud. A
     // `toContain('long')` would report "belongs" as a verdict; a scan aimed at nothing would pass anything.
     const fires = (text: string) =>
-      ['short', 'long', 'invalid', 'wrong', 'error', 'failed'].some((word) =>
-        new RegExp(`\\b${word}`).test(text.toLowerCase()));
+      VERDICT_WORDS.some((word) => new RegExp(`\\b${word}`).test(text.toLowerCase()));
     expect(fires('Your password is too short.'), 'the scan cannot see a verdict').toBe(true);
     expect(fires('That password is invalid.'), 'the scan cannot see a verdict').toBe(true);
     expect(fires('This password belongs to someone else.'),
