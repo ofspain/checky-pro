@@ -109,6 +109,9 @@ describe('AC1/AC3 the count is in code points, and every expectation is a Unicod
     // same control, stated as three properties of the table rather than as cases that can be removed.
     expect(CASES.filter((row) => row.codePoints !== row.utf16Units),
       'no row distinguishes code points from UTF-16 units').not.toEqual([]);
+    // THE CLAUSES BELOW READ THE CONSTANTS ON PURPOSE, not 12 and 128 (phase 8's I9). If a bound moves,
+    // this control fails until the table gains a row that discriminates AT THE NEW BOUND - which is the
+    // behaviour wanted, and the reason not to "fix" it into literals one day.
     // THE LOWER CROSSING: fewer code points than the minimum, but enough UTF-16 units to pass it. This is
     // the one direction of the bug that is SILENT - `value.length` would accept the password and say
     // nothing, where the other direction at least shows a visitor a message they can argue with.
@@ -127,8 +130,19 @@ describe('AC1/AC3 the count is in code points, and every expectation is a Unicod
     // and the most comfortable way to ship a suite that proves nothing. The scan is aimed at the TABLE
     // REGION rather than the whole file, because the source scans below legitimately mention these shapes.
     const self = withoutComments(await read('features/account/passwordLengthCountsCodePoints.test.ts'));
-    const table = /const CASES[\s\S]*?\n\];/.exec(self)?.[0];
-    expect(table, 'the table region could not be found, so this control measured nothing').toBeDefined();
+    const table = /const CASES[\s\S]*?\n\];/.exec(self)?.[0] ?? '';
+    // THE REGION MUST HOLD EVERY ROW, not merely exist (phase 8's I3). A formatting change could make the
+    // regex match a shorter span - and a guard that only asked `toBeDefined()` would pass while scanning a
+    // fragment. Counting the rows ties the control to the table's CONTENT rather than its punctuation.
+    // COUNTED ON A DATA-ONLY PATTERN, and the first draft of this guard taught me why in one run: it
+    // counted `{ name:` and reported 12 of 15, because four rows wrap onto several lines and their `name:`
+    // does not follow a brace. `name:` alone counts 16 - the extra one is the TYPE ANNOTATION, which also
+    // says `name:`. A number followed by a digit can only be a row.
+    expect(table.match(/utf16Units: \d/g)?.length,
+      'the extracted region does not hold every row, so this control scanned a fragment').toBe(CASES.length);
+    // I3 ALSO PROPOSED SCANNING THE WHOLE FILE FOR `[...`, AND THAT CANNOT WORK HERE: the export-shape case
+    // below legitimately spreads `Object.keys`, so a file-wide ban would fail on this suite's own honest
+    // code. The region is the right scope; it just has to be the whole region.
     for (const circular of [/\[\.\.\./, /Array\.from\s*\(/, /countCodePoints\s*\(/]) {
       expect(table, `an expectation in the table is computed with ${circular.source}`).not.toMatch(circular);
     }
@@ -177,8 +191,11 @@ describe('AC4 the count is total, and it is not additive', () => {
       expect(() => countCodePoints(input)).not.toThrow();
       expect(Number.isInteger(countCodePoints(input)), 'the count is not a whole number').toBe(true);
     }
-    // A LONG VALUE COSTS ONE PASS. R1 makes the check advisory, so a count that could hang on a paste would
-    // be a client-side gate by another name.
+    // A HUNDRED THOUSAND CHARACTERS COME BACK WITH THE RIGHT NUMBER - which is all this line measures, and
+    // the comment used to claim more (phase 7's F5, phase 8's I2). Nothing here counts passes or seconds,
+    // and a timing assertion on a shared runner would be flaky. What matters for R1 is that a pasted value
+    // ANSWERS: an advisory check that hangs or overflows on a long paste has become a gate, which is the
+    // one thing R1 forbids the client to be. The implementation is one pass; this case is not the evidence.
     expect(countCodePoints('a'.repeat(100_000))).toBe(100_000);
   });
 
@@ -198,9 +215,28 @@ describe('AC4 the count is total, and it is not additive', () => {
 });
 
 describe('AC6 the module depends on its argument alone', () => {
-  const ENVIRONMENT = [
-    /localStorage/, /sessionStorage/, /\bdocument\b/, /\bwindow\b/, /\bfetch\s*\(/, /\bDate\b/,
-    /setTimeout/, /setInterval/, /console\./, /\bcrypto\b/, /\bprocess\b/, /^import\s/m,
+  /**
+   * Every way this module could stop depending on its argument alone, LABELLED BY CATEGORY.
+   *
+   * The labels exist for the control below (phase 7's F4, phase 8's I1). It used to assert that five of
+   * these patterns fired on a synthetic impure module, and five is exactly how many can - so the threshold
+   * was tight by accident, not by design, and one more matching line in the sample would have let a broken
+   * pattern hide behind it. A count says "enough patterns work" when the claim is "every KIND of reach is
+   * visible", so the control now names the kinds.
+   */
+  const ENVIRONMENT: ReadonlyArray<{ category: string; pattern: RegExp }> = [
+    { category: 'storage', pattern: /localStorage/ },
+    { category: 'storage', pattern: /sessionStorage/ },
+    { category: 'dom', pattern: /\bdocument\b/ },
+    { category: 'dom', pattern: /\bwindow\b/ },
+    { category: 'network', pattern: /\bfetch\s*\(/ },
+    { category: 'clock', pattern: /\bDate\b/ },
+    { category: 'clock', pattern: /setTimeout/ },
+    { category: 'clock', pattern: /setInterval/ },
+    { category: 'console', pattern: /console\./ },
+    { category: 'platform', pattern: /\bcrypto\b/ },
+    { category: 'platform', pattern: /\bprocess\b/ },
+    { category: 'import', pattern: /^import\s/m },
   ];
 
   it('reaches for no storage, no DOM, no clock and no global, and imports nothing', async () => {
@@ -210,8 +246,8 @@ describe('AC6 the module depends on its argument alone', () => {
     // A pure function's purity has the same shape - nothing happens, and nothing happening is exactly what
     // a broken instrument also reports. The file text cannot be vacuous in that way.
     const module = withoutComments(await read('features/account/passwordLength.ts'));
-    for (const reach of ENVIRONMENT) {
-      expect(module, `passwordLength.ts reaches for ${reach.source}`).not.toMatch(reach);
+    for (const { pattern } of ENVIRONMENT) {
+      expect(module, `passwordLength.ts reaches for ${pattern.source}`).not.toMatch(pattern);
     }
   });
 
@@ -226,9 +262,13 @@ describe('AC6 the module depends on its argument alone', () => {
       '  return value.length;',
       '}',
     ].join('\n');
-    const fired = ENVIRONMENT.filter((reach) => reach.test(impure));
-    expect(fired.length, 'the scan cannot see storage, a clock, a console, the DOM or an import')
-      .toBeGreaterThanOrEqual(5);
+    const fired = [...new Set(ENVIRONMENT.filter(({ pattern }) => pattern.test(impure))
+      .map(({ category }) => category))].sort();
+    // THE SET, NOT THE SIZE. Five patterns can match this sample and five did, so the old
+    // `toBeGreaterThanOrEqual(5)` was satisfied with no margin - sensitive today, and silently blunted by
+    // the next line anyone adds to the sample. Naming the categories means a broken pattern fails here
+    // whatever else is in the file.
+    expect(fired, 'the scan is blind to a whole kind of reach').toEqual(['clock', 'console', 'dom', 'import', 'storage']);
   });
 });
 
@@ -246,6 +286,9 @@ describe('AC7 the module publishes what its consumers use, and the bounds are R1
     ]);
     expect(ADVISORY_MINIMUM_CODE_POINTS, "R1's lower bound moved").toBe(12);
     expect(ADVISORY_MAXIMUM_CODE_POINTS, "R1's upper bound moved").toBe(128);
+    // HELD BY THE TYPE SYSTEM, NOT BY THIS LINE (phase 7's F10, phase 8's I10). No mutant can falsify it -
+    // exporting the name as a non-function would not compile - so it is documentation that happens to be
+    // executable, kept for the reader and not counted as an instrument.
     expect(typeof countCodePoints).toBe('function');
   });
 });

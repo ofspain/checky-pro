@@ -669,6 +669,27 @@ def revert():
     subprocess.run(["git", "clean", "-fq", "--", *REVERT_PATHS], cwd=REPO, check=False)
 
 
+def dirty():
+    """Uncommitted changes under REVERT_PATHS, as porcelain lines.
+
+    TWO THINGS THIS CATCHES, and task 46 paid for both (phase 7's F3, phase 8's I5).
+
+    A LEFTOVER MUTANT. `revert()` runs after a row, so a process killed between the mutation and the
+    revert leaves production source modified - which happened: the host reaped this harness mid-row under
+    memory pressure and left `ADVISORY_MINIMUM_CODE_POINTS = 11` in the tree. The next run's baseline guard
+    would catch that one only BECAUSE it breaks tests; a leftover from an unfalsifiable row like TR24 or
+    TR50 changes nothing observable, would pass every guard, and would be committed by the next `git add`.
+
+    UNCOMMITTED TEST EDITS. `main()`'s first act is `revert()`, which is `git checkout --` plus
+    `git clean -fq`: it DESTROYS uncommitted work under those paths without asking. That cost 19 cases in
+    T14 and 5 in T15 and has been a standing rule ever since; a rule a tool can enforce should not stay a
+    rule people remember.
+    """
+    out = subprocess.run(["git", "status", "--porcelain", "--", *REVERT_PATHS],
+                         cwd=REPO, capture_output=True, text=True, check=False)
+    return [line for line in out.stdout.splitlines() if line.strip()]
+
+
 def preflight():
     """Every anchor in its file, exactly once, REPLAYED IN MEMORY so a mid-mutant ambiguity is caught
     before any verdict prints. T36 shipped a BROKEN row that the per-anchor check on unmutated text had
@@ -734,6 +755,14 @@ def score(label, base):
 def main():
     wanted = sys.argv[1] if len(sys.argv) > 1 else ""
     print(f"REPO = {REPO}\n")
+    unclean = dirty()
+    if unclean:
+        print("REFUSING TO RUN: there are uncommitted changes under the paths this harness reverts.\n"
+              "  Commit them first - `revert()` is `git checkout --` plus `git clean -fq` and would\n"
+              "  destroy them - or, if one of these is a mutant left behind by a killed run, restore it\n"
+              "  with `git checkout --` before measuring anything:\n"
+              + "\n".join(f"    {line}" for line in unclean))
+        return 1
     revert()
     if not preflight():
         return 1
@@ -760,7 +789,14 @@ def main():
             broken.append(label)
             revert()
             continue
-        lost, was_broken, _names, by_own = score(label, base)
+        # THE REVERT IS IN A `finally` (phase 7's F3). It covers an exception and a Ctrl-C, which is what
+        # this block can be interrupted by from inside; it does NOT cover a SIGKILL, because nothing can.
+        # The startup guard in `dirty()` is what covers that, on the next run, by refusing to measure a
+        # tree somebody else's crash has edited.
+        try:
+            lost, was_broken, _names, by_own = score(label, base)
+        finally:
+            revert()
         # A BROKEN ROW IS NOT AN OUTCOME. `score` returns (None, True, None, False) for BROKEN, which
         # this line read as "not a survivor, not own" and printed as KILLED/inherited - the exact sin the
         # guard inside `score` exists to prevent, one level up. The kill COUNT already excluded it; the
@@ -772,7 +808,6 @@ def main():
             survivors.append(lost)
         if was_broken:
             broken.append(label)
-        revert()
 
     kept = [row for row in MUTANTS if not wanted or wanted in row[0]]
     apart = CANARIES | UNFALSIFIABLE
