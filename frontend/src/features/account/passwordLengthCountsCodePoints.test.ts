@@ -197,6 +197,12 @@ describe('AC5 a grapheme cluster is not one code point', () => {
     // this file would still pass. `Intl.Segmenter` exists in this runtime and is used NOWHERE in `src`,
     // which is what makes it usable here - it is not the function under test, and unlike 1, 5 and 8 it is
     // not a number I chose. The ordering is asserted, not the numbers.
+    // STATED AS AN ASSUMPTION, NOT SKIPPED (phase 11's F4). A guard that skipped this case where
+    // `Intl.Segmenter` is missing would quietly remove the only number in this file that nobody here
+    // chose - T174's lesson, that a gap recorded is not a gap closed, with the recording automated. The
+    // package pins no runtime (no `engines` field, no `.nvmrc`), so if one ever lacks the API this line
+    // says which API in one sentence instead of throwing a ReferenceError from inside a helper.
+    expect(typeof Intl.Segmenter, 'this runtime has no grapheme segmenter to witness with').toBe('function');
     const graphemes = (value: string) =>
       [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(value)].length;
     const cluster = '\u{1F469}\u200D\u{1F469}\u200D\u{1F467}';
@@ -308,18 +314,35 @@ describe('AC6 the module depends on its argument alone', () => {
     const impure = [
       "import { thing } from './thing';",
       'export function impure(value: string): number {',
+      '  localStorage.setItem("seen", "1");',
       '  sessionStorage.setItem("count", String(value.length));',
       '  console.log(Date.now(), document.title);',
+      '  window.setTimeout(() => setInterval(() => {}, 1), 1);',
+      '  fetch("/count");',
+      '  crypto.getRandomValues(new Uint8Array(1));',
+      '  if (process.env.NODE_ENV) return 0;',
       '  return value.length;',
       '}',
     ].join('\n');
-    const fired = [...new Set(ENVIRONMENT.filter(({ pattern }) => pattern.test(impure))
-      .map(({ category }) => category))].sort();
-    // THE SET, NOT THE SIZE. Five patterns can match this sample and five did, so the old
-    // `toBeGreaterThanOrEqual(5)` was satisfied with no margin - sensitive today, and silently blunted by
-    // the next line anyone adds to the sample. Naming the categories means a broken pattern fails here
-    // whatever else is in the file.
-    expect(fired, 'the scan is blind to a whole kind of reach').toEqual(['clock', 'console', 'dom', 'import', 'storage']);
+    const silent = ENVIRONMENT.filter(({ pattern }) => !pattern.test(impure))
+      .map(({ pattern }) => pattern.source);
+    const declared = [...new Set(ENVIRONMENT.map(({ category }) => category))].sort();
+    // EVERY PATTERN, AND IT TOOK THREE GOES TO GET THE UNIT RIGHT. Phase 7 asserted that five patterns
+    // fired, which is a count. Phase 9 replaced the count with five category NAMES - the same mistake one
+    // level up, because I asked whether those five kinds fired and never whether five was all the kinds
+    // there are. It was not: `network` and `platform` were declared and never exercised, so three
+    // patterns could have matched nothing with both AC6 cases green, `passwordLength.ts` not reaching for
+    // those either (phase 11's F2). Adding a sample line per kind fixes that and is STILL not enough,
+    // which is the part F2 did not reach: a category check cannot see one broken pattern with a working
+    // sibling. Break `/\bcrypto\b/` and `platform` still fires through `/\bprocess\b/`. The thing that
+    // breaks is a PATTERN, so the pattern is what has to be shown firing - all twelve, by source, so a
+    // failure names the one that is aimed at nothing.
+    expect(silent, 'a pattern in the scan matches nothing, so the case above is blind to that reach')
+      .toEqual([]);
+    // AND THE KINDS ARE PINNED SEPARATELY, because the line above is satisfied by a shrinking list too:
+    // delete a category with its patterns and every surviving pattern still fires.
+    expect(declared, 'a whole kind of reach was removed from the scan').toEqual(
+      ['clock', 'console', 'dom', 'import', 'network', 'platform', 'storage']);
   });
 });
 
