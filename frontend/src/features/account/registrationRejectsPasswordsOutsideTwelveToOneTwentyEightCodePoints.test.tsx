@@ -429,6 +429,11 @@ describe('AC7 the sentence names the rule, from the catalogue, with the real bou
       expect(GUIDANCE.toLowerCase(), `the guidance delivers a verdict: "${verdict}"`)
         .not.toMatch(new RegExp(`\\b${verdict}`));
     }
+    // THE ONLY NON-DERIVED COPY CLAIM IN THIS FILE, and it must stay non-derived (phase 7's F4). Every
+    // other assertion compares against `GUIDANCE`, which is built FROM the catalogue and therefore moves
+    // with it: TR42 turns the sentence into "Your password is too short." and not one equality case
+    // notices. This line and the verdict scan above it are the whole copy contract. Rewriting it as a
+    // catalogue read would look like a tidy-up and would delete the contract.
     expect(GUIDANCE, 'the guidance stopped naming the rule').toBe('Use a password of 12 to 128 characters.');
   });
 
