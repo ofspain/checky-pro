@@ -55,6 +55,12 @@ NEW: SEVEN ROWS ON THE GUIDANCE PATH, AND TWO OF THEM ARE INVISIBLE ON SCREEN.
   TR54  a fourth export nobody uses - the export-shape pin.
   TR55  the minimum becomes 11 - predicted own AND inherited: three screen suites pin it too.
   TR56  CANARY a table row claims an astral string's code points equal its UTF-16 units.
+  TR57  the count becomes GRAPHEMES - the unit on the far side of a code point, and the only mutant
+        here that a suite without phase 10's cases would have SURVIVED. Added in phase 10.
+  TR58  the same grapheme count WITH every expectation rewritten to agree with it - a consistent
+        lie, which only the segmenter case can see. Added in phase 10; 8 edits over 2 files.
+  TR59  a duplicated table row - fifteen facts in sixteen rows, which the other three clauses of
+        the table control cannot see. Added in phase 10.
 
 FOUR OUTCOMES, AND EVERY ROW PREDICTS ONE:
 
@@ -606,6 +612,59 @@ MUTANTS = [
     ("TR56 CANARY a table row claims an astral string's code points equal its UTF-16 units",
      COUNT_SUITE, ASTRAL_ROW,
      ASTRAL_ROW + "\n  { name: 'CANARY', input: '\\u{1F44D}', codePoints: 2, utf16Units: 2 },", "own"),
+
+    # THE UNIT ON THE FAR SIDE OF A CODE POINT, and the row phase 10 exists for. Every other mutant here
+    # breaks the count in a way that shows up on ASCII or on nothing; this one is RIGHT on ASCII, right on
+    # the eleven-astral password at the lower bound, right on the 128-astral password at the upper bound,
+    # and right on every row of the composition property - 11 graphemes, 128 graphemes, k + m graphemes.
+    # It is wrong only where a cluster is more than one code point, which is exactly where "how long is
+    # this" has three answers. Against the suite as phase 7 left it this mutant WOULD HAVE DIED, on the
+    # three AC5 literals and the decomposed accent - so TR57 does not prove phase 10 was necessary. What
+    # it measures is the ORDERING case: `graphemes(cluster) < countCodePoints(cluster)` becomes `1 < 1`,
+    # which is the one assertion in the file that can tell the middle unit from the outer two by their
+    # relation rather than by three numbers I chose. Predicted own: the screens' suites pin counts at the
+    # bounds, where graphemes and code points AGREE, so none of them can see this.
+    ("TR57 the count becomes graphemes, the unit a visitor would guess",
+     LENGTH, COUNT_BODY,
+     "  return [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(value)].length;", "own"),
+    # THE WITNESS, MADE FALSIFIABLE - and the row that says what phase 10's segmenter case actually buys.
+    # TR57 proves a grapheme implementation dies here, but it dies on four table rows and three AC5
+    # literals, all of which existed at phase 7: on its own it says nothing about the new case. This row
+    # is the same implementation change WITH ALL SEVEN OF THOSE EXPECTATIONS REWRITTEN TO AGREE WITH IT -
+    # a consistent lie, which is the realistic shape of this mistake. Somebody decides the count should be
+    # "what the visitor sees", changes the function, runs the suite, and updates the numbers it reports.
+    # Every surviving assertion in the file is then self-consistent: the units still disagree on the
+    # astral rows, both bounds still cross, the table still discriminates, the arithmetic property still
+    # holds, totality still holds, the exports are unchanged. The ONE thing that cannot be made to agree
+    # is `graphemes(cluster) < countCodePoints(cluster)`, because the witness is outside the file and is
+    # not a number anyone can edit. Predicted own, and predicted to be killed by exactly ONE case.
+    ("TR58 the count becomes graphemes AND all seven expectations are rewritten to agree with it",
+     (LENGTH,) + (COUNT_SUITE,) * 7,
+     (COUNT_BODY,
+     "  { name: 'a skin-toned thumbs-up', input: '\\u{1F44D}\\u{1F3FD}', codePoints: 2, utf16Units: 4 },",
+     "  { name: 'a flag, which is two regional indicators', input: '\\u{1F1EC}\\u{1F1E7}', codePoints: 2, utf16Units: 4 },",
+     "    input: '\\u{1F469}\\u200D\\u{1F469}\\u200D\\u{1F467}', codePoints: 5, utf16Units: 8,",
+     "  { name: 'a decomposed accent', input: 'e\u0301', codePoints: 2, utf16Units: 2 },",
+     "    expect(countCodePoints('\\u{1F44D}\\u{1F3FD}'), 'a skin tone modifier is its own code point').toBe(2);",
+     "    expect(countCodePoints('\\u{1F1EC}\\u{1F1E7}'), 'a flag is two regional indicators').toBe(2);",
+     "      'a ZWJ sequence counts every person and every joiner').toBe(5);"),
+     ("  return [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(value)].length;",
+     "  { name: 'a skin-toned thumbs-up', input: '\\u{1F44D}\\u{1F3FD}', codePoints: 1, utf16Units: 4 },",
+     "  { name: 'a flag, which is two regional indicators', input: '\\u{1F1EC}\\u{1F1E7}', codePoints: 1, utf16Units: 4 },",
+     "    input: '\\u{1F469}\\u200D\\u{1F469}\\u200D\\u{1F467}', codePoints: 1, utf16Units: 8,",
+     "  { name: 'a decomposed accent', input: 'e\u0301', codePoints: 1, utf16Units: 2 },",
+     "    expect(countCodePoints('\\u{1F44D}\\u{1F3FD}'), 'a skin tone modifier is its own code point').toBe(1);",
+     "    expect(countCodePoints('\\u{1F1EC}\\u{1F1E7}'), 'a flag is two regional indicators').toBe(1);",
+     "      'a ZWJ sequence counts every person and every joiner').toBe(1);"),
+     "own"),
+    # THE DUPLICATE ROW, which is what phase 10's third addition exists to see. The table control's other
+    # three clauses are all satisfied by a table with a repeat in it, and the circularity control's
+    # row-count guard would have counted the repeat as a fact - both numbers grow together, so they stay
+    # equal. `it.each` runs the copy and it passes, because it is true. This is the cheapest way for a
+    # table to look longer than the number of facts it holds, and before phase 10 nothing in the file
+    # could tell the difference. Predicted own, and predicted to be killed by exactly ONE case.
+    ("TR59 a table row is duplicated, so the table holds fifteen facts in sixteen rows",
+     COUNT_SUITE, "  { name: 'a flag, which is two regional indicators', input: '\\u{1F1EC}\\u{1F1E7}', codePoints: 2, utf16Units: 4 },", "  { name: 'a flag, which is two regional indicators', input: '\\u{1F1EC}\\u{1F1E7}', codePoints: 2, utf16Units: 4 }," + "\n" + "  { name: 'a flag, which is two regional indicators', input: '\\u{1F1EC}\\u{1F1E7}', codePoints: 2, utf16Units: 4 },", "own"),
 ]
 
 def as_tuple(value):
