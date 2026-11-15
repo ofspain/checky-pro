@@ -194,6 +194,14 @@ const OUT_OF_RANGE: ReadonlyArray<{ name: string; password: string; codePoints: 
   // the most ordinary accidental submit there is. It gets the same sentence as every other row because the
   // sentence names the RULE and never the input.
   { name: 'the empty string, which is zero code points', password: '', codePoints: 0 },
+  // 11 CODE POINTS, 22 UTF-16 UNITS - THE ONLY ROW WHERE COUNTING THE WRONG UNIT WITHHOLDS THE SENTENCE.
+  // Phase 10 added it, and the row above it is why: 129 astral code points are 258 units, which is out of
+  // range on BOTH counts, so that row's guidance is right either way and it cannot discriminate. At this
+  // end it inverts - 22 units is comfortably inside 12-to-128, so a screen comparing `password.length`
+  // would call this password fine and say NOTHING to a visitor R1 says must be told. Task 43's 7-emoji row
+  // catches that comparison through the MARK; nothing caught it through the SENTENCE, and the sentence is
+  // what this task exists for.
+  { name: '11 astral code points, which are 22 UTF-16 units', password: '\u{1F44D}'.repeat(11), codePoints: 11 },
 ];
 
 describe('AC1/AC2 a password outside the advisory range shows the guidance', () => {
@@ -224,6 +232,27 @@ describe('AC1/AC2 a password outside the advisory range shows the guidance', () 
 // ==========================================================================================================
 // AC3 — in range shows nothing, and the query that says so can find it when it is there
 // ==========================================================================================================
+
+describe('CONTROL: the table measures what AC1, AC2 and the counting bug need it to', () => {
+  it('straddles both bounds, and carries the one astral row whose unit count is INSIDE the range', () => {
+    // A TABLE WHOSE ROWS ALL FAIL THE SAME WAY MEASURES ITS OWN LENGTH. AC2 says 11 and 129 get the SAME
+    // sentence word for word, and every row above compares against one constant - which satisfies that
+    // claim by construction and would go on satisfying it if someone deleted one end. T44 learnt this with
+    // its own table and pinned both bounds; this pins the same thing for the guidance.
+    expect(OUT_OF_RANGE.some((row) => row.codePoints < ADVISORY_MINIMUM_CODE_POINTS),
+      'no row is below the minimum, so AC1 is unmeasured').toBe(true);
+    expect(OUT_OF_RANGE.some((row) => row.codePoints > ADVISORY_MAXIMUM_CODE_POINTS),
+      'no row is above the maximum, so AC2 is unmeasured').toBe(true);
+    // AND THE ROW THAT DISCRIMINATES THE COUNTING BUG: code points outside the range, UTF-16 units inside
+    // it. Without such a row, every out-of-range row would be out of range on both counts and a screen
+    // measuring `password.length` would withhold the sentence with the whole table green.
+    expect(OUT_OF_RANGE.filter((row) =>
+      row.codePoints < ADVISORY_MINIMUM_CODE_POINTS
+      && row.password.length >= ADVISORY_MINIMUM_CODE_POINTS),
+    'no row counts differently in the two units, so the counting bug is invisible to the sentence')
+      .not.toEqual([]);
+  });
+});
 
 describe('AC3 a password inside the range shows no guidance', () => {
   it.each([
@@ -345,6 +374,34 @@ describe('AC5 the guidance is a submit-time answer, not a running commentary', (
     expect(describedElement(container), 'the screen judged a password that was still being typed').toBeNull();
     expect(container.textContent, 'the sentence is rendered before any submit').not.toContain(GUIDANCE);
     expect(passwordInput(container).getAttribute('aria-invalid')).toBeNull();
+  });
+});
+
+describe('AC5 the guidance outlives the typing that corrects it, until the next submit', () => {
+  it('keeps the sentence up while an in-range password is typed, and drops it on the submit', async () => {
+    // THE OTHER HALF OF THE SAME STATE MACHINE, and the first case anywhere to measure it - task 43 pinned
+    // that nothing is marked BEFORE a submit and stopped there. `advisory` changes in `submit()` and
+    // nowhere else, so a sentence raised by one submit stays up while the visitor fixes the password and
+    // comes down at the next one. That is the same choice T43 made for the mark, and the one condition in
+    // the screen extends it to the sentence; this case pins it rather than leaving it to be rediscovered
+    // as a bug report. Whether the sentence SHOULD clear on edit is the owner's call - OQ-T45-5 - and if
+    // it changes, this case is where the change announces itself.
+    installTransport(() => ACCEPTED);
+    const container = await renderScreen();
+
+    await fillAndSubmit(container, 'visitor@example.test', 'a'.repeat(11));
+    await settle();
+    expect(describedElement(container)?.textContent).toBe(GUIDANCE);
+
+    await type(passwordInput(container), 'a'.repeat(ADVISORY_MINIMUM_CODE_POINTS));
+    expect(describedElement(container)?.textContent,
+      'the sentence vanished on a keystroke, so the check is a running commentary after all').toBe(GUIDANCE);
+
+    await act(async () => {
+      submitControl(container).click();
+    });
+    await settle();
+    expect(describedElement(container), 'the sentence survived the submit that corrected it').toBeNull();
   });
 });
 

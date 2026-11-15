@@ -39,6 +39,9 @@ NEW: SEVEN ROWS ON THE GUIDANCE PATH, AND TWO OF THEM ARE INVISIBLE ON SCREEN.
   TR45  the template's bounds swapped - the mutant the digit-identity assertion never had.
   TR46  the sentence after the submit control - the reading-order claim the screen's comment made
                                             and nothing held until phase 9.
+  TR47  the LOWER comparison counts units - the end where the counting bug withholds the sentence
+                                            rather than raising it wrongly.
+  TR48  the advisory resets on every keystroke - the state machine's other edge.
 
 FOUR OUTCOMES, AND EVERY ROW PREDICTS ONE:
 
@@ -174,6 +177,8 @@ TABLE_LAST_ROW = ("  { name: '7 emoji, which `.length` would call 14', password:
 # --- task 44's anchors, all of them CODE ------------------------------------------------------------------
 MAXIMUM_CONST = "export const ADVISORY_MAXIMUM_CODE_POINTS = 128;"
 UPPER_COMPARISON = "length <= ADVISORY_MAXIMUM_CODE_POINTS"
+LOWER_COMPARISON = "length >= ADVISORY_MINIMUM_CODE_POINTS"
+PASSWORD_ONCHANGE = "          onChange={setPassword}"
 UPPER_HALF = " && length <= ADVISORY_MAXIMUM_CODE_POINTS"
 PASSWORD_ROW_129 = ("  { name: '129 ASCII characters, one past the upper bound', password: 'a'.repeat(129), "
                     "codePoints: 129, inRange: false },")
@@ -509,6 +514,24 @@ MUTANTS = [
     ("TR46 the guidance is rendered after the submit control, so it informs a decision already made",
      SCREEN, GUIDANCE_THEN_SUBMIT,
      "        <SubmitButton>{t('register.submit')}</SubmitButton>\n" + GUIDANCE_ELEMENT, "own"),
+
+    # --- phase 10: the two rows the new cases answer -------------------------------------------------
+    # TR33'S MIRROR, AT THE END WHERE THE BUG WITHHOLDS THE SENTENCE. TR33 changes the upper comparison and
+    # is caught through a false REJECT; this changes the lower one, where 11 astral code points are 22
+    # units, 22 is inside the range, and the screen says NOTHING to a visitor R1 says must be told. Task
+    # 43's 7-emoji row catches this comparison through the MARK, in a file this task did not write, so
+    # before phase 10 the sentence was uncovered at this end: silence is the hardest failure to notice.
+    ("TR47 the lower comparison counts UTF-16 units, so an astral password short of the bound is told nothing",
+     SCREEN, LOWER_COMPARISON, "password.length >= ADVISORY_MINIMUM_CODE_POINTS", "own"),
+
+    # THE STATE MACHINE'S OTHER EDGE. `advisory` is set in `submit()` and nowhere else; this resets it on
+    # every keystroke, which is the shape a well-meaning "clear the error as they fix it" change would
+    # take. Nothing measured it before phase 10 - task 43 pinned that nothing is marked BEFORE a submit and
+    # stopped there - so the sentence could have been made to vanish on a keystroke with 18 of 19 cases
+    # still green.
+    ("TR48 the advisory resets on every keystroke, so the sentence vanishes as soon as the visitor types",
+     SCREEN, PASSWORD_ONCHANGE,
+     "          onChange={(next) => { setPassword(next); setAdvisory('unchecked'); }}", "own"),
 ]
 
 def as_tuple(value):
