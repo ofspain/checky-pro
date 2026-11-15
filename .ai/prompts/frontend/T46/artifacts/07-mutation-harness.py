@@ -61,6 +61,9 @@ NEW: SEVEN ROWS ON THE GUIDANCE PATH, AND TWO OF THEM ARE INVISIBLE ON SCREEN.
         lie, which only the segmenter case can see. Added in phase 10; 8 edits over 2 files.
   TR59  a duplicated table row - fifteen facts in sixteen rows, which the other three clauses of
         the table control cannot see. Added in phase 10.
+  TR60  a purity-scan pattern blunted while ITS CATEGORY KEEPS FIRING - invisible to a kind-level
+        check, which is why the AC6 control counts patterns. Added in phase 11.
+  TR61  the only pattern in its category blunted - the contrast case, visible either way.
 
 FOUR OUTCOMES, AND EVERY ROW PREDICTS ONE:
 
@@ -73,7 +76,9 @@ FOUR OUTCOMES, AND EVERY ROW PREDICTS ONE:
     python3 -I .ai/prompts/frontend/T46/artifacts/07-mutation-harness.py TR49   # one
 """
 
+import os
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -665,6 +670,22 @@ MUTANTS = [
     # could tell the difference. Predicted own, and predicted to be killed by exactly ONE case.
     ("TR59 a table row is duplicated, so the table holds fifteen facts in sixteen rows",
      COUNT_SUITE, "  { name: 'a flag, which is two regional indicators', input: '\\u{1F1EC}\\u{1F1E7}', codePoints: 2, utf16Units: 4 },", "  { name: 'a flag, which is two regional indicators', input: '\\u{1F1EC}\\u{1F1E7}', codePoints: 2, utf16Units: 4 }," + "\n" + "  { name: 'a flag, which is two regional indicators', input: '\\u{1F1EC}\\u{1F1E7}', codePoints: 2, utf16Units: 4 },", "own"),
+    # ONE BROKEN PATTERN WITH A WORKING SIBLING - the row that says why the AC6 control counts patterns
+    # and not kinds. `platform` holds two patterns; blunt this one and `/\bprocess\b/` still fires, so the
+    # category still appears in the fired set and a kind-level check sees nothing wrong. Before phase 11
+    # this mutant SURVIVED twice over: the sample had no `crypto` line at all, and the assertion was a
+    # list of five category names that did not include `platform`. Predicted own, by exactly ONE case.
+    ("TR60 a pattern in the purity scan is blunted while its category keeps firing",
+     COUNT_SUITE, "    { category: 'platform', pattern: /\\bcrypto\\b/ },",
+     "    { category: 'platform', pattern: /\\bcryptoZZZ\\b/ },", "own"),
+
+    # THE ONLY PATTERN IN ITS CATEGORY, which phase 11's F2 would also have caught: blunt this and
+    # `network` disappears from the fired set entirely. It is here as the CONTRAST to TR60 - two mutants
+    # of the same kind, one visible to a category check and one not, so the choice of unit is measured
+    # rather than argued. Predicted own, by exactly ONE case.
+    ("TR61 the only pattern in its category is blunted, so a whole kind of reach goes unscanned",
+     COUNT_SUITE, "    { category: 'network', pattern: /\\bfetch\\s*\\(/ },",
+     "    { category: 'network', pattern: /\\bfetchZZZ\\s*\\(/ },", "own"),
 ]
 
 def as_tuple(value):
@@ -726,6 +747,29 @@ def apply(path, old, new):
 def revert():
     subprocess.run(["git", "checkout", "--", *REVERT_PATHS], cwd=REPO, check=False)
     subprocess.run(["git", "clean", "-fq", "--", *REVERT_PATHS], cwd=REPO, check=False)
+
+
+def install_signal_reverts():
+    """Revert the live mutant when this process is TERMINATED rather than interrupted.
+
+    Phase 11's F1, with its mechanism corrected. A default SIGTERM terminates without unwinding, so
+    the per-row `finally` does not run and whichever mutant was live stays on disk - production
+    source, modified, in a tree the next `git add` would stage. SIGHUP is here for the same reason:
+    a background run outliving its shell.
+
+    `os._exit` ON PURPOSE. Reverting and then letting SystemExit propagate would revert a second time
+    through the `finally`, out of a signal handler, while a vitest child is still mid-run. The tree is
+    already clean by then, so there is nothing left worth unwinding for, and an immediate exit cannot
+    be interrupted again halfway through the revert it is doing.
+    """
+    def handler(signum, _frame):
+        print(f"\n  SIGNAL {signal.Signals(signum).name}: reverting the live mutant before exit.",
+              flush=True)
+        revert()
+        os._exit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, handler)
 
 
 def dirty():
@@ -814,6 +858,7 @@ def score(label, base):
 def main():
     wanted = sys.argv[1] if len(sys.argv) > 1 else ""
     print(f"REPO = {REPO}\n")
+    install_signal_reverts()
     unclean = dirty()
     if unclean:
         print("REFUSING TO RUN: there are uncommitted changes under the paths this harness reverts.\n"
@@ -848,10 +893,15 @@ def main():
             broken.append(label)
             revert()
             continue
-        # THE REVERT IS IN A `finally` (phase 7's F3). It covers an exception and a Ctrl-C, which is what
-        # this block can be interrupted by from inside; it does NOT cover a SIGKILL, because nothing can.
-        # The startup guard in `dirty()` is what covers that, on the next run, by refusing to measure a
-        # tree somebody else's crash has edited.
+        # THE REVERT IS IN A `finally` (phase 7's F3), AND A `finally` IS NOT ENOUGH. Measured, because
+        # phase 11's F1 said the revert only runs after every row and that is not true - it is per row,
+        # right here. What is true is the conclusion: a default SIGTERM does not unwind the stack, so this
+        # `finally` never runs and the live mutant stays on disk. Both signals were measured rather than
+        # reasoned about: SIGINT exits -2 with the revert DONE (Ctrl-C raises KeyboardInterrupt, so the
+        # phase 9 comment was right about Ctrl-C), SIGTERM exits -15 with the mutant STILL THERE. That is
+        # the signal a killed background run gets, which is how this harness has actually been interrupted
+        # twice. `install_signal_reverts()` below closes it. SIGKILL still cannot be covered by anything,
+        # and `dirty()` is what covers that, on the next run.
         try:
             lost, was_broken, _names, by_own = score(label, base)
         finally:
