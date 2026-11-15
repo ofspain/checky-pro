@@ -227,19 +227,19 @@ MUTANTS = [
      FORM, (FORM_IMPORT, FORM_BLOCK),
      ("import { forwardRef, type ReactNode, type Ref } from 'react';",
       '      <div ref={ref as unknown as Ref<HTMLDivElement>} className="flex w-full flex-col gap-2">\n'
-      "        {children}\n      </div>"), "own"),
+      "        {children}\n      </div>"), "inherited"),
     ("TR02 EmailField renders type=text, so the email field is an ordinary text box",
-     EMAIL, EMAIL_TYPE, '        type="text"', "own"),
+     EMAIL, EMAIL_TYPE, '        type="text"', "inherited"),
     # The password unmasked. Every value typed into it becomes visible, and the one field whose content
     # must never be read back is readable by anything that walks the DOM.
     ("TR03 PasswordField renders type=text, so the password is not masked",
-     PASSWORD, PASSWORD_TYPE, '        type="text"', "own"),
+     PASSWORD, PASSWORD_TYPE, '        type="text"', "inherited"),
     # The LABEL kept as text and the ASSOCIATION dropped. A `<span>` renders the same words in the same
     # place and leaves the control with no accessible name - the failure a reader of the screen cannot
     # see and `input.labels` can.
     ("TR04 EmailField labels with a span, so the control has no accessible name",
      EMAIL, EMAIL_LABEL_BLOCK,
-     '      <span className="text-step-0 font-medium text-text">\n        {label}\n      </span>', "own"),
+     '      <span className="text-step-0 font-medium text-text">\n        {label}\n      </span>', "inherited"),
 
     # --- AC3: code points, not UTF-16 units -----------------------------------------------------------
     # THE ROW THIS TASK IS NAMED FOR. `.length` calls twelve emoji 24 - still in range, so the accepting
@@ -258,18 +258,18 @@ MUTANTS = [
      SCREEN, SEND,
      "    if (length >= ADVISORY_MINIMUM_CODE_POINTS && length <= ADVISORY_MAXIMUM_CODE_POINTS) {\n"
      "      void createPublicAuthApi().POST('/accounts', { body: { email, password } })\n"
-     "        .then(() => setStatus('sent'), () => setStatus('idle'));\n    }", "own"),
+     "        .then(() => setStatus('sent'), () => setStatus('idle'));\n    }", "inherited"),
 
     # --- AC5: through the generated client, with no bearer ---------------------------------------------
     ("TR07 the call is replaced by a hand-written fetch",
      SCREEN, SEND,
      "    void fetch('/accounts', { method: 'POST', body: JSON.stringify({ email, password }) })\n"
-     "      .then(() => setStatus('sent'), () => setStatus('idle'));", "own"),
+     "      .then(() => setStatus('sent'), () => setStatus('idle'));", "inherited"),
 
     # --- AC6: every word comes from the catalogue ------------------------------------------------------
     # The key renamed, which is what a missing key looks like: the DOM shows `register.emailLabel`.
     ("TR08 the catalogue key is renamed, so the label resolves to the key itself",
-     CATALOGUE, EMAIL_KEY, "    emailLabelText: 'Email address',", "own"),
+     CATALOGUE, EMAIL_KEY, "    emailLabelText: 'Email address',", "inherited"),
     # PREDICTED TO SURVIVE, AND IT IS A HOLE. Hardcoded English is BYTE-FOR-BYTE what the catalogue
     # holds, so every copy assertion in the suite passes: comparing the DOM with the catalogue cannot
     # distinguish a lookup from a literal. Phase 10 owes a source assertion that the screen reaches `t()`
@@ -279,57 +279,57 @@ MUTANTS = [
     # directions - every key reached, no sentence spelled - and is the only instrument that can tell.
     ("TR09 the email label is hardcoded in English in the screen",
      SCREEN, EMAIL_FIELD,
-     '        <EmailField label="Email address" value={email} onChange={setEmail} />', "own"),
+     '        <EmailField label="Email address" value={email} onChange={setEmail} />', "inherited"),
 
     # --- AC7: the screen renders no element of its own, and the lists say so ---------------------------
     # The whole point of §6e(3), and three instruments should see it: the screen's tag scan, the bearer
     # sweep across all of src/, and the credential table, which counts `<Form` and would now find two.
     ("TR10 the screen renders a lowercase form tag of its own",
      SCREEN, (FORM_OPEN, FORM_CLOSE),
-     ("      <form onSubmit={submit}>", "      </form>"), "own"),
+     ("      <form onSubmit={submit}>", "      </form>"), "inherited"),
     ("TR11 RegisterScreen.tsx is dropped from the render-site list",
-     ONLY, RENDER_SITE, "", "own"),
+     ONLY, RENDER_SITE, "", "inherited"),
     # A RENAME, NOT A DELETION (T42's lesson). `it.each(PRIMITIVES)` generates one case per entry, so
     # dropping one drops a TEST and the fall in the total is indistinguishable from a file that never
     # loaded. A rename keeps the count and breaks the read.
     ("TR12 Form is renamed in the primitive list, so the layer has an unpinned primitive",
-     ONLY, PRIMITIVE, "  'Forme',", "own"),
+     ONLY, PRIMITIVE, "  'Forme',", "inherited"),
     ("TR13 the primitive count is reverted to nine",
      ONLY, PRIMITIVE_COUNT,
      "    expect(PRIMITIVES, 'the primitive list changed size without the brief changing')"
-     ".toHaveLength(9);", "own"),
+     ".toHaveLength(9);", "inherited"),
     # The excuse deleted. T16's scan then reports an unexplained credential shape in production, which is
     # the friction working - and the staleness case reports the row that no longer describes anything.
     ("TR14 the screen's row is deleted from the credential table",
      CREDENTIALS, CREDENTIAL_ROW, "  {\n    file: 'nothing/at/all.tsx',\n    what: 'a form element',\n"
-     "    count: 1,", "own"),
+     "    count: 1,", "inherited"),
 
     # --- AC8: public, and no new path -----------------------------------------------------------------
     ("TR15 register is added to the authenticated route set",
      ROUTES, AUTHENTICATED_SET,
-     "export const AUTHENTICATED_ROUTE_PATHS = [\n  REGISTER_PATH,\n  HOME_PATH,", "own"),
+     "export const AUTHENTICATED_ROUTE_PATHS = [\n  REGISTER_PATH,\n  HOME_PATH,", "inherited"),
 
     # --- AC9: keyboard-reachable, and a real submit ----------------------------------------------------
     # `type="button"` is the regression `ActionButton`'s own header describes: Enter inside a field stops
     # submitting, and the only thing that still works is a mouse click on the control.
     ("TR16 SubmitButton becomes type=button, so Enter in a field submits nothing",
-     SUBMIT, SUBMIT_TYPE, '        type="button"', "own"),
+     SUBMIT, SUBMIT_TYPE, '        type="button"', "inherited"),
     ("TR17 SubmitButton loses its focus ring",
      SUBMIT, SUBMIT_CLASSES,
      '        className="self-start rounded-md bg-accent px-4 py-2 text-step-0 font-medium '
-     'text-text-inverse"', "own"),
+     'text-text-inverse"', "inherited"),
 
     # --- AC10: nothing is stored --------------------------------------------------------------------
     ("TR18 the email is written to sessionStorage",
      SCREEN, SUBMITTING,
-     "    globalThis.sessionStorage.setItem('register.email', email);\n" + SUBMITTING, "own"),
+     "    globalThis.sessionStorage.setItem('register.email', email);\n" + SUBMITTING, "inherited"),
 
     # --- AC11: no branching on the response ----------------------------------------------------------
     ("TR19 the handler branches on the response status",
      SCREEN, SEND,
      "    void createPublicAuthApi().POST('/accounts', { body: { email, password } })\n"
      "      .then((reply) => setStatus(reply.response.status === 202 ? 'sent' : 'idle'),\n"
-     "        () => setStatus('idle'));", "own"),
+     "        () => setStatus('idle'));", "inherited"),
 
     # --- D1: the live region is pre-mounted ----------------------------------------------------------
     # The regression D1 exists to prevent, and it is INVISIBLE to a case that only reads the text after
@@ -338,7 +338,7 @@ MUTANTS = [
      SCREEN, STATUS_BLOCK,
      "      {status === 'idle' ? null : (\n        <StatusRegion>\n"
      "          {t(status === 'submitting' ? 'register.submitting' : 'register.success')}\n"
-     "        </StatusRegion>\n      )}", "own"),
+     "        </StatusRegion>\n      )}", "inherited"),
 
     # --- D5: the screen does not move focus ----------------------------------------------------------
     # PREDICTED TO SURVIVE. D5 froze "no focus move on mount" and the suite has no case for it: AC9
@@ -356,14 +356,14 @@ MUTANTS = [
 
     # --- D13: preventDefault lives in the primitive ---------------------------------------------------
     ("TR22 Form stops calling preventDefault, so a browser leaves the SPA",
-     FORM, PREVENT, "", "own"),
+     FORM, PREVENT, "", "inherited"),
 
     # --- D17's unfalsifiable row, RE-AIMED (phase 6's D-1) -------------------------------------------
     # The freeze called this unfalsifiable: an advisory check nothing consumes changes nothing. Phase 6
     # gave it a consumer - `aria-invalid` - so it is now a regression with an observable effect, and the
     # re-aim is recorded here rather than applied to the outcome after the fact.
     ("TR23 the advisory check always reports in range",
-     SCREEN, ADVISORY_CHECK, "    setAdvisory('in-range');", "own"),
+     SCREEN, ADVISORY_CHECK, "    setAdvisory('in-range');", "inherited"),
 
     # --- the honest unfalsifiable row ----------------------------------------------------------------
     ("TR24 Form drops noValidate, so the browser validates before the handler runs",
@@ -381,7 +381,7 @@ MUTANTS = [
     # a send, not the absence of a handler. This deletes the handler alone, leaves the real call in place,
     # and can only be seen by a case whose transport throws. Everything else in the suite still passes.
     ("TR26 the rejection handler is deleted, so an offline submit hangs on the in-flight copy",
-     SCREEN, REJECTION_HANDLER, "", "own"),
+     SCREEN, REJECTION_HANDLER, "", "inherited"),
 
     # --- the pair pin phase 9 added (F3 / I8) --------------------------------------------------------
     # `SubmitButton`'s header claimed the two buttons were pinned to ONE appearance when nothing compared
@@ -390,7 +390,7 @@ MUTANTS = [
     # appearances. It is the row that makes a comment true.
     ("TR27 ActionButton's accent is changed, so the two buttons stop matching",
      ACTION_BUTTON, ACTION_CLASSES,
-     ACTION_CLASSES.replace("bg-accent", "bg-surface"), "own"),
+     ACTION_CLASSES.replace("bg-accent", "bg-surface"), "inherited"),
 
     # TR27 WAS KILLED AND DID NOT ISOLATE ITS CLAIM - the same defect the old TR26 had, found by reading
     # WHICH cases died rather than how many. T173's own `gives ActionButton the colour and type utilities
@@ -403,7 +403,7 @@ MUTANTS = [
     ("TR28 SubmitButton is restyled AND its utility row is updated with it, so only the pair pin can tell",
      (SUBMIT, ONLY), (SUBMIT_CLASSES, SUBMIT_UTILITIES),
      (SUBMIT_CLASSES.replace("bg-accent", "bg-surface"),
-      SUBMIT_UTILITIES.replace("bg-accent", "bg-surface")), "own"),
+      SUBMIT_UTILITIES.replace("bg-accent", "bg-surface")), "inherited"),
 
     # ======================================================================================================
     # TASK 44 - the upper bound. Every row below is aimed at something ONLY the 128 end can see.
@@ -419,19 +419,19 @@ MUTANTS = [
     # control still finds its row on the maximum and its row above it, and the ONLY thing left that can
     # notice there is no upper bound any more is a password that is over it.
     ("TR30 the upper half of the comparison is deleted, so there is no maximum at all",
-     SCREEN, UPPER_HALF, "", "own"),
+     SCREEN, UPPER_HALF, "", "inherited"),
 
     # An off-by-one AT the boundary, which is invisible to every row that is not at the boundary: 13 and
     # 11 and 7 emoji are judged exactly as before, and the two rows sitting ON 128 flip to out of range.
     ("TR31 the maximum becomes exclusive, so the bound itself is rejected",
-     SCREEN, UPPER_COMPARISON, "length < ADVISORY_MAXIMUM_CODE_POINTS", "own"),
+     SCREEN, UPPER_COMPARISON, "length < ADVISORY_MAXIMUM_CODE_POINTS", "inherited"),
 
     # THE ROW THIS TASK WAS BUILT AROUND (phase 3 F4, and the freeze's measurement against it). A field
     # that caps its own length in UTF-16 units truncates a 128-code-point passphrase of emoji to 64
     # characters before any handler runs. The claim under test is NEGATIVE and belongs to the two pins
     # phase 6 added: if this row dies anywhere else, the freeze's measurement was wrong.
     ("TR32 PasswordField caps its own length at 128 UTF-16 units, which truncates a valid password",
-     PASSWORD, PASSWORD_TYPE, '        type="password"\n        maxLength={128}', "own"),
+     PASSWORD, PASSWORD_TYPE, '        type="password"\n        maxLength={128}', "inherited"),
 
     # THE `.length` BUG, ISOLATED TO THIS END. TR05 swaps the counter and is killed by task 43's 7-emoji
     # row, so it cannot say whether the 128 end is measured. This changes only the UPPER comparison, and
@@ -439,7 +439,7 @@ MUTANTS = [
     # both are under 128 either way. At 128 emoji it reads 256, calls a valid password too long, and marks
     # it invalid - the false REJECT, which is the direction the bug points at this end.
     ("TR33 the upper comparison counts UTF-16 units, so a valid astral password is marked too long",
-     SCREEN, UPPER_COMPARISON, "password.length <= ADVISORY_MAXIMUM_CODE_POINTS", "own"),
+     SCREEN, UPPER_COMPARISON, "password.length <= ADVISORY_MAXIMUM_CODE_POINTS", "inherited"),
 
     # TR25's mirror. A table whose rows all expect the same outcome measures the row count and nothing
     # else; TR25 asks whether the `aria-invalid` assertion is awake at the end task 43 built, and this
@@ -457,39 +457,39 @@ MUTANTS = [
     # Two instruments must see it: the widened primitive scan, and the rendered pin that reads `minlength`
     # off both live fields.
     ("TR35 EmailField floors its own length at 12 UTF-16 units, which is R1's bound on the wrong field",
-     EMAIL, EMAIL_TYPE, '        type="email"\n        minLength={12}', "own"),
+     EMAIL, EMAIL_TYPE, '        type="email"\n        minLength={12}', "inherited"),
 
     # ======================================================================================================
     # TASK 45 - the advisory guidance. Two of these seven are invisible on screen.
     # ======================================================================================================
 
     ("TR36 the guidance never renders, so the field is marked with nothing to read",
-     SCREEN, GUIDANCE_ELEMENT, "        {null}", "own"),
+     SCREEN, GUIDANCE_ELEMENT, "        {null}", "inherited"),
 
     # In range too. The field still points at nothing when the password is fine, so a case that looks for
     # the sentence THROUGH `aria-describedby` cannot see this - which is why AC3 also asserts the sentence
     # is absent from the page text.
     ("TR37 the guidance renders for every password, including the ones that are fine",
      SCREEN, GUIDANCE_ELEMENT,
-     "        <Text id={GUIDANCE_ID}>{guidance}</Text>", "own"),
+     "        <Text id={GUIDANCE_ID}>{guidance}</Text>", "inherited"),
 
     # Up before the first submit. `!= 'in-range'` and not `!= 'unchecked'`: the state has three values,
     # only one of them renders today, so the second form would be the original in different words.
     ("TR38 the guidance is up from the first render, before anything has been submitted",
      SCREEN, GUIDANCE_ELEMENT,
-     "        {advisory !== 'in-range' ? <Text id={GUIDANCE_ID}>{guidance}</Text> : null}", "own"),
+     "        {advisory !== 'in-range' ? <Text id={GUIDANCE_ID}>{guidance}</Text> : null}", "inherited"),
 
     # The sentence stays on the page and nothing names it. This is the whole of AC4's claim, and it is also
     # what L11 means by an association: a message a sighted visitor reads and a screen-reader user never
     # meets.
     ("TR39 the field stops pointing at the guidance, which is then visual only",
-     SCREEN, FIELD_DESCRIBEDBY, "", "own"),
+     SCREEN, FIELD_DESCRIBEDBY, "", "inherited"),
 
     # BYTE-IDENTICAL ON SCREEN. The DOM says exactly what it said before, so every rendering assertion in
     # the suite passes; only a scan of the SOURCE can tell a lookup from a literal (task 43's TR09 taught
     # this once already).
     ("TR40 the sentence is spelled in the screen instead of looked up",
-     SCREEN, GUIDANCE_LOOKUP, "  const guidance = 'Use a password of 12 to 128 characters.';", "own"),
+     SCREEN, GUIDANCE_LOOKUP, "  const guidance = 'Use a password of 12 to 128 characters.';", "inherited"),
 
     # THE ROW THIS TASK WAS BUILT AROUND, and also byte-identical: the catalogue names the bounds as
     # literals instead of interpolating them. Nothing on screen moves. What makes the two different is
@@ -497,19 +497,19 @@ MUTANTS = [
     # kill it is one that says the rendered numbers ARE the constants.
     ("TR41 the catalogue types the bounds in, so they can drift from the check that enforces them",
      CATALOGUE, GUIDANCE_STRING,
-     "    passwordGuidance: 'Use a password of 12 to 128 characters.',", "own"),
+     "    passwordGuidance: 'Use a password of 12 to 128 characters.',", "inherited"),
 
     # The copy becomes a verdict. The equality cases do NOT die - they build the expected sentence from the
     # catalogue, so they move with it - which is exactly why the suite also pins the words themselves.
     ("TR42 the guidance delivers a verdict instead of naming the rule",
      CATALOGUE, GUIDANCE_STRING,
-     "    passwordGuidance: 'Your password is too short.',", "own"),
+     "    passwordGuidance: 'Your password is too short.',", "inherited"),
 
     # TR25's and TR34's shape at this task's table: a row claiming a password INSIDE the range is outside
     # it. If the guidance assertions are awake, the sentence will be absent and the row will fail.
     ("TR43 CANARY a 12-code-point row claims to be out of range",
      REJECT_SUITE, OUT_OF_RANGE_LAST_ROW,
-     OUT_OF_RANGE_LAST_ROW + "\n  { name: 'CANARY', password: 'a'.repeat(12), codePoints: 12 },", "own"),
+     OUT_OF_RANGE_LAST_ROW + "\n  { name: 'CANARY', password: 'a'.repeat(12), codePoints: 12 },", "inherited"),
 
     # --- phase 9: the three rows the reviews asked for ------------------------------------------------
     # THE HOLE PHASE 7 MEASURED. The screen interpolates the literals instead of the constants: the
@@ -519,7 +519,7 @@ MUTANTS = [
     # TR40's lesson had to be learnt twice: provenance is invisible to the DOM at BOTH ends of the wire.
     ("TR44 the screen interpolates literal bounds, so the catalogue's template is fed from nowhere",
      SCREEN, GUIDANCE_LOOKUP,
-     "  const guidance = t('register.passwordGuidance', {\n    min: 12,\n    max: 128,\n  });", "own"),
+     "  const guidance = t('register.passwordGuidance', {\n    min: 12,\n    max: 128,\n  });", "inherited"),
 
     # THE BOUNDS SWAPPED IN THE TEMPLATE: "Use a password of 128 to 12 characters." Nothing in the source
     # moves - the catalogue still interpolates, the screen still names the constants - and the sentence
@@ -527,7 +527,7 @@ MUTANTS = [
     # rendered numbers against the constants, and this row is the mutant it never had (phase 8's I3).
     ("TR45 the template names the bounds in the wrong order, so the sentence states an empty range",
      CATALOGUE, GUIDANCE_STRING,
-     "    passwordGuidance: 'Use a password of {{max}} to {{min}} characters.',", "own"),
+     "    passwordGuidance: 'Use a password of {{max}} to {{min}} characters.',", "inherited"),
 
     # THE SENTENCE AFTER THE BUTTON. The association still holds, every equality still passes, and the
     # screen's own comment - "between the field and the control so the reading order matches the visual
@@ -535,7 +535,7 @@ MUTANTS = [
     # both arrived in phase 9, because the claim was stated in production prose and held by nothing.
     ("TR46 the guidance is rendered after the submit control, so it informs a decision already made",
      SCREEN, GUIDANCE_THEN_SUBMIT,
-     "        <SubmitButton>{t('register.submit')}</SubmitButton>\n" + GUIDANCE_ELEMENT, "own"),
+     "        <SubmitButton>{t('register.submit')}</SubmitButton>\n" + GUIDANCE_ELEMENT, "inherited"),
 
     # --- phase 10: the two rows the new cases answer -------------------------------------------------
     # TR33'S MIRROR, AT THE END WHERE THE BUG WITHHOLDS THE SENTENCE. TR33 changes the upper comparison and
@@ -544,7 +544,7 @@ MUTANTS = [
     # 43's 7-emoji row catches this comparison through the MARK, in a file this task did not write, so
     # before phase 10 the sentence was uncovered at this end: silence is the hardest failure to notice.
     ("TR47 the lower comparison counts UTF-16 units, so an astral password short of the bound is told nothing",
-     SCREEN, LOWER_COMPARISON, "password.length >= ADVISORY_MINIMUM_CODE_POINTS", "own"),
+     SCREEN, LOWER_COMPARISON, "password.length >= ADVISORY_MINIMUM_CODE_POINTS", "inherited"),
 
     # THE STATE MACHINE'S OTHER EDGE. `advisory` is set in `submit()` and nowhere else; this resets it on
     # every keystroke, which is the shape a well-meaning "clear the error as they fix it" change would
@@ -553,7 +553,7 @@ MUTANTS = [
     # still green.
     ("TR48 the advisory resets on every keystroke, so the sentence vanishes as soon as the visitor types",
      SCREEN, PASSWORD_ONCHANGE,
-     "          onChange={(next) => { setPassword(next); setAdvisory('unchecked'); }}", "own"),
+     "          onChange={(next) => { setPassword(next); setAdvisory('unchecked'); }}", "inherited"),
 
     # --- task 46: the counting unit itself -----------------------------------------------------------
     # TR49 WAS WRITTEN AND THEN DELETED, and the reason is worth more than the row would have been. It
