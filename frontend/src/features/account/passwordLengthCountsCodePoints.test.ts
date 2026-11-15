@@ -77,7 +77,7 @@ const CASES: ReadonlyArray<{ name: string; input: string; codePoints: number; ut
   { name: 'a flag, which is two regional indicators', input: '\u{1F1EC}\u{1F1E7}', codePoints: 2, utf16Units: 4 },
   {
     name: 'a family emoji, three people joined by two zero-width joiners',
-    input: '\u{1F469}‍\u{1F469}‍\u{1F467}', codePoints: 5, utf16Units: 8,
+    input: '\u{1F469}\u200D\u{1F469}\u200D\u{1F467}', codePoints: 5, utf16Units: 8,
   },
   // THE SAME LETTER, SPELLED TWO WAYS (OQ-T46-2). Composed is one code point; decomposed is a letter and a
   // combining accent, so it is two. Nothing in this client normalises, so the same password typed on two
@@ -122,6 +122,12 @@ describe('AC1/AC3 the count is in code points, and every expectation is a Unicod
     expect(CASES.filter((row) =>
       row.codePoints <= ADVISORY_MAXIMUM_CODE_POINTS && row.utf16Units > ADVISORY_MAXIMUM_CODE_POINTS),
     'no row crosses the maximum between the two units').not.toEqual([]);
+    // AND NO TWO ROWS HOLD THE SAME STRING. Every clause above reads the table's CONTENT, but all three
+    // are satisfied by a table with a duplicate in it, and the row-count guard in the circularity control
+    // below would count the duplicate as a fact. A repeated input is the cheapest way for this file to
+    // look thorough while measuring less than its length suggests.
+    expect(new Set(CASES.map((row) => row.input)).size,
+      'two rows hold the same string, so the table is shorter than it looks').toBe(CASES.length);
   });
 
   it('CONTROL: no expectation in this file is computed by the function under test', async () => {
@@ -177,11 +183,33 @@ describe('AC5 a grapheme cluster is not one code point', () => {
     // where the unit actually lives.
     expect(countCodePoints('\u{1F44D}\u{1F3FD}'), 'a skin tone modifier is its own code point').toBe(2);
     expect(countCodePoints('\u{1F1EC}\u{1F1E7}'), 'a flag is two regional indicators').toBe(2);
-    expect(countCodePoints('\u{1F469}‍\u{1F469}‍\u{1F467}'),
+    expect(countCodePoints('\u{1F469}\u200D\u{1F469}\u200D\u{1F467}'),
       'a ZWJ sequence counts every person and every joiner').toBe(5);
     // And the contrast that makes the point: one picture, five code points, eight units - three different
     // answers to "how long is this", of which R1 names the middle one.
-    expect('\u{1F469}‍\u{1F469}‍\u{1F467}'.length).toBe(8);
+    expect('\u{1F469}\u200D\u{1F469}\u200D\u{1F467}'.length).toBe(8);
+  });
+
+  it('is strictly between the two units it is confused with, measured by a real segmenter', () => {
+    // THREE ANSWERS TO "HOW LONG IS THIS", AND R1 NAMES THE MIDDLE ONE. The case above asserts the first
+    // and the third as literals, which is honest but leaves their ORDER unmeasured: a reader could come
+    // away believing code points are what a visitor counts, or what the engine stores, and every row in
+    // this file would still pass. `Intl.Segmenter` exists in this runtime and is used NOWHERE in `src`,
+    // which is what makes it usable here - it is not the function under test, and unlike 1, 5 and 8 it is
+    // not a number I chose. The ordering is asserted, not the numbers.
+    const graphemes = (value: string) =>
+      [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(value)].length;
+    const cluster = '\u{1F469}\u200D\u{1F469}\u200D\u{1F467}';
+    expect(graphemes(cluster), 'the segmenter does not see one picture').toBe(1);
+    expect(graphemes(cluster) < countCodePoints(cluster),
+      'a cluster has no more graphemes than code points').toBe(true);
+    expect(countCodePoints(cluster) < cluster.length,
+      'a cluster has no more code points than UTF-16 units').toBe(true);
+    // CONTROL: THE WITNESS IS NOT BLIND, and it is not merely returning 1. On strings with no clusters in
+    // them it agrees with both of the other units, so the three-way split above is a property of the
+    // INPUT and not an artefact of the thing doing the counting.
+    expect(graphemes('\u{1F44D}'.repeat(3)), 'the segmenter is not counting graphemes').toBe(3);
+    expect(graphemes('abc'), 'the segmenter disagrees with ASCII').toBe(3);
   });
 });
 
@@ -211,6 +239,29 @@ describe('AC4 the count is total, and it is not additive', () => {
     expect(countCodePoints(low)).toBe(1);
     expect(countCodePoints(high + low), 'the halves were counted separately').toBe(1);
     expect(high + low).toBe('\u{1F44D}');
+  });
+});
+
+describe('AC3 the arithmetic holds for compositions the table does not list', () => {
+  it('counts k astral code points and m ASCII as k + m, for every k and m up to five', () => {
+    // A PROPERTY, NOT A ROW. The table above is fifteen strings I picked, and a function can satisfy a
+    // sample by accident: `value.length` cannot, but something that halved the length when the value
+    // "looked astral" would pass several of them. This asserts the same claim over thirty-six strings
+    // nobody wrote down, with BOTH numbers stated arithmetically rather than measured - k + m code
+    // points, 2k + m units - so no expectation here came out of the implementation either.
+    // THIS CASE HAS NO MUTANT OF ITS OWN in the harness, and that is written down rather than left to be
+    // discovered: every implementation it would kill is already killed by a named row. It is here because
+    // the rows are a sample and this is the law they are a sample of.
+    for (let astral = 0; astral <= 5; astral += 1) {
+      for (let ascii = 0; ascii <= 5; ascii += 1) {
+        const value = '\u{1F44D}'.repeat(astral) + 'a'.repeat(ascii);
+        expect(countCodePoints(value),
+          `${astral} astral and ${ascii} ASCII are not ${astral + ascii} code points`)
+          .toBe(astral + ascii);
+        expect(value.length, 'the UTF-16 arithmetic in this case is wrong, so it proves nothing')
+          .toBe(2 * astral + ascii);
+      }
+    }
   });
 });
 
