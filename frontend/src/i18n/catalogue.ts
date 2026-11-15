@@ -81,13 +81,32 @@ export const en = {
     emailLabel: 'Email address',
     passwordLabel: 'Password',
     submit: 'Create account',
-    // The two things the screen says after the submit, and ONLY these two (task 43, D7). There is no
-    // advisory, rejection, strength or hint copy here: task 45 owns the guidance shown when the 12-to-128
-    // check fails, and it should choose those words rather than inherit them from the task that wrote the
-    // check. `sent` says nothing about whether the address was already registered - R2 and L4 require the
-    // same words either way, and task 47's acknowledgement screen is where that claim gets its own suite.
+    // The two things the screen says after the submit (task 43, D7). `success` says nothing about whether
+    // the address was already registered - R2 and L4 require the same words either way, and task 47's
+    // acknowledgement screen is where that claim gets its own suite.
     submitting: 'Creating your account…',
     success: 'Check your email to finish creating your account.',
+    /**
+     * TASK 45, AND THE FIRST INTERPOLATED STRING IN THIS APPLICATION. Task 43 reserved this key's words for
+     * this task and said so here; the reservation is spent, and what replaced it is a TEMPLATE rather than
+     * a sentence, for one reason: R1's bound lives in `passwordLength.ts`, and a literal "12 to 128" here
+     * would be a second copy of it that drifts the day a bound moves. The screen interpolates
+     * `ADVISORY_MINIMUM_CODE_POINTS` and `ADVISORY_MAXIMUM_CODE_POINTS`, and a case asserts the rendered
+     * numbers ARE those constants - which is the only thing that can tell this string from one with the
+     * numbers typed in, since both render identically.
+     *
+     * IT NAMES THE RULE AND DOES NOT DIAGNOSE THE INPUT (D-T45-2). "Too short" is a verdict, and R1 makes
+     * this check ADVISORY - the server is the authority, so the client has no standing to deliver one. It
+     * also means ONE string serves both ends of the range and the screen never branches on which bound was
+     * missed.
+     *
+     * "CHARACTERS", NOT "CODE POINTS", and the imprecision is deliberate. R1 counts code points and
+     * `tasks.md` itself says "128 characters"; for every password a visitor is likely to type the two
+     * agree. They part only for a grapheme cluster built from several code points - a flag, or a family
+     * emoji - where this sentence would understate the allowance. Naming the unit precisely would cost
+     * every visitor a term they do not know to save a few the surprise that the server resolves anyway.
+     */
+    passwordGuidance: 'Use a password of {{min}} to {{max}} characters.',
   },
   shell: {
     // Not invented either: the mirror of `signedOut.action`'s 'Sign in', so the two directions of the same

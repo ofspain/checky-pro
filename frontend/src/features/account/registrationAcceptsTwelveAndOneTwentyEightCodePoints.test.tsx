@@ -513,7 +513,7 @@ describe('AC6 the screen says what the catalogue says, and never a key', () => {
     // with the catalogue cannot distinguish a lookup from a literal. Only the source can, and it is
     // asserted in both directions - every key is reached, and no sentence is spelled.
     for (const key of ['register.heading', 'register.emailLabel', 'register.passwordLabel',
-      'register.submit', 'register.submitting', 'register.success']) {
+      'register.submit', 'register.submitting', 'register.success', 'register.passwordGuidance']) {
       expect(code, `the screen does not reach the catalogue for ${key}`).toContain(`'${key}'`);
     }
     // A WORD-BOUNDARY MATCH, NOT A SUBSTRING, AND THE TRAP BIT A SECOND TIME TO TEACH IT. Written as a

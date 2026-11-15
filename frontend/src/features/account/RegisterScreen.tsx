@@ -1,7 +1,7 @@
 import { useState, type ReactElement } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPublicAuthApi } from '../../api/client';
-import { EmailField, Form, Heading, PasswordField, Screen, StatusRegion, SubmitButton } from '../../app/ui';
+import { EmailField, Form, Heading, PasswordField, Screen, StatusRegion, SubmitButton, Text } from '../../app/ui';
 import { ADVISORY_MAXIMUM_CODE_POINTS, ADVISORY_MINIMUM_CODE_POINTS, countCodePoints } from './passwordLength';
 
 /**
@@ -48,6 +48,16 @@ import { ADVISORY_MAXIMUM_CODE_POINTS, ADVISORY_MINIMUM_CODE_POINTS, countCodePo
  * share across screens - which is what both exist for. The first screen that needs server state across
  * screens should revisit L13 with a real consumer, the way task 43 revisited the design system's invitation.
  */
+/**
+ * The guidance element's id, which the password field points at with `aria-describedby` (task 45).
+ *
+ * A CONSTANT RATHER THAN `useId()` BECAUSE TWO SIBLINGS MUST AGREE ON IT, and because the screen renders
+ * once per route - `SignInScreen` fixes `sign-in-explanation` the same way for the same reason. A
+ * generated id would be correct too, but it would have to be threaded through both elements, and the
+ * value a test reads would then be an implementation detail rather than a name.
+ */
+const GUIDANCE_ID = 'register-password-guidance';
+
 export function RegisterScreen(): ReactElement {
   const { t } = useTranslation();
   const [email, setEmail] = useState('');
@@ -65,6 +75,14 @@ export function RegisterScreen(): ReactElement {
       .then(() => setStatus('sent'), () => setStatus('idle'));
   }
 
+  // THE BOUNDS COME FROM THE MODULE THAT ENFORCES THEM, never from the sentence. A catalogue string with
+  // "12 to 128" typed into it renders identically to this one and goes stale the day a bound moves, which
+  // is why the numbers are interpolated and why a case asserts the rendered ones ARE these constants.
+  const guidance = t('register.passwordGuidance', {
+    min: ADVISORY_MINIMUM_CODE_POINTS,
+    max: ADVISORY_MAXIMUM_CODE_POINTS,
+  });
+
   return (
     <Screen>
       <Heading>{t('register.heading')}</Heading>
@@ -75,7 +93,14 @@ export function RegisterScreen(): ReactElement {
           value={password}
           onChange={setPassword}
           aria-invalid={advisory === 'out-of-range' ? true : undefined}
+          aria-describedby={advisory === 'out-of-range' ? GUIDANCE_ID : undefined}
         />
+        {/* ONE CONDITION DRIVES BOTH, deliberately. The mark and the sentence that explains it must appear
+            and disappear together: a field marked invalid with nothing to read is what task 43 shipped and
+            what this task exists to finish, and a sentence with no `aria-describedby` pointing at it is
+            the same defect for anyone who cannot see the layout. Between the field and the control so the
+            reading order matches the visual one. */}
+        {advisory === 'out-of-range' ? <Text id={GUIDANCE_ID}>{guidance}</Text> : null}
         <SubmitButton>{t('register.submit')}</SubmitButton>
       </Form>
       <StatusRegion>

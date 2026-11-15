@@ -39,7 +39,23 @@ export const PasswordField = forwardRef<HTMLInputElement, {
    * with no sentence, which is deliberate and incomplete rather than wrong.
    */
   'aria-invalid'?: boolean;
-}>(function PasswordField({ label, value, onChange, 'aria-invalid': ariaInvalid }, ref) {
+  /**
+   * The id of an element that explains the field, which task 45 uses to attach R1's advisory guidance.
+   *
+   * A RELATIONSHIP THE SCREEN OWNS, NOT A CONTRACT ATTRIBUTE, which is why rule 2 permits it as a prop.
+   * The message is the screen's - it holds the state that decides whether there is one, and the catalogue
+   * key that supplies its words - so the screen is the only party that can know the id. `ActionButton`
+   * has taken this exact prop since task 16 and `Text` carries an `id` prop "for one reason:
+   * `aria-describedby`", so this is the layer's established shape rather than a relaxation of it. What
+   * rule 2 keeps inside this file is still inside it: `type`, and the `htmlFor`/`id` pair.
+   *
+   * Left undefined there is no description, and the attribute is absent rather than empty - an
+   * `aria-describedby=""` points at nothing and some assistive technology announces the emptiness.
+   */
+  'aria-describedby'?: string;
+}>(function PasswordField(
+  { label, value, onChange, 'aria-invalid': ariaInvalid, 'aria-describedby': describedBy }, ref,
+) {
   const id = useId();
   return (
     <>
@@ -53,6 +69,7 @@ export const PasswordField = forwardRef<HTMLInputElement, {
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-invalid={ariaInvalid}
+        aria-describedby={describedBy}
         className="mb-2 rounded-md border border-muted bg-surface px-3 py-2 text-step-0 text-text outline-offset-2 focus-visible:outline-2 focus-visible:outline-focus"
       />
     </>

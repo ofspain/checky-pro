@@ -920,6 +920,16 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
       'register.submit',
       'register.submitting',
       'register.success',
+      // TASK 45's one, and the first TEMPLATE this pin has admitted - its value holds `{{min}}` and
+      // `{{max}}` rather than a finished sentence, because R1's bound lives in `passwordLength.ts` and a
+      // literal here would be a second copy of it. The pin is unharmed either way: it counts KEYS, and
+      // what it forbids is a primitive or a restyling quietly editing or dropping a string.
+      //
+      // PHASE 3's F9 SAID THIS FILE NEEDED NO CHANGE and the freeze accepted that. It was wrong, and the
+      // test said so within a minute: F9 reasoned about element counts and prop types and neither it nor
+      // the freeze remembered the key-set pin lived here too. Recorded as a deviation rather than quietly
+      // fixed, because the next task that adds a word will meet the same surprise.
+      'register.passwordGuidance',
       // TASK 42's one, admitted for the same reason and on the same terms: it is the authenticated chrome's
       // own word, not a primitive's. `Banner` carries no copy - the case below this one is what says so.
       'shell.signOut',
