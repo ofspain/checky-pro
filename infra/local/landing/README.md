@@ -29,16 +29,28 @@ open http://localhost:5173
 
 Paste the `transactionHash` into the page.
 
-Three demo moments worth rehearsing:
+### The outcomes you can actually show, all measured on this stack
 
-| | |
-|---|---|
-| **AGREED** | `bin/chain pay <addr> 12500000` — the happy path, shows "12.5 USDC". |
-| **NOT FOUND** | Any plausible-looking hash that was never mined. All three providers agree it does not exist. |
-| **HELD** | `bin/chain pay-blocked <addr> 1000000` pays from the address local screening blocks. |
+| Outcome | How | Measured |
+|---|---|---|
+| **AGREED** | `bin/chain pay <addr> 12500000` | `AGREED`, 1 confirmation, `"12.5 USDC"` |
+| **NOT FOUND** | Any plausible hash that was never mined | `NOT_FOUND`, every fact null |
+| **UNKNOWN TOKEN** | Move a token that is not on the allowlist | `UNKNOWN_TOKEN`, amount `5000000`, **no** `amountDisplay` |
+| **The reorg** | Verify a hash, then `bin/chain reorg 20`, then verify it again | `AGREED` with 20 confirmations → `NOT_FOUND` |
 
-`bin/chain reorg 3` drops the last three blocks, so a hash that verified a moment ago stops
-existing — a strong thing to show live, and the reason the quorum exists.
+**The reorg is the one to close on.** A payment verifies, the chain reorganises, and the same hash
+now reports that it never happened — which is the whole argument for confirmations, for finality,
+and for not trusting a single provider's "yes".
+
+**`HELD` cannot be shown on this stack, and it is the one outcome worth wanting.** It means the
+three providers disagreed, and locally all three *are the same anvil node* — they cannot disagree.
+To demo it you would have to point one provider at a different node in
+`infra/local/config/crypto.properties`. Nothing is faked to produce it: the quorum code runs on
+every request, it simply always reaches agreement here.
+
+**`bin/chain pay-blocked` does not produce `HELD` on this page** — measured, it returns `AGREED`.
+Sanctions screening belongs to the attestation and watch paths, not to this read. An earlier draft
+of this file claimed otherwise, which is exactly the kind of thing that ruins a live demo.
 
 ## Before this is served on a public URL
 
@@ -52,6 +64,9 @@ These are the gaps, written down rather than discovered later.
   its own comment). The quorum logic is real and runs for every request; what is not real locally
   is the independence of the three answers. A public deployment needs three genuinely separate
   providers, or the 2-of-3 claim is a claim about one node agreeing with itself.
+- **Append-only is enforced by the database, not by convention.** Measured: `payment_app` holds
+  `INSERT` and `SELECT` on `chain_verifications`, and an `UPDATE` as that role fails with
+  `permission denied`.
 - **No caching.** The same hash asked twice is two provider fan-outs and two rows. That is correct
   — each answer is a fact about a moment, and a reorg can change it — but a public page wants a
   short cache in front of it anyway.
