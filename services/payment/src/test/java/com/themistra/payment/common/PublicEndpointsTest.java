@@ -19,7 +19,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Phase 7 finding 1: {@code PublicEndpoints.PATTERNS} is exactly the 3 declared paths, and
+ * Phase 7 finding 1: {@code PublicEndpoints.PATTERNS} is exactly the 4 declared paths, and
  * nothing else is {@code permitAll}. Mirrors {@code notification-service}'s own
  * {@code PublicEndpointsTest} exactly. The positive cases may still 404 (no real actuator
  * handler is registered in this {@code @WebMvcTest} slice) - the assertion is exclusively about
@@ -33,11 +33,12 @@ class PublicEndpointsTest {
     private MockMvc mockMvc;
 
     @Test
-    void patternsListExactlyTheThreeDeclaredPaths() {
+    void patternsListExactlyTheFourDeclaredPaths() {
         assertThat(PublicEndpoints.PATTERNS).containsExactlyInAnyOrder(
                 "/actuator/health/**",
                 "/actuator/info",
-                "/actuator/prometheus");
+                "/actuator/prometheus",
+                "/api/v1/verifications");
     }
 
     @ParameterizedTest
@@ -46,7 +47,8 @@ class PublicEndpointsTest {
             "/actuator/health/liveness",
             "/actuator/health/readiness",
             "/actuator/info",
-            "/actuator/prometheus"
+            "/actuator/prometheus",
+            "/api/v1/verifications"
     })
     void declaredPublicPathsAreNotBlockedBySecurity(String path) throws Exception {
         MvcResult result = mockMvc.perform(get(path)).andReturn();

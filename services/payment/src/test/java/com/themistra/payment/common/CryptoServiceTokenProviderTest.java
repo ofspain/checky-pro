@@ -178,7 +178,8 @@ class CryptoServiceTokenProviderTest {
                 "http://127.0.0.1:" + server.getAddress().getPort() + "/oauth2/token",
                 "payment-service", "test-secret");
         CryptoClientProperties properties = new CryptoClientProperties(
-                "http://crypto-service", "/internal/v1/attest", "/internal/v1/watches", 2000, 2000, auth);
+                "http://crypto-service", "/internal/v1/attest", "/internal/v1/watches",
+                "/internal/v1/transactions", 2000, 2000, auth);
         return new CryptoServiceTokenProvider(RestClient.builder(), properties, clock);
     }
 

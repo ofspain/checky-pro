@@ -24,6 +24,7 @@ public record CryptoClientProperties(
         @NotBlank String baseUrl,
         @NotBlank String attestPath,
         @NotBlank String watchPath,
+        @NotBlank String lookupPath,
         @Positive int connectTimeoutMs,
         @Positive int readTimeoutMs,
         @NotNull @Valid Auth auth

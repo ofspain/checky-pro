@@ -193,6 +193,13 @@ services:
       THEMISTRA_PAYMENT_INVOICE_DEFAULTTTLMINUTES: ${LOCAL_INVOICE_TTL_MINUTES:-60}
       THEMISTRA_PAYMENT_INVOICE_EXPIRYSWEEP_CRON: ${LOCAL_EXPIRY_SWEEP_CRON:-0 */5 * * * *}
       CRYPTO_AUTH_TOKEN_URI: http://auth:8080/oauth2/token
+      # Display only (demo/onchain-verification): how the landing page prints an agreed amount.
+      # crypto-service owns the real allowlist and the decision; these two decide nothing. The
+      # address is anvil's deterministic MockUSDC, the same one bin/chain pays in.
+      THEMISTRA_PAYMENT_CHAINVERIFY_TOKENS_0_CHAIN: ETHEREUM
+      THEMISTRA_PAYMENT_CHAINVERIFY_TOKENS_0_CONTRACTADDRESS: "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+      THEMISTRA_PAYMENT_CHAINVERIFY_TOKENS_0_SYMBOL: USDC
+      THEMISTRA_PAYMENT_CHAINVERIFY_TOKENS_0_DECIMALS: "6"
       RECEIPT_BUCKET: themistra-local-receipts
       KMS_PUBLIC_KEYS_URL: http://crypto:8080/.well-known/themistra-verification-keys
     ports: ["18083:8083"]
@@ -220,6 +227,7 @@ services:
     image: caddy:2.10-alpine
     volumes:
       - ./edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./landing:/srv/landing:ro
     ports: ["5173:80"]
     depends_on: [auth, payment, notification]
 

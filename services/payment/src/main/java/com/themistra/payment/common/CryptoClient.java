@@ -6,6 +6,7 @@ import com.themistra.payment.common.crypto.AttestResponse;
 import com.themistra.payment.common.crypto.AttestationResult;
 import com.themistra.payment.common.crypto.RegisterWatchRequest;
 import com.themistra.payment.common.crypto.RegisterWatchResponse;
+import com.themistra.payment.common.crypto.TransactionLookupResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -47,11 +48,13 @@ public class CryptoClient {
     private final RestClient restClient;
     private final String watchPath;
     private final String attestPath;
+    private final String lookupPath;
 
     public CryptoClient(RestClient.Builder restClientBuilder, CryptoServiceTokenProvider tokenProvider,
                          CryptoClientProperties properties) {
         this.watchPath = properties.watchPath();
         this.attestPath = properties.attestPath();
+        this.lookupPath = properties.lookupPath();
 
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(properties.connectTimeoutMs());
@@ -165,5 +168,41 @@ public class CryptoClient {
         throw new CryptoServiceUnavailableException(
                 "Crypto Service returned unexpected attest outcome '" + response.outcome()
                         + "' for " + chain + ":" + txHash, null);
+    }
+
+    /**
+     * {@code GET /internal/v1/transactions/{chain}/{txHash}} (crypto R29, L16) — the agreed facts
+     * for a transaction hash the caller already has. This is a <b>read</b>: crypto-service answers
+     * it from its three providers under the same 2-of-3 quorum the watcher uses, and writes no row
+     * of its own for it.
+     *
+     * <p>A {@code 404} means all three providers agree the transaction does not exist, which is a
+     * real answer and not a failure — it returns {@code null}, and the caller records
+     * {@code NOT_FOUND}. An absence that only two providers report is not a 404: crypto answers
+     * {@code HELD} for that, because an absence one provider disputes must never be resolved in the
+     * caller's favour. Everything else — a {@code 4xx} this client caused, any {@code 5xx}, a
+     * timeout, a malformed body — throws {@link CryptoServiceUnavailableException}, exactly as
+     * {@link #attest} does.</p>
+     */
+    public TransactionLookupResponse lookupTransaction(String chain, String txHash) {
+        TransactionLookupResponse response;
+        try {
+            response = restClient.get()
+                    .uri(lookupPath + "/{chain}/{txHash}", chain, txHash)
+                    .retrieve()
+                    .body(TransactionLookupResponse.class);
+        } catch (HttpClientErrorException.NotFound e) {
+            log.debug("Crypto Service reports {}:{} does not exist on any provider", chain, txHash);
+            return null;
+        } catch (RestClientException e) {
+            throw new CryptoServiceUnavailableException(
+                    "Failed to look up transaction " + chain + ":" + txHash, e);
+        }
+
+        if (response == null || response.outcome() == null) {
+            throw new CryptoServiceUnavailableException(
+                    "Crypto Service returned no lookup outcome for " + chain + ":" + txHash, null);
+        }
+        return response;
     }
 }

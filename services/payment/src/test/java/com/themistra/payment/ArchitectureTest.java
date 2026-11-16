@@ -8,6 +8,8 @@ import com.themistra.payment.archtestfixtures.RogueUnguardedController;
 import com.themistra.payment.archtestfixtures.RogueFloatingPointMoneyUser;
 import com.themistra.payment.archtestfixtures.RogueKmsAndChainClientUser;
 import com.themistra.payment.archtestfixtures.RoguePermitAllUser;
+import com.themistra.payment.archtestfixtures.RoguePublicController;
+import com.themistra.payment.common.PublicEndpoints;
 import com.themistra.payment.archtestfixtures.RogueRawSqlUser;
 import com.themistra.payment.archtestfixtures.RogueS3ObjectMutator;
 import com.themistra.payment.archtestfixtures.RogueUnmappedEntity;
@@ -39,6 +41,9 @@ import java.lang.reflect.Method;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.HashSet;
+import java.util.Arrays;
 import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
@@ -146,7 +151,7 @@ class ArchitectureTest {
      * no special-case, mirroring crypto's own identical choice — a {@code common}-package class
      * importing a feature module's entity is already, correctly, a violation. */
     private static final List<String> FEATURE_MODULES =
-            List.of("invoice", "payment", "events", "verification", "consumer", "receipt");
+            List.of("invoice", "payment", "events", "verification", "consumer", "receipt", "chainverify");
 
     private static String featureModuleOf(JavaClass javaClass) {
         String packageName = javaClass.getPackageName();
@@ -874,7 +879,8 @@ class ArchitectureTest {
                 .flatMap(javaClass -> javaClass.getMethods().stream())
                 .filter(method -> method.isMetaAnnotatedWith(RequestMapping.class))
                 .count();
-        assertThat(handlers).as("InvoiceController x3, ExportController, ReceiptController, PaymentHistoryController").isEqualTo(6);
+        assertThat(handlers).as("InvoiceController x3, ExportController, ReceiptController, "
+                + "PaymentHistoryController, ChainVerificationController x2").isEqualTo(8);
     }
 
     @Test
@@ -907,7 +913,8 @@ class ArchitectureTest {
     /** Kimi sweep review, Finding 2 (2026-10-20), ported here from the other services: the only
      * access expression a payment handler may use. An always-true rule such as {@code "true"} would
      * still satisfy the presence rule above, so the expression itself is pinned too. */
-    private static final Set<String> KNOWN_ACCESS_EXPRESSIONS = Set.of("hasRole('MERCHANT')");
+    private static final Set<String> KNOWN_ACCESS_EXPRESSIONS =
+            Set.of("hasRole('MERCHANT')", "permitAll()");
 
     /** Every handler's effective {@code @PreAuthorize} expression (the method's, else its
      * class's), keyed by the handler method. */
@@ -935,10 +942,72 @@ class ArchitectureTest {
     @Test
     void everyHandlerUsesAKnownAccessExpression() {
         Map<String, String> handlers = handlerAccess(analyzedClasses());
-        assertThat(handlers).hasSize(6);
+        assertThat(handlers).hasSize(8);
         handlers.forEach((handler, expression) -> assertThat(expression)
                 .as("%s uses an access expression outside KNOWN_ACCESS_EXPRESSIONS", handler)
                 .isIn(KNOWN_ACCESS_EXPRESSIONS));
+    }
+
+    /** Every {@code @RestController} request path whose effective rule is {@code permitAll()},
+     * as {@code "/class-path/method-path"}. */
+    private static Set<String> permitAllPaths(JavaClasses classes) {
+        Set<String> paths = new HashSet<>();
+        for (JavaClass javaClass : classes) {
+            if (!javaClass.isAnnotatedWith(RestController.class)) {
+                continue;
+            }
+            Class<?> type = javaClass.reflect();
+            RequestMapping classMapping = AnnotatedElementUtils.findMergedAnnotation(type, RequestMapping.class);
+            String prefix = classMapping == null || classMapping.path().length == 0 ? "" : classMapping.path()[0];
+            for (Method method : type.getDeclaredMethods()) {
+                RequestMapping mapping = AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class);
+                if (mapping == null) {
+                    continue;
+                }
+                PreAuthorize access = AnnotatedElementUtils.findMergedAnnotation(method, PreAuthorize.class);
+                if (access == null) {
+                    access = AnnotatedElementUtils.findMergedAnnotation(type, PreAuthorize.class);
+                }
+                if (access != null && "permitAll()".equals(access.value())) {
+                    paths.add(prefix + (mapping.path().length == 0 ? "" : mapping.path()[0]));
+                }
+            }
+        }
+        return paths;
+    }
+
+    /**
+     * Ported from {@code services/crypto}'s own {@code ControllerRulesArchitectureTest} with the
+     * demo branch's first public write.
+     *
+     * <p>Admitting {@code permitAll()} into {@link #KNOWN_ACCESS_EXPRESSIONS} would otherwise have
+     * weakened that rule from "every handler states a real rule" to "any handler may be public":
+     * the expression check alone cannot tell a deliberate public path from a forgotten one. This
+     * ties the two declarations together, so a {@code permitAll()} handler exists only if its path
+     * was also written into {@code PublicEndpoints.PATTERNS}, where the filter chain and
+     * {@code PublicEndpointsTest} both read it. Declaring it in one place and not the other fails
+     * here.</p>
+     */
+    @Test
+    void everyPermitAllHandlerIsDeclaredInPublicEndpoints() {
+        Set<String> allowlisted = Arrays.stream(PublicEndpoints.PATTERNS)
+                .filter(pattern -> !pattern.startsWith("/actuator/"))
+                .collect(Collectors.toSet());
+
+        assertThat(permitAllPaths(analyzedClasses()))
+                .as("a permitAll() handler whose path is not in PublicEndpoints.PATTERNS is a "
+                        + "public endpoint nobody declared")
+                .isEqualTo(allowlisted);
+    }
+
+    /** The test above only shows the two lists agree today. This shows it can fail: a controller
+     * with a {@code permitAll()} path that was never allowlisted is exactly the violation. */
+    @Test
+    void everyPermitAllHandlerIsDeclaredInPublicEndpointsFailsOnAnUndeclaredPublicPath() {
+        Set<String> roguePaths = permitAllPaths(
+                new ClassFileImporter().importClasses(RoguePublicController.class));
+        assertThat(roguePaths).containsExactly("/rogue/public");
+        assertThat(Arrays.asList(PublicEndpoints.PATTERNS)).doesNotContain("/rogue/public");
     }
 
     @Test

@@ -29,8 +29,13 @@
 		reverse_proxy frontend:5173
 	}
 
+	# The public landing page (demo/onchain-verification). It was a 302 to /app/ until this
+	# branch; the SPA still owns /app and is untouched. One file, no build step, served from the
+	# same origin as /api/v1/* so the page's fetch is same-origin wherever this is deployed.
 	handle / {
-		redir /app/ 302
+		root * /srv/landing
+		rewrite * /index.html
+		file_server
 	}
 
 	handle {

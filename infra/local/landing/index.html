@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Themistra — Verify a payment on-chain</title>
+<meta name="description" content="Paste a transaction hash. Three independent providers answer. Two must agree.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #070b14;
+    --bg-soft: #0d1422;
+    --card: rgba(255,255,255,.035);
+    --line: rgba(255,255,255,.09);
+    --text: #e8edf7;
+    --muted: #8b9ab4;
+    --accent: #5b8cff;
+    --accent-2: #27d4a8;
+    --agreed: #27d4a8;
+    --held: #ffb340;
+    --absent: #8b9ab4;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  /* Two slow-drifting colour fields. Decorative only, and the whole block is disabled for
+     anyone who asked their system for less motion. */
+  .glow { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+  .glow::before, .glow::after {
+    content: ""; position: absolute; width: 60vw; height: 60vw; border-radius: 50%;
+    filter: blur(120px); opacity: .22;
+  }
+  .glow::before { background: var(--accent); top: -18vw; left: -10vw; animation: drift 24s ease-in-out infinite alternate; }
+  .glow::after  { background: var(--accent-2); bottom: -22vw; right: -12vw; animation: drift 30s ease-in-out infinite alternate-reverse; }
+  @keyframes drift { to { transform: translate3d(6vw, 4vw, 0) scale(1.15); } }
+  @media (prefers-reduced-motion: reduce) {
+    .glow::before, .glow::after { animation: none; }
+    * { transition: none !important; }
+  }
+
+  .wrap { position: relative; z-index: 1; max-width: 860px; margin: 0 auto; padding: 56px 20px 80px; }
+
+  header { text-align: center; margin-bottom: 44px; }
+  .mark {
+    display: inline-flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 26px;
+  }
+  .mark .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); box-shadow: 0 0 12px var(--accent-2); }
+  h1 { font-size: clamp(32px, 6vw, 52px); line-height: 1.08; margin: 0 0 16px; font-weight: 700; letter-spacing: -.025em; }
+  h1 .grad {
+    background: linear-gradient(100deg, var(--accent) 10%, var(--accent-2) 90%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lede { color: var(--muted); font-size: 17px; line-height: 1.6; margin: 0 auto; max-width: 30em; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    backdrop-filter: blur(14px); padding: 26px;
+  }
+
+  form { display: flex; gap: 12px; margin-bottom: 14px; }
+  .field { flex: 1; position: relative; }
+  input[type=text] {
+    width: 100%; padding: 16px 18px; font-size: 15px; font-family: "JetBrains Mono", ui-monospace, monospace;
+    color: var(--text); background: rgba(0,0,0,.3); border: 1px solid var(--line);
+    border-radius: 12px; outline: none; transition: border-color .18s, box-shadow .18s;
+  }
+  input[type=text]::placeholder { color: #55637d; }
+  input[type=text]:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(91,140,255,.16); }
+  button {
+    padding: 16px 26px; font-size: 15px; font-weight: 600; font-family: inherit; color: #04101f;
+    background: linear-gradient(100deg, var(--accent) 0%, var(--accent-2) 100%);
+    border: 0; border-radius: 12px; cursor: pointer; white-space: nowrap;
+    transition: transform .14s, filter .18s, opacity .18s;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+  button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  button:disabled { opacity: .55; cursor: progress; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .hint code { font-family: "JetBrains Mono", monospace; color: #a9b8d4; }
+
+  .msg { margin-top: 14px; padding: 12px 14px; border-radius: 10px; font-size: 14px; display: none; }
+  .msg.show { display: block; }
+  .msg.error { background: rgba(255,92,92,.1); border: 1px solid rgba(255,92,92,.3); color: #ffb0b0; }
+
+  /* Result */
+  #result { margin-top: 22px; display: none; }
+  #result.show { display: block; animation: rise .32s ease-out; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  .verdict { display: flex; align-items: center; gap: 13px; margin-bottom: 20px; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; letter-spacing: .03em;
+  }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .chip.agreed { color: var(--agreed); background: rgba(39,212,168,.12); border: 1px solid rgba(39,212,168,.3); }
+  .chip.held { color: var(--held); background: rgba(255,179,64,.12); border: 1px solid rgba(255,179,64,.3); }
+  .chip.absent { color: var(--absent); background: rgba(139,154,180,.12); border: 1px solid rgba(139,154,180,.3); }
+  .verdict-note { color: var(--muted); font-size: 14px; }
+
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1px;
+           background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .fact { background: #0b1120; padding: 14px 16px; }
+  .fact dt { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 6px; }
+  .fact dd { margin: 0; font-size: 14px; font-family: "JetBrains Mono", monospace; word-break: break-all; }
+  .fact dd .big { font-size: 19px; font-weight: 600; font-family: Inter, sans-serif; }
+
+  .recent { margin-top: 40px; }
+  .recent h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+  .recent ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .recent li {
+    display: flex; align-items: center; gap: 12px; padding: 12px 15px; font-size: 13px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .recent .hash { font-family: "JetBrains Mono", monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .recent .when { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .recent .empty { color: var(--muted); font-size: 14px; }
+
+  footer { margin-top: 52px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.7; }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  @media (max-width: 580px) {
+    form { flex-direction: column; }
+    .wrap { padding-top: 36px; }
+  }
+</style>
+</head>
+<body>
+<div class="glow" aria-hidden="true"></div>
+<div class="wrap">
+
+  <header>
+    <div class="mark"><span class="dot"></span> Themistra</div>
+    <h1>Verify a payment <span class="grad">on-chain</span></h1>
+    <p class="lede">Paste a transaction hash. Three independent providers are asked, and
+      at least two must agree before a single fact is reported.</p>
+  </header>
+
+  <main class="card">
+    <form id="form" novalidate>
+      <div class="field">
+        <label class="sr-only" for="txHash">Transaction hash</label>
+        <input id="txHash" name="txHash" type="text" autocomplete="off" spellcheck="false"
+               placeholder="0x… transaction hash" aria-describedby="hint">
+      </div>
+      <button id="submit" type="submit">Verify</button>
+    </form>
+    <p class="hint" id="hint">Ethereum. Try a transfer you just made with <code>bin/chain pay</code>.</p>
+
+    <div class="msg error" id="error" role="alert"></div>
+
+    <section id="result" aria-live="polite">
+      <div class="verdict">
+        <span class="chip" id="chip"><span class="dot"></span><span id="chipText"></span></span>
+        <span class="verdict-note" id="verdictNote"></span>
+      </div>
+      <dl class="facts" id="facts"></dl>
+    </section>
+  </main>
+
+  <section class="recent">
+    <h2>Recently verified</h2>
+    <ol id="recent"><li class="empty">Nothing verified yet.</li></ol>
+  </section>
+
+  <footer>
+    Every answer above is recorded, append-only.<br>
+    A disputed fact is never reported — it is held.
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const form = document.getElementById('form');
+  const input = document.getElementById('txHash');
+  const submit = document.getElementById('submit');
+  const errorBox = document.getElementById('error');
+  const result = document.getElementById('result');
+  const chip = document.getElementById('chip');
+  const chipText = document.getElementById('chipText');
+  const verdictNote = document.getElementById('verdictNote');
+  const facts = document.getElementById('facts');
+  const recent = document.getElementById('recent');
+
+  // Same origin as the page: the edge serves this file and proxies /api/v1/* to the service,
+  // so there is no cross-origin request to configure and nothing to change when the host changes.
+  const API = '/api/v1/verifications';
+
+  const VERDICTS = {
+    AGREED:        { cls: 'agreed', label: 'Agreed',        note: 'The providers agreed on every fact below.' },
+    HELD:          { cls: 'held',   label: 'Held',          note: 'The providers disagreed, so no facts are reported.' },
+    UNKNOWN_TOKEN: { cls: 'held',   label: 'Unknown token', note: 'The facts agreed, but this token is not on the allowlist.' },
+    NOT_FOUND:     { cls: 'absent', label: 'Not found',     note: 'All three providers agree this transaction does not exist.' }
+  };
+
+  const short = (value) => !value ? '—'
+    : (value.length > 22 ? value.slice(0, 12) + '…' + value.slice(-8) : value);
+
+  // textContent everywhere below, never innerHTML: a transaction hash is visitor input and it is
+  // echoed straight back onto this page.
+  const fact = (term, value, big) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'fact';
+    const dt = document.createElement('dt');
+    dt.textContent = term;
+    const dd = document.createElement('dd');
+    if (big) {
+      const strong = document.createElement('span');
+      strong.className = 'big';
+      strong.textContent = value ?? '—';
+      dd.appendChild(strong);
+    } else {
+      dd.textContent = value ?? '—';
+    }
+    wrapper.append(dt, dd);
+    return wrapper;
+  };
+
+  const show = (verification) => {
+    const verdict = VERDICTS[verification.outcome]
+      ?? { cls: 'held', label: verification.outcome, note: '' };
+    chip.className = 'chip ' + verdict.cls;
+    chipText.textContent = verdict.label;
+    verdictNote.textContent = verdict.note;
+
+    facts.replaceChildren();
+    facts.appendChild(fact('Transaction', short(verification.txHash)));
+    facts.appendChild(fact('Chain', verification.chain));
+    if (verification.outcome === 'AGREED' || verification.outcome === 'UNKNOWN_TOKEN') {
+      facts.appendChild(fact('Amount', verification.amountDisplay ?? verification.amount, true));
+      facts.appendChild(fact('Confirmations', verification.confirmations?.toString()));
+      facts.appendChild(fact('From', short(verification.fromAddress)));
+      facts.appendChild(fact('To', short(verification.toAddress)));
+      facts.appendChild(fact('Token', short(verification.tokenContractAddress)));
+    }
+    result.classList.add('show');
+  };
+
+  const listRecent = (rows) => {
+    recent.replaceChildren();
+    if (!rows.length) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'Nothing verified yet.';
+      recent.appendChild(li);
+      return;
+    }
+    for (const row of rows) {
+      const verdict = VERDICTS[row.outcome] ?? { cls: 'held', label: row.outcome };
+      const li = document.createElement('li');
+      const badge = document.createElement('span');
+      badge.className = 'chip ' + verdict.cls;
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      const badgeText = document.createElement('span');
+      badgeText.textContent = verdict.label;
+      badge.append(dot, badgeText);
+      const hash = document.createElement('span');
+      hash.className = 'hash';
+      hash.textContent = row.txHash;
+      const when = document.createElement('span');
+      when.className = 'when';
+      when.textContent = new Date(row.requestedAt).toLocaleTimeString();
+      li.append(badge, hash, when);
+      recent.appendChild(li);
+    }
+  };
+
+  const fail = (message) => {
+    errorBox.textContent = message;
+    errorBox.classList.add('show');
+  };
+
+  const loadRecent = async () => {
+    try {
+      const response = await fetch(API);
+      if (response.ok) { listRecent(await response.json()); }
+    } catch { /* the list is a nicety; its absence must never break the form */ }
+  };
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    errorBox.classList.remove('show');
+    result.classList.remove('show');
+
+    const txHash = input.value.trim();
+    if (!txHash) { fail('Enter a transaction hash.'); input.focus(); return; }
+
+    submit.disabled = true;
+    submit.textContent = 'Verifying…';
+    try {
+      const response = await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ txHash })
+      });
+      if (!response.ok) {
+        const problem = await response.json().catch(() => ({}));
+        fail(problem.detail || problem.message
+          || 'That could not be verified right now. The chain service may still be starting.');
+        return;
+      }
+      show(await response.json());
+      loadRecent();
+    } catch {
+      fail('Could not reach the verification service.');
+    } finally {
+      submit.disabled = false;
+      submit.textContent = 'Verify';
+    }
+  });
+
+  loadRecent();
+})();
+</script>
+</body>
+</html>

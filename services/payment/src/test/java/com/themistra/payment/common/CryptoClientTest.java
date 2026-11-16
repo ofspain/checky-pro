@@ -539,7 +539,8 @@ class CryptoClientTest {
     }
 
     private static CryptoClientProperties cryptoClientProperties(String baseUrl) {
-        return new CryptoClientProperties(baseUrl, "/internal/v1/attest", "/internal/v1/watches", 200, 200,
+        return new CryptoClientProperties(baseUrl, "/internal/v1/attest", "/internal/v1/watches",
+                "/internal/v1/transactions", 200, 200,
                 new CryptoClientProperties.Auth("http://127.0.0.1:1/oauth2/token", "payment-service", "secret"));
     }
 
