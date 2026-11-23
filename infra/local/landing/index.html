@@ -2,330 +2,500 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Themistra — Verify a payment on-chain</title>
-<meta name="description" content="Paste a transaction hash. Three independent providers answer. Two must agree.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Checkychain — Is this payment real?</title>
+<meta name="description" content="Paste a payment ID. Three independent providers are asked, and at least two must agree before anything is called real.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="logo.png">
 <style>
-  :root {
-    --bg: #070b14;
-    --bg-soft: #0d1422;
-    --card: rgba(255,255,255,.035);
-    --line: rgba(255,255,255,.09);
-    --text: #e8edf7;
-    --muted: #8b9ab4;
-    --accent: #5b8cff;
-    --accent-2: #27d4a8;
-    --agreed: #27d4a8;
-    --held: #ffb340;
-    --absent: #8b9ab4;
-    --radius: 16px;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body {
-    margin: 0;
-    font-family: Inter, system-ui, -apple-system, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
-  }
-  /* Two slow-drifting colour fields. Decorative only, and the whole block is disabled for
-     anyone who asked their system for less motion. */
-  .glow { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
-  .glow::before, .glow::after {
-    content: ""; position: absolute; width: 60vw; height: 60vw; border-radius: 50%;
-    filter: blur(120px); opacity: .22;
-  }
-  .glow::before { background: var(--accent); top: -18vw; left: -10vw; animation: drift 24s ease-in-out infinite alternate; }
-  .glow::after  { background: var(--accent-2); bottom: -22vw; right: -12vw; animation: drift 30s ease-in-out infinite alternate-reverse; }
-  @keyframes drift { to { transform: translate3d(6vw, 4vw, 0) scale(1.15); } }
-  @media (prefers-reduced-motion: reduce) {
-    .glow::before, .glow::after { animation: none; }
-    * { transition: none !important; }
-  }
+:root{
+  color-scheme:light;
+  --bg:#f7f7f4;--paper:#fff;--ink:#17191e;--muted:#5f656e;--faint:#959ba4;--line:#e5e5e0;--line-2:#efefea;
+  --accent:#2150e0;--accent-soft:#ecf1fe;
+  --good:#17693f;--good-bg:#e8f4ed;--good-mark:#2e9a63;
+  --warn:#835800;--warn-bg:#fbf1d9;--warn-mark:#d4a017;
+  --bad:#a52d27;--bad-bg:#fbebea;--bad-mark:#d65a52;
+  --track:#ebebe6;
+  --shadow:0 1px 2px rgba(20,22,30,.04),0 8px 28px rgba(20,22,30,.06);
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans","Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Noto Sans Mono",monospace;
+}
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --bg:#121418;--paper:#1a1d23;--ink:#eceef2;--muted:#a6acb6;--faint:#737a85;--line:#2b3038;--line-2:#23272e;
+  --accent:#7fa4ff;--accent-soft:#1f2a45;
+  --good:#8fdcb0;--good-bg:#1d3328;--good-mark:#4cc083;
+  --warn:#f0cd82;--warn-bg:#3a3020;--warn-mark:#e0b43c;
+  --bad:#f4a3a0;--bad-bg:#3b2224;--bad-mark:#e57772;
+  --track:#2a2e36;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.28);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  color-scheme:dark;
+  --bg:#121418;--paper:#1a1d23;--ink:#eceef2;--muted:#a6acb6;--faint:#737a85;--line:#2b3038;--line-2:#23272e;
+  --accent:#7fa4ff;--accent-soft:#1f2a45;
+  --good:#8fdcb0;--good-bg:#1d3328;--good-mark:#4cc083;
+  --warn:#f0cd82;--warn-bg:#3a3020;--warn-mark:#e0b43c;
+  --bad:#f4a3a0;--bad-bg:#3b2224;--bad-mark:#e57772;
+  --track:#2a2e36;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.28);
+}}
 
-  .wrap { position: relative; z-index: 1; max-width: 860px; margin: 0 auto; padding: 56px 20px 80px; }
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--accent);text-underline-offset:4px}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:10px}
+.mono{font-family:var(--mono);font-size:.92em}
+.muted{color:var(--muted)}
+.center{text-align:center}
+.skip{position:absolute;left:12px;top:-80px;background:var(--paper);padding:10px 14px;border-radius:10px;z-index:9;box-shadow:var(--shadow)}
+.skip:focus{top:12px}
 
-  header { text-align: center; margin-bottom: 44px; }
-  .mark {
-    display: inline-flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: .14em;
-    text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 26px;
-  }
-  .mark .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); box-shadow: 0 0 12px var(--accent-2); }
-  h1 { font-size: clamp(32px, 6vw, 52px); line-height: 1.08; margin: 0 0 16px; font-weight: 700; letter-spacing: -.025em; }
-  h1 .grad {
-    background: linear-gradient(100deg, var(--accent) 10%, var(--accent-2) 90%);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .lede { color: var(--muted); font-size: 17px; line-height: 1.6; margin: 0 auto; max-width: 30em; }
+/* ---------- frame ---------- */
+.wrap{max-width:720px;margin:0 auto;padding:0 20px}
+header.site{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line-2)}
+.top{display:flex;align-items:center;justify-content:space-between;gap:10px;height:64px}
+.logo{display:flex;align-items:center;gap:10px;color:var(--ink);text-decoration:none;font-family:var(--serif);font-size:21px;letter-spacing:-.2px;white-space:nowrap;background:none;border:0;padding:0}
+.logo img{width:30px;height:30px;display:block;border-radius:8px}
+.icon-btn{display:inline-grid;place-items:center;width:38px;height:38px;border-radius:999px;border:1px solid var(--line);background:var(--paper);color:var(--muted);transition:color .2s,border-color .2s}
+.icon-btn:hover{color:var(--ink);border-color:var(--faint)}
+.icon-btn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+main.wrap{padding-top:52px;padding-bottom:64px;outline:none}
+section{text-align:center}
 
-  .card {
-    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
-    backdrop-filter: blur(14px); padding: 26px;
-  }
+.eyebrow{display:inline-flex;align-items:center;gap:9px;font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 18px}
+.eyebrow::before,.eyebrow::after{content:"";width:22px;height:1px;background:var(--line)}
+h1{font-family:var(--serif);font-weight:400;font-size:clamp(36px,7vw,54px);line-height:1.08;letter-spacing:-.02em;margin:0 auto 18px;max-width:14ch}
+h2{font-family:var(--serif);font-weight:400;font-size:27px;line-height:1.2;letter-spacing:-.01em;margin:0 0 8px}
+p{margin:0 0 16px}
+.lede{color:var(--muted);font-size:18px;max-width:470px;margin:0 auto 34px}
 
-  form { display: flex; gap: 12px; margin-bottom: 14px; }
-  .field { flex: 1; position: relative; }
-  input[type=text] {
-    width: 100%; padding: 16px 18px; font-size: 15px; font-family: "JetBrains Mono", ui-monospace, monospace;
-    color: var(--text); background: rgba(0,0,0,.3); border: 1px solid var(--line);
-    border-radius: 12px; outline: none; transition: border-color .18s, box-shadow .18s;
-  }
-  input[type=text]::placeholder { color: #55637d; }
-  input[type=text]:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(91,140,255,.16); }
-  button {
-    padding: 16px 26px; font-size: 15px; font-weight: 600; font-family: inherit; color: #04101f;
-    background: linear-gradient(100deg, var(--accent) 0%, var(--accent-2) 100%);
-    border: 0; border-radius: 12px; cursor: pointer; white-space: nowrap;
-    transition: transform .14s, filter .18s, opacity .18s;
-  }
-  button:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
-  button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-  button:disabled { opacity: .55; cursor: progress; }
-  .hint { color: var(--muted); font-size: 13px; }
-  .hint code { font-family: "JetBrains Mono", monospace; color: #a9b8d4; }
+.card{background:var(--paper);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);padding:30px;margin:0 auto 20px;text-align:left;max-width:540px}
+.card.center{text-align:center}
 
-  .msg { margin-top: 14px; padding: 12px 14px; border-radius: 10px; font-size: 14px; display: none; }
-  .msg.show { display: block; }
-  .msg.error { background: rgba(255,92,92,.1); border: 1px solid rgba(255,92,92,.3); color: #ffb0b0; }
+/* ---------- form ---------- */
+.field{margin-bottom:18px}
+label{display:block;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.02em;margin:0 0 7px}
+input{display:block;width:100%;min-width:0;padding:14px 15px;border-radius:14px;border:1px solid var(--line);background:var(--bg);font-size:15.5px;transition:border-color .2s,background .2s}
+input.mono{font-family:var(--mono);font-size:14.5px}
+input::placeholder{font-family:var(--sans);color:var(--faint)}
+input:focus{outline:none;border-color:var(--accent);background:var(--paper)}
+input[aria-invalid=true]{border-color:var(--bad-mark)}
+.hint{font-size:13px;color:var(--muted);margin:8px 2px 0}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:52px;padding:0 26px;border-radius:999px;border:1px solid transparent;font-weight:600;font-size:15.5px;transition:transform .15s,box-shadow .2s,border-color .2s,opacity .2s}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.55;cursor:default;transform:none}
+.btn-primary{width:100%;background:var(--ink);color:var(--paper);box-shadow:0 6px 18px rgba(20,22,30,.14)}
+.btn-primary:hover:not(:disabled){box-shadow:0 10px 26px rgba(20,22,30,.2)}
+.btn-link{min-height:44px;padding:0 12px;background:none;border:0;color:var(--accent);font-weight:550;font-size:14.5px;border-radius:999px}
+.btn-link:hover{text-decoration:underline;text-underline-offset:4px}
+.spinner{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:spin .8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error{color:var(--bad);font-size:14px;margin:14px 0 0;text-align:center}
+.status-line{display:flex;align-items:center;justify-content:center;gap:10px;color:var(--muted);font-size:14px;margin:14px 0 0}
+.fineprint{border-top:1px solid var(--line-2);margin:22px 0 0;padding-top:16px;text-align:center;font-size:12.5px;color:var(--muted)}
 
-  /* Result */
-  #result { margin-top: 22px; display: none; }
-  #result.show { display: block; animation: rise .32s ease-out; }
-  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
-  .verdict { display: flex; align-items: center; gap: 13px; margin-bottom: 20px; flex-wrap: wrap; }
-  .chip {
-    display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px;
-    font-size: 13px; font-weight: 600; letter-spacing: .03em;
-  }
-  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-  .chip.agreed { color: var(--agreed); background: rgba(39,212,168,.12); border: 1px solid rgba(39,212,168,.3); }
-  .chip.held { color: var(--held); background: rgba(255,179,64,.12); border: 1px solid rgba(255,179,64,.3); }
-  .chip.absent { color: var(--absent); background: rgba(139,154,180,.12); border: 1px solid rgba(139,154,180,.3); }
-  .verdict-note { color: var(--muted); font-size: 14px; }
+/* ---------- verdict ---------- */
+.verdict{text-align:center;position:relative;overflow:hidden}
+.verdict::before{content:"";position:absolute;inset:0 0 auto 0;height:5px;background:var(--faint)}
+.verdict.safe::before{background:var(--good-mark)}
+.verdict.caution::before{background:var(--warn-mark)}
+.verdict.absent::before{background:var(--faint)}
+.verdict.unsure::before{background:var(--accent)}
+.seal{width:70px;height:70px;border-radius:50%;display:grid;place-items:center;margin:6px auto 16px;background:var(--track);color:var(--muted)}
+.seal svg{width:32px;height:32px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.safe .seal{background:var(--good-bg);color:var(--good)}
+.caution .seal{background:var(--warn-bg);color:var(--warn)}
+.absent .seal{background:var(--track);color:var(--muted)}
+.unsure .seal{background:var(--accent-soft);color:var(--accent)}
+.seal svg path,.seal svg circle,.seal svg line{stroke-dasharray:var(--len,80);stroke-dashoffset:var(--len,80);animation:draw .55s .1s ease-out forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+.verdict h2{font-size:30px;margin-bottom:6px}
+.verdict .sub{color:var(--muted);max-width:430px;margin:0 auto}
+.amount{font-family:var(--serif);font-size:clamp(40px,10vw,56px);line-height:1.1;letter-spacing:-.02em;margin:26px 0 0;overflow-wrap:anywhere}
+.amount small{font-family:var(--sans);font-size:17px;font-weight:600;color:var(--muted);letter-spacing:0}
+.base{color:var(--faint);font-size:13px;margin:6px 0 0;font-family:var(--mono)}
 
-  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1px;
-           background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  .fact { background: #0b1120; padding: 14px 16px; }
-  .fact dt { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 6px; }
-  .fact dd { margin: 0; font-size: 14px; font-family: "JetBrains Mono", monospace; word-break: break-all; }
-  .fact dd .big { font-size: 19px; font-weight: 600; font-family: Inter, sans-serif; }
+.meter{max-width:320px;margin:24px auto 4px}
+.meter-bar{display:flex;gap:4px;height:10px}
+.meter-bar i{flex:1;border-radius:99px;background:var(--track);transition:background .3s}
+.meter-bar i.on{background:var(--good-mark)}
+.meter-caption{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);margin-top:9px}
+.meter-caption b{color:var(--ink);font-weight:600}
 
-  .recent { margin-top: 40px; }
-  .recent h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 0 0 14px; font-weight: 600; }
-  .recent ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  .recent li {
-    display: flex; align-items: center; gap: 12px; padding: 12px 15px; font-size: 13px;
-    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-  }
-  .recent .hash { font-family: "JetBrains Mono", monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-  .recent .when { color: var(--muted); font-size: 12px; white-space: nowrap; }
-  .recent .empty { color: var(--muted); font-size: 14px; }
+.checklist{list-style:none;margin:24px 0 8px;padding:0;text-align:left;border-top:1px solid var(--line-2)}
+.checklist li{display:grid;grid-template-columns:34px minmax(0,1fr);gap:12px;padding:14px 2px;border-bottom:1px solid var(--line-2)}
+.checklist .ico{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px}
+.ico.pass{background:var(--good-bg);color:var(--good)}
+.ico.fail{background:var(--bad-bg);color:var(--bad)}
+.ico.warn{background:var(--warn-bg);color:var(--warn)}
+.ico.info{background:var(--track);color:var(--muted)}
+.checklist b{display:block;font-size:15px;line-height:1.35;margin-top:4px}
+.checklist span{display:block;color:var(--muted);font-size:13.5px;margin-top:2px}
 
-  footer { margin-top: 52px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.parties{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;margin:8px 0 4px;padding:16px 0}
+.parties div{min-width:0}
+.parties small{display:block;color:var(--muted);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
+.parties strong{font-family:var(--mono);font-size:14px;font-weight:500}
+.parties .arrow{color:var(--faint)}
+.notice{display:flex;gap:10px;align-items:flex-start;text-align:left;background:var(--warn-bg);color:var(--warn);border-radius:14px;padding:12px 14px;font-size:13.5px;line-height:1.5;margin:20px 0 0}
+.notice.info{background:var(--accent-soft);color:var(--accent)}
+.checked-at{font-size:13px;color:var(--faint);margin:14px 0 0}
+details{text-align:left}
+summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;color:var(--accent);font-weight:550;font-size:14.5px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"";width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);transition:transform .2s}
+details[open]>summary::after{transform:rotate(225deg) translateY(-1px)}
+details.tech{border-top:1px solid var(--line-2);margin-top:18px;padding-top:6px}
+dl{display:grid;grid-template-columns:minmax(0,138px) minmax(0,1fr);gap:9px 16px;font-size:13.5px;margin:8px 0 0;text-align:left}
+dt{color:var(--muted)}
+dd{margin:0;overflow-wrap:anywhere;font-family:var(--mono);font-size:13px}
 
-  .sr-only {
-    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
-  }
-  @media (max-width: 580px) {
-    form { flex-direction: column; }
-    .wrap { padding-top: 36px; }
-  }
+/* ---------- recent ---------- */
+.recent{max-width:540px;margin:34px auto 0;text-align:left}
+.recent h3{font-family:var(--serif);font-weight:400;font-size:19px;margin:0 0 12px;text-align:center;color:var(--muted)}
+.list{display:grid;gap:10px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border:1px solid var(--line-2);border-radius:14px;background:var(--paper);text-align:left;color:inherit;width:100%;transition:border-color .2s}
+.row:hover{border-color:var(--faint)}
+.row .main{min-width:0}
+.row b{display:block;font-size:14px;font-weight:600;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row small{display:block;color:var(--muted);font-size:12.5px;margin-top:2px}
+.badge{flex:none;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;background:var(--track);color:var(--muted);white-space:nowrap}
+.badge.ok{background:var(--good-bg);color:var(--good)}
+.badge.warn{background:var(--warn-bg);color:var(--warn)}
+.badge.info{background:var(--accent-soft);color:var(--accent)}
+.empty{color:var(--muted);font-size:14px;text-align:center;padding:24px 12px;border:1px dashed var(--line);border-radius:14px}
+footer.site{text-align:center;color:var(--muted);font-size:13px;padding:0 20px 44px}
+.reveal{animation:rise .45s ease-out both}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+@media (max-width:560px){
+  .wrap{padding:0 16px}
+  .top{height:58px}
+  main.wrap{padding-top:34px}
+  .card{padding:22px 18px;border-radius:20px}
+  .lede{font-size:16px;margin-bottom:26px}
+  .verdict h2{font-size:26px}
+  .parties{grid-template-columns:1fr;gap:10px;text-align:center}
+  .parties .arrow{transform:rotate(90deg);justify-self:center}
+  dl{grid-template-columns:minmax(0,1fr)}
+  dt{margin-top:6px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+}
 </style>
 </head>
 <body>
-<div class="glow" aria-hidden="true"></div>
-<div class="wrap">
+<a class="skip" href="#main">Skip to content</a>
 
-  <header>
-    <div class="mark"><span class="dot"></span> Themistra</div>
-    <h1>Verify a payment <span class="grad">on-chain</span></h1>
-    <p class="lede">Paste a transaction hash. Three independent providers are asked, and
-      at least two must agree before a single fact is reported.</p>
-  </header>
+<header class="site"><div class="wrap top">
+  <button class="logo" id="home" type="button"><img src="logo.png" alt="" width="30" height="30"><span>Checkychain</span></button>
+  <button class="icon-btn" id="theme" type="button" aria-label="Switch theme"></button>
+</div></header>
 
-  <main class="card">
-    <form id="form" novalidate>
-      <div class="field">
-        <label class="sr-only" for="txHash">Transaction hash</label>
-        <input id="txHash" name="txHash" type="text" autocomplete="off" spellcheck="false"
-               placeholder="0x… transaction hash" aria-describedby="hint">
-      </div>
-      <button id="submit" type="submit">Verify</button>
-    </form>
-    <p class="hint" id="hint">Ethereum. Try a transfer you just made with <code>bin/chain pay</code>.</p>
+<main id="main" class="wrap" tabindex="-1">
 
-    <div class="msg error" id="error" role="alert"></div>
+  <section id="entry">
+    <p class="eyebrow">Payment check</p>
+    <h1>Is this payment real?</h1>
+    <p class="lede">Someone says they sent you crypto. Paste the payment ID and we will ask three independent providers before we call it anything.</p>
 
-    <section id="result" aria-live="polite">
-      <div class="verdict">
-        <span class="chip" id="chip"><span class="dot"></span><span id="chipText"></span></span>
-        <span class="verdict-note" id="verdictNote"></span>
-      </div>
-      <dl class="facts" id="facts"></dl>
-    </section>
-  </main>
+    <div class="card">
+      <form id="form" novalidate>
+        <div class="field">
+          <label for="tx">Payment ID</label>
+          <input id="tx" class="mono" spellcheck="false" autocomplete="off" autocapitalize="off" inputmode="text" placeholder="Paste the payment ID (starts with 0x)">
+          <p class="hint">Ask the sender for the payment ID from their wallet. It is also called a &ldquo;transaction hash&rdquo;.</p>
+        </div>
+        <button id="submit" class="btn btn-primary" type="submit">Check payment</button>
+      </form>
+      <div class="center"><button id="example" class="btn-link" type="button" hidden>No ID? Use the last one checked &rarr;</button></div>
+      <p id="error" class="error" role="alert" hidden></p>
+      <p id="loading" class="status-line" role="status" hidden></p>
+      <p class="fineprint">No wallet connection &middot; No money moved &middot; Nothing to sign</p>
+    </div>
 
-  <section class="recent">
-    <h2>Recently verified</h2>
-    <ol id="recent"><li class="empty">Nothing verified yet.</li></ol>
+    <div class="card center">
+      <h2>One source is not enough.</h2>
+      <p class="muted" style="margin:0">Every payment is checked by three independent providers. At least two must agree on a detail before we will show it to you.</p>
+    </div>
+
+    <div class="recent" id="recent-wrap" hidden>
+      <h3>Recently checked</h3>
+      <div class="list" id="recent"></div>
+    </div>
   </section>
 
-  <footer>
-    Every answer above is recorded, append-only.<br>
-    A disputed fact is never reported — it is held.
-  </footer>
-</div>
+  <section id="result" hidden></section>
+</main>
+
+<footer class="site">Checkychain &middot; verification runs against the chain, not against our word for it.</footer>
 
 <script>
-(() => {
-  'use strict';
-  const form = document.getElementById('form');
-  const input = document.getElementById('txHash');
-  const submit = document.getElementById('submit');
-  const errorBox = document.getElementById('error');
-  const result = document.getElementById('result');
-  const chip = document.getElementById('chip');
-  const chipText = document.getElementById('chipText');
-  const verdictNote = document.getElementById('verdictNote');
-  const facts = document.getElementById('facts');
-  const recent = document.getElementById('recent');
+'use strict';
+const API = '/api/v1/verifications';
+const $ = id => document.getElementById(id);
+const el = (tag, text, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 
-  // Same origin as the page: the edge serves this file and proxies /api/v1/* to the service,
-  // so there is no cross-origin request to configure and nothing to change when the host changes.
-  const API = '/api/v1/verifications';
+/* ---------- icons (drawn, not pasted as markup) ---------- */
+const ICON = {
+  check: 'M20 6 9 17l-5-5',
+  warn: 'M12 9v4 M12 17h.01 M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+  ask: 'M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3 M12 17h.01 M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18z',
+  absent: 'M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18z M8 12h8'
+};
+function svgIcon(d) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+  for (const seg of d.split(' M').map((s, i) => (i ? 'M' + s : s))) {
+    const p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', seg);
+    p.style.setProperty('--len', '80');
+    svg.append(p);
+  }
+  return svg;
+}
 
-  const VERDICTS = {
-    AGREED:        { cls: 'agreed', label: 'Agreed',        note: 'The providers agreed on every fact below.' },
-    HELD:          { cls: 'held',   label: 'Held',          note: 'The providers disagreed, so no facts are reported.' },
-    UNKNOWN_TOKEN: { cls: 'held',   label: 'Unknown token', note: 'The facts agreed, but this token is not on the allowlist.' },
-    NOT_FOUND:     { cls: 'absent', label: 'Not found',     note: 'All three providers agree this transaction does not exist.' }
-  };
+/* ---------- theme ---------- */
+const SUN = 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z M12 1v2 M12 21v2 M4.2 4.2l1.4 1.4 M18.4 18.4l1.4 1.4 M1 12h2 M21 12h2 M4.2 19.8l1.4-1.4 M18.4 5.6l1.4-1.4';
+const MOON = 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z';
+let theme = null;
+try { theme = localStorage.getItem('theme'); } catch { /* storage may be blocked */ }
+function applyTheme() {
+  if (theme) document.documentElement.setAttribute('data-theme', theme);
+  else document.documentElement.removeAttribute('data-theme');
+  const dark = theme === 'dark' || (!theme && matchMedia('(prefers-color-scheme:dark)').matches);
+  $('theme').replaceChildren(svgIcon(dark ? SUN : MOON));
+  $('theme').querySelectorAll('path').forEach(p => p.style.animation = 'none');
+}
+$('theme').onclick = () => {
+  const dark = theme === 'dark' || (!theme && matchMedia('(prefers-color-scheme:dark)').matches);
+  theme = dark ? 'light' : 'dark';
+  try { localStorage.setItem('theme', theme); } catch { /* ignore */ }
+  applyTheme();
+};
+applyTheme();
 
-  const short = (value) => !value ? '—'
-    : (value.length > 22 ? value.slice(0, 12) + '…' + value.slice(-8) : value);
+/* ---------- verdict vocabulary ----------
+   Deliberately not the reference's "can no longer be reversed": at a low
+   confirmation count a chain reorganisation can still remove this payment,
+   which the demo itself shows. The copy must not promise more than the
+   quorum actually checked. */
+const VERDICT = {
+  AGREED:        { cls: 'safe',    icon: ICON.check,  t: 'Payment confirmed',
+                   s: 'Three independent providers were asked. Every detail below was agreed by at least two of them.' },
+  UNKNOWN_TOKEN: { cls: 'caution', icon: ICON.warn,   t: 'Real, but an unknown token',
+                   s: 'The providers agreed this payment happened, but the token it moved is not one we recognise. We will not tell you what it is worth.' },
+  HELD:          { cls: 'unsure',  icon: ICON.ask,    t: 'We are not sure yet',
+                   s: 'The providers did not agree, so no detail is shown at all. This usually clears up within a minute.' },
+  NOT_FOUND:     { cls: 'absent',  icon: ICON.absent, t: 'Payment not found',
+                   s: 'Every provider says this payment ID does not exist. Check it with the sender — a made-up ID is a common scam.' }
+};
 
-  // textContent everywhere below, never innerHTML: a transaction hash is visitor input and it is
-  // echoed straight back onto this page.
-  const fact = (term, value, big) => {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'fact';
-    const dt = document.createElement('dt');
-    dt.textContent = term;
-    const dd = document.createElement('dd');
-    if (big) {
-      const strong = document.createElement('span');
-      strong.className = 'big';
-      strong.textContent = value ?? '—';
-      dd.appendChild(strong);
-    } else {
-      dd.textContent = value ?? '—';
+function short(v) { return !v ? '—' : (v.length > 18 ? v.slice(0, 10) + '…' + v.slice(-6) : v); }
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso)
+    : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/* ---------- check ---------- */
+let busy = false;
+function showErr(msg) { const n = $('error'); n.textContent = msg || ''; n.hidden = !msg; }
+function setLoading(on) {
+  const n = $('loading'); n.replaceChildren(); n.hidden = !on;
+  if (on) { n.append(el('span', null, 'spinner'), document.createTextNode('Asking three providers…')); }
+  $('submit').disabled = on; $('tx').disabled = on;
+}
+
+$('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (busy) return;
+  showErr(null);
+  const input = $('tx');
+  const value = input.value.trim();
+  input.removeAttribute('aria-invalid');
+  if (!value) { input.setAttribute('aria-invalid', 'true'); input.focus(); showErr('Paste a payment ID first.'); return; }
+
+  busy = true; setLoading(true);
+  try {
+    const res = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ txHash: value })
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body && (body.detail || body.message) ? (body.detail || body.message) : 'That payment ID was not accepted.');
     }
-    wrapper.append(dt, dd);
-    return wrapper;
+    render(await res.json());
+    loadRecent();
+  } catch (err) {
+    showErr(err && err.message ? err.message : 'Something went wrong. Try again.');
+  } finally {
+    busy = false; setLoading(false);
+  }
+});
+
+$('home').onclick = showEntry;
+function showEntry() {
+  $('result').hidden = true; $('entry').hidden = false;
+  scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* ---------- result ---------- */
+function render(r) {
+  const v = VERDICT[r.outcome] || VERDICT.HELD;
+  const root = $('result'); root.replaceChildren();
+
+  const back = el('button', '← Check another payment', 'btn-link'); back.type = 'button'; back.onclick = showEntry;
+  const backWrap = el('div'); backWrap.style.marginBottom = '10px'; backWrap.append(back);
+  root.append(backWrap);
+
+  const card = el('div', null, 'card verdict reveal ' + v.cls);
+  const seal = el('div', null, 'seal'); seal.append(svgIcon(v.icon));
+  card.append(seal, el('h2', v.t), el('p', v.s, 'sub'));
+
+  // The amount, only when a token we recognise let us name it.
+  if (r.amountDisplay) {
+    const cut = r.amountDisplay.lastIndexOf(' ');
+    const big = el('div', null, 'amount');
+    big.append(document.createTextNode(r.amountDisplay.slice(0, cut) + ' '), el('small', r.amountDisplay.slice(cut + 1)));
+    card.append(big);
+  } else if (r.amount) {
+    card.append(el('div', r.amount, 'amount'), el('p', 'base units — the token is not one we recognise', 'base'));
+  }
+
+  // Agreement meter over the facts that actually reached a quorum.
+  const FACTS = [
+    ['existence', r.existence === 'AGREED'],
+    ['confirmations', r.confirmations != null],
+    ['token', !!r.tokenContractAddress],
+    ['sender', !!r.fromAddress],
+    ['recipient', !!r.toAddress],
+    ['amount', !!r.amount]
+  ];
+  const agreed = FACTS.filter(([, ok]) => ok).length;
+  const meter = el('div', null, 'meter');
+  const bar = el('div', null, 'meter-bar');
+  bar.setAttribute('role', 'img');
+  bar.setAttribute('aria-label', agreed + ' of ' + FACTS.length + ' details agreed by at least two providers');
+  for (let i = 0; i < FACTS.length; i++) bar.append(el('i', null, i < agreed ? 'on' : ''));
+  const cap = el('div', null, 'meter-caption');
+  const left = el('span'); left.append(el('b', agreed + ' of ' + FACTS.length), document.createTextNode(' details agreed'));
+  cap.append(left, el('span', '2 of 3 providers needed'));
+  meter.append(bar, cap);
+  card.append(meter);
+
+  // Per-detail checklist — every row is a fact the backend really decided.
+  const list = el('ul', null, 'checklist');
+  const row = (status, title, detail) => {
+    const li = el('li');
+    const ico = el('span', { pass: '✓', fail: '✕', warn: '!', info: 'i' }[status], 'ico ' + status);
+    ico.setAttribute('aria-hidden', 'true');
+    const body = el('div'); body.append(el('b', title), el('span', detail));
+    li.append(ico, body); return li;
   };
 
-  const show = (verification) => {
-    const verdict = VERDICTS[verification.outcome]
-      ?? { cls: 'held', label: verification.outcome, note: '' };
-    chip.className = 'chip ' + verdict.cls;
-    chipText.textContent = verdict.label;
-    verdictNote.textContent = verdict.note;
-
-    facts.replaceChildren();
-    facts.appendChild(fact('Transaction', short(verification.txHash)));
-    facts.appendChild(fact('Chain', verification.chain));
-    if (verification.outcome === 'AGREED' || verification.outcome === 'UNKNOWN_TOKEN') {
-      facts.appendChild(fact('Amount', verification.amountDisplay ?? verification.amount, true));
-      facts.appendChild(fact('Confirmations', verification.confirmations?.toString()));
-      facts.appendChild(fact('From', short(verification.fromAddress)));
-      facts.appendChild(fact('To', short(verification.toAddress)));
-      facts.appendChild(fact('Token', short(verification.tokenContractAddress)));
+  if (r.outcome === 'NOT_FOUND') {
+    list.append(row('fail', 'No provider has seen this payment',
+      'All three were asked and all three said it does not exist. Nothing here was reversed or cancelled — it never happened.'));
+  } else if (r.outcome === 'HELD') {
+    list.append(row('warn', 'The providers disagreed',
+      'A disputed answer is never resolved in the sender’s favour, so no amount, address or token is shown.'));
+  } else {
+    list.append(row('pass', 'Real payment', 'At least two of three independent providers saw exactly this payment.'));
+    if (r.confirmations != null) {
+      const thin = r.confirmations < 6;
+      list.append(row(thin ? 'warn' : 'pass',
+        r.confirmations + (r.confirmations === 1 ? ' confirmation' : ' confirmations'),
+        thin ? 'Still shallow. A chain reorganisation could still remove this payment — wait for more blocks before you hand anything over.'
+             : 'Buried deeply enough that a routine reorganisation will not remove it.'));
     }
-    result.classList.add('show');
-  };
+    list.append(r.tokenContractAddress
+      ? (r.amountDisplay
+          ? row('pass', 'Known token', 'The contract that moved the money is on our allowlist, so we can name it and scale the amount.')
+          : row('warn', 'Unrecognised token', 'This contract is not on our allowlist. It may be a lookalike of a real token — we will not give it a name or a value.'))
+      : row('info', 'Token not established', 'No token contract reached agreement.'));
+  }
+  card.append(list);
 
-  const listRecent = (rows) => {
-    recent.replaceChildren();
-    if (!rows.length) {
-      const li = document.createElement('li');
-      li.className = 'empty';
-      li.textContent = 'Nothing verified yet.';
-      recent.appendChild(li);
-      return;
-    }
-    for (const row of rows) {
-      const verdict = VERDICTS[row.outcome] ?? { cls: 'held', label: row.outcome };
-      const li = document.createElement('li');
-      const badge = document.createElement('span');
-      badge.className = 'chip ' + verdict.cls;
-      const dot = document.createElement('span');
-      dot.className = 'dot';
-      const badgeText = document.createElement('span');
-      badgeText.textContent = verdict.label;
-      badge.append(dot, badgeText);
-      const hash = document.createElement('span');
-      hash.className = 'hash';
-      hash.textContent = row.txHash;
-      const when = document.createElement('span');
-      when.className = 'when';
-      when.textContent = new Date(row.requestedAt).toLocaleTimeString();
-      li.append(badge, hash, when);
-      recent.appendChild(li);
-    }
-  };
+  if (r.fromAddress && r.toAddress) {
+    const parties = el('div', null, 'parties');
+    const side = (label, val) => { const d = el('div'); d.append(el('small', label), el('strong', short(val))); d.title = val; return d; };
+    const arrow = el('div', '→', 'arrow'); arrow.setAttribute('aria-hidden', 'true');
+    parties.append(side('Sent by', r.fromAddress), arrow, side('Received by', r.toAddress));
+    card.append(parties);
+  }
 
-  const fail = (message) => {
-    errorBox.textContent = message;
-    errorBox.classList.add('show');
-  };
+  if (r.outcome === 'AGREED' && r.confirmations != null && r.confirmations < 6) {
+    const n = el('div', null, 'notice');
+    n.append(el('b', 'Not settled yet.'), document.createTextNode(' Confirmed answers can still change while the block is shallow. This page shows what was true the moment you asked.'));
+    card.append(n);
+  }
 
-  const loadRecent = async () => {
-    try {
-      const response = await fetch(API);
-      if (response.ok) { listRecent(await response.json()); }
-    } catch { /* the list is a nicety; its absence must never break the form */ }
-  };
+  card.append(el('p', 'Checked ' + fmtWhen(r.requestedAt), 'checked-at'));
 
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    errorBox.classList.remove('show');
-    result.classList.remove('show');
+  const det = el('details', null, 'tech');
+  det.append(el('summary', 'See details'));
+  const dl = el('dl');
+  const pair = (k, val) => { if (val == null || val === '') return; dl.append(el('dt', k), el('dd', String(val))); };
+  pair('Payment ID', r.txHash);
+  pair('Network', r.chain);
+  pair('Existence', r.existence);
+  pair('Outcome', r.outcome);
+  pair('Confirmations', r.confirmations);
+  pair('Token contract', r.tokenContractAddress);
+  pair('Exact amount', r.amount);
+  pair('Sent by', r.fromAddress);
+  pair('Received by', r.toAddress);
+  pair('Check ID', r.verificationId);
+  det.append(dl); card.append(det);
 
-    const txHash = input.value.trim();
-    if (!txHash) { fail('Enter a transaction hash.'); input.focus(); return; }
+  root.append(card);
+  $('entry').hidden = true; root.hidden = false;
+  scrollTo({ top: 0, behavior: 'smooth' });
+  $('main').focus({ preventScroll: true });
+}
 
-    submit.disabled = true;
-    submit.textContent = 'Verifying…';
-    try {
-      const response = await fetch(API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ txHash })
-      });
-      if (!response.ok) {
-        const problem = await response.json().catch(() => ({}));
-        fail(problem.detail || problem.message
-          || 'That could not be verified right now. The chain service may still be starting.');
-        return;
-      }
-      show(await response.json());
-      loadRecent();
-    } catch {
-      fail('Could not reach the verification service.');
-    } finally {
-      submit.disabled = false;
-      submit.textContent = 'Verify';
-    }
-  });
+/* ---------- recent ---------- */
+const BADGE = { AGREED: ['ok', 'Confirmed'], UNKNOWN_TOKEN: ['warn', 'Unknown token'], HELD: ['info', 'Not sure'], NOT_FOUND: ['', 'Not found'] };
+async function loadRecent() {
+  let rows = [];
+  try {
+    const res = await fetch(API);
+    if (!res.ok) return;
+    rows = await res.json();
+  } catch { return; }
+  if (!Array.isArray(rows) || rows.length === 0) { $('recent-wrap').hidden = true; return; }
 
-  loadRecent();
-})();
+  const list = $('recent'); list.replaceChildren();
+  for (const r of rows) {
+    const [cls, text] = BADGE[r.outcome] || ['', r.outcome];
+    const btn = el('button', null, 'row'); btn.type = 'button';
+    const main = el('div', null, 'main');
+    main.append(el('b', short(r.txHash)), el('small', (r.amountDisplay || 'no amount shown') + ' · ' + fmtWhen(r.requestedAt)));
+    btn.append(main, el('span', text, 'badge ' + cls));
+    btn.onclick = () => render(r);
+    list.append(btn);
+  }
+  $('recent-wrap').hidden = false;
+
+  const first = rows[0];
+  if (first && first.txHash) {
+    const ex = $('example');
+    ex.hidden = false;
+    ex.onclick = () => { $('tx').value = first.txHash; $('tx').focus(); };
+  }
+}
+loadRecent();
 </script>
 </body>
 </html>

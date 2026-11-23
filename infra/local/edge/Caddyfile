@@ -38,6 +38,13 @@
 		file_server
 	}
 
+	# The landing page's own assets. `handle /` above matches the bare path only,
+	# so without this the logo falls through to the 404 responder.
+	handle /logo.png {
+		root * /srv/landing
+		file_server
+	}
+
 	handle {
 		respond "Not routed by the local edge" 404
 	}
