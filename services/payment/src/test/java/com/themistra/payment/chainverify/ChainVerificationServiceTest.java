@@ -14,10 +14,13 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,8 +51,10 @@ class ChainVerificationServiceTest {
         service = new ChainVerificationService(cryptoClient, repository, tokens,
                 Clock.fixed(NOW, ZoneOffset.UTC));
         // The real repository returns the saved instance; this service reads the row it stored
-        // rather than the answer it was given, so the stub has to behave the same way.
-        when(repository.save(any(ChainVerification.class))).thenAnswer(call -> call.getArgument(0));
+        // rather than the answer it was given, so the stub has to behave the same way. It is
+        // lenient because it describes the repository, not an expectation: the read-only cases
+        // below never save, and strict stubbing would fail them for that alone.
+        lenient().when(repository.save(any(ChainVerification.class))).thenAnswer(call -> call.getArgument(0));
     }
 
     private static TransactionLookupResponse agreed(String amount) {
@@ -164,5 +169,28 @@ class ChainVerificationServiceTest {
         assertThat(saved.getValue().getTxHash()).isEqualTo(HASH);
         assertThat(saved.getValue().getVerificationUuid()).isNotNull();
         assertThat(saved.getValue().getRequestedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void findsOneRecordedAnswerByItsPublicIdAndPresentsItTheSameWay() {
+        when(cryptoClient.lookupTransaction("ETHEREUM", HASH)).thenReturn(agreed("12500000"));
+        VerifyResponse fresh = service.verify(HASH, "ETHEREUM");
+
+        ArgumentCaptor<ChainVerification> saved = ArgumentCaptor.forClass(ChainVerification.class);
+        verify(repository).save(saved.capture());
+        UUID id = saved.getValue().getVerificationUuid();
+        when(repository.findByVerificationUuid(id)).thenReturn(Optional.of(saved.getValue()));
+
+        // A receipt link must show exactly what the check showed, or the printed page and the
+        // screen it came from are two different claims about the same transaction.
+        assertThat(service.find(id)).contains(fresh);
+    }
+
+    @Test
+    void findsNothingForAnIdThatWasNeverRecorded() {
+        UUID unknown = UUID.fromString("11111111-1111-4111-8111-111111111111");
+        when(repository.findByVerificationUuid(unknown)).thenReturn(Optional.empty());
+
+        assertThat(service.find(unknown)).isEmpty();
     }
 }

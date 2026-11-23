@@ -45,6 +45,14 @@
 		file_server
 	}
 
+	# Receipt links: /r/<verification-id>. The same one file answers, and reads the
+	# id out of its own path - there is no build step and no router to add.
+	handle /r/* {
+		root * /srv/landing
+		rewrite * /index.html
+		file_server
+	}
+
 	handle {
 		respond "Not routed by the local edge" 404
 	}

@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -76,6 +77,18 @@ public class ChainVerificationService {
 
         log.info("Verified {}:{} -> {}", chain, txHash, stored.getOutcome());
         return present(stored);
+    }
+
+    /**
+     * One recorded answer by its public id, for a receipt link that can be shared and reopened.
+     *
+     * <p>It is deliberately readable by anyone holding the id: the id is a random UUID, it is the
+     * only way in, and the row describes a public chain transaction that any block explorer will
+     * show the same way. Nothing merchant-scoped is reachable through it.</p>
+     */
+    @Transactional(readOnly = true)
+    public Optional<VerifyResponse> find(UUID verificationId) {
+        return repository.findByVerificationUuid(verificationId).map(this::present);
     }
 
     @Transactional(readOnly = true)

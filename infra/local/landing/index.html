@@ -186,6 +186,38 @@ footer.site{text-align:center;color:var(--muted);font-size:13px;padding:0 20px 4
   dl{grid-template-columns:minmax(0,1fr)}
   dt{margin-top:6px}
 }
+/* ---------- receipt ---------- */
+.doc-head{display:none;justify-content:space-between;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--line-2);margin-bottom:20px;text-align:left}
+.doc-head .brand{display:flex;align-items:center;gap:9px;font-family:var(--serif);font-size:19px}
+.doc-head .brand img{width:26px;height:26px;border-radius:7px}
+.doc-head .rid{font-family:var(--mono);font-size:11.5px;color:var(--muted);text-align:right;overflow-wrap:anywhere;max-width:200px}
+.receipt .doc-head{display:flex}
+.share{background:var(--bg);border:1px solid var(--line-2);border-radius:18px;padding:16px;margin-top:18px;text-align:center}
+.share h3{font-size:14px;font-weight:600;margin:0 0 10px;color:var(--muted)}
+.share-link{display:flex;gap:8px;align-items:center;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:6px 6px 6px 12px}
+.share-link span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12.5px;text-align:left}
+.share-link button{flex:none;border:0;background:var(--ink);color:var(--paper);border-radius:9px;padding:8px 12px;font-size:13px;font-weight:600;min-height:36px}
+.share-row{display:flex;gap:8px;margin-top:10px}
+.share-row .btn{flex:1;min-height:44px;font-size:14px}
+.btn-secondary{background:var(--paper);border-color:var(--line);color:var(--ink)}
+.btn-secondary:hover:not(:disabled){border-color:var(--faint)}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:999px;font-size:14px;z-index:30;box-shadow:var(--shadow)}
+
+@media print{
+  /* A receipt is printed to PDF from here; everything that cannot be acted on
+     when it is paper comes off the page first. */
+  header.site,footer.site,.btn,.btn-link,.share,.no-print,.recent{display:none!important}
+  :root,:root[data-theme=dark]{--bg:#fff;--paper:#fff;--ink:#000;--muted:#444;--faint:#666;--line:#ccc;--line-2:#ddd;--shadow:none}
+  body{background:#fff;color:#000}
+  main.wrap{padding:0;max-width:none}
+  .card{box-shadow:none;border-color:#ccc;break-inside:avoid;max-width:none;margin:0}
+  .doc-head{display:flex!important}
+  details.tech{border-top:1px solid #ddd}
+  details.tech summary{display:none}
+  details.tech dl{display:grid!important}
+  .seal svg path{animation:none;stroke-dashoffset:0}
+  @page{margin:16mm}
+}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
 }
@@ -346,7 +378,12 @@ $('form').addEventListener('submit', async e => {
 
 $('home').onclick = showEntry;
 function showEntry() {
+  // A receipt link must not stay in the address bar once its result is dismissed.
+  if (location.pathname !== '/') {
+    try { history.pushState(null, '', '/'); } catch { /* ignore */ }
+  }
   $('result').hidden = true; $('entry').hidden = false;
+  loadRecent();
   scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -359,7 +396,18 @@ function render(r) {
   const backWrap = el('div'); backWrap.style.marginBottom = '10px'; backWrap.append(back);
   root.append(backWrap);
 
-  const card = el('div', null, 'card verdict reveal ' + v.cls);
+  const card = el('div', null, 'card verdict reveal receipt ' + v.cls);
+
+  // Printed, this is the only thing that says what the page was: on screen the
+  // header above already does, so it stays hidden until the receipt view or print.
+  const head = el('div', null, 'doc-head');
+  const brand = el('div', null, 'brand');
+  const mark = document.createElement('img');
+  mark.src = 'logo.png'; mark.alt = ''; mark.width = 26; mark.height = 26;
+  brand.append(mark, document.createTextNode('Checkychain'));
+  head.append(brand, el('div', 'Check ' + r.verificationId, 'rid'));
+  card.append(head);
+
   const seal = el('div', null, 'seal'); seal.append(svgIcon(v.icon));
   card.append(seal, el('h2', v.t), el('p', v.s, 'sub'));
 
@@ -459,10 +507,38 @@ function render(r) {
   pair('Check ID', r.verificationId);
   det.append(dl); card.append(det);
 
+  // Share and print. Both are no-ops on paper, so both are hidden by the print rules.
+  const url = location.origin + '/r/' + r.verificationId;
+  const share = el('div', null, 'share');
+  share.append(el('h3', 'Receipt link'));
+  const link = el('div', null, 'share-link');
+  const copy = el('button', 'Copy'); copy.type = 'button';
+  copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(url); toast('Link copied'); }
+    catch { toast('Press \u2318C to copy'); }
+  };
+  link.append(el('span', url), copy);
+  const actions = el('div', null, 'share-row');
+  const printBtn = el('button', 'Print / Save as PDF', 'btn btn-primary'); printBtn.type = 'button';
+  printBtn.onclick = () => window.print();
+  const openLink = el('a', 'Open receipt', 'btn btn-secondary');
+  openLink.href = '/r/' + r.verificationId;
+  actions.append(printBtn, openLink);
+  share.append(link, actions);
+  card.append(share);
+
   root.append(card);
   $('entry').hidden = true; root.hidden = false;
   scrollTo({ top: 0, behavior: 'smooth' });
   $('main').focus({ preventScroll: true });
+}
+
+function toast(text) {
+  const prev = document.querySelector('.toast');
+  if (prev) prev.remove();
+  const n = el('div', text, 'toast');
+  document.body.append(n);
+  setTimeout(() => n.remove(), 2400);
 }
 
 /* ---------- recent ---------- */
@@ -495,7 +571,31 @@ async function loadRecent() {
     ex.onclick = () => { $('tx').value = first.txHash; $('tx').focus(); };
   }
 }
-loadRecent();
+/* ---------- receipt links: /r/<verification-id> ---------- */
+const UUID_RE = /^[0-9a-fA-F-]{36}$/;
+async function openFromPath() {
+  const match = location.pathname.match(/^\/r\/([^/]+)\/?$/);
+  if (!match) return false;
+  const id = decodeURIComponent(match[1]);
+  if (!UUID_RE.test(id)) { showErr('That receipt link is not valid.'); return false; }
+  try {
+    const res = await fetch(API + '/' + encodeURIComponent(id));
+    if (!res.ok) {
+      showErr(res.status === 404
+        ? 'No check was found for that receipt link.'
+        : 'That receipt could not be opened.');
+      return false;
+    }
+    render(await res.json());
+    return true;
+  } catch {
+    showErr('That receipt could not be opened.');
+    return false;
+  }
+}
+
+// A receipt link goes straight to its result; the form stays behind it.
+openFromPath().then(opened => { if (!opened) loadRecent(); });
 </script>
 </body>
 </html>

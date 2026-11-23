@@ -880,7 +880,7 @@ class ArchitectureTest {
                 .filter(method -> method.isMetaAnnotatedWith(RequestMapping.class))
                 .count();
         assertThat(handlers).as("InvoiceController x3, ExportController, ReceiptController, "
-                + "PaymentHistoryController, ChainVerificationController x2").isEqualTo(8);
+                + "PaymentHistoryController, ChainVerificationController x3").isEqualTo(9);
     }
 
     @Test
@@ -942,7 +942,7 @@ class ArchitectureTest {
     @Test
     void everyHandlerUsesAKnownAccessExpression() {
         Map<String, String> handlers = handlerAccess(analyzedClasses());
-        assertThat(handlers).hasSize(8);
+        assertThat(handlers).hasSize(9);
         handlers.forEach((handler, expression) -> assertThat(expression)
                 .as("%s uses an access expression outside KNOWN_ACCESS_EXPRESSIONS", handler)
                 .isIn(KNOWN_ACCESS_EXPRESSIONS));

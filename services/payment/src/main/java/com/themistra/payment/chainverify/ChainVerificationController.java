@@ -7,10 +7,12 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * The public landing page's one call: paste a transaction hash, get the chain's agreed answer, and
@@ -51,5 +53,18 @@ public class ChainVerificationController {
     @PreAuthorize("permitAll()")
     public List<VerifyResponse> recent() {
         return service.recent();
+    }
+
+    /**
+     * One recorded answer, so a check can be linked, reopened and printed.
+     *
+     * <p>The id is the only key, and it is a random UUID — guessing one is the whole attack, and it
+     * yields a public chain fact that any explorer shows anyway. Nothing merchant-scoped is
+     * reachable from here.</p>
+     */
+    @GetMapping("/{verificationId}")
+    @PreAuthorize("permitAll()")
+    public VerifyResponse one(@PathVariable UUID verificationId) {
+        return service.find(verificationId).orElseThrow(ChainVerificationNotFoundException::new);
     }
 }
