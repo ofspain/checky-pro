@@ -435,6 +435,7 @@ components:
             - https://checky.pro/problems/forbidden
             - https://checky.pro/problems/unauthorized
             - https://checky.pro/problems/internal-error
+            - https://checky.pro/problems/method-not-allowed
             - https://checky.pro/problems/invalid-invoice-request
             - https://checky.pro/problems/crypto-service-unavailable
             - https://checky.pro/problems/not-found

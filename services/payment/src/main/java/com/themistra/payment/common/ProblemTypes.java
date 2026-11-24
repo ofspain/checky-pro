@@ -20,6 +20,7 @@ public final class ProblemTypes {
     public static final URI FORBIDDEN = URI.create(BASE + "forbidden");
     public static final URI UNAUTHORIZED = URI.create(BASE + "unauthorized");
     public static final URI INTERNAL_ERROR = URI.create(BASE + "internal-error");
+    public static final URI METHOD_NOT_ALLOWED = URI.create(BASE + "method-not-allowed");
     public static final URI INVALID_INVOICE_REQUEST = URI.create(BASE + "invalid-invoice-request");
     public static final URI CRYPTO_SERVICE_UNAVAILABLE = URI.create(BASE + "crypto-service-unavailable");
     /** Shared across every "doesn't exist or isn't yours, 404 either way" endpoint (R28) — no

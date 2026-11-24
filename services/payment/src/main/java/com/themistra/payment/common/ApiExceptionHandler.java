@@ -6,15 +6,21 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.authorization.AuthorizationDeniedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+
+import java.util.Set;
 
 import java.util.List;
 import java.util.UUID;
@@ -86,6 +92,30 @@ public class ApiExceptionHandler {
      * by the same mirrored template, every sibling service using {@code @PreAuthorize}) returns
      * {@code 500}, not {@code 403}, for a role-denied caller - confirmed empirically via
      * {@code InvoiceControllerTest} before this handler existed. */
+    /**
+     * A wrong method is a 405, not a 500.
+     *
+     * <p>Spring raises this before any handler runs, so without a mapping it fell through to the
+     * catch-all below and every wrong-method request was reported as an internal error with a
+     * support reference. That was true of this service's whole API; it only became visible when a
+     * public path lost its {@code GET} handler and a plain browser request started producing
+     * 500s. The {@code Allow} header is set because a 405 without one tells the caller nothing.</p>
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    ResponseEntity<ProblemDetail> onMethodNotAllowed(HttpRequestMethodNotSupportedException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.METHOD_NOT_ALLOWED);
+        problem.setType(ProblemTypes.METHOD_NOT_ALLOWED);
+        problem.setTitle("Method not allowed");
+        problem.setDetail("Request method '" + e.getMethod() + "' is not supported on this path.");
+
+        HttpHeaders headers = new HttpHeaders();
+        Set<HttpMethod> allowed = e.getSupportedHttpMethods();
+        if (allowed != null && !allowed.isEmpty()) {
+            headers.setAllow(allowed);
+        }
+        return new ResponseEntity<>(problem, headers, HttpStatus.METHOD_NOT_ALLOWED);
+    }
+
     @ExceptionHandler(AuthorizationDeniedException.class)
     ProblemDetail onAuthorizationDenied(AuthorizationDeniedException e) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);

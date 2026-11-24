@@ -5,14 +5,12 @@ import com.themistra.payment.common.CryptoClient;
 import com.themistra.payment.common.crypto.TransactionLookupResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
@@ -38,7 +36,6 @@ public class ChainVerificationService {
 
     /** All three providers agree it does not exist — a real answer, and crypto's own 404. */
     private static final String NOT_FOUND = "NOT_FOUND";
-    private static final int RECENT_LIMIT = 10;
 
     private final CryptoClient cryptoClient;
     private final ChainVerificationRepository repository;
@@ -89,12 +86,6 @@ public class ChainVerificationService {
     @Transactional(readOnly = true)
     public Optional<VerifyResponse> find(UUID verificationId) {
         return repository.findByVerificationUuid(verificationId).map(this::present);
-    }
-
-    @Transactional(readOnly = true)
-    public List<VerifyResponse> recent() {
-        return repository.findAllByOrderByRequestedAtDesc(Limit.of(RECENT_LIMIT))
-                .stream().map(this::present).toList();
     }
 
     /**

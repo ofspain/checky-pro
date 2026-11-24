@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 import java.util.UUID;
 
 /**
@@ -28,9 +27,17 @@ import java.util.UUID;
  * <p><b>What a public caller can and cannot do.</b> It can cause one read against crypto-service
  * (which fans out to three chain providers) and one append-only row. It cannot read anybody's
  * invoice, payment or receipt, and it cannot change a stored row - the table grants
- * {@code INSERT} and {@code SELECT} only. The real exposure is cost and noise, not disclosure:
- * before this is served on a public URL it needs a rate limit at the edge, which is recorded in
- * the branch's README rather than left to be noticed.</p>
+ * {@code INSERT} and {@code SELECT} only.
+ *
+ * <p><b>There is deliberately no "list recent checks" endpoint.</b> One existed and was removed
+ * before this went anywhere public: it returned the last ten checks - hashes, addresses, amounts -
+ * to any caller at all, which tells a stranger what payments other people are investigating. The
+ * landing page keeps its own history in the visitor's browser instead, so a check is visible to
+ * the person who ran it and to anyone they hand the receipt link to, and to nobody else.
+ *
+ * <p>Both remaining paths are rate limited per client by
+ * {@link VerificationRateLimitFilter}; the POST fans out to three providers and is the one that
+ * costs real money.</p>
  */
 @RestController
 @RequestMapping("/api/v1/verifications")
@@ -46,13 +53,6 @@ public class ChainVerificationController {
     @PreAuthorize("permitAll()")
     public VerifyResponse verify(@Valid @RequestBody VerifyRequest request) {
         return service.verify(request.txHash(), request.chain());
-    }
-
-    /** The most recent verifications, newest first — the list the landing page shows under the form. */
-    @GetMapping
-    @PreAuthorize("permitAll()")
-    public List<VerifyResponse> recent() {
-        return service.recent();
     }
 
     /**

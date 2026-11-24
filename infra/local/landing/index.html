@@ -367,8 +367,9 @@ $('form').addEventListener('submit', async e => {
       const body = await res.json().catch(() => null);
       throw new Error(body && (body.detail || body.message) ? (body.detail || body.message) : 'That payment ID was not accepted.');
     }
-    render(await res.json());
-    loadRecent();
+    const answer = await res.json();
+    remember(answer);
+    render(answer);
   } catch (err) {
     showErr(err && err.message ? err.message : 'Something went wrong. Try again.');
   } finally {
@@ -383,7 +384,7 @@ function showEntry() {
     try { history.pushState(null, '', '/'); } catch { /* ignore */ }
   }
   $('result').hidden = true; $('entry').hidden = false;
-  loadRecent();
+  renderRecent();
   scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -541,36 +542,50 @@ function toast(text) {
   setTimeout(() => n.remove(), 2400);
 }
 
-/* ---------- recent ---------- */
+/* ---------- recent: this browser's own history ----------
+   There is deliberately no server-side "recent checks" list. One existed and
+   was removed: it handed the last ten checks - hashes, addresses, amounts - to
+   any caller at all, which tells a stranger what payments other people are
+   looking into. History lives here instead, so a check is visible to whoever
+   ran it and to anyone they send the receipt link to, and to nobody else. */
+const HISTORY_KEY = 'checks.v1';
+const HISTORY_MAX = 8;
 const BADGE = { AGREED: ['ok', 'Confirmed'], UNKNOWN_TOKEN: ['warn', 'Unknown token'], HELD: ['info', 'Not sure'], NOT_FOUND: ['', 'Not found'] };
-async function loadRecent() {
-  let rows = [];
+
+function readHistory() {
   try {
-    const res = await fetch(API);
-    if (!res.ok) return;
-    rows = await res.json();
-  } catch { return; }
-  if (!Array.isArray(rows) || rows.length === 0) { $('recent-wrap').hidden = true; return; }
+    const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    return Array.isArray(raw) ? raw.filter(r => r && typeof r.verificationId === 'string').slice(0, HISTORY_MAX) : [];
+  } catch { return []; }
+}
+function remember(r) {
+  try {
+    const kept = readHistory().filter(x => x.verificationId !== r.verificationId);
+    kept.unshift(r);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(kept.slice(0, HISTORY_MAX)));
+  } catch { /* private window, or storage disabled - the page works without it */ }
+}
+function renderRecent() {
+  const rows = readHistory();
+  if (rows.length === 0) { $('recent-wrap').hidden = true; $('example').hidden = true; return; }
 
   const list = $('recent'); list.replaceChildren();
   for (const r of rows) {
     const [cls, text] = BADGE[r.outcome] || ['', r.outcome];
     const btn = el('button', null, 'row'); btn.type = 'button';
     const main = el('div', null, 'main');
-    main.append(el('b', short(r.txHash)), el('small', (r.amountDisplay || 'no amount shown') + ' · ' + fmtWhen(r.requestedAt)));
+    main.append(el('b', short(r.txHash)), el('small', (r.amountDisplay || 'no amount shown') + ' \u00b7 ' + fmtWhen(r.requestedAt)));
     btn.append(main, el('span', text, 'badge ' + cls));
     btn.onclick = () => render(r);
     list.append(btn);
   }
   $('recent-wrap').hidden = false;
 
-  const first = rows[0];
-  if (first && first.txHash) {
-    const ex = $('example');
-    ex.hidden = false;
-    ex.onclick = () => { $('tx').value = first.txHash; $('tx').focus(); };
-  }
+  const ex = $('example');
+  ex.hidden = false;
+  ex.onclick = () => { $('tx').value = rows[0].txHash; $('tx').focus(); };
 }
+
 /* ---------- receipt links: /r/<verification-id> ---------- */
 const UUID_RE = /^[0-9a-fA-F-]{36}$/;
 async function openFromPath() {
@@ -586,7 +601,9 @@ async function openFromPath() {
         : 'That receipt could not be opened.');
       return false;
     }
-    render(await res.json());
+    const answer = await res.json();
+    remember(answer);
+    render(answer);
     return true;
   } catch {
     showErr('That receipt could not be opened.');
@@ -595,7 +612,7 @@ async function openFromPath() {
 }
 
 // A receipt link goes straight to its result; the form stays behind it.
-openFromPath().then(opened => { if (!opened) loadRecent(); });
+openFromPath().then(opened => { if (!opened) renderRecent(); });
 </script>
 </body>
 </html>

@@ -52,14 +52,34 @@ every request, it simply always reaches agreement here.
 Sanctions screening belongs to the attestation and watch paths, not to this read. An earlier draft
 of this file claimed otherwise, which is exactly the kind of thing that ruins a live demo.
 
+## What is captured
+
+One append-only row per check: a random id, the chain, the transaction hash, the outcome, the
+agreed facts, and the time. All of it is public chain data plus a timestamp. **No account, no
+email, no IP address, no cookie, no wallet connection, nothing signed.** The visitor's browser
+keeps its own history of checks in `localStorage` and nothing else; the edge has no access-log
+directive; crypto-service writes nothing at all on this path.
+
+**There is deliberately no server-side "recent checks" list.** One existed and was removed before
+this went anywhere public: `GET /api/v1/verifications` handed the last ten checks — hashes,
+addresses, amounts — to any caller at all, which tells a stranger what payments other people are
+investigating. That path is now `405`, and the page's history is per-browser.
+
 ## Before this is served on a public URL
 
 These are the gaps, written down rather than discovered later.
 
-- **Rate limiting is not implemented.** One unauthenticated request fans out to three RPC provider
-  calls. On localhost that is free; against paid providers it is a cost and abuse surface. It
-  belongs at the edge (Caddy's `rate_limit`, or whatever fronts the deployment), not in the
-  service — the service should not be the thing deciding who may ask.
+- **Rate limiting is done, in the service rather than at the edge.** An earlier draft of this file
+  argued it belonged in Caddy. That was wrong for this deployment: the Caddyfile here is a
+  local-development artifact, a public deploy may sit behind ngrok, a cloud load balancer or
+  nothing at all, and a limit written into one edge disappears the moment the edge changes.
+  `VerificationRateLimitFilter` gives each client 10 POSTs and 60 reads a minute, with
+  `RateLimit-*` headers and a 429 carrying `Retry-After`. The counters are in memory, so each
+  instance has its own budget: **several replicas permit several times this**, and a real
+  deployment behind more than one wants a shared store.
+- **The receipt is not signed.** This path writes no `quorum_decisions` and no `observations` row,
+  so it cannot feed attestation (L10). What prints is a record of what three providers said at one
+  moment, which is what the page claims and no more.
 - **The three "providers" are one anvil node** (`infra/local/config/crypto.properties` says so in
   its own comment). The quorum logic is real and runs for every request; what is not real locally
   is the independence of the three answers. A public deployment needs three genuinely separate

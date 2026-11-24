@@ -165,7 +165,7 @@ class PaymentsOpenApiContractTest {
                 catalogue.add(field.get(null).toString());
             }
         }
-        assertThat(catalogue).as("ProblemTypes catalogue size").hasSize(12);
+        assertThat(catalogue).as("ProblemTypes catalogue size").hasSize(13);
 
         JsonNode type = contract().get("components").get("schemas").get("Problem").get("properties").get("type");
         assertThat(type.get("format").asText()).isEqualTo("uri");
