@@ -364,6 +364,15 @@ $('form').addEventListener('submit', async e => {
       body: JSON.stringify({ txHash: value })
     });
     if (!res.ok) {
+      // 503 is the shared upstream-unavailable problem, whose detail talks about invoices
+      // because the same handler serves invoice creation. 429 is the rate limit. Neither
+      // message is written for someone standing in front of this page.
+      if (res.status === 503) {
+        throw new Error('We could not reach the providers just now. Try again in a moment.');
+      }
+      if (res.status === 429) {
+        throw new Error('That is a lot of checks at once. Wait a minute and try again.');
+      }
       const body = await res.json().catch(() => null);
       throw new Error(body && (body.detail || body.message) ? (body.detail || body.message) : 'That payment ID was not accepted.');
     }

@@ -1,0 +1,170 @@
+# The demo on one EC2 box. Deployed by infra/deploy/ansible, never edited on the server.
+#
+# Images are pulled from ECR; nothing is built here. A public-facing box has no business holding
+# the source tree, a Maven cache and a JDK.
+#
+# Only `edge` publishes ports. Everything else talks over the compose network, so auth-service and
+# the two application services are not reachable from the internet at all.
+name: checky-demo
+
+x-java: &java
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+x-java-env: &java-env
+  SPRING_PROFILES_ACTIVE: prod
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  AWS_REGION: ${AWS_REGION}
+  JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70.0"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: checky
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U checky -d payment"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  kafka:
+    image: apache/kafka:3.8.0
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: checky-demo-cluster-0001
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # Flyway runs outside the services it migrates, as it does locally. The SQL is copied to the box
+  # by Ansible; the services themselves hold no migration rights.
+  migrate-crypto:
+    image: flyway/flyway:10-alpine
+    command: >-
+      -url=jdbc:postgresql://postgres:5432/crypto -user=checky -password=${POSTGRES_PASSWORD}
+      -schemas=crypto -locations=filesystem:/flyway/sql -connectRetries=20 migrate
+    volumes:
+      - ./migrations/crypto:/flyway/sql:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  migrate-payment:
+    image: flyway/flyway:10-alpine
+    command: >-
+      -url=jdbc:postgresql://postgres:5432/payment -user=checky -password=${POSTGRES_PASSWORD}
+      -schemas=payments -locations=filesystem:/flyway/sql -connectRetries=20 migrate
+    volumes:
+      - ./migrations/payment:/flyway/sql:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # Not exposed. It exists because payment-service mints a client_credentials token here to call
+  # crypto-service's internal API - without it, a check cannot be made at all.
+  auth:
+    <<: *java
+    image: ${ECR_REGISTRY}/checky-auth:${IMAGE_TAG:-latest}
+    environment:
+      <<: *java-env
+      SERVER_PORT: "8080"
+      DB_URL: jdbc:postgresql://postgres:5432/auth
+      DB_USER: checky
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      AUTH_ISSUER_URI: http://auth:8080
+      PAYMENT_SERVICE_CLIENT_SECRET: ${PAYMENT_SERVICE_CLIENT_SECRET:?set PAYMENT_SERVICE_CLIENT_SECRET}
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  crypto:
+    <<: *java
+    image: ${ECR_REGISTRY}/checky-crypto:${IMAGE_TAG:-latest}
+    environment:
+      <<: *java-env
+      SERVER_PORT: "8080"
+      DB_URL: jdbc:postgresql://postgres:5432/crypto
+      DB_USER: crypto_app
+      DB_PASSWORD: ${CRYPTO_APP_PASSWORD:?set CRYPTO_APP_PASSWORD}
+      AUTH_ISSUER_URI: http://auth:8080
+      AUTH_JWK_SET_URI: http://auth:8080/oauth2/jwks
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/config/crypto.properties
+      SEPOLIA_RPC_1: ${SEPOLIA_RPC_1:?set SEPOLIA_RPC_1}
+      SEPOLIA_RPC_2: ${SEPOLIA_RPC_2:?set SEPOLIA_RPC_2}
+      SEPOLIA_RPC_3: ${SEPOLIA_RPC_3:?set SEPOLIA_RPC_3}
+      DEMO_TOKEN_ADDRESS: ${DEMO_TOKEN_ADDRESS:?set DEMO_TOKEN_ADDRESS}
+      DEMO_TOKEN_SYMBOL: ${DEMO_TOKEN_SYMBOL:-USDC}
+      DEMO_TOKEN_DECIMALS: ${DEMO_TOKEN_DECIMALS:-6}
+    volumes:
+      - ./config/crypto.properties:/config/crypto.properties:ro
+    depends_on:
+      migrate-crypto: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+
+  payment:
+    <<: *java
+    image: ${ECR_REGISTRY}/checky-payment:${IMAGE_TAG:-latest}
+    environment:
+      <<: *java-env
+      SERVER_PORT: "8083"
+      DB_URL: jdbc:postgresql://postgres:5432/payment
+      DB_USER: payment_app
+      DB_PASSWORD: ${PAYMENT_APP_PASSWORD:?set PAYMENT_APP_PASSWORD}
+      AUTH_ISSUER_URI: http://auth:8080
+      AUTH_JWK_SET_URI: http://auth:8080/oauth2/jwks
+      CRYPTO_SERVICE_BASE_URL: http://crypto:8080
+      CRYPTO_AUTH_TOKEN_URI: http://auth:8080/oauth2/token
+      PAYMENT_SERVICE_CLIENT_SECRET: ${PAYMENT_SERVICE_CLIENT_SECRET}
+      # A real RPC round trip is slower than a local anvil one.
+      THEMISTRA_PAYMENT_CRYPTO_READTIMEOUTMS: "20000"
+      # Display only. crypto-service owns the allowlist and the decision; these name the token.
+      THEMISTRA_PAYMENT_CHAINVERIFY_TOKENS_0_CHAIN: ETHEREUM
+      THEMISTRA_PAYMENT_CHAINVERIFY_TOKENS_0_CONTRACTADDRESS: ${DEMO_TOKEN_ADDRESS}
+      THEMISTRA_PAYMENT_CHAINVERIFY_TOKENS_0_SYMBOL: ${DEMO_TOKEN_SYMBOL:-USDC}
+      THEMISTRA_PAYMENT_CHAINVERIFY_TOKENS_0_DECIMALS: ${DEMO_TOKEN_DECIMALS:-6}
+    depends_on:
+      migrate-payment: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+
+  # The only container with published ports, and the only routes the internet can reach.
+  edge:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    volumes:
+      - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./landing:/srv/landing:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [payment]
+
+volumes:
+  postgres-data:
+  kafka-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,177 @@
+---
+# Configure the demo box and start it.
+#
+#   ansible-playbook playbook.yml
+#
+# Everything the application needs lives in files/ and config/ in the repository and is copied
+# here. Nothing is edited on the server: a change is made in git, and the playbook runs again.
+# It is safe to re-run - that is the point of it.
+- name: Deploy the Checkychain verification demo
+  hosts: demo
+  become: false
+  gather_facts: true
+
+  vars:
+    app_dir: /opt/checky
+    repo_root: "{{ playbook_dir }}/../../.."
+    deploy_root: "{{ playbook_dir }}/.."
+    env_file: "{{ playbook_dir }}/../.env"
+
+  pre_tasks:
+    - name: Fail early when the environment file is missing
+      ansible.builtin.stat:
+        path: "{{ env_file }}"
+      register: env_stat
+      delegate_to: localhost
+      become: false
+
+    - name: Explain what is missing rather than failing deep inside a template
+      ansible.builtin.fail:
+        msg: >-
+          {{ env_file }} does not exist. Copy infra/deploy/env.example to infra/deploy/.env and
+          fill it in. It holds the database passwords, the three Sepolia RPC URLs and the
+          hostname, and it is gitignored.
+      when: not env_stat.stat.exists
+
+    - name: Read the deployment environment
+      ansible.builtin.set_fact:
+        deploy_env: "{{ lookup('ansible.builtin.file', env_file) | regex_findall('(?m)^([A-Z0-9_]+)=(.*)$') | items2dict(key_name=0, value_name=1) }}"
+      no_log: true
+
+    - name: Require every value the compose file will demand
+      ansible.builtin.assert:
+        that: deploy_env[item] is defined and deploy_env[item] | length > 0
+        fail_msg: "{{ item }} is empty in .env — the stack will not start without it."
+      loop:
+        - PUBLIC_HOST
+        - ACME_EMAIL
+        - ECR_REGISTRY
+        - AWS_REGION
+        - POSTGRES_PASSWORD
+        - CRYPTO_APP_PASSWORD
+        - PAYMENT_APP_PASSWORD
+        - PAYMENT_SERVICE_CLIENT_SECRET
+        - SEPOLIA_RPC_1
+        - SEPOLIA_RPC_2
+        - SEPOLIA_RPC_3
+        - DEMO_TOKEN_ADDRESS
+      no_log: true
+
+  tasks:
+    - name: Wait for the instance to finish its user-data bootstrap
+      ansible.builtin.wait_for:
+        path: /usr/local/lib/docker/cli-plugins/docker-compose
+        timeout: 600
+
+    - name: Create the application directories
+      ansible.builtin.file:
+        path: "{{ app_dir }}/{{ item }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: "0755"
+      become: true
+      loop: ["", config, landing, migrations/crypto, migrations/payment]
+
+    - name: Copy the compose file
+      ansible.builtin.copy:
+        src: "{{ deploy_root }}/compose.prod.yaml"
+        dest: "{{ app_dir }}/compose.yaml"
+        mode: "0644"
+
+    - name: Copy the environment file
+      ansible.builtin.copy:
+        src: "{{ env_file }}"
+        dest: "{{ app_dir }}/.env"
+        mode: "0600"
+      no_log: true
+
+    - name: Copy the edge and service configuration
+      ansible.builtin.copy:
+        src: "{{ deploy_root }}/config/{{ item }}"
+        dest: "{{ app_dir }}/config/{{ item }}"
+        mode: "0644"
+      loop: [Caddyfile, crypto.properties]
+      notify: Restart the stack
+
+    # The passwords are substituted here rather than stored anywhere, and the file only has any
+    # effect on an empty data volume - Postgres ignores it on every later start.
+    - name: Render the database initialisation script
+      ansible.builtin.template:
+        src: init.sql.j2
+        dest: "{{ app_dir }}/config/init.sql"
+        mode: "0600"
+      no_log: true
+
+    - name: Copy the landing page
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/infra/local/landing/{{ item }}"
+        dest: "{{ app_dir }}/landing/{{ item }}"
+        mode: "0644"
+      loop: [index.html, logo.png]
+      notify: Restart the stack
+
+    # Flyway runs outside the services, as it does locally, so the SQL has to be on the box. It is
+    # a few kilobytes of text - the source tree stays off this machine.
+    - name: Copy the database migrations
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/services/{{ item }}/src/main/resources/db/migration/"
+        dest: "{{ app_dir }}/migrations/{{ item }}/"
+        mode: "0644"
+      loop: [crypto, payment]
+
+    - name: Log in to ECR
+      ansible.builtin.shell:
+        cmd: >-
+          aws ecr get-login-password --region {{ deploy_env.AWS_REGION }}
+          | docker login --username AWS --password-stdin {{ deploy_env.ECR_REGISTRY }}
+      changed_when: false
+      no_log: true
+
+    - name: Pull the images
+      ansible.builtin.command:
+        cmd: docker compose pull --quiet
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    - name: Start the stack
+      ansible.builtin.command:
+        cmd: docker compose up -d --remove-orphans
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    - name: Wait for the landing page to answer over HTTPS
+      ansible.builtin.uri:
+        url: "https://{{ deploy_env.PUBLIC_HOST }}/"
+        status_code: 200
+      register: landing
+      until: landing.status == 200
+      retries: 30
+      delay: 10
+      delegate_to: localhost
+      become: false
+
+    # The check that matters is the one performed after publishing, not before.
+    - name: Prove that nothing but the demo is reachable
+      ansible.builtin.uri:
+        url: "https://{{ deploy_env.PUBLIC_HOST }}/{{ item }}"
+        status_code: 404
+      loop:
+        - login
+        - oauth2/authorize
+        - admin
+        - accounts
+        - api-keys
+        - app/
+        - api/v1/invoices
+        - api/v1/receipts
+        - actuator/health
+        - userinfo
+      delegate_to: localhost
+      become: false
+
+  handlers:
+    - name: Restart the stack
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ app_dir }}"

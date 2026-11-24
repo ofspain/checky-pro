@@ -1,0 +1,52 @@
+# The public surface, and nothing else.
+#
+# Caddy obtains and renews a Let's Encrypt certificate for PUBLIC_HOST automatically, which is why
+# the box needs ports 80 and 443 open and the DNS record pointing at it before the first start.
+{
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_HOST} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		# The page loads nothing from anywhere else; its CSS and JS are inline.
+		Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		-Server
+	}
+
+	handle /api/v1/verifications {
+		reverse_proxy payment:8083
+	}
+
+	handle /api/v1/verifications/* {
+		reverse_proxy payment:8083
+	}
+
+	handle /logo.png {
+		root * /srv/landing
+		file_server
+	}
+
+	# The landing page and every receipt link are the same single file.
+	handle /r/* {
+		root * /srv/landing
+		rewrite * /index.html
+		file_server
+	}
+
+	handle / {
+		root * /srv/landing
+		rewrite * /index.html
+		file_server
+	}
+
+	# Everything else - auth, the merchant API, the SPA, actuator - is simply not routed here.
+	handle {
+		respond "Not found" 404
+	}
+}

@@ -1,0 +1,7 @@
+-- Rendered by Ansible. Runs once, on an empty Postgres volume.
+-- One database per service (infra/README.md "Database layout").
+CREATE DATABASE auth;
+CREATE DATABASE crypto;
+CREATE DATABASE payment;
+CREATE ROLE crypto_app LOGIN PASSWORD '{{ deploy_env.CRYPTO_APP_PASSWORD }}';
+CREATE ROLE payment_app LOGIN PASSWORD '{{ deploy_env.PAYMENT_APP_PASSWORD }}';

@@ -1,0 +1,8 @@
+# Deployment secrets and the inventory naming your box.
+.env
+inventory.ini
+cdk/node_modules/
+cdk/cdk.out/
+cdk/*.js
+cdk/*.d.ts
+cdk/cdk.context.json
