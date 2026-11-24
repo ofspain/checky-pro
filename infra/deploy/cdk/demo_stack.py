@@ -40,7 +40,7 @@ class DemoStack(Stack):
         scope: Construct,
         construct_id: str,
         *,
-        ssh_cidr: str,
+        ssh_cidr: str | None,
         key_name: str | None,
         instance_type: str,
         **kwargs,
@@ -98,11 +98,15 @@ class DemoStack(Stack):
             ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP (ACME + redirect)"
         )
         security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")
-        # Ansible does not need this: it connects over SSM. Port 22 is kept, open to one
-        # address only, as break-glass for the case where the SSM agent itself is the problem.
-        security_group.add_ingress_rule(
-            ec2.Peer.ipv4(ssh_cidr), ec2.Port.tcp(22), "SSH break-glass, one address only"
-        )
+        # No SSH unless an address was named. Ansible connects over SSM and the console uses
+        # Session Manager, so with no key pair on the box an open port 22 cannot be authenticated
+        # against at all - it is surface with no use. Real break-glass for a broken agent is the
+        # EC2 Serial Console, which needs no inbound port, or destroying and redeploying this
+        # stack, which takes about four minutes and is the honest answer for a demo box.
+        if ssh_cidr:
+            security_group.add_ingress_rule(
+                ec2.Peer.ipv4(ssh_cidr), ec2.Port.tcp(22), "SSH, one address only"
+            )
 
         role = iam.Role(
             self,
@@ -206,9 +210,12 @@ class DemoStack(Stack):
             value=instance.instance_id,
             description="ansible_host for the SSM connection, and what the console connects to.",
         )
-        CfnOutput(
-            self,
-            "SshCommand",
-            value=f"ssh -i <your-key.pem> ec2-user@{address.ref}",
-            description="Break-glass only, and only if a keyName was supplied. Ansible uses SSM.",
-        )
+        # Printed only when SSH was actually asked for, so the output cannot advertise a route
+        # that no security group rule and no key pair would let anyone take.
+        if ssh_cidr and key_name:
+            CfnOutput(
+                self,
+                "SshCommand",
+                value=f"ssh -i <{key_name}.pem> ec2-user@{address.ref}",
+                description="Break-glass only. Ansible and the console both use SSM.",
+            )

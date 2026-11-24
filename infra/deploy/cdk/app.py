@@ -11,19 +11,21 @@ app = cdk.App()
 # Required context, passed with -c or set in cdk.context.json. There is no default for ssh_cidr
 # on purpose: the default would be 0.0.0.0/0, and SSH open to the internet is not something
 # anyone should get by forgetting to think about it.
+# Both optional, and the default is no SSH at all: no open port and no key on the box.
+#
+# Ansible connects over SSM and the console connects through Session Manager, so an SSH rule
+# protects nothing here while still being a rule that goes stale - a home address changes, and
+# the entry then names a stranger's. Supply both of these together if you ever want SSH back.
 ssh_cidr = app.node.try_get_context("sshCidr")
-if not ssh_cidr:
-    raise SystemExit(
-        "Missing context. Deploy with:\n"
-        "  cdk deploy -c sshCidr=<your.ip.addr.ess/32>\n"
-        "Find your address with: curl -s https://checkip.amazonaws.com\n\n"
-        "Port 22 is break-glass only; Ansible connects over SSM. Add\n"
-        "-c keyName=<ec2-key-pair> if you want an SSH key on the box as well."
-    )
-
-# Optional on purpose. Ansible uses SSM, and the console connects without a key, so a key pair
-# is only worth attaching if you want SSH to work when the SSM agent is the thing that is broken.
 key_name = app.node.try_get_context("keyName")
+
+# The one thing worth refusing outright. An address is a deliberate choice; the whole internet
+# on port 22 is almost always a slip, and it is the slip this project should not make quietly.
+if ssh_cidr and ssh_cidr.strip().endswith("/0"):
+    raise SystemExit(
+        f"Refusing sshCidr={ssh_cidr}: that is SSH open to the internet.\n"
+        "Pass a single address, for example -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32"
+    )
 
 # This stack looks up the default VPC, which CDK can only do for a named account and region.
 # Without credentials the lookup fails several layers down as a jsii stack trace about a
