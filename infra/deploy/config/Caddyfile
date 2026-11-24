@@ -2,9 +2,9 @@
 #
 # Caddy obtains and renews a Let's Encrypt certificate for PUBLIC_HOST automatically, which is why
 # the box needs ports 80 and 443 open and the DNS record pointing at it before the first start.
-{
-	email {$ACME_EMAIL}
-}
+# No `email` directive: Let's Encrypt permits an ACME account with no contact address, and
+# certificates issue and renew identically without one. The only thing given up is expiry warning
+# mail. To turn that on, add `email you@example.com` inside a global block here.
 
 {$PUBLIC_HOST} {
 	encode zstd gzip

@@ -49,10 +49,14 @@ DemoStack(
     description="Public verification demo: one EC2 instance, three ECR repositories.",
     ssh_cidr=ssh_cidr,
     key_name=key_name,
-    # t3.medium, not t3.small. Three JVMs, Kafka and Postgres share this box; measured against
-    # the real images, payment-service alone took 188 seconds to start when all three booted at
-    # once. 2 GB is not enough headroom for that, and an OOM during startup looks like a hang.
-    instance_type=app.node.try_get_context("instanceType") or "t3.medium",
+    # t4g.medium: Graviton, arm64. Three JVMs, Kafka and Postgres share this box; measured
+    # against the real images, payment-service alone took 188 seconds to start when all three
+    # booted together, so 2 GB leaves no headroom and an OOM during startup looks like a hang.
+    #
+    # arm64 rather than x86_64 because every image here has an arm64 build (checked: postgres,
+    # kafka, flyway 11, caddy) and the machines building them are Apple Silicon - so the builds
+    # are native instead of QEMU-emulated, and the instance is cheaper besides.
+    instance_type=app.node.try_get_context("instanceType") or "t4g.medium",
 )
 
 app.synth()

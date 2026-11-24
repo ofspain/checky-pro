@@ -48,7 +48,6 @@
         fail_msg: "{{ item }} is empty in .env — the stack will not start without it."
       loop:
         - PUBLIC_HOST
-        - ACME_EMAIL
         - ECR_REGISTRY
         - AWS_REGION
         - POSTGRES_PASSWORD

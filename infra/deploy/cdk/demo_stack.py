@@ -150,7 +150,7 @@ class DemoStack(Stack):
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             instance_type=ec2.InstanceType(instance_type),
             machine_image=ec2.MachineImage.latest_amazon_linux2023(
-                cpu_type=ec2.AmazonLinuxCpuType.X86_64
+                cpu_type=ec2.AmazonLinuxCpuType.ARM_64
             ),
             security_group=security_group,
             role=role,

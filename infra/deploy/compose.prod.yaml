@@ -63,7 +63,7 @@ services:
   # Flyway runs outside the services it migrates, as it does locally. The SQL is copied to the box
   # by Ansible; the services themselves hold no migration rights.
   migrate-crypto:
-    image: flyway/flyway:10-alpine
+    image: flyway/flyway:11.7.2-alpine
     command: >-
       -url=jdbc:postgresql://postgres:5432/crypto -user=checky -password=${POSTGRES_PASSWORD}
       -schemas=crypto -locations=filesystem:/flyway/sql -connectRetries=20 migrate
@@ -73,7 +73,7 @@ services:
       postgres: { condition: service_healthy }
 
   migrate-payment:
-    image: flyway/flyway:10-alpine
+    image: flyway/flyway:11.7.2-alpine
     command: >-
       -url=jdbc:postgresql://postgres:5432/payment -user=checky -password=${POSTGRES_PASSWORD}
       -schemas=payments -locations=filesystem:/flyway/sql -connectRetries=20 migrate
@@ -155,7 +155,7 @@ services:
     ports: ["80:80", "443:443"]
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST}
-      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+      ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
       - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./landing:/srv/landing:ro
