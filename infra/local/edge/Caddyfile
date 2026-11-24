@@ -57,3 +57,48 @@
 		respond "Not routed by the local edge" 404
 	}
 }
+
+# ---------------------------------------------------------------------------
+# The PUBLIC surface (demo/onchain-verification), on its own port.
+#
+# This is the only thing that should ever be tunnelled or published. The site
+# above is the whole local platform: auth-service's /login, /oauth2/*, /admin/*,
+# /accounts/* and /api-keys/*, the merchant API, the notification stream and the
+# SPA, all running on local development credentials that protect nothing. Putting
+# that on the internet would hand over an admin path and a token issuer.
+#
+# So the public demo gets its own site with an explicit allowlist of four routes
+# and a 404 for everything else. A route cannot leak out here by being added to
+# the edge above; it has to be written in again, below.
+# ---------------------------------------------------------------------------
+:8080 {
+	handle /api/v1/verifications {
+		reverse_proxy payment:8083
+	}
+
+	handle /api/v1/verifications/* {
+		reverse_proxy payment:8083
+	}
+
+	handle /logo.png {
+		root * /srv/landing
+		file_server
+	}
+
+	# The landing page, and every receipt link, are the same single file.
+	handle /r/* {
+		root * /srv/landing
+		rewrite * /index.html
+		file_server
+	}
+
+	handle / {
+		root * /srv/landing
+		rewrite * /index.html
+		file_server
+	}
+
+	handle {
+		respond "Not found" 404
+	}
+}

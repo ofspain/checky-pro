@@ -228,7 +228,7 @@ services:
     volumes:
       - ./edge/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./landing:/srv/landing:ro
-    ports: ["5173:80"]
+    ports: ["5173:80", "8080:8080"]
     depends_on: [auth, payment, notification]
 
 volumes:
