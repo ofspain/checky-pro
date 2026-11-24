@@ -37,8 +37,10 @@ which is a few kilobytes of text.
 #    ./cdk runs the toolchain in a container, so nothing has to be installed on this machine.
 cd infra/deploy/cdk
 ./cdk bootstrap                         # first time in this account/region only
-./cdk deploy -c keyName=<your-ec2-key-pair> -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32
-# Note the PublicIp and EcrRegistry outputs.
+./cdk deploy -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32
+#    Add -c keyName=<your-ec2-key-pair> only if you want an SSH key on the box as well.
+#    Ansible does not need one, and neither does the console.
+# Note the InstanceId, SsmTransferBucketName, PublicIp and EcrRegistry outputs.
 
 # 2. DNS. Point your hostname's A record at PublicIp and wait for it to resolve.
 #    Caddy cannot obtain a certificate before this is true.
@@ -48,8 +50,10 @@ cd ..
 cp env.example .env && $EDITOR .env     # .env is gitignored
 cp ansible/inventory.ini.example ansible/inventory.ini && $EDITOR ansible/inventory.ini
 
-# 4. Images.
-aws ecr get-login-password --region <region> \
+# 4. Images. The AWS CLI is in the ansible toolchain image, so it needs no install either.
+docker run --rm -e AWS_PROFILE -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+  -e AWS_SESSION_TOKEN -v "$HOME/.aws:/root/.aws:ro" --entrypoint aws checky-ansible \
+  ecr get-login-password --region <region> \
   | docker login --username AWS --password-stdin <EcrRegistry>
 for s in auth crypto payment; do
   docker build -f services/$s/Dockerfile -t <EcrRegistry>/checky-$s:latest .   # from the repo root
@@ -61,7 +65,7 @@ done
 
 ```sh
 cd infra/deploy/ansible
-ansible-playbook playbook.yml
+./play
 ```
 
 The playbook is safe to re-run; that is the point of it. It refuses to start if anything in `.env`
@@ -72,9 +76,33 @@ the one performed after publishing.
 
 Nothing is edited on the server. A change is made in git and the playbook runs again.
 
+## How Ansible reaches the box
+
+**Over SSM, not SSH.** `ansible_connection=community.aws.aws_ssm` opens a Session Manager
+channel through the AWS API, so a deploy needs no key pair, no `ansible_user` and no inbound
+port. The instance role already carries `AmazonSSMManagedInstanceCore`, which is the same thing
+that makes *Connect* work in the EC2 console.
+
+Two consequences worth knowing, because both look like bugs otherwise:
+
+- **`ansible_host` is the instance ID**, not an IP address. SSM addresses instances, not hosts.
+- **The connection needs an S3 bucket.** The Session Manager channel cannot carry files, so the
+  plugin stages them through S3. The stack creates that bucket, blocks public access, expires
+  objects after a day and empties it on `cdk destroy`.
+
+The playbook runs with `become: true` for a reason that only shows up here: over SSM the session
+is `ssm-user`, which is **not** in the docker group and cannot write to `/opt/checky`, whereas
+over SSH it is `ec2-user`, which can do both. Escalating to root makes the two transports
+identical, and files are still owned by `ec2-user` so a human who logs in can manage the stack.
+
+**SSH is kept as break-glass**, port 22 open to the one address in `sshCidr`, for the case where
+the SSM agent itself is the problem. It only works if the stack was deployed with `-c keyName=`;
+`ansible/inventory.ini.example` has the exact override. If you never use it, nothing is lost by
+leaving the key pair off — the console still gets you a shell.
+
 ## The toolchain
 
-`./cdk` is the CDK, run in a container. It takes exactly what the real CLI takes — `./cdk synth`,
+`./cdk` is the CDK and `ansible/play` is Ansible, each run in a container. It takes exactly what the real CLI takes — `./cdk synth`,
 `./cdk deploy -c ...`, `./cdk diff` — and it builds its image the first time it is used.
 
 It exists because the toolchain has two requirements that have nothing to do with the stacks:
@@ -87,8 +115,27 @@ Your AWS credentials are passed through: `~/.aws` is mounted read-only and `AWS_
 `AWS_REGION` and exported keys or session tokens are forwarded, so profiles and SSO work exactly
 as they do on the host.
 
-To run it natively instead, install Node and the CLI (`npm install -g aws-cdk`), use Python
-3.11–3.13, and `pip install -r requirements.txt`.
+`ansible/play` exists for a sharper version of the same problem. The SSM path needs four things
+that are each easy to get wrong on their own: Ansible, the `community.aws` collection for the
+connection plugin, `boto3` for it to call AWS with, and AWS's `session-manager-plugin`, which is
+not a Python package and is in no distribution's repositories. All four are pinned in
+`ansible/Dockerfile`. It also carries the AWS CLI, so the ECR login needs no install either.
+Arguments pass straight through: `./play --check`, `./play -v`, `./play --syntax-check`.
+
+To run either natively instead: for the CDK, install Node and the CLI (`npm install -g aws-cdk`),
+use Python 3.11–3.13 and `pip install -r requirements.txt`; for Ansible, install `ansible-core`,
+`boto3`, the two collections and the Session Manager plugin yourself.
+
+## Credentials
+
+Nothing here reads a credential from the repository, and nothing needs one stored permanently.
+Both wrappers mount `~/.aws` read-only if it exists and forward `AWS_PROFILE`, `AWS_REGION` and
+any exported key, secret and session token, so profiles, SSO and short-lived STS sessions all
+work the way they do on the host.
+
+Prefer **temporary** credentials. `aws sts get-session-token`, an SSO login or an assumed role
+all produce a set that expires on its own, which is the right shape for a demo deploy: there is
+nothing left behind to leak or rotate afterwards.
 
 ## The chain
 

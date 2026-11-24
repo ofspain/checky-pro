@@ -8,7 +8,11 @@
 # It is safe to re-run - that is the point of it.
 - name: Deploy the Checkychain verification demo
   hosts: demo
-  become: false
+  # Root, because the connection user differs by transport and neither can do the work as itself.
+  # Over SSM the session runs as `ssm-user`, which is not in the docker group and cannot write to
+  # /opt/checky; over SSH it is `ec2-user`, which can do both. Escalating makes the two identical,
+  # and the files are still owned by ec2-user so that a human who logs in can manage the stack.
+  become: true
   gather_facts: true
 
   vars:
@@ -70,7 +74,6 @@
         owner: ec2-user
         group: ec2-user
         mode: "0755"
-      become: true
       loop: ["", config, landing, migrations/crypto, migrations/payment]
 
     - name: Copy the compose file

@@ -1,0 +1,56 @@
+#!/usr/bin/env sh
+# Run the playbook without installing Ansible, boto3, the community.aws collection or AWS's
+# session-manager-plugin on this machine.
+#
+#   ./play                     the whole deploy
+#   ./play --check             a dry run
+#   ./play -v                  more detail when something fails
+#   ./play -e ansible_connection=ssh   break-glass, if SSM itself is broken
+#
+# Everything is passed straight through to ansible-playbook. The repository is mounted at /repo
+# because the playbook copies the landing page and the Flyway SQL from it, and credentials are
+# forwarded the same way ../cdk/cdk forwards them.
+set -eu
+
+IMAGE=checky-ansible
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO=$(CDPATH= cd -- "$HERE/../../.." && pwd)
+
+if [ -z "$(docker images -q "$IMAGE" 2>/dev/null)" ]; then
+  echo "Building the $IMAGE toolchain image (once, a few minutes)..." >&2
+  docker build -q -t "$IMAGE" "$HERE" >/dev/null
+fi
+
+AWS_MOUNT=""
+if [ -d "$HOME/.aws" ]; then
+  AWS_MOUNT="-v $HOME/.aws:/root/.aws:ro"
+fi
+
+# Only mounted if it exists: the SSM path needs no key, and most runs will not have one.
+SSH_MOUNT=""
+if [ -d "$HOME/.ssh" ]; then
+  SSH_MOUNT="-v $HOME/.ssh:/root/.ssh:ro"
+fi
+
+TTY=""
+if [ -t 0 ] && [ -t 1 ]; then
+  TTY="-it"
+fi
+
+# The entrypoint is ansible-playbook, which needs a playbook before it will accept anything else,
+# so `./play --check` on its own is an error rather than a dry run. Everything here is a flag
+# unless a playbook is named explicitly, so the default is supplied when none was given.
+case "${1-}" in
+  *.yml|*.yaml) ;;
+  *) set -- playbook.yml "$@" ;;
+esac
+
+# shellcheck disable=SC2086
+exec docker run --rm $TTY \
+  -v "$REPO:/repo" \
+  -w /repo/infra/deploy/ansible \
+  $AWS_MOUNT $SSH_MOUNT \
+  -e AWS_PROFILE -e AWS_REGION -e AWS_DEFAULT_REGION \
+  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
+  -e ANSIBLE_CONFIG=/repo/infra/deploy/ansible/ansible.cfg \
+  "$IMAGE" "$@"

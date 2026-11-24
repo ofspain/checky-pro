@@ -1,8 +1,25 @@
-# Copy to inventory.ini and fill in the address the CDK stack printed as PublicIp.
-# inventory.ini is gitignored: it names your box and your key.
+# Copy to inventory.ini and fill in the two values the CDK stack printed.
+# inventory.ini is gitignored: it names your box.
+#
+# Ansible reaches the instance over SSM, not SSH. That means there is no key to manage, no
+# ansible_user to agree on, and port 22 does not have to be open for a deploy to work. What it
+# does need is the instance ID rather than an IP address, and the transfer bucket, because the
+# Session Manager channel cannot carry files on its own.
+
 [demo]
-checky-demo ansible_host=REPLACE_WITH_ELASTIC_IP
+checky-demo ansible_host=REPLACE_WITH_InstanceId
 
 [demo:vars]
-ansible_user=ec2-user
-ansible_ssh_private_key_file=~/.ssh/REPLACE_WITH_YOUR_KEY.pem
+ansible_connection=community.aws.aws_ssm
+ansible_aws_ssm_bucket_name=REPLACE_WITH_SsmTransferBucketName
+ansible_aws_ssm_region=eu-west-1
+
+# Break-glass, for when the SSM agent itself is what is broken. Requires that the stack was
+# deployed with -c keyName=<your-key-pair>, and that your address is still the one in sshCidr:
+#
+#   ./play -e ansible_connection=ssh \
+#          -e ansible_host=REPLACE_WITH_PublicIp \
+#          -e ansible_user=ec2-user \
+#          -e ansible_ssh_private_key_file=/root/.ssh/REPLACE_WITH_YOUR_KEY.pem
+#
+# The key path is the one *inside the container*: ./play mounts ~/.ssh at /root/.ssh read-only.

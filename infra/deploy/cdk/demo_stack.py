@@ -2,11 +2,13 @@
 
 from aws_cdk import (
     CfnOutput,
+    Duration,
     RemovalPolicy,
     Stack,
     aws_ec2 as ec2,
     aws_ecr as ecr,
     aws_iam as iam,
+    aws_s3 as s3,
 )
 from constructs import Construct
 
@@ -39,7 +41,7 @@ class DemoStack(Stack):
         construct_id: str,
         *,
         ssh_cidr: str,
-        key_name: str,
+        key_name: str | None,
         instance_type: str,
         **kwargs,
     ) -> None:
@@ -64,6 +66,26 @@ class DemoStack(Stack):
             for service in SERVICES
         ]
 
+        # Ansible reaches this box over SSM rather than SSH, and the aws_ssm connection plugin
+        # moves files through S3 because the Session Manager channel itself cannot carry them.
+        # The objects are transient, so they are expired after a day and the bucket is emptied
+        # when the stack is destroyed - otherwise `cdk destroy` leaves a bucket behind forever.
+        transfer_bucket = s3.Bucket(
+            self,
+            "SsmTransferBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            enforce_ssl=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    expiration=Duration.days(1),
+                    abort_incomplete_multipart_upload_after=Duration.days(1),
+                )
+            ],
+        )
+
         security_group = ec2.SecurityGroup(
             self,
             "DemoSg",
@@ -76,8 +98,10 @@ class DemoStack(Stack):
             ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP (ACME + redirect)"
         )
         security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")
+        # Ansible does not need this: it connects over SSM. Port 22 is kept, open to one
+        # address only, as break-glass for the case where the SSM agent itself is the problem.
         security_group.add_ingress_rule(
-            ec2.Peer.ipv4(ssh_cidr), ec2.Port.tcp(22), "SSH for Ansible"
+            ec2.Peer.ipv4(ssh_cidr), ec2.Port.tcp(22), "SSH break-glass, one address only"
         )
 
         role = iam.Role(
@@ -95,6 +119,9 @@ class DemoStack(Stack):
         role.add_to_policy(
             iam.PolicyStatement(actions=["ecr:GetAuthorizationToken"], resources=["*"])
         )
+        # Both ends of the SSM file transfer: the box reads what Ansible uploaded and writes
+        # back what Ansible fetches.
+        transfer_bucket.grant_read_write(role)
 
         # Everything the box needs before Ansible can reach it, and nothing else. Application
         # configuration is Ansible's job, so that changing it does not replace the instance.
@@ -123,7 +150,14 @@ class DemoStack(Stack):
             ),
             security_group=security_group,
             role=role,
-            key_pair=ec2.KeyPair.from_key_pair_name(self, "DemoKeyPair", key_name),
+            # Omitted unless a key pair was named. Without one there is no SSH key on the box at
+            # all, and break-glass access goes through the console or EC2 Instance Connect, which
+            # pushes a temporary key. Session Manager does not use this either way.
+            key_pair=(
+                ec2.KeyPair.from_key_pair_name(self, "DemoKeyPair", key_name)
+                if key_name
+                else None
+            ),
             user_data=user_data,
             block_devices=[
                 ec2.BlockDevice(
@@ -162,7 +196,19 @@ class DemoStack(Stack):
         )
         CfnOutput(
             self,
+            "SsmTransferBucketName",
+            value=transfer_bucket.bucket_name,
+            description="SSM_BUCKET for ansible/inventory.ini",
+        )
+        CfnOutput(
+            self,
+            "InstanceId",
+            value=instance.instance_id,
+            description="ansible_host for the SSM connection, and what the console connects to.",
+        )
+        CfnOutput(
+            self,
             "SshCommand",
             value=f"ssh -i <your-key.pem> ec2-user@{address.ref}",
-            description="Ansible uses this host; check it works before the playbook runs.",
+            description="Break-glass only, and only if a keyName was supplied. Ansible uses SSM.",
         )

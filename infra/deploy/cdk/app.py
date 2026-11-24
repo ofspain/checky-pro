@@ -12,13 +12,18 @@ app = cdk.App()
 # on purpose: the default would be 0.0.0.0/0, and SSH open to the internet is not something
 # anyone should get by forgetting to think about it.
 ssh_cidr = app.node.try_get_context("sshCidr")
-key_name = app.node.try_get_context("keyName")
-if not ssh_cidr or not key_name:
+if not ssh_cidr:
     raise SystemExit(
         "Missing context. Deploy with:\n"
-        "  cdk deploy -c keyName=<ec2-key-pair> -c sshCidr=<your.ip.addr.ess/32>\n"
-        "Find your address with: curl -s https://checkip.amazonaws.com"
+        "  cdk deploy -c sshCidr=<your.ip.addr.ess/32>\n"
+        "Find your address with: curl -s https://checkip.amazonaws.com\n\n"
+        "Port 22 is break-glass only; Ansible connects over SSM. Add\n"
+        "-c keyName=<ec2-key-pair> if you want an SSH key on the box as well."
     )
+
+# Optional on purpose. Ansible uses SSM, and the console connects without a key, so a key pair
+# is only worth attaching if you want SSH to work when the SSM agent is the thing that is broken.
+key_name = app.node.try_get_context("keyName")
 
 # This stack looks up the default VPC, which CDK can only do for a named account and region.
 # Without credentials the lookup fails several layers down as a jsii stack trace about a
