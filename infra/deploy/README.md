@@ -34,10 +34,13 @@ which is a few kilobytes of text.
 
 ```sh
 # 1. Infrastructure. sshCidr has no default on purpose - the default would be 0.0.0.0/0.
+#    The stacks are Python; the cdk CLI is a Node program whatever language they are written in.
+npm install -g aws-cdk                  # once per machine
 cd infra/deploy/cdk
-npm install
-npx cdk bootstrap                       # first time in this account/region only
-npx cdk deploy -c keyName=<your-ec2-key-pair> -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32
+python3.12 -m venv .venv && . .venv/bin/activate   # 3.11-3.13; newer builds jsii from source
+pip install -r requirements.txt
+cdk bootstrap                           # first time in this account/region only
+cdk deploy -c keyName=<your-ec2-key-pair> -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32
 # Note the PublicIp and EcrRegistry outputs.
 
 # 2. DNS. Point your hostname's A record at PublicIp and wait for it to resolve.
@@ -91,7 +94,12 @@ sepolia.etherscan.io before using it.**
 
 - `docker compose config` on `compose.prod.yaml`: valid, 8 services, only 80 and 443 published.
 - `caddy validate` on the Caddyfile: valid, with automatic HTTP→HTTPS redirects.
-- `tsc --noEmit` on the CDK: clean.
+- **The CDK stack synthesises.** Run on Python 3.12 with the VPC lookup stubbed (the lookup is
+  the only part that needs an AWS account), `app.py` produced a CloudFormation template with the
+  security group ingress exactly as intended — 80 and 443 from `0.0.0.0/0`, 22 from the single
+  supplied CIDR and nowhere else — a `t3.medium` with a 30 GB encrypted gp3 root volume, the
+  three `checky-*` ECR repositories, and the `PublicIp`, `EcrRegistry` and `SshCommand` outputs.
+  The missing-context guard was checked separately and refuses to synthesise without `sshCidr`.
 - **The whole stack run locally from `compose.prod.yaml` with the real images and no LocalStack**:
   migrations applied (crypto v10, payments v11), all three services started cleanly, and a check
   returned a correct RFC 9457 `503` after trying three unreachable providers — proving payment

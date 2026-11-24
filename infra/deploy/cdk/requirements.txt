@@ -1,0 +1,7 @@
+# The CDK construct library. The `cdk` CLI itself is a Node program whatever language the stacks
+# are written in: install it separately with `npm install -g aws-cdk`.
+#
+# Use Python 3.11, 3.12 or 3.13. aws-cdk-lib publishes wheels for those; on a newer interpreter
+# pip falls back to building jsii from source, which takes a very long time and may not finish.
+aws-cdk-lib==2.173.4
+constructs>=10.0.0,<11.0.0

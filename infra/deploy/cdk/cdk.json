@@ -1,5 +1,5 @@
 {
-  "app": "npx ts-node --prefer-ts-exts bin/demo.ts",
+  "app": "python3 app.py",
   "context": {
     "@aws-cdk/core:newStyleStackSynthesis": true,
     "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": true

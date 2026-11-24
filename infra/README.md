@@ -1,4 +1,4 @@
-# Infrastructure — AWS CDK (TypeScript)
+# Infrastructure — AWS CDK (Python)
 
 Stacks are split by blast radius (CloudFormation rollbacks are per-stack):
 

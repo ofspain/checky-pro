@@ -1,8 +1,9 @@
 # Deployment secrets and the inventory naming your box.
 .env
 inventory.ini
-cdk/node_modules/
+
+# Python CDK
+cdk/.venv/
+cdk/__pycache__/
 cdk/cdk.out/
-cdk/*.js
-cdk/*.d.ts
 cdk/cdk.context.json
