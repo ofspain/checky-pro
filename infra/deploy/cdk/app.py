@@ -20,11 +20,23 @@ if not ssh_cidr or not key_name:
         "Find your address with: curl -s https://checkip.amazonaws.com"
     )
 
+# This stack looks up the default VPC, which CDK can only do for a named account and region.
+# Without credentials the lookup fails several layers down as a jsii stack trace about a
+# "context provider", which says nothing useful to the person who simply has not logged in yet.
+account = os.environ.get("CDK_DEFAULT_ACCOUNT")
+if not account:
+    raise SystemExit(
+        "No AWS account resolved, so the default-VPC lookup cannot run.\n"
+        "Configure credentials and try again, for example:\n"
+        "  aws configure                 # or\n"
+        "  export AWS_PROFILE=<profile>  # for an SSO or named profile"
+    )
+
 DemoStack(
     app,
     "CheckyDemo",
     env=cdk.Environment(
-        account=os.environ.get("CDK_DEFAULT_ACCOUNT"),
+        account=account,
         region=os.environ.get("CDK_DEFAULT_REGION", "eu-west-1"),
     ),
     description="Public verification demo: one EC2 instance, three ECR repositories.",

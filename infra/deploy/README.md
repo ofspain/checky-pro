@@ -34,13 +34,10 @@ which is a few kilobytes of text.
 
 ```sh
 # 1. Infrastructure. sshCidr has no default on purpose - the default would be 0.0.0.0/0.
-#    The stacks are Python; the cdk CLI is a Node program whatever language they are written in.
-npm install -g aws-cdk                  # once per machine
+#    ./cdk runs the toolchain in a container, so nothing has to be installed on this machine.
 cd infra/deploy/cdk
-python3.12 -m venv .venv && . .venv/bin/activate   # 3.11-3.13; newer builds jsii from source
-pip install -r requirements.txt
-cdk bootstrap                           # first time in this account/region only
-cdk deploy -c keyName=<your-ec2-key-pair> -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32
+./cdk bootstrap                         # first time in this account/region only
+./cdk deploy -c keyName=<your-ec2-key-pair> -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32
 # Note the PublicIp and EcrRegistry outputs.
 
 # 2. DNS. Point your hostname's A record at PublicIp and wait for it to resolve.
@@ -74,6 +71,24 @@ is missing, waits for the page to answer over HTTPS, and then **asserts that `/l
 the one performed after publishing.
 
 Nothing is edited on the server. A change is made in git and the playbook runs again.
+
+## The toolchain
+
+`./cdk` is the CDK, run in a container. It takes exactly what the real CLI takes — `./cdk synth`,
+`./cdk deploy -c ...`, `./cdk diff` — and it builds its image the first time it is used.
+
+It exists because the toolchain has two requirements that have nothing to do with the stacks:
+the `cdk` CLI is a Node program even though the stacks are Python, and `aws-cdk-lib` only
+publishes wheels for Python 3.11–3.13, so a newer interpreter silently falls back to building
+jsii from source. On a machine with Python 3.15 that ran for over ten minutes without finishing.
+Both are pinned in `Dockerfile` once, and CI runs the identical image.
+
+Your AWS credentials are passed through: `~/.aws` is mounted read-only and `AWS_PROFILE`,
+`AWS_REGION` and exported keys or session tokens are forwarded, so profiles and SSO work exactly
+as they do on the host.
+
+To run it natively instead, install Node and the CLI (`npm install -g aws-cdk`), use Python
+3.11–3.13, and `pip install -r requirements.txt`.
 
 ## The chain
 

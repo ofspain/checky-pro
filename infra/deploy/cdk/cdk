@@ -1,0 +1,43 @@
+#!/usr/bin/env sh
+# Run the CDK without installing Node, the CDK CLI, or a particular Python on this machine.
+#
+#   ./cdk synth
+#   ./cdk deploy -c keyName=my-key -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32
+#
+# Everything the real `cdk` accepts is passed straight through. The image is built once and
+# reused; delete it with `docker rmi checky-cdk` to force a rebuild.
+set -eu
+
+IMAGE=checky-cdk
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [ -z "$(docker images -q "$IMAGE" 2>/dev/null)" ]; then
+  echo "Building the $IMAGE toolchain image (once)..." >&2
+  docker build -q -t "$IMAGE" "$HERE" >/dev/null
+fi
+
+# Credentials are mounted read-only, and the environment is passed through so that
+# AWS_PROFILE, SSO sessions or exported keys all work the same way they do on the host.
+#
+# The container runs as root, so on Linux anything it writes into cdk.out is root-owned. Docker
+# Desktop maps ownership back to the invoking user, so on macOS this does not arise.
+AWS_MOUNT=""
+if [ -d "$HOME/.aws" ]; then
+  AWS_MOUNT="-v $HOME/.aws:/root/.aws:ro"
+fi
+
+# A TTY is only requested when there is one to attach: `cdk deploy` prompts about IAM changes
+# interactively, but the same command in CI has no terminal and docker refuses -t outright.
+TTY=""
+if [ -t 0 ] && [ -t 1 ]; then
+  TTY="-it"
+fi
+
+# shellcheck disable=SC2086
+exec docker run --rm $TTY \
+  -v "$HERE:/stack" \
+  $AWS_MOUNT \
+  -e AWS_PROFILE -e AWS_REGION -e AWS_DEFAULT_REGION \
+  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
+  -e CDK_DEFAULT_ACCOUNT -e CDK_DEFAULT_REGION \
+  "$IMAGE" "$@"
