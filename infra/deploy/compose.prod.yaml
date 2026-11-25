@@ -95,6 +95,7 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       AUTH_ISSUER_URI: http://auth:8080
       PAYMENT_SERVICE_CLIENT_SECRET: ${PAYMENT_SERVICE_CLIENT_SECRET:?set PAYMENT_SERVICE_CLIENT_SECRET}
+      MFA_SEED_KEK_ARN: ${MFA_SEED_KEK_ARN:?set MFA_SEED_KEK_ARN}
     depends_on:
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }

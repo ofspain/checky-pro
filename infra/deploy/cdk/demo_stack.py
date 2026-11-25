@@ -8,6 +8,7 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_ecr as ecr,
     aws_iam as iam,
+    aws_kms as kms,
     aws_s3 as s3,
 )
 from constructs import Construct
@@ -86,6 +87,20 @@ class DemoStack(Stack):
             ],
         )
 
+        # auth-service envelope-encrypts TOTP seeds with a KMS data key (ADR-0003) and refuses
+        # to start outside the local profile without a key, rather than silently falling back to
+        # its fixed local-dev key. That guard is right, so the demo gets a real key. Nothing in
+        # the demo path signs in, so this is a startup requirement rather than a used feature -
+        # but a service that will not boot is not much use either way.
+        mfa_key = kms.Key(
+            self,
+            "MfaSeedKek",
+            description="Checky demo: KEK for auth-service TOTP seed envelope encryption.",
+            enable_key_rotation=True,
+            removal_policy=RemovalPolicy.DESTROY,
+            alias="alias/checky-demo-mfa-seed-kek",
+        )
+
         security_group = ec2.SecurityGroup(
             self,
             "DemoSg",
@@ -126,6 +141,9 @@ class DemoStack(Stack):
         # Both ends of the SSM file transfer: the box reads what Ansible uploaded and writes
         # back what Ansible fetches.
         transfer_bucket.grant_read_write(role)
+        # GenerateDataKey and Decrypt, which is what envelope encryption needs. The containers
+        # pick these credentials up from the instance metadata endpoint via the default chain.
+        mfa_key.grant_encrypt_decrypt(role)
 
         # Everything the box needs before Ansible can reach it, and nothing else. Application
         # configuration is Ansible's job, so that changing it does not replace the instance.
@@ -202,6 +220,12 @@ class DemoStack(Stack):
             "EcrRegistry",
             value=f"{self.account}.dkr.ecr.{self.region}.amazonaws.com",
             description="ECR_REGISTRY for infra/deploy/.env",
+        )
+        CfnOutput(
+            self,
+            "MfaSeedKekArn",
+            value=mfa_key.key_arn,
+            description="MFA_SEED_KEK_ARN for infra/deploy/.env",
         )
         CfnOutput(
             self,
