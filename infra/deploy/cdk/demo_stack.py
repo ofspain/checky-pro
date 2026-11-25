@@ -137,8 +137,13 @@ class DemoStack(Stack):
             "systemctl enable --now docker",
             "usermod -aG docker ec2-user",
             "mkdir -p /usr/local/lib/docker/cli-plugins",
+            # Architecture-matched, not hardcoded. A compose binary for the wrong architecture
+            # still installs and still passes a file-exists check, then fails as "'compose' is
+            # not a docker command" much later - which is exactly what an x86_64 download did on
+            # this Graviton box. Ansible re-checks and repairs this, so a wrong one is survivable.
+            'ARCH=$(uname -m)',
             "curl -fsSL https://github.com/docker/compose/releases/download/v2.32.1/"
-            "docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose",
+            "docker-compose-linux-${ARCH} -o /usr/local/lib/docker/cli-plugins/docker-compose",
             "chmod +x /usr/local/lib/docker/cli-plugins/docker-compose",
             "install -d -o ec2-user -g ec2-user /opt/checky",
         )

@@ -61,10 +61,36 @@
       no_log: true
 
   tasks:
-    - name: Wait for the instance to finish its user-data bootstrap
-      ansible.builtin.wait_for:
-        path: /usr/local/lib/docker/cli-plugins/docker-compose
-        timeout: 600
+    # This used to wait for the compose plugin's path to exist, which is not the same as the
+    # plugin working: an x86_64 binary on this arm64 box satisfied the path check and then failed
+    # several tasks later with "'compose' is not a docker command". Presence is not usability, so
+    # the check now runs the thing, and repairs it for this machine's architecture if it cannot.
+    - name: Wait for the Docker daemon that user-data installs
+      ansible.builtin.command: docker info
+      register: docker_info
+      until: docker_info.rc == 0
+      retries: 60
+      delay: 10
+      changed_when: false
+
+    - name: Find out whether the compose plugin actually runs here
+      ansible.builtin.command: docker compose version
+      register: compose_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Install the compose plugin built for this machine's architecture
+      ansible.builtin.get_url:
+        url: "https://github.com/docker/compose/releases/download/v2.32.1/docker-compose-linux-{{ ansible_architecture }}"
+        dest: /usr/local/lib/docker/cli-plugins/docker-compose
+        mode: "0755"
+        force: true
+      when: compose_probe.rc != 0
+
+    - name: Prove the plugin runs, rather than merely exists
+      ansible.builtin.command: docker compose version
+      register: compose_version
+      changed_when: false
 
     - name: Create the application directories
       ansible.builtin.file:
@@ -102,6 +128,14 @@
       ansible.builtin.template:
         src: init.sql.j2
         dest: "{{ app_dir }}/config/init.sql"
+        # Owned by uid 70, which is what postgres runs as inside postgres:16-alpine (checked with
+        # id, not assumed). The playbook escalates to root, so without this the file is root-owned
+        # and the container cannot read it: the entrypoint reports "Permission denied", creates no
+        # databases, and every later connection fails with "database ... does not exist" while the
+        # data directory still counts as initialised. 0600 not 0644 on purpose - this file carries
+        # the app role passwords, so no other user on the host should be able to read it either.
+        owner: "70"
+        group: "70"
         mode: "0600"
       no_log: true
 
