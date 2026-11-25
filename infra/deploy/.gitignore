@@ -7,3 +7,6 @@ cdk/.venv/
 cdk/__pycache__/
 cdk/cdk.out/
 cdk/cdk.context.json
+
+# Cloudflare Origin CA keypair. Never committed.
+secrets/
