@@ -903,7 +903,7 @@ pipelining = True</code></pre>
   18 (which cannot know whether they changed anything without doing the work) and nothing else. The
   copy tasks compare checksums and stay <code>ok</code>. That is what makes the playbook usable as
   a routine operation rather than a ceremony: it is how a provider URL was swapped three times in
-  §7.1, each time by editing one line of <code>.env</code> and re-running.
+  §7.2, each time by editing one line of <code>.env</code> and re-running.
 </p>
 <div class="file">
   <div class="name"><span>playbook.yml</span><span class="tag">handler</span></div>
@@ -1289,7 +1289,103 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
   and the service would not start. The placeholders stay, and the file now says why.
 </div>
 
-<h3>7.1 Choosing providers that work <em>from the box</em></h3>
+<h3>7.1 Why three providers, and what they are <em>not</em></h3>
+
+<p>
+  The most common misreading of this design is that the three providers are three blockchains.
+  They are not. <strong>They are three separate companies' servers, each running a node that syncs
+  the one Sepolia ledger.</strong> There is a single chain and a single canonical history; what
+  differs is who is telling you about it.
+</p>
+
+<div class="warn">
+  <b>Blockchains are not linked to one another</b>
+  Bitcoin, Ethereum and Tron are wholly independent ledgers — separate histories, separate
+  validators, separate consensus rules, with nothing joining them at the protocol level. A
+  transaction hash from Ethereum is not "not found" on Tron; it belongs to a different universe of
+  record entirely. This is why providers are configured <em>per chain</em>, and why
+  <code>ProviderSet</code> demands three for <code>ETHEREUM</code> <em>and</em> three for
+  <code>TRON</code> rather than three in total — the configuration and the callout directly
+  above. Bridges exist, but they are applications
+  built on top of two chains watching each other, not a protocol-level link.
+</div>
+
+<p>
+  So if all three read the same ledger, why ask three? <strong>Because the provider is not the
+  blockchain.</strong> It is a company's server with an API in front of it. The moment a verdict
+  rests on asking one endpoint, there is a <em>trusted third party</em> in the path — precisely the
+  thing this product exists to remove. Anyone able to compromise, coerce or intercept that one
+  endpoint can report a payment as real when it is not. Asking one provider does not verify a
+  payment; it verifies <em>what one company says</em> about a payment.
+</p>
+
+<h4>What the three actually defend against</h4>
+<table>
+  <thead><tr><th style="width:24%">Failure</th><th style="width:40%">What it looks like</th><th>How the quorum catches it</th></tr></thead>
+  <tbody>
+    <tr><td><strong>A provider lies</strong></td><td>Compromised, coerced, or an intercepted connection.</td><td>The other two disagree, so no fact reaches the 2-of-3 threshold.</td></tr>
+    <tr><td><strong>A provider is stale</strong></td><td>Lagging the chain tip, serving a cache, or partially synced after a restart.</td><td>Confirmation counts disagree.</td></tr>
+    <tr><td><strong>A provider is down</strong></td><td>503, 429, timeout — measured on this very deployment, twice (§7.2).</td><td>Two of three still reach an answer.</td></tr>
+    <tr><td><strong>The chain itself is provisional</strong></td><td>The transaction is real but seconds old; some nodes have it, some do not.</td><td>They cannot agree, and the answer is <code>HELD</code>.</td></tr>
+  </tbody>
+</table>
+
+<div class="info">
+  <b>Measured, not theoretical</b>
+  Queried at one instant from the deployed box, the three providers answered blocks
+  <strong>12211599, 12211600 and 12211600</strong>. That one-block spread is not a fault: blocks
+  propagate across a gossip network, so brief disagreement about the tip is the normal condition,
+  not the exceptional one.
+</div>
+
+<h4>The deepest reason: a recent block is genuinely uncertain</h4>
+<p>
+  A block near the tip can be <strong>orphaned</strong>. A transaction with one confirmation sits in
+  a block that may yet be replaced, which means a payment that "happened" can un-happen. Different
+  nodes briefly holding different views is not malfunction — it is how distributed consensus works
+  before settlement.
+</p>
+<p>
+  This is what <code>HELD</code> is for, and it is the outcome that most justified deploying at all.
+  Locally it was <strong>unreachable</strong>: all three configured "providers" pointed at a single
+  anvil node, so they could never disagree. The quorum logic was written, unit-tested, and had never
+  once been exercised against a real disagreement. The first transaction submitted to the public
+  deployment returned <code>HELD</code>.
+</p>
+
+<h4>Why two of three</h4>
+<ul>
+  <li><strong>One of three</strong> — no better than trusting a single company.</li>
+  <li><strong>Three of three</strong> — any single outage or one-block lag blocks every answer; availability collapses, and §7.2 shows outages are routine.</li>
+  <li><strong>Two of three</strong> — tolerates one failure while still requiring <em>independent corroboration</em>.</li>
+</ul>
+<p>
+  Worth stating precisely: this is not Byzantine fault tolerance, which needs 3f+1 participants and
+  a different threat model. It is a pragmatic corroboration threshold whose guarantee is narrower
+  and worth saying plainly — <em>no single provider can determine the answer alone</em>.
+</p>
+
+<h4>The honest limit of the quorum</h4>
+<p>
+  Quorum and confirmations defend different things, and conflating them would overstate the claim.
+  <strong>Quorum protects against provider-level failure</strong> — lying, lag, downtime.
+  <strong>Confirmations protect against chain-level provisionality.</strong> Three providers reading
+  the same chain can be unanimously right about a block that is later reorganised out; no amount of
+  agreement helps there, only depth does. On post-Merge Ethereum a block is <em>finalized</em> after
+  roughly two epochs (about 13 minutes), after which reversal would require slashing a third of all
+  staked ETH. That is what <code>finality.enabled-chains</code> tracks.
+</p>
+
+<div class="note">
+  <b>What the product therefore claims</b>
+  Not "this payment is real", which no observer can honestly promise, but something narrower and
+  defensible: <strong>three independent witnesses agree this transaction exists, with this much
+  settlement behind it</strong> — and it names the amount only for a token it can actually identify.
+  Every outcome other than <code>AGREED</code> is that sentence refusing to overstate itself.
+</div>
+
+<h3>7.2 Choosing providers that work <em>from the box</em></h3>
+
 
 <p>
   Three provider URLs were selected by testing from this laptop. Two of them failed in production,
@@ -1315,7 +1411,7 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
   <em>origin</em>, not of the URL.
 </div>
 
-<h3>7.2 Screening mode</h3>
+<h3>7.3 Screening mode</h3>
 <div class="file">
   <div class="name"><span>crypto.properties</span><span class="tag">screening</span></div>
 <pre><code># No screening.mode here on purpose. local-dev is refused outside the local profile - the
@@ -1323,7 +1419,7 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
 # records an ERROR outcome rather than pretending an address was screened.</code></pre>
 </div>
 
-<h3>7.3 The demo token, verified by calling it</h3>
+<h3>7.4 The demo token, verified by calling it</h3>
 <p>
   The allowlisted token was confirmed on-chain rather than trusted from memory — <code>name()</code>,
   <code>symbol()</code> and <code>decimals()</code> over <code>eth_call</code>:
