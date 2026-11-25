@@ -630,21 +630,137 @@ esac</code></pre>
 <h2><span class="num">4</span>Configuration management — Ansible over SSM</h2>
 
 <p>
-  The division of labour is strict. CDK creates infrastructure; Ansible configures the box and runs
-  the application. Nothing is ever edited on the server — a change is made in git and the playbook
-  runs again. The playbook is idempotent by construction, which is the whole point of it.
+  The division of labour is strict and worth stating before any detail. <strong>CDK creates
+  infrastructure; Ansible configures the box and runs the application.</strong> Nothing is ever
+  edited on the server — a change is made in git and the playbook runs again. The playbook is
+  idempotent by construction, which is the entire point of it: it is not a bootstrap script that
+  runs once, it is a description of what the box should look like, applied as often as you like.
 </p>
 
-<h3>4.1 Connecting without SSH</h3>
+<h3>4.1 What runs where</h3>
 <p>
-  Ansible reaches the instance through <strong>Session Manager</strong>, using the
-  <code>community.aws.aws_ssm</code> connection plugin. Three consequences follow, and all three
-  are improvements: there is no key to manage, no <code>ansible_user</code> to agree on, and port
-  22 need not be open for a deploy to work. The cost is that <code>ansible_host</code> must be an
-  <em>instance ID</em>, and a transfer bucket is required because the Session Manager channel
-  cannot carry files on its own.
+  Ansible is <em>agentless</em> in the usual sense — there is no Ansible daemon on the box — but it
+  is not contactless. Three machines are involved in a single <code>./play</code>:
 </p>
 
+<table>
+  <thead><tr><th style="width:22%">Machine</th><th>Role</th><th style="width:34%">What it needs</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Your laptop</strong><br><span style="color:#5b6472">the "control node"</span></td>
+      <td>Runs the <code>checky-ansible</code> container, which holds ansible-core, boto3, the two AWS collections and the Session Manager plugin. Reads <code>.env</code> and <code>inventory.ini</code>. Also performs the final HTTPS gates.</td>
+      <td>Docker, and AWS credentials in the environment. Nothing else — no Python version requirement, no pip installs.</td>
+    </tr>
+    <tr>
+      <td><strong>AWS SSM</strong><br><span style="color:#5b6472">the broker</span></td>
+      <td>Brokers an authenticated, encrypted session to the instance. No inbound port is involved on either side.</td>
+      <td>IAM permissions for your credentials to start a session.</td>
+    </tr>
+    <tr>
+      <td><strong>The EC2 box</strong><br><span style="color:#5b6472">the "managed node"</span></td>
+      <td>Runs the SSM Agent (pre-installed on Amazon Linux 2023) and Python 3 (installed by user-data — Ansible modules are Python that is shipped over and executed there).</td>
+      <td>An instance profile with <code>AmazonSSMManagedInstanceCore</code> and read/write on the transfer bucket.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>4.2 How the connection actually works</h3>
+
+<p>
+  This is the part that differs most from a conventional Ansible setup, and the part most worth
+  understanding, because every quirk in the playbook descends from it. There is <strong>no SSH
+  anywhere in the path</strong>.
+</p>
+
+<figure>
+<svg viewBox="0 0 880 300" role="img" aria-label="How Ansible connects over SSM: control node to AWS SSM to the instance, with files passing through S3">
+  <defs>
+    <marker id="a2" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#5b6472"/></marker>
+    <marker id="a3" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#92400e"/></marker>
+  </defs>
+  <rect x="2" y="2" width="876" height="296" fill="none" stroke="#eceef2"/>
+
+  <rect x="26" y="96" width="150" height="76" rx="6" fill="#f6f7f9" stroke="#1a1f2b"/>
+  <text x="101" y="122" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1a1f2b">Control node</text>
+  <text x="101" y="138" text-anchor="middle" font-size="9" fill="#5b6472">checky-ansible container</text>
+  <text x="101" y="152" text-anchor="middle" font-size="9" fill="#5b6472">on your laptop</text>
+  <text x="101" y="165" text-anchor="middle" font-size="8.5" fill="#92400e">reads .env + inventory</text>
+
+  <rect x="300" y="96" width="150" height="76" rx="6" fill="#eaf0fd" stroke="#1e40af"/>
+  <text x="375" y="122" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1e40af">AWS SSM</text>
+  <text x="375" y="138" text-anchor="middle" font-size="9" fill="#1e40af">Session Manager</text>
+  <text x="375" y="153" text-anchor="middle" font-size="8.5" fill="#5b6472">authenticates with IAM</text>
+  <text x="375" y="166" text-anchor="middle" font-size="8.5" fill="#5b6472">logs every session</text>
+
+  <rect x="574" y="96" width="160" height="76" rx="6" fill="#e8f3ec" stroke="#14532d"/>
+  <text x="654" y="122" text-anchor="middle" font-size="12.5" font-weight="600" fill="#14532d">EC2 instance</text>
+  <text x="654" y="138" text-anchor="middle" font-size="9" fill="#14532d">SSM Agent → ssm-user</text>
+  <text x="654" y="153" text-anchor="middle" font-size="8.5" fill="#5b6472">become: true → root</text>
+  <text x="654" y="166" text-anchor="middle" font-size="8.5" fill="#5b6472">python3 runs the modules</text>
+
+  <rect x="300" y="222" width="150" height="54" rx="6" fill="#fdf3e5" stroke="#92400e"/>
+  <text x="375" y="243" text-anchor="middle" font-size="11.5" font-weight="600" fill="#92400e">S3 transfer bucket</text>
+  <text x="375" y="258" text-anchor="middle" font-size="8.5" fill="#5b6472">files only · 1-day expiry</text>
+
+  <line x1="176" y1="122" x2="296" y2="122" stroke="#5b6472" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="236" y="114" text-anchor="middle" font-size="8.5" fill="#5b6472">commands</text>
+  <line x1="450" y1="122" x2="570" y2="122" stroke="#5b6472" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="510" y="114" text-anchor="middle" font-size="8.5" fill="#5b6472">over the agent</text>
+
+  <line x1="296" y1="148" x2="180" y2="148" stroke="#5b6472" stroke-width="1.2" marker-end="url(#a2)"/>
+  <line x1="570" y1="148" x2="454" y2="148" stroke="#5b6472" stroke-width="1.2" marker-end="url(#a2)"/>
+  <text x="375" y="192" text-anchor="middle" font-size="8.5" fill="#5b6472">results come back the same way</text>
+
+  <path d="M101,172 L101,249 L296,249" fill="none" stroke="#92400e" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#a3)"/>
+  <path d="M454,249 L654,249 L654,176" fill="none" stroke="#92400e" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#a3)"/>
+  <text x="196" y="242" text-anchor="middle" font-size="8.5" fill="#92400e">upload</text>
+  <text x="556" y="242" text-anchor="middle" font-size="8.5" fill="#92400e">download</text>
+
+  <text x="800" y="122" text-anchor="middle" font-size="9" fill="#5b6472" font-style="italic">no inbound</text>
+  <text x="800" y="136" text-anchor="middle" font-size="9" fill="#5b6472" font-style="italic">port at all</text>
+  <text x="440" y="36" text-anchor="middle" font-size="10.5" font-weight="600" fill="#1a1f2b">Every hop is outbound-initiated and IAM-authenticated</text>
+  <text x="440" y="54" text-anchor="middle" font-size="9" fill="#5b6472">the agent dials out to SSM; nothing dials in to the box</text>
+</svg>
+<figcaption>The SSM path. Commands travel over the Session Manager channel; <strong>files cannot</strong>, so they detour through S3.</figcaption>
+</figure>
+
+<p>Step by step, what one task does:</p>
+<ol>
+  <li>Ansible resolves the host to an <strong>instance ID</strong> (not an IP) from the inventory.</li>
+  <li>The <code>community.aws.aws_ssm</code> plugin opens a Session Manager session using your AWS credentials. The session-manager-plugin binary in the image does the websocket work.</li>
+  <li>The module's Python code and any file it needs are <strong>uploaded to the S3 transfer bucket</strong>, because the Session Manager channel carries a terminal stream, not files.</li>
+  <li>A command is sent over the session telling the box to fetch that object from S3 — which it can, because its instance role has read/write on the bucket — and execute it.</li>
+  <li>Output returns over the session; larger results go back via S3 the same way.</li>
+</ol>
+
+<div class="note">
+  <b>Why this is the right trade for a public box</b>
+  No inbound port, no key material anywhere, no <code>authorized_keys</code> to rotate, and no
+  bastion. Access is granted and revoked purely with IAM, and every session is recorded in
+  CloudTrail. The security group for this deployment contains <em>no SSH rule at all</em> — and the
+  deploy still works, which is the proof that the rule was never needed.
+</div>
+
+<h3>4.3 What each side must be allowed to do</h3>
+<table>
+  <thead><tr><th style="width:26%">Side</th><th>Permission</th><th style="width:30%">Where it comes from</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="2"><strong>Your credentials</strong></td><td><code>ssm:StartSession</code> (with the <code>AWS-StartSSHSession</code> / port document), <code>ssm:TerminateSession</code>, <code>ssm:DescribeInstanceInformation</code></td><td>The IAM user or role you deploy with.</td></tr>
+    <tr><td><code>s3:PutObject</code> / <code>s3:GetObject</code> on the transfer bucket</td><td>Same.</td></tr>
+    <tr><td rowspan="2"><strong>The instance</strong></td><td><code>AmazonSSMManagedInstanceCore</code> — lets the agent register and accept sessions</td><td><code>demo_stack.py</code>, attached to the instance role.</td></tr>
+    <tr><td>Read/write on the transfer bucket</td><td><code>transfer_bucket.grant_read_write(role)</code></td></tr>
+  </tbody>
+</table>
+
+<p>
+  If <code>./play</code> reports the host as unreachable, the cause is almost always one of three
+  things, in this order of likelihood: the instance has not finished booting so the agent has not
+  registered yet; the credentials lack <code>ssm:StartSession</code>; or the bucket name in the
+  inventory is wrong. <code>aws ssm describe-instance-information</code> distinguishes the first
+  from the others — if the instance is listed there, the agent is healthy and the problem is yours.
+</p>
+
+<h3>4.4 The inventory — an instance ID, not an address</h3>
 <div class="file">
   <div class="name"><span>infra/deploy/ansible/inventory.ini.example</span><span class="tag">inventory</span></div>
 <pre><code>[demo]
@@ -665,6 +781,11 @@ ansible_aws_ssm_region=eu-west-1
 #
 # The key path is the one *inside the container*: ./play mounts ~/.ssh at /root/.ssh read-only.</code></pre>
 </div>
+<p>
+  Both values come straight from CDK outputs — <code>InstanceId</code> and
+  <code>SsmTransferBucketName</code>. <code>inventory.ini</code> is gitignored because it names
+  your specific box; only the example is committed.
+</p>
 
 <div class="file">
   <div class="name"><span>infra/deploy/ansible/ansible.cfg</span><span class="tag">config</span></div>
@@ -682,10 +803,15 @@ interpreter_python = auto_silent
 [ssh_connection]
 pipelining = True</code></pre>
 </div>
+<p class="cap">
+  <code>stdout_callback = yaml</code> was the original value and it killed <code>./play</code>
+  instantly: that callback lives in <code>community.general</code> and was removed in its 10.0.0.
+  <code>result_format = yaml</code> gives identical readable output using ansible-core alone.
+</p>
 
-<h3>4.2 Escalation, because the connection user differs by transport</h3>
+<h3>4.5 Escalation, because the connection user depends on the transport</h3>
 <div class="file">
-  <div class="name"><span>infra/deploy/ansible/playbook.yml</span><span class="tag">play header</span></div>
+  <div class="name"><span>playbook.yml</span><span class="tag">play header</span></div>
 <pre><code>- name: Deploy the Checkychain verification demo
   hosts: demo
   # Root, because the connection user differs by transport and neither can do the work as itself.
@@ -695,104 +821,110 @@ pipelining = True</code></pre>
   become: true
   gather_facts: true</code></pre>
 </div>
-
-<h3>4.3 Failing early and in English</h3>
 <p>
-  The playbook reads <code>.env</code> on the control machine, asserts every key the compose file
-  will demand, and says what is missing — rather than failing deep inside a template or, worse,
-  starting a stack that will crash-loop.
+  <code>gather_facts</code> is not ceremonial here — <code>ansible_architecture</code> is used to
+  download the correct compose binary (§4.7), which is exactly the bug that made the fact necessary.
 </p>
 
+<h3>4.6 Variables, and the discipline around secrets</h3>
 <div class="file">
-  <div class="name"><span>playbook.yml</span><span class="tag">pre_tasks</span></div>
+  <div class="name"><span>playbook.yml</span><span class="tag">vars</span></div>
+<pre><code>vars:
+  app_dir: /opt/checky
+  repo_root: "{{ playbook_dir }}/../../.."
+  deploy_root: "{{ playbook_dir }}/.."
+  env_file: "{{ playbook_dir }}/../.env"</code></pre>
+</div>
+<p>
+  Everything is derived from <code>playbook_dir</code>, so the playbook works regardless of where it
+  is invoked from, including from inside the container where the repository is mounted at
+  <code>/repo</code>.
+</p>
+<p>
+  <code>.env</code> is parsed on the control node into a dictionary and never written anywhere
+  except the box, at mode 0600:
+</p>
+<div class="file">
+  <div class="name"><span>playbook.yml</span><span class="tag">reading .env</span></div>
 <pre><code>- name: Read the deployment environment
   ansible.builtin.set_fact:
     deploy_env: "{{ lookup('ansible.builtin.file', env_file) | regex_findall('(?m)^([A-Z0-9_]+)=(.*)$') | items2dict(key_name=0, value_name=1) }}"
-  no_log: true
-
-- name: Require every value the compose file will demand
-  ansible.builtin.assert:
-    that: deploy_env[item] is defined and deploy_env[item] | length &gt; 0
-    fail_msg: "{{ item }} is empty in .env — the stack will not start without it."
-  loop:
-    - PUBLIC_HOST
-    - ECR_REGISTRY
-    - AWS_REGION
-    - POSTGRES_PASSWORD
-    - CRYPTO_APP_PASSWORD
-    - PAYMENT_APP_PASSWORD
-    - PAYMENT_SERVICE_CLIENT_SECRET
-    - MFA_SEED_KEK_ARN
-    - SEPOLIA_RPC_1
-    - SEPOLIA_RPC_2
-    - SEPOLIA_RPC_3
-    - DEMO_TOKEN_ADDRESS
   no_log: true</code></pre>
 </div>
 
-<h3>4.4 The readiness check that was rewritten</h3>
+<div class="warn">
+  <b><code>no_log: true</code> is load-bearing</b>
+  It appears on every task that touches a secret: reading <code>.env</code>, asserting over its
+  keys, copying it to the box, rendering <code>init.sql</code> (which interpolates two passwords),
+  and the ECR login. Without it, Ansible prints the task's arguments on failure — so the first time
+  anything went wrong, the database passwords would be in the terminal scrollback and in any CI log.
+</div>
+
+<h3>4.7 The playbook, task by task</h3>
 <p>
-  This is the most instructive change in the playbook. The original waited for the compose plugin's
-  <em>path</em> to exist — which a binary for the wrong architecture satisfies perfectly.
+  Twenty tasks and one handler. The <em>Idempotent</em> column is what makes re-running safe.
 </p>
 
-<div class="bug">
-  <b>Presence is not usability</b>
-  An x86_64 compose binary on this arm64 box passed a <code>wait_for</code> path check, and then
-  failed four tasks later as <code>unknown flag: --quiet</code> — an error that points at the wrong
-  thing entirely. <code>file</code> on the binary reported <em>"ELF 64-bit LSB executable,
-  x86-64"</em>. The check now <strong>runs the thing</strong>, and repairs it if it cannot.
-</div>
-
-<div class="file">
-  <div class="name"><span>playbook.yml</span><span class="tag">probe and self-repair</span></div>
-<pre><code>- name: Wait for the Docker daemon that user-data installs
-  ansible.builtin.command: docker info
-  register: docker_info
-  until: docker_info.rc == 0
-  retries: 60
-  delay: 10
-  changed_when: false
-
-- name: Find out whether the compose plugin actually runs here
-  ansible.builtin.command: docker compose version
-  register: compose_probe
-  failed_when: false
-  changed_when: false
-
-- name: Install the compose plugin built for this machine's architecture
-  ansible.builtin.get_url:
-    url: "https://github.com/docker/compose/releases/download/v2.32.1/docker-compose-linux-{{ ansible_architecture }}"
-    dest: /usr/local/lib/docker/cli-plugins/docker-compose
-    mode: "0755"
-    force: true
-  when: compose_probe.rc != 0
-
-- name: Prove the plugin runs, rather than merely exists
-  ansible.builtin.command: docker compose version
-  register: compose_version
-  changed_when: false</code></pre>
-</div>
-
-<h3>4.5 What gets copied</h3>
 <table>
-  <thead><tr><th style="width:38%">Source (repository)</th><th style="width:34%">Destination (box)</th><th>Note</th></tr></thead>
+  <thead><tr><th style="width:4%">#</th><th style="width:28%">Task</th><th>What it does and why</th><th style="width:13%">Idempotent</th></tr></thead>
   <tbody>
-    <tr><td><code>compose.prod.yaml</code></td><td><code>/opt/checky/compose.yaml</code></td><td>—</td></tr>
-    <tr><td><code>.env</code></td><td><code>/opt/checky/.env</code></td><td>mode 0600, <code>no_log</code></td></tr>
-    <tr><td><code>config/Caddyfile</code>, <code>config/crypto.properties</code></td><td><code>/opt/checky/config/</code></td><td>notifies a restart handler</td></tr>
-    <tr><td><code>templates/init.sql.j2</code></td><td><code>/opt/checky/config/init.sql</code></td><td>rendered; owned by uid 70</td></tr>
-    <tr><td><code>infra/local/landing/{index.html,logo.png}</code></td><td><code>/opt/checky/landing/</code></td><td>the same page served locally</td></tr>
-    <tr><td><code>services/{crypto,payment}/…/db/migration/</code></td><td><code>/opt/checky/migrations/</code></td><td>a few KB of SQL; no source tree</td></tr>
+    <tr><td colspan="4" style="background:#f6f7f9;font-weight:600;font-size:11px;letter-spacing:.06em">PRE-TASKS — fail on the laptop, before touching the box</td></tr>
+    <tr><td>1</td><td>Stat the environment file</td><td>Runs on <code>localhost</code>. Checks <code>.env</code> exists before anything else happens.</td><td>read-only</td></tr>
+    <tr><td>2</td><td>Explain what is missing</td><td>A human-readable failure naming the file to copy, instead of a template error twelve tasks later.</td><td>n/a</td></tr>
+    <tr><td>3</td><td>Read the deployment environment</td><td>Parses <code>.env</code> into <code>deploy_env</code>. <code>no_log</code>.</td><td>read-only</td></tr>
+    <tr><td>4</td><td>Require every value</td><td>Asserts all twelve required keys are present <em>and non-empty</em>. Compose's <code>:?</code> would catch this too, but only after images are pulled and containers start crash-looping.</td><td>read-only</td></tr>
+    <tr><td colspan="4" style="background:#f6f7f9;font-weight:600;font-size:11px;letter-spacing:.06em">PREPARING THE HOST</td></tr>
+    <tr><td>5</td><td>Wait for the Docker daemon</td><td><code>docker info</code> until rc 0, 60 retries × 10s. Covers the gap between the instance accepting SSM sessions and user-data finishing.</td><td><code>changed_when: false</code></td></tr>
+    <tr><td>6</td><td>Probe the compose plugin</td><td><code>docker compose version</code> with <code>failed_when: false</code> — a question, not an assertion.</td><td><code>changed_when: false</code></td></tr>
+    <tr><td>7</td><td>Install the right compose plugin</td><td>Only <code>when: compose_probe.rc != 0</code>. Uses <code>ansible_architecture</code>, so it is correct on arm64 and x86_64 alike.</td><td>conditional</td></tr>
+    <tr><td>8</td><td>Prove the plugin runs</td><td>Re-runs the command. If 7 did not fix it, the deploy stops here rather than four tasks later.</td><td><code>changed_when: false</code></td></tr>
+    <tr><td>9</td><td>Create directories</td><td><code>/opt/checky</code> plus <code>config</code>, <code>landing</code>, <code>migrations/{crypto,payment}</code>, owned by <code>ec2-user</code>.</td><td>yes</td></tr>
+    <tr><td colspan="4" style="background:#f6f7f9;font-weight:600;font-size:11px;letter-spacing:.06em">SHIPPING CONFIGURATION — the repository is the source of truth</td></tr>
+    <tr><td>10</td><td>Copy the compose file</td><td><code>compose.prod.yaml</code> → <code>/opt/checky/compose.yaml</code>.</td><td>checksum</td></tr>
+    <tr><td>11</td><td>Copy <code>.env</code></td><td>Mode 0600, <code>no_log</code>.</td><td>checksum</td></tr>
+    <tr><td>12</td><td>Copy edge + service config</td><td><code>Caddyfile</code> and <code>crypto.properties</code>. <strong>Notifies the restart handler.</strong></td><td>checksum</td></tr>
+    <tr><td>13</td><td>Render <code>init.sql</code></td><td>Interpolates the two app-role passwords. <code>owner/group: "70"</code>, mode 0600 — see §5.4.</td><td>template</td></tr>
+    <tr><td>14</td><td>Copy the landing page</td><td>The same <code>index.html</code> and <code>logo.png</code> served locally. Notifies the handler.</td><td>checksum</td></tr>
+    <tr><td>15</td><td>Copy the migrations</td><td><code>services/{crypto,payment}/…/db/migration/</code>. A few KB of SQL — the source tree never reaches the box.</td><td>checksum</td></tr>
+    <tr><td colspan="4" style="background:#f6f7f9;font-weight:600;font-size:11px;letter-spacing:.06em">STARTING IT</td></tr>
+    <tr><td>16</td><td>Log in to ECR</td><td><code>aws ecr get-login-password | docker login</code>. The token lasts 12 hours; the instance role authorises it, so no registry password exists anywhere.</td><td><code>changed_when: false</code></td></tr>
+    <tr><td>17</td><td>Pull the images</td><td><code>docker compose pull --quiet</code>.</td><td>always "changed"</td></tr>
+    <tr><td>18</td><td>Start the stack</td><td><code>docker compose up -d --remove-orphans</code>. Compose recreates only containers whose config or image changed — which is why editing <code>.env</code> and re-running is enough to move a provider URL.</td><td>compose decides</td></tr>
+    <tr><td colspan="4" style="background:#f6f7f9;font-weight:600;font-size:11px;letter-spacing:.06em">GATES — from outside, over the public internet</td></tr>
+    <tr><td>19</td><td>Wait for HTTPS 200</td><td><code>delegate_to: localhost</code>, 30 × 10s. Allows for container startup <em>and</em> first-time ACME issuance.</td><td>read-only</td></tr>
+    <tr><td>20</td><td>Prove nothing else is reachable</td><td>Ten paths must return 404 — see §4.9.</td><td>read-only</td></tr>
+    <tr><td>H</td><td><em>Handler:</em> restart the stack</td><td>Runs once at the end, only if 12 or 14 changed something.</td><td>n/a</td></tr>
   </tbody>
 </table>
 
-<h3>4.6 Two gates after publishing</h3>
+<h3>4.8 Idempotency and the handler</h3>
 <p>
-  The playbook does not end at <code>docker compose up</code>. It verifies the result from the
-  <em>control machine</em>, over the public internet — which is the only perspective that counts.
+  Re-running the playbook on an unchanged repository produces <code>changed=3</code> — tasks 17 and
+  18 (which cannot know whether they changed anything without doing the work) and nothing else. The
+  copy tasks compare checksums and stay <code>ok</code>. That is what makes the playbook usable as
+  a routine operation rather than a ceremony: it is how a provider URL was swapped three times in
+  §7.1, each time by editing one line of <code>.env</code> and re-running.
+</p>
+<div class="file">
+  <div class="name"><span>playbook.yml</span><span class="tag">handler</span></div>
+<pre><code>handlers:
+  - name: Restart the stack
+    ansible.builtin.command:
+      cmd: docker compose up -d
+      chdir: "{{ app_dir }}"</code></pre>
+</div>
+<p>
+  Only the <em>config</em> copies notify it. Compose already restarts containers whose image or
+  environment changed; the handler exists for the case where a mounted file changed but nothing
+  compose can see did — editing the Caddyfile, for instance, which is a bind mount.
 </p>
 
+<h3>4.9 The gates — verifying from outside</h3>
+<p>
+  Both checks use <code>delegate_to: localhost</code>, so they run from your laptop against the
+  public hostname rather than from the box against itself. A check performed on the server would
+  pass even if DNS, the certificate, the security group or the proxy were wrong.
+</p>
 <div class="file">
   <div class="name"><span>playbook.yml</span><span class="tag">post-deploy gates</span></div>
 <pre><code>- name: Wait for the landing page to answer over HTTPS
@@ -825,13 +957,37 @@ pipelining = True</code></pre>
   delegate_to: localhost
   become: false</code></pre>
 </div>
-
 <p>
-  The second gate is a <strong>negative test on the live site</strong>: ten paths that exist in the
-  platform and must not be exposed by this deployment. If a future change to the Caddyfile
-  accidentally routes <code>/actuator/health</code> or the whole SPA, the deploy fails rather than
-  succeeding quietly. All ten returned 404.
+  The second is a <strong>negative test against the live site</strong>: ten paths that exist
+  elsewhere in the platform and must not be exposed by this deployment. Should a future Caddyfile
+  edit accidentally route the SPA or <code>/actuator/health</code>, the deploy fails instead of
+  quietly succeeding. All ten returned 404 on the final run.
 </p>
+
+<h3>4.10 Running it</h3>
+<div class="file">
+  <div class="name"><span>everyday commands</span><span class="tag">usage</span></div>
+<pre><code>./play                       # the whole thing; safe to repeat
+./play --check               # dry run: report what would change, change nothing
+./play --syntax-check        # parse only
+./play -v                    # per-task detail (-vvv includes the SSM plumbing)
+./play --start-at-task "Pull the images"
+./play -e IMAGE_TAG=sha-abc123          # override a variable for one run
+
+# The playbook defines no tags, so -t / --tags would match nothing and run zero tasks.</code></pre>
+</div>
+
+<table>
+  <thead><tr><th style="width:36%">Symptom</th><th>Cause and remedy</th></tr></thead>
+  <tbody>
+    <tr><td><code>UNREACHABLE</code> at the first task</td><td>Agent not registered yet (wait ~90s after <code>cdk deploy</code>), missing <code>ssm:StartSession</code>, or a wrong bucket name. Check with <code>aws ssm describe-instance-information</code>.</td></tr>
+    <tr><td>Hangs on "Wait for the Docker daemon"</td><td>user-data is still running. It has 10 minutes of retries; <code>sudo cat /var/log/cloud-init-output.log</code> on the box shows progress.</td></tr>
+    <tr><td>Fails on "Prove the plugin runs"</td><td>The architecture-matched download also failed — check egress to GitHub.</td></tr>
+    <tr><td>Gate 19 times out</td><td>DNS not pointing at the EIP yet, port 80 blocked (ACME cannot validate), or a service crash-looping. <code>docker compose ps</code> and <code>docker compose logs</code> on the box.</td></tr>
+    <tr><td>Gate 20 fails with a 200</td><td>A route was exposed that should not be. This is the check doing its job — fix the Caddyfile.</td></tr>
+    <tr><td><code>template error … unexpected '.'</code></td><td>Jinja is interpreting Go template syntax such as <code>{{.Name}}</code> in a <code>shell</code>/<code>raw</code> argument. Put the script in a file and use the <code>script</code> module.</td></tr>
+  </tbody>
+</table>
 
 <div class="page-break"></div>
 
@@ -1323,7 +1479,7 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
 
 <h3>10.2 The immediate next steps</h3>
 <ol>
-  <li><strong>Tie it to the real domain, behind Cloudflare</strong> — §11, the last mile.</li>
+  <li><strong>Tie it to the real domain</strong> — <code>verify.checky.pro</code>. §11 gives a ten-minute route that touches nothing else, and the full Cloudflare migration separately.</li>
   <li><strong>Move off unauthenticated public RPC</strong> — keyed endpoints so a demo cannot be throttled into a 503.</li>
   <li><strong>Rate-limit the public endpoint</strong> — at the Cloudflare edge, before it costs upstream requests.</li>
   <li><strong>Fix the 503 copy</strong> so a verification failure does not mention invoices.</li>
@@ -1340,75 +1496,236 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
   Each of those survives the move; only the implementations change.
 </p>
 
-<h2><span class="num">11</span>The last mile — a real domain behind Cloudflare</h2>
+<h2><span class="num">11</span>The last mile — the real domain, and Cloudflare</h2>
 
 <p>
   Today the site answers on <code>54-216-107-16.sslip.io</code>, a wildcard DNS service that
-  resolves any dashed-IP hostname to that IP. It is genuinely useful — it earned a real Let's
-  Encrypt certificate — but it is not a name anyone should be given. This section is the full
-  procedure to move to an owned domain fronted by Cloudflare.
+  resolves any dashed-IP hostname to that address. It earned a genuine Let's Encrypt certificate,
+  but it is not a name to give anyone. The real domain is <strong><code>checky.pro</code></strong>,
+  and moving to it is not a blank-slate exercise — that domain is already carrying production
+  traffic and production email.
 </p>
 
-<h3>11.1 The decision that shapes everything else: who holds the certificate</h3>
+<h3>11.1 What is there now — measured, not assumed</h3>
+<p>
+  Every row below was resolved live before writing this section. <strong>Re-check it immediately
+  before you act</strong>, because a plan built on a stale inventory is how domains break.
+</p>
 
-<div class="warn">
-  <b>Read this before turning the orange cloud on</b>
-  Caddy currently gets its certificate over the <strong>HTTP-01</strong> challenge, which requires
-  Let's Encrypt to reach port 80 on the origin. Once Cloudflare proxies the hostname, Cloudflare
-  terminates TLS at its edge and the origin is no longer directly addressable — so HTTP-01
-  renewal becomes unreliable or impossible. Enabling the proxy without changing certificate
-  strategy is the single most common way to break this setup, and it breaks at <em>renewal</em>,
-  sixty days later, not at switch-over.
+<table>
+  <thead><tr><th style="width:20%">Record</th><th style="width:34%">Value</th><th>What it is</th></tr></thead>
+  <tbody>
+    <tr><td><code>NS</code></td><td><code>ns10.wixdns.net</code>, <code>ns11.wixdns.net</code></td><td><strong>DNS is hosted at Wix.</strong> This is what a Cloudflare migration would change.</td></tr>
+    <tr><td><code>checky.pro</code> A</td><td><code>147.79.108.66</code></td><td>A <strong>live WordPress site</strong> (responds <code>PHP/8.3.37</code>, serves <code>/wp-json/</code>). Not Wix-hosted despite the nameservers.</td></tr>
+    <tr><td><code>www</code></td><td>CNAME → <code>checky.pro</code></td><td>Follows the apex.</td></tr>
+    <tr><td><code>app</code></td><td>Cloudflare IPs → <strong>Bubble.io</strong></td><td>Currently returns <code>302 → bubble.io/domain_not_supported</code>. <strong>Broken, and the name is spoken for</strong> — see 11.2.</td></tr>
+    <tr><td><code>MX</code> ×5</td><td><code>aspmx.l.google.com</code> + 4 alternates (10/20/30/40/50)</td><td><strong>Live Google Workspace email.</strong> The highest-stakes item on this page.</td></tr>
+    <tr><td><code>TXT</code></td><td><code>v=spf1 include:_spf.google.com ~all</code><br><code>google-site-verification=2qxWQk-…</code></td><td>Mail authorisation and domain ownership proof.</td></tr>
+    <tr><td><code>_dmarc</code></td><td style="color:#9f1239"><strong>absent</strong></td><td>No DMARC policy exists. See 11.2.</td></tr>
+    <tr><td><code>CAA</code></td><td style="color:#9f1239"><strong>absent</strong></td><td>Any CA may issue for this domain.</td></tr>
+    <tr><td><code>verify</code>, <code>demo</code>, <code>api</code>, <code>staging</code>, <code>auth</code></td><td>—</td><td>All free.</td></tr>
+  </tbody>
+</table>
+
+<h3>11.2 Three findings that change the plan</h3>
+
+<div class="bug">
+  <b>1 · Moving nameservers can silently destroy email</b>
+  <code>checky.pro</code> runs Google Workspace. Changing the nameservers to Cloudflare means
+  <strong>every record must exist at Cloudflare before the switch</strong> — all five MX records and
+  both TXT records included. Cloudflare's import scan is good but not guaranteed to be complete,
+  and the failure mode is brutal: mail stops being delivered, with no error anyone sees until
+  someone mentions they have not heard back. This risk is entirely absent from Route A below.
 </div>
 
-<p>Two workable strategies, in order of preference:</p>
+<div class="warn">
+  <b>2 · <code>app.checky.pro</code> is already reserved — and already broken</b>
+  It points at a Bubble.io app that answers <code>domain_not_supported</code>. That hostname is
+  <em>also</em> the SPA's registered OAuth redirect host in the auth-service seed data
+  (<code>https://app.checky.pro/auth/callback</code>). So it is the frontend's name, it is
+  currently dead, and the demo must <strong>not</strong> take it. Use <code>verify.checky.pro</code>.
+</div>
+
+<div class="info">
+  <b>3 · Two free hardening wins while you are in there</b>
+  There is <strong>no DMARC record</strong> and <strong>no CAA record</strong>. Neither is required
+  for this deployment, but both are a few minutes of work in the same DNS panel, and DMARC in
+  particular is worth having on a domain whose entire business is telling people what is genuine.
+  Start with <code>v=DMARC1; p=none; rua=mailto:…</code> — report-only, so it cannot bounce
+  legitimate mail — and tighten to <code>p=quarantine</code> once the reports look clean. Also
+  confirm DKIM is switched on in the Google Admin console: nothing is published at the usual
+  <code>google._domainkey</code> selector.
+</div>
+
+<h3>11.3 Two routes, and which to take</h3>
 
 <table>
-  <thead><tr><th style="width:22%">Strategy</th><th>How it works</th><th style="width:28%">Trade-off</th></tr></thead>
+  <thead><tr><th style="width:18%">Route</th><th>What it involves</th><th style="width:22%">Gets you</th><th style="width:16%">Risk</th></tr></thead>
   <tbody>
     <tr>
-      <td><strong>A. Cloudflare Origin CA</strong> <span class="pill ok">recommended</span></td>
-      <td>Cloudflare issues a long-lived (up to 15-year) certificate valid only between its edge and your origin. Caddy serves it with an explicit <code>tls</code> directive and stops talking to Let's Encrypt entirely. Cloudflare presents its own public certificate to visitors.</td>
-      <td>No ACME on the origin at all — nothing to renew, nothing to break. Requires SSL mode <strong>Full (strict)</strong>.</td>
+      <td><strong>A · Subdomain on the existing DNS</strong> <span class="pill ok">do this first</span></td>
+      <td>Add one A record at Wix: <code>verify</code> → the EIP. Change one line of <code>.env</code>. Re-run <code>./play</code>. Let's Encrypt works exactly as it does today.</td>
+      <td>A real, professional hostname with a real certificate.</td>
+      <td><span class="pill ok">none</span> — touches nothing else in the zone.</td>
     </tr>
     <tr>
-      <td><strong>B. DNS-01 with a Cloudflare API token</strong></td>
-      <td>Caddy keeps using Let's Encrypt but proves control via a DNS TXT record instead of port 80, so the origin need not be reachable.</td>
-      <td>Needs a <strong>custom Caddy image</strong> (the Cloudflare DNS module is not in the standard build) and a scoped API token on the box.</td>
+      <td><strong>B · Full Cloudflare migration</strong></td>
+      <td>Move the whole zone to Cloudflare, replicating every record first. Then proxy <code>verify</code> and switch the origin to a Cloudflare Origin CA certificate.</td>
+      <td>WAF, rate limiting, caching, DDoS absorption, origin IP hidden.</td>
+      <td><span class="pill gap">real</span> — email and the live WordPress site are both in the blast radius.</td>
     </tr>
   </tbody>
 </table>
 
-<h3>11.2 Procedure — strategy A, step by step</h3>
-
-<h4>Step 1 · Add the domain to Cloudflare</h4>
 <p>
-  Add the zone in the Cloudflare dashboard and change the nameservers at the registrar to the two
-  Cloudflare assigns. Propagation is typically minutes to a few hours. Cloudflare's own activation
-  check confirms it.
+  <strong>Recommendation: do A now, B deliberately and separately.</strong> Route A takes about ten
+  minutes and gets the demo onto <code>verify.checky.pro</code> with nothing else at stake. Route B
+  is worth doing — the rate limiting in particular is the only real answer to an unauthenticated
+  endpoint that costs three upstream RPC calls per request — but it is a DNS migration of a live
+  domain, and it deserves its own change window rather than being bundled into a demo deploy.
 </p>
 
-<h4>Step 2 · Create the DNS record</h4>
-<table>
-  <thead><tr><th>Type</th><th>Name</th><th>Content</th><th>Proxy</th><th>TTL</th></tr></thead>
-  <tbody>
-    <tr><td>A</td><td><code>verify</code></td><td>the stack's <code>PublicIp</code> output</td><td><strong>Proxied</strong> (orange)</td><td>Auto</td></tr>
-  </tbody>
-</table>
-<p class="cap">
-  Leave it <em>unproxied</em> (grey) at first if you want to confirm the origin works under the new
-  name before Cloudflare is in the path. With strategy A that is optional.
-</p>
+<div class="warn">
+  <b>Why there is no middle option on the free plan</b>
+  Cloudflare can proxy a single hostname while another provider keeps the zone — "partial" or
+  "CNAME setup" — but that is a <strong>Business-plan feature</strong> (around USD 200/month).
+  On Free and Pro, proxying anything means Cloudflare must be authoritative for the whole zone.
+  That is precisely why Route B is all-or-nothing and why Route A exists.
+</div>
 
-<h4>Step 3 · Issue an Origin CA certificate</h4>
-<p>
-  In <strong>SSL/TLS → Origin Server → Create Certificate</strong>, request a certificate for
-  <code>verify.example.com</code> (and <code>*.example.com</code> if wanted). Cloudflare returns a
-  certificate and a private key <em>once</em> — the key is never shown again. Save both.
-</p>
+<h3>11.4 Route A — the ten-minute version</h3>
+
+<h4>What you need</h4>
+<ul>
+  <li>Login to whoever manages DNS for <code>checky.pro</code> (currently the Wix DNS panel).</li>
+  <li>The stack's <code>PublicIp</code> output — the Elastic IP, which survives instance replacement.</li>
+</ul>
 
 <div class="file">
-  <div class="name"><span>place the pair on the box via Ansible, never by hand</span><span class="tag">new playbook tasks</span></div>
+  <div class="name"><span>Route A</span><span class="tag">three steps</span></div>
+<pre><code># 1. At the DNS provider, add ONE record. Change nothing else.
+#    Type: A    Name: verify    Value: &lt;PublicIp&gt;    TTL: 300 (low, while you iterate)
+
+# 2. Confirm it resolves before deploying - Caddy cannot get a certificate until it does.
+dig +short verify.checky.pro          # must print the Elastic IP
+
+# 3. Point the deployment at it and re-run.
+#    infra/deploy/.env:
+PUBLIC_HOST=verify.checky.pro
+cd infra/deploy/ansible &amp;&amp; ./play</code></pre>
+</div>
+
+<p>
+  The playbook's own gates then prove it: the landing page must return 200 over HTTPS on the new
+  name, and all ten private paths must return 404. Caddy obtains the certificate automatically on
+  first request. Nothing about the apex, <code>www</code>, <code>app</code> or email is touched.
+</p>
+
+<div class="note">
+  <b>Keep the TTL low until you are settled</b>
+  300 seconds while iterating means a mistake is corrected in five minutes rather than a day. Raise
+  it to 3600 once the address is stable.
+</div>
+
+<h3>11.5 Route B — the full Cloudflare migration</h3>
+
+<h4>What you will need before starting</h4>
+<table>
+  <thead><tr><th style="width:30%">Item</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td>A Cloudflare account</td><td>Free plan is sufficient for everything described here, including WAF managed rules and one rate-limiting rule.</td></tr>
+    <tr><td><strong>Registrar access</strong></td><td>Not Wix DNS — the <em>registrar</em>, where nameservers are set. If the domain was registered through Wix, that is the Wix domain panel.</td></tr>
+    <tr><td><strong>A complete record export</strong></td><td>The inventory in 11.1, re-verified. Export a zone file from Wix if it offers one; otherwise transcribe every record by hand and check it twice.</td></tr>
+    <tr><td>Google Workspace admin</td><td>Only to confirm MX and DKIM afterwards. You should not need to change anything there.</td></tr>
+    <tr><td>Origin CA certificate + key</td><td>Generated in the Cloudflare dashboard during step 4. The private key is shown <strong>once</strong>.</td></tr>
+    <tr><td>A change window</td><td>Nameserver propagation is typically under an hour but is allowed to take 48. Do not start this on a Friday.</td></tr>
+  </tbody>
+</table>
+
+<h4>Step 1 · Inventory and verify, before touching anything</h4>
+<div class="file">
+  <div class="name"><span>capture the current truth</span><span class="tag">pre-flight</span></div>
+<pre><code># Save this output. It is your rollback reference and your completeness checklist.
+for r in SOA NS A AAAA MX TXT CAA; do echo "== $r"; dig +short $r checky.pro; done
+for n in www app mail blog shop portal cdn; do echo "== $n"; dig +short "$n.checky.pro"; done
+dig +short TXT _dmarc.checky.pro
+dig +short TXT google._domainkey.checky.pro</code></pre>
+</div>
+
+<h4>Step 2 · Add the zone to Cloudflare and recreate every record</h4>
+<p>
+  Add <code>checky.pro</code> in the Cloudflare dashboard. Its scan will import most records.
+  <strong>Then audit the imported set against your inventory, line by line.</strong> For this zone
+  that means confirming:
+</p>
+<table>
+  <thead><tr><th style="width:12%">Type</th><th style="width:14%">Name</th><th style="width:34%">Value</th><th style="width:14%">Proxy</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>A</td><td><code>@</code></td><td><code>147.79.108.66</code></td><td>DNS only (grey)</td><td>The WordPress site. Proxying it is a separate decision — do not change behaviour during a migration.</td></tr>
+    <tr><td>CNAME</td><td><code>www</code></td><td><code>checky.pro</code></td><td>match the apex</td><td>—</td></tr>
+    <tr><td>CNAME/A</td><td><code>app</code></td><td>whatever Bubble specifies</td><td>DNS only</td><td>Broken today. Fix or remove it deliberately, not by accident.</td></tr>
+    <tr><td>MX</td><td><code>@</code></td><td><code>aspmx.l.google.com</code> (10)</td><td>n/a</td><td rowspan="5"><strong>All five. A missing MX record is undelivered mail.</strong></td></tr>
+    <tr><td>MX</td><td><code>@</code></td><td><code>alt1.aspmx.l.google.com</code> (20)</td><td>n/a</td></tr>
+    <tr><td>MX</td><td><code>@</code></td><td><code>alt2.aspmx.l.google.com</code> (30)</td><td>n/a</td></tr>
+    <tr><td>MX</td><td><code>@</code></td><td><code>alt3.aspmx.l.google.com</code> (40)</td><td>n/a</td></tr>
+    <tr><td>MX</td><td><code>@</code></td><td><code>alt4.aspmx.l.google.com</code> (50)</td><td>n/a</td></tr>
+    <tr><td>TXT</td><td><code>@</code></td><td><code>v=spf1 include:_spf.google.com ~all</code></td><td>n/a</td><td>Mail will start failing SPF without it.</td></tr>
+    <tr><td>TXT</td><td><code>@</code></td><td><code>google-site-verification=2qxWQk-…</code></td><td>n/a</td><td>Removing it can un-verify the Workspace domain.</td></tr>
+    <tr><td><strong>A</strong></td><td><strong><code>verify</code></strong></td><td><strong>the Elastic IP</strong></td><td><strong>Proxied (orange)</strong></td><td>The new record. The only one this project adds.</td></tr>
+  </tbody>
+</table>
+
+<div class="warn">
+  <b>Verify at Cloudflare before switching nameservers</b>
+  Query Cloudflare's own servers directly while Wix is still authoritative — this is free and
+  catches a missing MX before it can hurt:
+  <div class="file" style="margin-top:8px">
+<pre><code>dig @&lt;your-cloudflare-ns&gt;.ns.cloudflare.com checky.pro MX +short
+dig @&lt;your-cloudflare-ns&gt;.ns.cloudflare.com checky.pro TXT +short</code></pre>
+  </div>
+  The answers must match your inventory exactly. Only then change the nameservers at the registrar.
+</div>
+
+<h4>Step 3 · Switch the nameservers</h4>
+<p>
+  At the registrar, replace <code>ns10.wixdns.net</code> / <code>ns11.wixdns.net</code> with the two
+  Cloudflare assigns. Cloudflare emails when the zone goes active. Keep the Wix zone intact for a
+  few days — it costs nothing and is your rollback.
+</p>
+
+<h4>Step 4 · The certificate decision</h4>
+<div class="warn">
+  <b>This is the step most people get wrong, and it fails sixty days later</b>
+  Caddy currently uses the <strong>HTTP-01</strong> challenge, which needs Let's Encrypt to reach
+  port 80 <em>on the origin</em>. Once Cloudflare proxies the hostname, the origin is no longer
+  directly addressable and HTTP-01 renewal becomes unreliable. Everything keeps working at
+  switch-over — the break happens at the first renewal, about two months later, which is the worst
+  possible time to discover it.
+</div>
+
+<table>
+  <thead><tr><th style="width:22%">Option</th><th>How it works</th><th style="width:26%">Trade-off</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Cloudflare Origin CA</strong> <span class="pill ok">recommended</span></td>
+      <td>Cloudflare issues a certificate (up to 15 years) valid only between its edge and your origin. Caddy serves it via an explicit <code>tls</code> directive and stops doing ACME entirely. Visitors see Cloudflare's own public certificate.</td>
+      <td>Nothing to renew, nothing to break. Requires SSL mode <strong>Full (strict)</strong>.</td>
+    </tr>
+    <tr>
+      <td>DNS-01 with an API token</td>
+      <td>Caddy keeps Let's Encrypt but proves control via a DNS TXT record, so the origin need not be reachable.</td>
+      <td>Needs a <strong>custom Caddy image</strong> — the Cloudflare DNS module is not in the standard build — plus a scoped API token stored on the box.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>Step 5 · Install the origin certificate</h4>
+<p>
+  <strong>SSL/TLS → Origin Server → Create Certificate</strong>, for <code>verify.checky.pro</code>
+  (or <code>*.checky.pro</code>). Save both halves; the key is displayed once.
+</p>
+<div class="file">
+  <div class="name"><span>ship it with Ansible, never by hand</span><span class="tag">new playbook tasks</span></div>
 <pre><code>- name: Install the Cloudflare Origin CA certificate
   ansible.builtin.copy:
     src: "{{ deploy_root }}/secrets/origin.pem"
@@ -1430,15 +1747,14 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
 </div>
 <p class="cap">
   Add <code>infra/deploy/secrets/</code> to <code>.gitignore</code> in the same commit that creates
-  it. The key must never be committed.
+  the directory. The key must never be committed.
 </p>
 
-<h4>Step 4 · Point Caddy at the certificate instead of Let's Encrypt</h4>
 <div class="file">
-  <div class="name"><span>config/Caddyfile — the only change needed</span><span class="tag">TLS</span></div>
+  <div class="name"><span>config/Caddyfile — the only line that changes</span><span class="tag">TLS</span></div>
 <pre><code>{$PUBLIC_HOST} {
-	# Cloudflare Origin CA, not Let's Encrypt. Caddy no longer performs ACME at all, so the
-	# origin does not need to be publicly reachable on port 80 for a renewal to succeed.
+	# Cloudflare Origin CA, not Let's Encrypt. Caddy performs no ACME at all, so the origin
+	# does not need to be publicly reachable on port 80 for a renewal to succeed.
 	tls /etc/caddy/origin.pem /etc/caddy/origin.key
 
 	encode zstd gzip
@@ -1447,7 +1763,7 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
 </div>
 
 <div class="file">
-  <div class="name"><span>compose.prod.yaml — mount the pair</span><span class="tag">edge service</span></div>
+  <div class="name"><span>compose.prod.yaml — mount the pair</span><span class="tag">edge</span></div>
 <pre><code>edge:
   image: caddy:2.10-alpine
   ports: ["80:80", "443:443"]
@@ -1460,66 +1776,65 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
     - caddy-config:/config</code></pre>
 </div>
 
-<h4>Step 5 · Set the SSL mode correctly</h4>
-<p>
-  <strong>SSL/TLS → Overview → Full (strict)</strong>. This is not optional with strategy A, and the
-  other modes are actively harmful:
-</p>
+<h4>Step 6 · Set the SSL mode</h4>
+<p><strong>SSL/TLS → Overview → Full (strict)</strong>. The other modes are not merely weaker; two are harmful.</p>
 <table>
-  <thead><tr><th style="width:22%">Mode</th><th>What it does</th><th style="width:22%">Verdict</th></tr></thead>
+  <thead><tr><th style="width:22%">Mode</th><th>Behaviour</th><th style="width:20%">Verdict</th></tr></thead>
   <tbody>
     <tr><td>Off</td><td>No TLS to the visitor.</td><td><span class="pill no">never</span></td></tr>
-    <tr><td>Flexible</td><td>TLS to the visitor, <strong>plaintext HTTP to the origin</strong>. Traffic crosses the public internet unencrypted and redirect loops are common.</td><td><span class="pill no">never</span></td></tr>
-    <tr><td>Full</td><td>TLS to the origin, but the origin's certificate is <em>not validated</em> — a self-signed certificate is accepted, so the hop is encrypted but not authenticated.</td><td><span class="pill gap">insufficient</span></td></tr>
+    <tr><td>Flexible</td><td>TLS to the visitor, <strong>plaintext to the origin</strong>. Traffic crosses the public internet unencrypted, and redirect loops are common because Caddy will 308 to HTTPS.</td><td><span class="pill no">never</span></td></tr>
+    <tr><td>Full</td><td>TLS to the origin, certificate <em>not validated</em> — a self-signed one is accepted. Encrypted but not authenticated.</td><td><span class="pill gap">insufficient</span></td></tr>
     <tr><td>Full (strict)</td><td>TLS to the origin with full validation against the Origin CA.</td><td><span class="pill ok">use this</span></td></tr>
   </tbody>
 </table>
 
-<h4>Step 6 · Lock the origin to Cloudflare</h4>
-<p>
-  With the proxy enabled, anyone who learns the IP can still bypass Cloudflare and hit the origin
-  directly — defeating the rate limiting and WAF entirely. The security group should accept 80 and
-  443 <strong>only from Cloudflare's published ranges</strong>.
-</p>
+<div class="warn">
+  <b>Order matters</b>
+  Install the certificate and set Full (strict) <em>before</em> turning the orange cloud on for
+  <code>verify</code>. The other order leaves a window where Cloudflare cannot validate the origin
+  and every visitor sees error 526.
+</div>
 
+<h4>Step 7 · Lock the origin to Cloudflare</h4>
+<p>
+  With the proxy on, anyone who learns the Elastic IP can bypass Cloudflare and hit the box
+  directly, defeating the WAF and the rate limit entirely. Accept 80 and 443 only from Cloudflare.
+</p>
 <div class="file">
   <div class="name"><span>demo_stack.py — replacing the two any-ipv4 rules</span><span class="tag">CDK</span></div>
-<pre><code># Cloudflare's published edge ranges, from https://www.cloudflare.com/ips-v4
-# Fetch them at synth time rather than pasting a list that will silently go stale:
-#   curl -s https://www.cloudflare.com/ips-v4
-# Treat the fetched list as data: validate each entry parses as a CIDR before using it.
-cloudflare_v4 = app.node.try_get_context("cloudflareIpsV4")  # newline- or comma-separated
+<pre><code># Cloudflare's published edge ranges: https://www.cloudflare.com/ips-v4
+# Pass them in at synth time rather than pasting a list that will silently go stale:
+#   ./cdk deploy -c cloudflareIpsV4="$(curl -s https://www.cloudflare.com/ips-v4)"
+# Treat the fetched list as data: every entry must parse as a CIDR before it becomes a rule.
+cloudflare_v4 = app.node.try_get_context("cloudflareIpsV4")
 
 if cloudflare_v4:
     for cidr in [c.strip() for c in cloudflare_v4.replace(",", "\n").split() if c.strip()]:
         security_group.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(443), "Cloudflare edge")
         security_group.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(80), "Cloudflare edge")
 else:
-    # Fallback: open, as today. Only correct while the hostname is unproxied.
+    # Fallback: open, as today. Correct only while the hostname is unproxied (Route A).
     security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP (ACME + redirect)")
     security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")</code></pre>
 </div>
 
 <div class="note">
-  <b>A sturdier alternative</b>
-  <strong>Cloudflare Tunnel</strong> (<code>cloudflared</code> as a container in the compose file)
-  removes inbound ports altogether: the box dials out to Cloudflare and nothing needs to be open.
-  That is strictly better than an IP allowlist, which goes stale whenever Cloudflare adds a range.
-  It costs one more container and a tunnel token.
+  <b>A sturdier alternative: Cloudflare Tunnel</b>
+  Running <code>cloudflared</code> as one more container removes inbound ports altogether — the box
+  dials out and nothing needs to be open, so there is no IP allowlist to go stale and no origin
+  address to leak. It costs one container and a tunnel token, and it still requires the zone to be
+  on Cloudflare. If Route B is happening anyway, this is the better endpoint.
 </div>
 
-<h4>Step 7 · Recover the real client IP</h4>
+<h4>Step 8 · Recover the real client IP</h4>
 <p>
-  Behind a proxy, every request appears to come from a Cloudflare address. Caddy must be told to
-  trust the proxy before it will believe the forwarded header — otherwise logs and any origin-side
-  rate limiting see only Cloudflare.
+  Behind a proxy every request appears to come from Cloudflare. Caddy will only believe a forwarded
+  address from a proxy it has been told to trust — which is the correct default, since otherwise
+  any client could spoof its own source address with a header.
 </p>
 <div class="file">
   <div class="name"><span>config/Caddyfile — global options block</span><span class="tag">client IP</span></div>
-<pre><code># Cloudflare sends the visitor's address in CF-Connecting-IP. Caddy will only believe a
-# forwarded address from a proxy it has been told to trust, which is the correct default:
-# otherwise any client could spoof its own source address by setting the header.
-{
+<pre><code>{
 	servers {
 		client_ip_headers CF-Connecting-IP X-Forwarded-For
 		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 # ... the full Cloudflare list
@@ -1527,63 +1842,70 @@ else:
 }</code></pre>
 </div>
 
-<h4>Step 8 · Turn on the protections that were the point of using Cloudflare</h4>
+<h4>Step 9 · Turn on the protections that were the point</h4>
 <table>
-  <thead><tr><th style="width:26%">Setting</th><th>Value</th><th>Why</th></tr></thead>
+  <thead><tr><th style="width:24%">Setting</th><th style="width:30%">Value</th><th>Why</th></tr></thead>
   <tbody>
-    <tr><td>Always Use HTTPS</td><td>On</td><td>Edge-level redirect; Caddy's own 308 becomes a backstop.</td></tr>
+    <tr><td><strong>Rate limiting rule</strong></td><td><code>POST /api/v1/verifications</code> → ~10 req/min per IP</td><td><strong>The single most valuable setting here.</strong> Every call costs three upstream RPC requests; this is what stops one script exhausting the provider quotas and turning the demo into a 503.</td></tr>
+    <tr><td>Cache rule — API</td><td>Bypass cache for <code>/api/*</code></td><td>A cached verification would be actively wrong: confirmations change every block.</td></tr>
+    <tr><td>Cache rule — page</td><td>Cache <code>/</code> and <code>/logo.png</code></td><td>Static. Takes load off a 2-vCPU box.</td></tr>
+    <tr><td>Always Use HTTPS</td><td>On</td><td>Edge-level redirect; Caddy's 308 becomes a backstop.</td></tr>
     <tr><td>Minimum TLS Version</td><td>1.2</td><td>Drops obsolete clients.</td></tr>
-    <tr><td>HSTS</td><td>On, 12 months</td><td>Caddy already sends <code>max-age=31536000</code>; enabling it at the edge covers the proxied path too. Enable <em>only</em> once HTTPS is confirmed working — it is hard to undo.</td></tr>
-    <tr><td>Rate limiting rule</td><td><code>POST /api/v1/verifications</code> → e.g. 10 requests / minute / IP</td><td><strong>The most valuable single setting.</strong> Each call costs three upstream RPC requests; this is what stops a script exhausting the provider quotas.</td></tr>
-    <tr><td>Cache rule — API</td><td>Bypass cache for <code>/api/*</code></td><td>A cached verification result would be actively wrong: confirmations change every block.</td></tr>
-    <tr><td>Cache rule — page</td><td>Cache <code>/</code> and <code>/logo.png</code></td><td>The landing page is static; serving it from the edge takes load off a 2-vCPU box.</td></tr>
-    <tr><td>Bot Fight Mode / WAF</td><td>On</td><td>Free-tier protection against the commodity scanning that any public IP attracts.</td></tr>
+    <tr><td>HSTS</td><td>On, 12 months</td><td>Caddy already sends <code>max-age=31536000</code>. Enable at the edge <em>only</em> once HTTPS is confirmed — it is hard to undo.</td></tr>
+    <tr><td>Bot Fight Mode / WAF</td><td>On</td><td>Free-tier protection against the commodity scanning any public IP attracts.</td></tr>
   </tbody>
 </table>
 
-<h4>Step 9 · Point the deployment at the new name and re-run</h4>
+<h4>Step 10 · Point the deployment at the name and re-run</h4>
 <div class="file">
   <div class="name"><span>infra/deploy/.env</span><span class="tag">one line</span></div>
-<pre><code>PUBLIC_HOST=verify.example.com</code></pre>
+<pre><code>PUBLIC_HOST=verify.checky.pro</code></pre>
 </div>
 <p>
-  Then <code>./play</code>. The playbook's own post-deploy gates now exercise the <em>real</em>
-  hostname through Cloudflare: the landing page must return 200 and all ten private paths must
-  return 404. If Cloudflare is misconfigured — wrong SSL mode, a caching rule that swallows the
-  API — the deploy fails rather than appearing to succeed.
+  Then <code>./play</code>. The playbook's gates now exercise the real hostname <em>through</em>
+  Cloudflare: 200 on the landing page, 404 on all ten private paths. A wrong SSL mode or a caching
+  rule that swallows the API makes the deploy fail rather than appear to succeed.
 </p>
 
-<h4>Step 10 · Verify what you actually built</h4>
+<h4>Step 11 · Verify what you actually built</h4>
 <div class="file">
   <div class="name"><span>post-cutover checks</span><span class="tag">verification</span></div>
-<pre><code># 1. The certificate the visitor sees is Cloudflare's, and the name is right.
-openssl s_client -connect verify.example.com:443 -servername verify.example.com &lt;/dev/null \
+<pre><code># 1. Email still works - CHECK THIS FIRST, and send a real test message both ways.
+dig +short MX checky.pro
+dig +short TXT checky.pro
+
+# 2. The apex WordPress site is unaffected.
+curl -sI https://checky.pro/ | head -1
+
+# 3. The visitor-facing certificate is Cloudflare's, with the right name.
+openssl s_client -connect verify.checky.pro:443 -servername verify.checky.pro &lt;/dev/null \
   | openssl x509 -noout -subject -issuer -dates
 
-# 2. Cloudflare is actually in the path (expect cf-ray and server: cloudflare).
-curl -sI https://verify.example.com/ | grep -iE 'cf-ray|server|strict-transport'
+# 4. Cloudflare is actually in the path (expect cf-ray, server: cloudflare).
+curl -sI https://verify.checky.pro/ | grep -iE 'cf-ray|server|strict-transport'
 
-# 3. The origin is NOT reachable directly any more (expect a timeout, not a page).
+# 5. The origin is NOT reachable directly any more (expect a timeout, not a page).
 curl -sS --max-time 10 https://&lt;PublicIp&gt;/ ; echo "exit=$?"
 
-# 4. The product still works through the proxy.
-curl -s -X POST https://verify.example.com/api/v1/verifications \
+# 6. The product still works through the proxy.
+curl -s -X POST https://verify.checky.pro/api/v1/verifications \
   -H 'Content-Type: application/json' \
   --data '{"txHash":"0x...","chain":"ETHEREUM"}'
 
-# 5. The rate limit engages where it should.
+# 7. The rate limit engages where it should.
 for i in $(seq 1 25); do
-  curl -s -o /dev/null -w '%{http_code} ' -X POST https://verify.example.com/api/v1/verifications \
+  curl -s -o /dev/null -w '%{http_code} ' -X POST https://verify.checky.pro/api/v1/verifications \
     -H 'Content-Type: application/json' --data '{"txHash":"0x...","chain":"ETHEREUM"}'
 done; echo</code></pre>
 </div>
 
-<div class="warn">
-  <b>Order matters</b>
-  Install the origin certificate and set <strong>Full (strict)</strong> <em>before</em> enabling the
-  orange cloud. Doing it the other way round gives a window in which Cloudflare cannot validate the
-  origin and every visitor sees error 526.
-</div>
+<h4>Rollback</h4>
+<p>
+  Until the Wix zone is deleted, rollback is a nameserver change at the registrar back to
+  <code>ns10/ns11.wixdns.net</code>. Propagation is the same hour-ish wait. This is the reason to
+  leave the old zone in place for a week rather than tidying it up immediately — and the reason to
+  keep the TTLs low through the cutover.
+</p>
 
 <div class="page-break"></div>
 
