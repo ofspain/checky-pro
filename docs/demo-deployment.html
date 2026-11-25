@@ -1,0 +1,1665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkychain — Public Verification Demo: Infrastructure Record</title>
+<style>
+  :root {
+    --ink: #1a1f2b;
+    --muted: #5b6472;
+    --faint: #8a93a2;
+    --line: #d7dbe2;
+    --rule: #eceef2;
+    --accent: #14532d;
+    --accent-bg: #e8f3ec;
+    --warn: #92400e;
+    --warn-bg: #fdf3e5;
+    --bug: #9f1239;
+    --bug-bg: #fdeef2;
+    --info: #1e40af;
+    --info-bg: #eaf0fd;
+    --code-bg: #f7f8fa;
+    --code-ink: #24292f;
+    --mono: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    line-height: 1.58;
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 40px 32px;
+    background: #fff;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- cover ---------- */
+  .cover { padding: 40px 0 28px; border-bottom: 3px solid var(--ink); margin-bottom: 8px; }
+  .kicker { text-transform: uppercase; letter-spacing: .16em; font-size: 10.5px; color: var(--muted); margin-bottom: 10px; font-weight: 600; }
+  h1 { font-size: 30px; line-height: 1.15; letter-spacing: -.01em; }
+  .sub { font-size: 15px; color: var(--muted); margin-top: 10px; font-weight: 400; }
+  .meta { color: var(--faint); font-size: 12px; margin-top: 16px; }
+
+  .factbox { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; border: 1px solid var(--line); margin: 22px 0 8px; }
+  .factbox div { padding: 9px 13px; border-bottom: 1px solid var(--rule); font-size: 12.5px; }
+  .factbox div:nth-child(odd) { border-right: 1px solid var(--rule); }
+  .factbox dt { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; display: block; margin-bottom: 1px; }
+  .factbox dd { font-family: var(--mono); font-size: 11.5px; word-break: break-all; }
+
+  /* ---------- structure ---------- */
+  h2 { font-size: 19px; margin: 36px 0 12px; padding-top: 14px; border-top: 2px solid var(--ink); letter-spacing: -.005em; }
+  h2 .num { color: var(--faint); font-weight: 400; margin-right: 8px; }
+  h3 { font-size: 14.5px; margin: 22px 0 7px; }
+  h4 { font-size: 12.5px; margin: 16px 0 5px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; }
+  p { margin: 9px 0; font-size: 13.5px; }
+  ul, ol { margin: 9px 0 9px 22px; font-size: 13.5px; }
+  li { margin: 4px 0; }
+  code { font-family: var(--mono); font-size: .89em; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; border: 1px solid var(--rule); }
+  a { color: var(--info); }
+  strong { font-weight: 600; }
+
+  /* ---------- code blocks ---------- */
+  .file { margin: 14px 0 18px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .file > .name {
+    font-family: var(--mono); font-size: 10.5px; padding: 6px 11px;
+    background: #eef0f4; color: var(--muted); border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  }
+  .file > .name .tag { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; text-transform: uppercase; letter-spacing: .07em; font-size: 9px; color: var(--faint); }
+  pre { background: var(--code-bg); padding: 11px 13px; overflow-x: auto; }
+  pre code { font-size: 10.6px; background: none; border: none; padding: 0; line-height: 1.52; color: var(--code-ink); display: block; white-space: pre; }
+  .cap { font-size: 11.5px; color: var(--muted); margin: -8px 0 16px; padding-left: 2px; }
+
+  /* ---------- callouts ---------- */
+  .note, .warn, .bug, .info { padding: 10px 14px; margin: 14px 0; font-size: 12.8px; border-left: 3px solid; border-radius: 0 3px 3px 0; }
+  .note { background: var(--accent-bg); border-color: var(--accent); }
+  .warn { background: var(--warn-bg); border-color: var(--warn); }
+  .bug  { background: var(--bug-bg);  border-color: var(--bug); }
+  .info { background: var(--info-bg); border-color: var(--info); }
+  .note b, .warn b, .bug b, .info b { display: block; margin-bottom: 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+  .note b { color: var(--accent); } .warn b { color: var(--warn); }
+  .bug b { color: var(--bug); } .info b { color: var(--info); }
+
+  /* ---------- tables ---------- */
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 18px; font-size: 12px; }
+  th, td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
+  th { background: #f6f7f9; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+  td code { font-size: 10.5px; }
+  tbody tr:nth-child(even) { background: #fcfcfd; }
+
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; white-space: nowrap; border: 1px solid; }
+  .pill.ok   { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+  .pill.gap  { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .pill.no   { background: var(--bug-bg); color: var(--bug); border-color: var(--bug); }
+
+  figure { margin: 20px 0 24px; }
+  figcaption { font-size: 11px; color: var(--muted); margin-top: 8px; text-align: center; }
+  svg { width: 100%; height: auto; display: block; }
+  svg text { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+
+  footer { margin-top: 44px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+
+  @page { size: A4; margin: 14mm 13mm; }
+  @media print {
+    body { padding: 0; max-width: none; }
+    h2 { break-after: avoid; break-before: auto; }
+    h3, h4 { break-after: avoid; }
+    .file, table, figure, .note, .warn, .bug, .info, .factbox { break-inside: avoid; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+    pre code { white-space: pre-wrap; }
+    .page-break { break-before: page; }
+    a { color: var(--ink); text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">Checkychain · Infrastructure Record · Branch <code>demo/onchain-verification</code></div>
+  <h1>Public Verification Demo</h1>
+  <div class="sub">Everything provisioned, configured and measured to put one on-chain check on the public internet — and the eight failures that only appeared once it was there.</div>
+  <div class="meta">2026-11-25 · AWS eu-west-1 · CDK (Python) + Ansible (SSM) + Docker Compose · Status: deployed, verified, then destroyed</div>
+</div>
+
+<div class="factbox">
+  <div><dt>Public URL (while live)</dt><dd>https://54-216-107-16.sslip.io</dd></div>
+  <div><dt>Instance</dt><dd>i-0bcb1cfffa33598e3 · t4g.medium · aarch64</dd></div>
+  <div><dt>Elastic IP</dt><dd>54.216.107.16</dd></div>
+  <div><dt>Certificate</dt><dd>Let's Encrypt · CN=54-216-107-16.sslip.io</dd></div>
+  <div><dt>Registry</dt><dd>774173912604.dkr.ecr.eu-west-1.amazonaws.com</dd></div>
+  <div><dt>Running cost</dt><dd>≈ USD 0.05 / hour</dd></div>
+</div>
+
+<h2><span class="num">1</span>What this is</h2>
+
+<p>
+  The platform is a multi-service payment-dispute system — auth, crypto, payment, notification and
+  intelligence services, built over months against specs and heavily tested suites. None of that
+  had ever run anywhere but a laptop. This exercise took the <strong>leanest slice that still proves
+  the core claim</strong> — paste a transaction hash, get an independent on-chain verdict — and put it
+  on the public internet with a real certificate.
+</p>
+<p>
+  The slice is deliberately thin. No sign-in, no merchant dashboard, no invoices. One page, one
+  endpoint, three services behind it, and three independent blockchain providers voting on what is
+  true. Everything else in the platform is present on the box but unroutable.
+</p>
+
+<div class="note">
+  <b>The one result that matters</b>
+  A real Sepolia transaction, submitted to the public URL, returned <code>outcome: AGREED</code>,
+  <code>existence: AGREED</code>, 26 confirmations and <code>"0.01 WETH"</code> with both addresses —
+  every fact agreed 2-of-3 by <em>three separate companies' nodes</em>. That is the product's entire
+  premise, executing on infrastructure defined in code.
+</div>
+
+<h3>1.1 What a visitor sees</h3>
+<p>
+  A single page asking for a transaction hash. Paste one, and within a few seconds the page states
+  whether that transaction exists on-chain, how many blocks have confirmed it, who sent it, who
+  received it, and how much of which token moved. Four outcomes are possible, and three of them are
+  refusals to overstate:
+</p>
+
+<table>
+  <thead><tr><th style="width:22%">Outcome</th><th>What it means</th><th style="width:30%">Why it is not just "valid / invalid"</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill ok">AGREED</span></td><td>All three providers independently returned the same facts. The payment is real and fully described.</td><td>Agreement is the <em>evidence</em>, not one server's say-so.</td></tr>
+    <tr><td><span class="pill gap">HELD</span></td><td>The providers do not agree yet — typically a transaction seconds old that some nodes have seen and others have not.</td><td>The honest answer when the chain itself has not settled. Impossible to produce locally.</td></tr>
+    <tr><td><span class="pill gap">UNKNOWN_TOKEN</span></td><td>The transaction is real and the amount is known, but the token is not one this deployment can name.</td><td>Refuses to label an arbitrary contract as "USDC". Shows the amount, withholds the name.</td></tr>
+    <tr><td><span class="pill no">NOT_FOUND</span></td><td>No such transaction.</td><td>—</td></tr>
+  </tbody>
+</table>
+
+<figure>
+<svg viewBox="0 0 880 400" role="img" aria-label="Request flow from the internet through Caddy to payment, crypto and three RPC providers">
+  <defs>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#5b6472"/>
+    </marker>
+    <marker id="arg" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#14532d"/>
+    </marker>
+  </defs>
+  <rect x="2" y="2" width="876" height="396" fill="none" stroke="#eceef2"/>
+
+  <!-- internet -->
+  <rect x="18" y="160" width="104" height="48" rx="5" fill="#f6f7f9" stroke="#5b6472"/>
+  <text x="70" y="180" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1f2b">Internet</text>
+  <text x="70" y="196" text-anchor="middle" font-size="9.5" fill="#5b6472">:80 → :443</text>
+
+  <!-- EC2 boundary -->
+  <rect x="150" y="26" width="470" height="350" rx="7" fill="none" stroke="#1a1f2b" stroke-dasharray="5 3"/>
+  <text x="162" y="44" font-size="10" font-weight="600" fill="#5b6472" letter-spacing="1">EC2 · t4g.medium · eu-west-1</text>
+
+  <!-- caddy -->
+  <rect x="172" y="152" width="112" height="64" rx="5" fill="#e8f3ec" stroke="#14532d"/>
+  <text x="228" y="174" text-anchor="middle" font-size="12" font-weight="600" fill="#14532d">edge</text>
+  <text x="228" y="189" text-anchor="middle" font-size="9" fill="#14532d">Caddy + TLS</text>
+  <text x="228" y="202" text-anchor="middle" font-size="8.5" fill="#5b6472">default: 404</text>
+
+  <!-- payment -->
+  <rect x="320" y="152" width="112" height="64" rx="5" fill="#eaf0fd" stroke="#1e40af"/>
+  <text x="376" y="174" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">payment</text>
+  <text x="376" y="189" text-anchor="middle" font-size="9" fill="#1e40af">:8083</text>
+  <text x="376" y="202" text-anchor="middle" font-size="8.5" fill="#5b6472">orchestrates</text>
+
+  <!-- crypto -->
+  <rect x="468" y="152" width="112" height="64" rx="5" fill="#eaf0fd" stroke="#1e40af"/>
+  <text x="524" y="174" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">crypto</text>
+  <text x="524" y="189" text-anchor="middle" font-size="9" fill="#1e40af">:8080</text>
+  <text x="524" y="202" text-anchor="middle" font-size="8.5" fill="#5b6472">quorum 2-of-3</text>
+
+  <!-- auth -->
+  <rect x="320" y="66" width="112" height="46" rx="5" fill="#f1f2f4" stroke="#6b7280"/>
+  <text x="376" y="84" text-anchor="middle" font-size="11" font-weight="600" fill="#374151">auth</text>
+  <text x="376" y="99" text-anchor="middle" font-size="8.5" fill="#5b6472">client_credentials</text>
+
+  <!-- data -->
+  <rect x="190" y="286" width="96" height="44" rx="5" fill="#f1f2f4" stroke="#6b7280"/>
+  <text x="238" y="304" text-anchor="middle" font-size="11" font-weight="600" fill="#374151">postgres</text>
+  <text x="238" y="318" text-anchor="middle" font-size="8.5" fill="#5b6472">3 databases</text>
+
+  <rect x="310" y="286" width="96" height="44" rx="5" fill="#f1f2f4" stroke="#6b7280"/>
+  <text x="358" y="304" text-anchor="middle" font-size="11" font-weight="600" fill="#374151">kafka</text>
+  <text x="358" y="318" text-anchor="middle" font-size="8.5" fill="#5b6472">KRaft, 1 node</text>
+
+  <rect x="430" y="286" width="150" height="44" rx="5" fill="#fdf3e5" stroke="#92400e"/>
+  <text x="505" y="304" text-anchor="middle" font-size="11" font-weight="600" fill="#92400e">flyway ×2</text>
+  <text x="505" y="318" text-anchor="middle" font-size="8.5" fill="#5b6472">run to completion</text>
+
+  <!-- providers -->
+  <rect x="656" y="92" width="200" height="40" rx="5" fill="#fff" stroke="#14532d"/>
+  <text x="756" y="110" text-anchor="middle" font-size="10.5" font-weight="600" fill="#14532d">PublicNode</text>
+  <text x="756" y="123" text-anchor="middle" font-size="8.5" fill="#5b6472">provider-a</text>
+
+  <rect x="656" y="146" width="200" height="40" rx="5" fill="#fff" stroke="#14532d"/>
+  <text x="756" y="164" text-anchor="middle" font-size="10.5" font-weight="600" fill="#14532d">Tenderly</text>
+  <text x="756" y="177" text-anchor="middle" font-size="8.5" fill="#5b6472">provider-b</text>
+
+  <rect x="656" y="200" width="200" height="40" rx="5" fill="#fff" stroke="#14532d"/>
+  <text x="756" y="218" text-anchor="middle" font-size="10.5" font-weight="600" fill="#14532d">ZAN</text>
+  <text x="756" y="231" text-anchor="middle" font-size="8.5" fill="#5b6472">provider-c</text>
+
+  <text x="756" y="262" text-anchor="middle" font-size="9.5" fill="#5b6472" font-style="italic">three operators · Sepolia</text>
+
+  <!-- arrows -->
+  <line x1="122" y1="184" x2="168" y2="184" stroke="#5b6472" stroke-width="1.4" marker-end="url(#ar)"/>
+  <line x1="284" y1="184" x2="316" y2="184" stroke="#5b6472" stroke-width="1.4" marker-end="url(#ar)"/>
+  <line x1="432" y1="184" x2="464" y2="184" stroke="#5b6472" stroke-width="1.4" marker-end="url(#ar)"/>
+  <line x1="376" y1="152" x2="376" y2="116" stroke="#5b6472" stroke-width="1.2" marker-end="url(#ar)"/>
+  <line x1="580" y1="170" x2="652" y2="115" stroke="#14532d" stroke-width="1.3" marker-end="url(#arg)"/>
+  <line x1="580" y1="184" x2="652" y2="166" stroke="#14532d" stroke-width="1.3" marker-end="url(#arg)"/>
+  <line x1="580" y1="198" x2="652" y2="218" stroke="#14532d" stroke-width="1.3" marker-end="url(#arg)"/>
+  <line x1="238" y1="216" x2="238" y2="282" stroke="#9aa2ae" stroke-width="1.1" stroke-dasharray="3 2"/>
+  <line x1="376" y1="216" x2="358" y2="282" stroke="#9aa2ae" stroke-width="1.1" stroke-dasharray="3 2"/>
+  <line x1="524" y1="216" x2="524" y2="282" stroke="#9aa2ae" stroke-width="1.1" stroke-dasharray="3 2"/>
+
+  <text x="300" y="146" text-anchor="middle" font-size="8.5" fill="#5b6472">/api/v1/verifications</text>
+  <text x="448" y="146" text-anchor="middle" font-size="8.5" fill="#5b6472">internal API</text>
+</svg>
+<figcaption>The request path. Only <code>edge</code> publishes ports; everything else is reachable solely on the compose network.</figcaption>
+</figure>
+
+<div class="page-break"></div>
+
+<h2><span class="num">2</span>Infrastructure as code — AWS CDK in Python</h2>
+
+<p>
+  The infrastructure is one CDK app. It was originally scaffolded in TypeScript; that was corrected
+  to <strong>Python</strong>, which is now the standard for infrastructure in this project (the
+  engineering-standard document has been amended to match — it had carried the same error).
+</p>
+
+<h3>2.1 Entry point: refusing to do the dangerous thing quietly</h3>
+<p>
+  <code>app.py</code> does almost nothing except guard two failure modes that are much worse when
+  they are silent.
+</p>
+
+<div class="file">
+  <div class="name"><span>infra/deploy/cdk/app.py</span><span class="tag">CDK entry point</span></div>
+<pre><code>app = cdk.App()
+
+# Both optional, and the default is no SSH at all: no open port and no key on the box.
+#
+# Ansible connects over SSM and the console connects through Session Manager, so an SSH rule
+# protects nothing here while still being a rule that goes stale - a home address changes, and
+# the entry then names a stranger's. Supply both of these together if you ever want SSH back.
+ssh_cidr = app.node.try_get_context("sshCidr")
+key_name = app.node.try_get_context("keyName")
+
+# The one thing worth refusing outright. An address is a deliberate choice; the whole internet
+# on port 22 is almost always a slip, and it is the slip this project should not make quietly.
+if ssh_cidr and ssh_cidr.strip().endswith("/0"):
+    raise SystemExit(
+        f"Refusing sshCidr={ssh_cidr}: that is SSH open to the internet.\n"
+        "Pass a single address, for example -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32"
+    )
+
+# This stack looks up the default VPC, which CDK can only do for a named account and region.
+# Without credentials the lookup fails several layers down as a jsii stack trace about a
+# "context provider", which says nothing useful to the person who simply has not logged in yet.
+account = os.environ.get("CDK_DEFAULT_ACCOUNT")
+if not account:
+    raise SystemExit(
+        "No AWS account resolved, so the default-VPC lookup cannot run.\n"
+        "Configure credentials and try again, for example:\n"
+        "  aws configure                 # or\n"
+        "  export AWS_PROFILE=&lt;profile&gt;  # for an SSO or named profile"
+    )</code></pre>
+</div>
+
+<p>
+  The default is <strong>no SSH at all</strong> — no inbound port 22, and no key pair on the
+  instance. This was not the starting position; it was arrived at deliberately after confirming
+  that Ansible (over SSM) and the AWS console (over Session Manager) both work without it, which
+  makes an open port 22 pure attack surface with no compensating use.
+</p>
+
+<h3>2.2 The stack</h3>
+<p>
+  <code>demo_stack.py</code> is about 250 lines and creates: three ECR repositories, an S3 transfer
+  bucket, a KMS key, a security group, an IAM role, one EC2 instance with user-data, and an Elastic
+  IP. Each decision is recorded in the class docstring because each one differs from what the real
+  platform will do.
+</p>
+
+<div class="file">
+  <div class="name"><span>infra/deploy/cdk/demo_stack.py — class docstring</span><span class="tag">rationale</span></div>
+<pre><code>"""The demo's infrastructure.
+
+The real platform is planned as CDK stacks split by blast radius - network, data, security,
+edge, one per service, on EKS with RDS, MSK and KMS (infra/README.md). This is not that, and
+is not trying to be: it is the demo, sized for a demo, written so the parts that matter later
+are already expressed as code rather than clicked into a console.
+
+Deliberate choices, each of which the real stack makes differently:
+
+- **The default VPC is used, not a new one.** A private subnet needs a NAT gateway to pull
+  images, which costs more per month than the instance. The box is public-subnet with a
+  security group doing the work.
+- **Postgres and Kafka run as containers, not RDS and MSK.** One box, one demo. The compose
+  file keeps one database per service, so moving to RDS later is a connection string.
+- **No load balancer.** Caddy terminates TLS on the box with Let's Encrypt, which is free and
+  renews itself. An ALB with ACM is the production answer and costs about sixteen dollars a
+  month to serve one page.
+"""</code></pre>
+</div>
+
+<h4>Image repositories — pull only</h4>
+<div class="file">
+  <div class="name"><span>demo_stack.py</span><span class="tag">ECR</span></div>
+<pre><code>SERVICES = ("auth", "crypto", "payment")
+
+# One repository per service. The box only ever pulls; images are built and pushed from a
+# developer machine or CI, so the source tree never lands on an internet-facing host.
+repositories = [
+    ecr.Repository(
+        self, f"Repo{service}",
+        repository_name=f"checky-{service}",
+        image_scan_on_push=True,
+        removal_policy=RemovalPolicy.DESTROY,
+        empty_on_delete=True,
+        lifecycle_rules=[
+            ecr.LifecycleRule(max_image_count=5, description="Keep the last five images.")
+        ],
+    )
+    for service in SERVICES
+]</code></pre>
+</div>
+<p class="cap">
+  <code>empty_on_delete=True</code> matters: without it <code>cdk destroy</code> fails on a
+  repository that still holds images, and leaves the stack half-deleted.
+</p>
+
+<h4>The S3 bucket that exists only because SSM cannot carry files</h4>
+<div class="file">
+  <div class="name"><span>demo_stack.py</span><span class="tag">S3</span></div>
+<pre><code># Ansible reaches this box over SSM rather than SSH, and the aws_ssm connection plugin
+# moves files through S3 because the Session Manager channel itself cannot carry them.
+# The objects are transient, so they are expired after a day and the bucket is emptied
+# when the stack is destroyed - otherwise `cdk destroy` leaves a bucket behind forever.
+transfer_bucket = s3.Bucket(
+    self, "SsmTransferBucket",
+    block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+    enforce_ssl=True,
+    encryption=s3.BucketEncryption.S3_MANAGED,
+    removal_policy=RemovalPolicy.DESTROY,
+    auto_delete_objects=True,
+    lifecycle_rules=[
+        s3.LifecycleRule(
+            expiration=Duration.days(1),
+            abort_incomplete_multipart_upload_after=Duration.days(1),
+        )
+    ],
+)</code></pre>
+</div>
+
+<h4>A KMS key, because a service refused to start without one</h4>
+<div class="file">
+  <div class="name"><span>demo_stack.py</span><span class="tag">KMS</span></div>
+<pre><code># auth-service envelope-encrypts TOTP seeds with a KMS data key (ADR-0003) and refuses
+# to start outside the local profile without a key, rather than silently falling back to
+# its fixed local-dev key. That guard is right, so the demo gets a real key. Nothing in
+# the demo path signs in, so this is a startup requirement rather than a used feature -
+# but a service that will not boot is not much use either way.
+mfa_key = kms.Key(
+    self, "MfaSeedKek",
+    description="Checky demo: KEK for auth-service TOTP seed envelope encryption.",
+    enable_key_rotation=True,
+    removal_policy=RemovalPolicy.DESTROY,
+    alias="alias/checky-demo-mfa-seed-kek",
+)</code></pre>
+</div>
+
+<h4>Network: two ports open, and a third only on request</h4>
+<div class="file">
+  <div class="name"><span>demo_stack.py</span><span class="tag">security group</span></div>
+<pre><code># 80 is not optional: Let's Encrypt validates over it, and Caddy redirects it to 443.
+security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP (ACME + redirect)")
+security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")
+
+# No SSH unless an address was named. Ansible connects over SSM and the console uses
+# Session Manager, so with no key pair on the box an open port 22 cannot be authenticated
+# against at all - it is surface with no use. Real break-glass for a broken agent is the
+# EC2 Serial Console, which needs no inbound port, or destroying and redeploying this
+# stack, which takes about four minutes and is the honest answer for a demo box.
+if ssh_cidr:
+    security_group.add_ingress_rule(
+        ec2.Peer.ipv4(ssh_cidr), ec2.Port.tcp(22), "SSH, one address only"
+    )</code></pre>
+</div>
+
+<h4>IAM: four grants, no more</h4>
+<div class="file">
+  <div class="name"><span>demo_stack.py</span><span class="tag">IAM</span></div>
+<pre><code>role = iam.Role(
+    self, "DemoInstanceRole",
+    assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
+    managed_policies=[
+        iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")
+    ],
+)
+# Pull only. The box has no business pushing an image.
+for repository in repositories:
+    repository.grant_pull(role)
+role.add_to_policy(iam.PolicyStatement(actions=["ecr:GetAuthorizationToken"], resources=["*"]))
+# Both ends of the SSM file transfer: the box reads what Ansible uploaded and writes
+# back what Ansible fetches.
+transfer_bucket.grant_read_write(role)
+# GenerateDataKey and Decrypt, which is what envelope encryption needs. The containers
+# pick these credentials up from the instance metadata endpoint via the default chain.
+mfa_key.grant_encrypt_decrypt(role)</code></pre>
+</div>
+
+<h4>User-data: the minimum, and one architecture lesson</h4>
+<div class="file">
+  <div class="name"><span>demo_stack.py</span><span class="tag">user-data</span></div>
+<pre><code>user_data.add_commands(
+    "set -eux",
+    "dnf update -y",
+    "dnf install -y docker python3 python3-pip",
+    "systemctl enable --now docker",
+    "usermod -aG docker ec2-user",
+    "mkdir -p /usr/local/lib/docker/cli-plugins",
+    # Architecture-matched, not hardcoded. A compose binary for the wrong architecture
+    # still installs and still passes a file-exists check, then fails as "'compose' is
+    # not a docker command" much later - which is exactly what an x86_64 download did on
+    # this Graviton box. Ansible re-checks and repairs this, so a wrong one is survivable.
+    'ARCH=$(uname -m)',
+    "curl -fsSL https://github.com/docker/compose/releases/download/v2.32.1/"
+    "docker-compose-linux-${ARCH} -o /usr/local/lib/docker/cli-plugins/docker-compose",
+    "chmod +x /usr/local/lib/docker/cli-plugins/docker-compose",
+    "install -d -o ec2-user -g ec2-user /opt/checky",
+)</code></pre>
+</div>
+<p>
+  User-data installs <em>only</em> what must exist before Ansible can connect. All application
+  configuration is Ansible's job, deliberately: user-data runs once at first boot, so anything put
+  here can only be changed by replacing the instance.
+</p>
+
+<h4>Instance and address</h4>
+<div class="file">
+  <div class="name"><span>demo_stack.py</span><span class="tag">EC2 + EIP</span></div>
+<pre><code>instance = ec2.Instance(
+    self, "DemoInstance",
+    vpc=vpc,
+    vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+    instance_type=ec2.InstanceType(instance_type),
+    machine_image=ec2.MachineImage.latest_amazon_linux2023(
+        cpu_type=ec2.AmazonLinuxCpuType.ARM_64
+    ),
+    security_group=security_group,
+    role=role,
+    # Omitted unless a key pair was named. Without one there is no SSH key on the box at
+    # all, and break-glass access goes through the console or EC2 Instance Connect, which
+    # pushes a temporary key. Session Manager does not use this either way.
+    key_pair=(ec2.KeyPair.from_key_pair_name(self, "DemoKeyPair", key_name) if key_name else None),
+    user_data=user_data,
+    block_devices=[
+        ec2.BlockDevice(
+            device_name="/dev/xvda",
+            volume=ec2.BlockDeviceVolume.ebs(
+                30, volume_type=ec2.EbsDeviceVolumeType.GP3,
+                encrypted=True, delete_on_termination=True,
+            ),
+        )
+    ],
+)
+
+# A fixed address, so the DNS record survives a stop/start. Without it the public IP
+# changes and the certificate stops being issuable until DNS catches up.
+address = ec2.CfnEIP(self, "DemoEip", domain="vpc")
+ec2.CfnEIPAssociation(
+    self, "DemoEipAssociation",
+    allocation_id=address.attr_allocation_id,
+    instance_id=instance.instance_id,
+)</code></pre>
+</div>
+
+<div class="info">
+  <b>Measured, not assumed — instance sizing</b>
+  <code>t4g.medium</code> (Graviton, arm64, 2 vCPU, 3835 MB). Three JVMs, Kafka and Postgres share
+  this box; <code>payment-service</code> alone took <strong>188 seconds</strong> to start when all
+  three booted together, so 2 GB leaves no headroom and an OOM during startup presents as a hang.
+  arm64 was chosen because every image in the stack has an arm64 build (verified for postgres,
+  kafka, flyway 11 and caddy) and the machines building them are Apple Silicon — so builds are
+  native rather than QEMU-emulated, and the instance is cheaper besides.
+</div>
+
+<h4>Outputs — and one that hides itself</h4>
+<p>
+  The stack prints <code>PublicIp</code>, <code>EcrRegistry</code>, <code>MfaSeedKekArn</code>,
+  <code>SsmTransferBucketName</code> and <code>InstanceId</code>. Each feeds a specific line of
+  <code>.env</code> or <code>inventory.ini</code>. A sixth is conditional:
+</p>
+<div class="file">
+  <div class="name"><span>demo_stack.py</span><span class="tag">outputs</span></div>
+<pre><code># Printed only when SSH was actually asked for, so the output cannot advertise a route
+# that no security group rule and no key pair would let anyone take.
+if ssh_cidr and key_name:
+    CfnOutput(self, "SshCommand",
+        value=f"ssh -i &lt;{key_name}.pem&gt; ec2-user@{address.ref}",
+        description="Break-glass only. Ansible and the console both use SSM.")</code></pre>
+</div>
+
+<div class="page-break"></div>
+
+<h2><span class="num">3</span>The containerised toolchain</h2>
+
+<p>
+  Two frictions stood between this repository and a deploy, and both were removed by containerising
+  the tool rather than documenting a prerequisite.
+</p>
+
+<table>
+  <thead><tr><th style="width:30%">Friction</th><th>Why it bites</th><th style="width:30%">Resolution</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>CDK needs Node even for Python stacks</td>
+      <td>The CDK CLI is a Node program, and <code>jsii</code> bridges Python to it. A Python-only image fails with <code>'_NodeProcess' object has no attribute '_process'</code>.</td>
+      <td><code>cdk/Dockerfile</code> on <code>node:22-bookworm-slim</code> with Python added.</td>
+    </tr>
+    <tr>
+      <td><code>aws-cdk-lib</code> publishes wheels only for Python 3.11–3.13</td>
+      <td>On this machine's Python 3.15, pip fell back to building jsii from source and had not finished after ten minutes.</td>
+      <td>The image pins Python 3.11.2, so the host's interpreter is irrelevant.</td>
+    </tr>
+    <tr>
+      <td>Ansible needs the SSM plugin, boto3 and two collections</td>
+      <td>A long, version-sensitive install nobody should repeat by hand.</td>
+      <td><code>ansible/Dockerfile</code>, built once (~13 minutes), then cached.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="file">
+  <div class="name"><span>infra/deploy/ansible/Dockerfile</span><span class="tag">excerpt</span></div>
+<pre><code>FROM python:3.12-slim
+RUN pip install --no-cache-dir \
+        "ansible-core==2.18.1" "boto3==1.35.90" "botocore==1.35.90" \
+    &amp;&amp; ansible-galaxy collection install "community.aws:9.0.0" "amazon.aws:9.0.0"
+RUN set -eux; \
+    case "$(uname -m)" in \
+      x86_64)  ARCH=64bit ;; \
+      aarch64) ARCH=arm64 ;; \
+      *) echo "unsupported architecture $(uname -m)" &gt;&amp;2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_${ARCH}/session-manager-plugin.deb" \
+      -o /tmp/smp.deb; \
+    dpkg -i /tmp/smp.deb; rm -f /tmp/smp.deb; \
+    session-manager-plugin --version</code></pre>
+</div>
+
+<h3>3.1 Wrappers: <code>./cdk</code> and <code>./play</code></h3>
+<p>
+  Each image has a short shell wrapper that builds it once, mounts the repository, and forwards AWS
+  credentials from the environment. Two details in them were corrected after they caused failures:
+</p>
+
+<div class="file">
+  <div class="name"><span>infra/deploy/cdk/cdk and ansible/play</span><span class="tag">two fixes</span></div>
+<pre><code># 1. A TTY only when there is one. `docker run -it` fails outright with no terminal
+#    attached, which would break the moment either wrapper ran in CI.
+if [ -t 0 ] &amp;&amp; [ -t 1 ]; then TTY_FLAGS="-it"; else TTY_FLAGS=""; fi
+
+# 2. ./play with no arguments must still run the playbook. The entrypoint is
+#    ansible-playbook, so a bare `./play` was an argparse error rather than a deploy.
+case "${1-}" in
+  *.yml|*.yaml) ;;
+  *) set -- playbook.yml "$@" ;;
+esac</code></pre>
+</div>
+
+<div class="note">
+  <b>Credential handling</b>
+  Credentials were never written to <code>~/.aws</code> and never committed. They live in a single
+  <code>0600</code> file in a session scratchpad outside the repository, sourced into the
+  environment for the length of a command, and forwarded into the container as environment
+  variables. The repository's <code>.gitignore</code> covers <code>.env</code>,
+  <code>.env.*</code> and <code>inventory.ini</code>; <code>env.example</code> is the only
+  committed form and holds no real values.
+</div>
+
+<div class="page-break"></div>
+
+<h2><span class="num">4</span>Configuration management — Ansible over SSM</h2>
+
+<p>
+  The division of labour is strict. CDK creates infrastructure; Ansible configures the box and runs
+  the application. Nothing is ever edited on the server — a change is made in git and the playbook
+  runs again. The playbook is idempotent by construction, which is the whole point of it.
+</p>
+
+<h3>4.1 Connecting without SSH</h3>
+<p>
+  Ansible reaches the instance through <strong>Session Manager</strong>, using the
+  <code>community.aws.aws_ssm</code> connection plugin. Three consequences follow, and all three
+  are improvements: there is no key to manage, no <code>ansible_user</code> to agree on, and port
+  22 need not be open for a deploy to work. The cost is that <code>ansible_host</code> must be an
+  <em>instance ID</em>, and a transfer bucket is required because the Session Manager channel
+  cannot carry files on its own.
+</p>
+
+<div class="file">
+  <div class="name"><span>infra/deploy/ansible/inventory.ini.example</span><span class="tag">inventory</span></div>
+<pre><code>[demo]
+checky-demo ansible_host=REPLACE_WITH_InstanceId
+
+[demo:vars]
+ansible_connection=community.aws.aws_ssm
+ansible_aws_ssm_bucket_name=REPLACE_WITH_SsmTransferBucketName
+ansible_aws_ssm_region=eu-west-1
+
+# Break-glass, for when the SSM agent itself is what is broken. Requires that the stack was
+# deployed with -c keyName=&lt;your-key-pair&gt;, and that your address is still the one in sshCidr:
+#
+#   ./play -e ansible_connection=ssh \
+#          -e ansible_host=REPLACE_WITH_PublicIp \
+#          -e ansible_user=ec2-user \
+#          -e ansible_ssh_private_key_file=/root/.ssh/REPLACE_WITH_YOUR_KEY.pem
+#
+# The key path is the one *inside the container*: ./play mounts ~/.ssh at /root/.ssh read-only.</code></pre>
+</div>
+
+<div class="file">
+  <div class="name"><span>infra/deploy/ansible/ansible.cfg</span><span class="tag">config</span></div>
+<pre><code>[defaults]
+inventory = inventory.ini
+host_key_checking = False
+retry_files_enabled = False
+# The yaml stdout callback lived in community.general and was removed in its 10.0.0, so it is
+# not a safe thing to depend on. ansible-core's own result_format gives the same readable
+# multi-line output without a callback plugin at all.
+stdout_callback = default
+result_format = yaml
+interpreter_python = auto_silent
+
+[ssh_connection]
+pipelining = True</code></pre>
+</div>
+
+<h3>4.2 Escalation, because the connection user differs by transport</h3>
+<div class="file">
+  <div class="name"><span>infra/deploy/ansible/playbook.yml</span><span class="tag">play header</span></div>
+<pre><code>- name: Deploy the Checkychain verification demo
+  hosts: demo
+  # Root, because the connection user differs by transport and neither can do the work as itself.
+  # Over SSM the session runs as `ssm-user`, which is not in the docker group and cannot write to
+  # /opt/checky; over SSH it is `ec2-user`, which can do both. Escalating makes the two identical,
+  # and the files are still owned by ec2-user so that a human who logs in can manage the stack.
+  become: true
+  gather_facts: true</code></pre>
+</div>
+
+<h3>4.3 Failing early and in English</h3>
+<p>
+  The playbook reads <code>.env</code> on the control machine, asserts every key the compose file
+  will demand, and says what is missing — rather than failing deep inside a template or, worse,
+  starting a stack that will crash-loop.
+</p>
+
+<div class="file">
+  <div class="name"><span>playbook.yml</span><span class="tag">pre_tasks</span></div>
+<pre><code>- name: Read the deployment environment
+  ansible.builtin.set_fact:
+    deploy_env: "{{ lookup('ansible.builtin.file', env_file) | regex_findall('(?m)^([A-Z0-9_]+)=(.*)$') | items2dict(key_name=0, value_name=1) }}"
+  no_log: true
+
+- name: Require every value the compose file will demand
+  ansible.builtin.assert:
+    that: deploy_env[item] is defined and deploy_env[item] | length &gt; 0
+    fail_msg: "{{ item }} is empty in .env — the stack will not start without it."
+  loop:
+    - PUBLIC_HOST
+    - ECR_REGISTRY
+    - AWS_REGION
+    - POSTGRES_PASSWORD
+    - CRYPTO_APP_PASSWORD
+    - PAYMENT_APP_PASSWORD
+    - PAYMENT_SERVICE_CLIENT_SECRET
+    - MFA_SEED_KEK_ARN
+    - SEPOLIA_RPC_1
+    - SEPOLIA_RPC_2
+    - SEPOLIA_RPC_3
+    - DEMO_TOKEN_ADDRESS
+  no_log: true</code></pre>
+</div>
+
+<h3>4.4 The readiness check that was rewritten</h3>
+<p>
+  This is the most instructive change in the playbook. The original waited for the compose plugin's
+  <em>path</em> to exist — which a binary for the wrong architecture satisfies perfectly.
+</p>
+
+<div class="bug">
+  <b>Presence is not usability</b>
+  An x86_64 compose binary on this arm64 box passed a <code>wait_for</code> path check, and then
+  failed four tasks later as <code>unknown flag: --quiet</code> — an error that points at the wrong
+  thing entirely. <code>file</code> on the binary reported <em>"ELF 64-bit LSB executable,
+  x86-64"</em>. The check now <strong>runs the thing</strong>, and repairs it if it cannot.
+</div>
+
+<div class="file">
+  <div class="name"><span>playbook.yml</span><span class="tag">probe and self-repair</span></div>
+<pre><code>- name: Wait for the Docker daemon that user-data installs
+  ansible.builtin.command: docker info
+  register: docker_info
+  until: docker_info.rc == 0
+  retries: 60
+  delay: 10
+  changed_when: false
+
+- name: Find out whether the compose plugin actually runs here
+  ansible.builtin.command: docker compose version
+  register: compose_probe
+  failed_when: false
+  changed_when: false
+
+- name: Install the compose plugin built for this machine's architecture
+  ansible.builtin.get_url:
+    url: "https://github.com/docker/compose/releases/download/v2.32.1/docker-compose-linux-{{ ansible_architecture }}"
+    dest: /usr/local/lib/docker/cli-plugins/docker-compose
+    mode: "0755"
+    force: true
+  when: compose_probe.rc != 0
+
+- name: Prove the plugin runs, rather than merely exists
+  ansible.builtin.command: docker compose version
+  register: compose_version
+  changed_when: false</code></pre>
+</div>
+
+<h3>4.5 What gets copied</h3>
+<table>
+  <thead><tr><th style="width:38%">Source (repository)</th><th style="width:34%">Destination (box)</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td><code>compose.prod.yaml</code></td><td><code>/opt/checky/compose.yaml</code></td><td>—</td></tr>
+    <tr><td><code>.env</code></td><td><code>/opt/checky/.env</code></td><td>mode 0600, <code>no_log</code></td></tr>
+    <tr><td><code>config/Caddyfile</code>, <code>config/crypto.properties</code></td><td><code>/opt/checky/config/</code></td><td>notifies a restart handler</td></tr>
+    <tr><td><code>templates/init.sql.j2</code></td><td><code>/opt/checky/config/init.sql</code></td><td>rendered; owned by uid 70</td></tr>
+    <tr><td><code>infra/local/landing/{index.html,logo.png}</code></td><td><code>/opt/checky/landing/</code></td><td>the same page served locally</td></tr>
+    <tr><td><code>services/{crypto,payment}/…/db/migration/</code></td><td><code>/opt/checky/migrations/</code></td><td>a few KB of SQL; no source tree</td></tr>
+  </tbody>
+</table>
+
+<h3>4.6 Two gates after publishing</h3>
+<p>
+  The playbook does not end at <code>docker compose up</code>. It verifies the result from the
+  <em>control machine</em>, over the public internet — which is the only perspective that counts.
+</p>
+
+<div class="file">
+  <div class="name"><span>playbook.yml</span><span class="tag">post-deploy gates</span></div>
+<pre><code>- name: Wait for the landing page to answer over HTTPS
+  ansible.builtin.uri:
+    url: "https://{{ deploy_env.PUBLIC_HOST }}/"
+    status_code: 200
+  register: landing
+  until: landing.status == 200
+  retries: 30
+  delay: 10
+  delegate_to: localhost
+  become: false
+
+# The check that matters is the one performed after publishing, not before.
+- name: Prove that nothing but the demo is reachable
+  ansible.builtin.uri:
+    url: "https://{{ deploy_env.PUBLIC_HOST }}/{{ item }}"
+    status_code: 404
+  loop:
+    - login
+    - oauth2/authorize
+    - admin
+    - accounts
+    - api-keys
+    - app/
+    - api/v1/invoices
+    - api/v1/receipts
+    - actuator/health
+    - userinfo
+  delegate_to: localhost
+  become: false</code></pre>
+</div>
+
+<p>
+  The second gate is a <strong>negative test on the live site</strong>: ten paths that exist in the
+  platform and must not be exposed by this deployment. If a future change to the Caddyfile
+  accidentally routes <code>/actuator/health</code> or the whole SPA, the deploy fails rather than
+  succeeding quietly. All ten returned 404.
+</p>
+
+<div class="page-break"></div>
+
+<h2><span class="num">5</span>Runtime topology — Docker Compose</h2>
+
+<p>
+  Six containers run; two more run to completion and exit. Only <code>edge</code> publishes ports.
+</p>
+
+<div class="file">
+  <div class="name"><span>infra/deploy/compose.prod.yaml</span><span class="tag">header + shared env</span></div>
+<pre><code># The demo on one EC2 box. Deployed by infra/deploy/ansible, never edited on the server.
+#
+# Images are pulled from ECR; nothing is built here. A public-facing box has no business holding
+# the source tree, a Maven cache and a JDK.
+#
+# Only `edge` publishes ports. Everything else talks over the compose network, so auth-service and
+# the two application services are not reachable from the internet at all.
+name: checky-demo
+
+x-java: &amp;java
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+x-java-env: &amp;java-env
+  SPRING_PROFILES_ACTIVE: prod
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  AWS_REGION: ${AWS_REGION}
+  JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70.0"</code></pre>
+</div>
+
+<p class="cap">
+  <code>MaxRAMPercentage=70.0</code> rather than a fixed heap: three JVMs share 3835 MB, and the
+  percentage adapts if the instance is resized. Log rotation is capped at 30 MB per container so a
+  crash-loop cannot fill the volume.
+</p>
+
+<h3>5.1 Datastores</h3>
+<div class="file">
+  <div class="name"><span>compose.prod.yaml</span><span class="tag">postgres + kafka</span></div>
+<pre><code>postgres:
+  image: postgres:16-alpine
+  environment:
+    POSTGRES_USER: checky
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    POSTGRES_DB: postgres
+  volumes:
+    - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    - postgres-data:/var/lib/postgresql/data
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U checky -d payment"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+
+kafka:
+  image: apache/kafka:3.8.0
+  environment:
+    KAFKA_PROCESS_ROLES: broker,controller      # KRaft - no ZooKeeper
+    KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    CLUSTER_ID: checky-demo-cluster-0001
+  healthcheck:
+    test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 &gt;/dev/null 2&gt;&amp;1"]</code></pre>
+</div>
+
+<div class="info">
+  <b>A healthcheck that proves the right thing</b>
+  <code>pg_isready -U checky -d payment</code> names a database that <em>only exists if
+  <code>init.sql</code> ran</em>. A healthcheck against the default <code>postgres</code> database
+  would report healthy on a server where initialisation had silently failed — which is precisely
+  the failure described in §7.
+</div>
+
+<h3>5.2 Migrations run outside the services</h3>
+<div class="file">
+  <div class="name"><span>compose.prod.yaml</span><span class="tag">Flyway</span></div>
+<pre><code># Flyway runs outside the services it migrates, as it does locally. The SQL is copied to the box
+# by Ansible; the services themselves hold no migration rights.
+migrate-crypto:
+  image: flyway/flyway:11.7.2-alpine
+  command: &gt;-
+    -url=jdbc:postgresql://postgres:5432/crypto -user=checky -password=${POSTGRES_PASSWORD}
+    -schemas=crypto -locations=filesystem:/flyway/sql -connectRetries=20 migrate
+  volumes:
+    - ./migrations/crypto:/flyway/sql:ro
+  depends_on:
+    postgres: { condition: service_healthy }</code></pre>
+</div>
+
+<p>
+  The services then wait on migration <em>completion</em>, not merely on the container starting:
+</p>
+<div class="file">
+  <div class="name"><span>compose.prod.yaml</span><span class="tag">ordering</span></div>
+<pre><code>depends_on:
+  migrate-crypto: { condition: service_completed_successfully }
+  kafka: { condition: service_healthy }</code></pre>
+</div>
+
+<div class="warn">
+  <b>A version drift worth catching</b>
+  The file originally pinned <code>flyway/flyway:10-alpine</code> in both places. That tag is
+  <strong>amd64-only</strong> — it would not run on Graviton at all — <em>and</em> it had drifted
+  from the <code>11.7.2</code> that every local test had actually used. Both occurrences now pin
+  <code>11.7.2-alpine</code>: the tested version, with an arm64 build.
+</div>
+
+<h3>5.3 The three services</h3>
+<p>
+  Each service receives its database URL, a distinct database role, the auth issuer, and nothing it
+  does not need. The <code>:?</code> syntax makes compose refuse to start rather than substitute an
+  empty string.
+</p>
+
+<div class="file">
+  <div class="name"><span>compose.prod.yaml</span><span class="tag">crypto + payment</span></div>
+<pre><code>crypto:
+  image: ${ECR_REGISTRY}/checky-crypto:${IMAGE_TAG:-latest}
+  environment:
+    &lt;&lt;: *java-env
+    DB_URL: jdbc:postgresql://postgres:5432/crypto
+    DB_USER: crypto_app
+    DB_PASSWORD: ${CRYPTO_APP_PASSWORD:?set CRYPTO_APP_PASSWORD}
+    AUTH_JWK_SET_URI: http://auth:8080/oauth2/jwks
+    SPRING_CONFIG_ADDITIONAL_LOCATION: file:/config/crypto.properties
+    SEPOLIA_RPC_1: ${SEPOLIA_RPC_1:?set SEPOLIA_RPC_1}
+    SEPOLIA_RPC_2: ${SEPOLIA_RPC_2:?set SEPOLIA_RPC_2}
+    SEPOLIA_RPC_3: ${SEPOLIA_RPC_3:?set SEPOLIA_RPC_3}
+    DEMO_TOKEN_ADDRESS: ${DEMO_TOKEN_ADDRESS:?set DEMO_TOKEN_ADDRESS}
+
+payment:
+  image: ${ECR_REGISTRY}/checky-payment:${IMAGE_TAG:-latest}
+  environment:
+    &lt;&lt;: *java-env
+    DB_USER: payment_app
+    CRYPTO_SERVICE_BASE_URL: http://crypto:8080
+    CRYPTO_AUTH_TOKEN_URI: http://auth:8080/oauth2/token
+    PAYMENT_SERVICE_CLIENT_SECRET: ${PAYMENT_SERVICE_CLIENT_SECRET}
+    # A real RPC round trip is slower than a local anvil one.
+    THEMISTRA_PAYMENT_CRYPTO_READTIMEOUTMS: "20000"
+    # Display only. crypto-service owns the allowlist and the decision; these name the token.
+    THEMISTRA_PAYMENT_CHAINVERIFY_TOKENS_0_CHAIN: ETHEREUM
+    THEMISTRA_PAYMENT_CHAINVERIFY_TOKENS_0_CONTRACTADDRESS: ${DEMO_TOKEN_ADDRESS}</code></pre>
+</div>
+
+<p>
+  <code>auth</code> is present but unexposed. It exists for one reason: <code>payment</code> mints a
+  <code>client_credentials</code> token there to call <code>crypto</code>'s internal API. Without
+  it, a check cannot be made at all — the service-to-service authentication is real even in the
+  demo.
+</p>
+
+<h3>5.4 Database initialisation</h3>
+<div class="file">
+  <div class="name"><span>infra/deploy/ansible/templates/init.sql.j2</span><span class="tag">rendered once</span></div>
+<pre><code>-- Rendered by Ansible. Runs once, on an empty Postgres volume.
+-- One database per service (infra/README.md "Database layout").
+CREATE DATABASE auth;
+CREATE DATABASE crypto;
+CREATE DATABASE payment;
+CREATE ROLE crypto_app LOGIN PASSWORD '{{ deploy_env.CRYPTO_APP_PASSWORD }}';
+CREATE ROLE payment_app LOGIN PASSWORD '{{ deploy_env.PAYMENT_APP_PASSWORD }}';</code></pre>
+</div>
+
+<p>
+  Three databases, one per service, so that moving any of them to RDS later is a connection-string
+  change. The application roles are distinct from the superuser that Flyway migrates with: services
+  connect as <code>crypto_app</code> and <code>payment_app</code> and hold no migration rights.
+</p>
+
+<div class="bug">
+  <b>The file ownership bug — and why it was nearly invisible</b>
+  The playbook escalates to root, so the rendered file was root-owned <code>0600</code>. Postgres
+  runs as <strong>uid 70</strong> inside <code>postgres:16-alpine</code>. The entrypoint logged
+  <code>Permission denied</code>, <strong>created none of the three databases, and carried on</strong>
+  — while still marking the data directory as initialised, so the script would never be retried.
+  Every later connection failed with "database … does not exist". The fix sets the owner
+  explicitly; the mode stays <code>0600</code> because the file carries the role passwords.
+</div>
+
+<div class="file">
+  <div class="name"><span>playbook.yml</span><span class="tag">the fix</span></div>
+<pre><code>- name: Render the database initialisation script
+  ansible.builtin.template:
+    src: init.sql.j2
+    dest: "{{ app_dir }}/config/init.sql"
+    # Owned by uid 70, which is what postgres runs as inside postgres:16-alpine (checked with
+    # id, not assumed). The playbook escalates to root, so without this the file is root-owned
+    # and the container cannot read it: the entrypoint reports "Permission denied", creates no
+    # databases, and every later connection fails with "database ... does not exist" while the
+    # data directory still counts as initialised. 0600 not 0644 on purpose - this file carries
+    # the app role passwords, so no other user on the host should be able to read it either.
+    owner: "70"
+    group: "70"
+    mode: "0600"
+  no_log: true</code></pre>
+</div>
+
+<div class="page-break"></div>
+
+<h2><span class="num">6</span>The edge — TLS, routing and default-deny</h2>
+
+<p>
+  Caddy terminates TLS, obtains and renews a Let's Encrypt certificate without configuration, and
+  routes exactly four things. Everything else returns 404 — not by omission, but by an explicit
+  final block.
+</p>
+
+<div class="file">
+  <div class="name"><span>infra/deploy/config/Caddyfile</span><span class="tag">complete</span></div>
+<pre><code># The public surface, and nothing else.
+#
+# Caddy obtains and renews a Let's Encrypt certificate for PUBLIC_HOST automatically, which is why
+# the box needs ports 80 and 443 open and the DNS record pointing at it before the first start.
+# No `email` directive: Let's Encrypt permits an ACME account with no contact address, and
+# certificates issue and renew identically without one. The only thing given up is expiry warning
+# mail. To turn that on, add `email you@example.com` inside a global block here.
+
+{$PUBLIC_HOST} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		# The page loads nothing from anywhere else; its CSS and JS are inline.
+		Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		-Server
+	}
+
+	handle /api/v1/verifications      { reverse_proxy payment:8083 }
+	handle /api/v1/verifications/*    { reverse_proxy payment:8083 }
+	handle /logo.png                  { root * /srv/landing
+	                                    file_server }
+
+	# The landing page and every receipt link are the same single file.
+	handle /r/*  { root * /srv/landing
+	               rewrite * /index.html
+	               file_server }
+	handle /     { root * /srv/landing
+	               rewrite * /index.html
+	               file_server }
+
+	# Everything else - auth, the merchant API, the SPA, actuator - is simply not routed here.
+	handle { respond "Not found" 404 }
+}</code></pre>
+</div>
+
+<p>
+  The security headers are strict because they can be: the page loads nothing from any other
+  origin, so <code>default-src 'none'</code> with an explicit <code>connect-src 'self'</code> is
+  achievable rather than aspirational.
+</p>
+
+<div class="warn">
+  <b>On the ACME contact address</b>
+  No <code>email</code> directive is present, by instruction and by design. Let's Encrypt permits an
+  ACME account with no contact address, and certificates issue and renew identically without one;
+  the only thing forgone is expiry-warning mail. An earlier draft left
+  <code>email {$ACME_EMAIL}</code> in place with an empty variable — which renders as a bare
+  <code>email</code> and is <strong>not valid Caddy</strong>. Removing the directive entirely is the
+  correct form; an empty value would have been worse than an absent one.
+</div>
+
+<h2><span class="num">7</span>Chain configuration — where the product claim lives</h2>
+
+<p>
+  The verification quorum is the product. Locally, all three "providers" point at one anvil node —
+  so they can never disagree, and <code>HELD</code> is unreachable. In this deployment they are
+  three different companies.
+</p>
+
+<div class="file">
+  <div class="name"><span>infra/deploy/config/crypto.properties</span><span class="tag">quorum</span></div>
+<pre><code>themistra.crypto.providers.chains[0].chain=ETHEREUM
+themistra.crypto.providers.chains[0].providers[0].url=${SEPOLIA_RPC_1}
+themistra.crypto.providers.chains[0].providers[1].url=${SEPOLIA_RPC_2}
+themistra.crypto.providers.chains[0].providers[2].url=${SEPOLIA_RPC_3}
+themistra.crypto.providers.chains[0].quorum-threshold=2
+
+# Bare host:port, NOT a URL. gRPC's NameResolver rejects a scheme outright:
+# "Could not find a NameResolverProvider for http://127.0.0.1:9903".
+themistra.crypto.providers.chains[1].chain=TRON
+themistra.crypto.providers.chains[1].providers[0].url=localhost:9903
+themistra.crypto.providers.chains[1].providers[1].url=localhost:9904
+themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre>
+</div>
+
+<div class="bug">
+  <b>TRON cannot simply be removed</b>
+  The demo verifies Ethereum only, so deleting the unused TRON block looked obviously correct. It
+  is not: <code>ProviderSet</code> requires <strong>exactly three providers for every chain in the
+  <code>Chain</code> enum</strong>, because <code>QuorumEvaluator</code> hard-requires three answers.
+  Removing the block produced <em>"must configure exactly 3 providers for chain TRON … found 0"</em>
+  and the service would not start. The placeholders stay, and the file now says why.
+</div>
+
+<h3>7.1 Choosing providers that work <em>from the box</em></h3>
+
+<p>
+  Three provider URLs were selected by testing from this laptop. Two of them failed in production,
+  for different reasons, and neither failure is visible from a developer machine.
+</p>
+
+<table>
+  <thead><tr><th style="width:30%">Endpoint</th><th style="width:16%">From laptop</th><th style="width:16%">From EC2</th><th>Verdict</th></tr></thead>
+  <tbody>
+    <tr><td><code>1rpc.io/sepolia</code></td><td><span class="pill ok">200</span></td><td><span class="pill no">403 forbidden</span></td><td>Blocks datacenter egress addresses.</td></tr>
+    <tr><td><code>sepolia.rpc.thirdweb.com</code></td><td><span class="pill ok">200</span></td><td><span class="pill no">429, retry-after 135</span></td><td>Answered once, then throttled hard.</td></tr>
+    <tr><td><code>ethereum-sepolia-rpc.publicnode.com</code></td><td><span class="pill ok">200</span></td><td><span class="pill ok">10/10</span></td><td><strong>provider-a</strong></td></tr>
+    <tr><td><code>sepolia.gateway.tenderly.co</code></td><td><span class="pill ok">200</span></td><td><span class="pill ok">10/10</span></td><td><strong>provider-b</strong></td></tr>
+    <tr><td><code>api.zan.top/eth-sepolia</code></td><td><span class="pill ok">200</span></td><td><span class="pill ok">10/10</span></td><td><strong>provider-c</strong></td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <b>The generalisable lesson</b>
+  A single successful request is not evidence that an endpoint is usable. The final three were each
+  put through a <strong>ten-request burst from the instance itself</strong>; that is what separated
+  them from thirdweb, which passes any one-shot test. Reachability is a property of the
+  <em>origin</em>, not of the URL.
+</div>
+
+<h3>7.2 Screening mode</h3>
+<div class="file">
+  <div class="name"><span>crypto.properties</span><span class="tag">screening</span></div>
+<pre><code># No screening.mode here on purpose. local-dev is refused outside the local profile - the
+# service will not start - and fail-closed is the default (matchIfMissing = true), which
+# records an ERROR outcome rather than pretending an address was screened.</code></pre>
+</div>
+
+<h3>7.3 The demo token, verified by calling it</h3>
+<p>
+  The allowlisted token was confirmed on-chain rather than trusted from memory — <code>name()</code>,
+  <code>symbol()</code> and <code>decimals()</code> over <code>eth_call</code>:
+</p>
+<div class="file">
+  <div class="name"><span>verification performed before trusting the address</span><span class="tag">eth_call</span></div>
+<pre><code>0xfff9976782d46cc05630d1f6ebab18b2324d6b14
+  name()      -&gt; "Wrapped Ether"
+  symbol()    -&gt; "WETH"
+  decimals()  -&gt; 18</code></pre>
+</div>
+
+<div class="info">
+  <b>Why WETH and not USDC</b>
+  USDC was the original choice and is a better demo token in principle. In practice, Sepolia USDC
+  moves almost entirely <em>inside swaps</em>, where it is not the first transfer in the
+  transaction — so a real USDC transaction verifies as <code>UNKNOWN_TOKEN</code>. A scan of 1,399
+  USDC transfers over 60 blocks found <strong>zero</strong> where USDC was the first event. In those
+  same swaps WETH <em>is</em> first, so a live transaction produces a fully <code>AGREED</code>
+  answer. The Sepolia USDC address is recorded in <code>env.example</code> if it is wanted back.
+</div>
+
+<div class="page-break"></div>
+
+<h2><span class="num">8</span>The eight failures that only deploying could find</h2>
+
+<p>
+  Every item below passed local testing, or was never exercised locally at all. This is the
+  substantive output of the exercise: the gap between "it works on my machine" and "it works".
+</p>
+
+<table>
+  <thead><tr><th style="width:4%">#</th><th style="width:26%">Failure</th><th style="width:36%">Why local testing could not catch it</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>flyway:10-alpine</code> is amd64-only and version-drifted</td><td>Local machine never pulled it for arm64, and the tag resolved to something newer than the tested version.</td><td>Pin <code>11.7.2-alpine</code> in both places.</td></tr>
+    <tr><td>2</td><td>Compose plugin for the wrong architecture</td><td>User-data hardcoded <code>x86_64</code>; the laptop never ran user-data.</td><td><code>$(uname -m)</code> in user-data; a real probe and self-repair in Ansible.</td></tr>
+    <tr><td>3</td><td><code>init.sql</code> unreadable by Postgres (uid 70)</td><td>Local compose does not escalate to root, so the file was owned by the developer and world-readable.</td><td><code>owner/group: "70"</code>, mode kept at 0600.</td></tr>
+    <tr><td>4</td><td>auth refuses to start: no KMS key</td><td>The guard only fires outside the <code>local</code> profile.</td><td>Real KMS key in CDK + <code>MFA_SEED_KEK_ARN</code>.</td></tr>
+    <tr><td>5</td><td>crypto refuses to start: <code>screening.mode=local-dev</code></td><td>Same guard class — correct behaviour, invisible locally.</td><td>Fall back to the <code>fail-closed</code> default.</td></tr>
+    <tr><td>6</td><td>gRPC rejects <code>http://</code> TRON targets, and TRON cannot be deleted</td><td>Local config used bare <code>host:port</code>; the production file was newly written.</td><td>Restore bare <code>host:port</code> placeholders, document the three-provider requirement.</td></tr>
+    <tr><td>7</td><td><code>1rpc.io</code> returns 403 to AWS</td><td>Chosen by testing from a residential address.</td><td>Replace; burst-test every candidate from the instance.</td></tr>
+    <tr><td>8</td><td><code>thirdweb</code> returns 429 after one request</td><td>A single successful request looks identical to a usable endpoint.</td><td>Replace with ZAN; adopt burst testing as the standard.</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Two further corrections were made to claims rather than code. An earlier statement that the
+  production compose file had been verified locally with "all three services started with zero
+  startup failures" <strong>did not hold</strong> — items 4 and 5 show both auth and crypto refusing
+  to start under <code>SPRING_PROFILES_ACTIVE=prod</code>. And a comment asserting that "Caddy skips
+  the directive when the variable is empty" was a guess, not a measurement; it was removed along
+  with the directive.
+</p>
+
+<h2><span class="num">9</span>What this achieves, and what it does not</h2>
+
+<h3>9.1 From a user's point of view</h3>
+<p>
+  Someone who has been sent a payment and a transaction hash can, with no account and no software,
+  paste that hash into a public web page and learn — within seconds, from three independent sources
+  — whether the payment is real, how settled it is, and exactly what moved. The page will say
+  <em>"not yet"</em> when the chain has not settled, and will refuse to name a token it cannot
+  identify. That refusal is the product: a verification service that overstates its confidence is
+  worse than none.
+</p>
+
+<h3>9.2 What it proves to the team</h3>
+<ul>
+  <li>The three services genuinely interoperate outside a developer machine, including real OAuth2 <code>client_credentials</code> between <code>payment</code> and <code>crypto</code>.</li>
+  <li>The 2-of-3 quorum works against <strong>real, disagreeing providers</strong> — and <code>HELD</code>, which no local test could ever produce, was observed.</li>
+  <li>The whole environment is reproducible from this repository: <code>./cdk deploy</code> then <code>./play</code>, from any machine with Docker and credentials. No console clicking, no undocumented state.</li>
+  <li>The startup guards built months ago (KMS, screening mode, signing key) all fired correctly the first time they were outside <code>local</code>. They were not theatre.</li>
+</ul>
+
+<h3>9.3 Limitations — stated plainly</h3>
+
+<table>
+  <thead><tr><th style="width:26%">Limitation</th><th>Detail</th><th style="width:26%">What would fix it</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Public RPC endpoints, no SLA</strong></td>
+      <td>All three providers are free, unauthenticated, shared endpoints. thirdweb threw <code>429 retry-after: 135</code> after a single request; 1rpc.io blocks AWS entirely. The three now in use passed 10/10, but nothing contractually stops them throttling mid-demo — and if two of three throttle, the quorum cannot form and the answer becomes a 503.</td>
+      <td>Keyed free tiers (Alchemy, Infura) or paid plans. Roughly USD 0–50/month for demo volumes.</td>
+    </tr>
+    <tr>
+      <td><strong>Sepolia testnet only</strong></td>
+      <td>Nothing verified here involves real money. Mainnet is a configuration change, but mainnet RPC volume is where provider costs actually begin.</td>
+      <td>Mainnet endpoints and a funded provider plan.</td>
+    </tr>
+    <tr>
+      <td><strong>One allowlisted token</strong></td>
+      <td>Exactly one ERC-20 can be named. Everything else is <code>UNKNOWN_TOKEN</code> — correct, but narrow.</td>
+      <td>A token registry, or a trusted on-chain metadata source.</td>
+    </tr>
+    <tr>
+      <td><strong>Single box, no redundancy</strong></td>
+      <td>One EC2 instance runs Postgres, Kafka and three JVMs on 3835 MB. No HA, no failover, no autoscaling. An instance failure is total downtime.</td>
+      <td>The planned EKS + RDS + MSK stacks.</td>
+    </tr>
+    <tr>
+      <td><strong>No backups</strong></td>
+      <td>Data lives in Docker volumes on one EBS volume with <code>delete_on_termination=True</code>. <code>cdk destroy</code> discards everything. Acceptable for a demo that stores no customer data; unacceptable for anything else.</td>
+      <td>RDS with automated snapshots.</td>
+    </tr>
+    <tr>
+      <td><strong>Unauthenticated public endpoint</strong></td>
+      <td><code>POST /api/v1/verifications</code> is open to anyone. Each call costs three upstream RPC requests, so a trivial script can exhaust the providers' rate limits — a denial-of-service with no authentication needed.</td>
+      <td>Rate limiting at the edge (see §11), plus a per-IP quota.</td>
+    </tr>
+    <tr>
+      <td><strong>Secrets sit in a file on the box</strong></td>
+      <td><code>/opt/checky/.env</code> is mode 0600 and holds database passwords and the client secret. Adequate for a throwaway box; not how production should hold secrets.</td>
+      <td>AWS Secrets Manager or SSM Parameter Store with the instance role reading at boot.</td>
+    </tr>
+    <tr>
+      <td><strong>No monitoring or alerting</strong></td>
+      <td>No metrics, no log aggregation, no alarms. A crash is discovered by visiting the page.</td>
+      <td>CloudWatch agent, or the observability stack in the main plan.</td>
+    </tr>
+    <tr>
+      <td><strong>Images pushed from a laptop</strong></td>
+      <td>No CI/CD. <code>IMAGE_TAG=latest</code>, so there is no record of which commit is deployed.</td>
+      <td>A pipeline that tags images with the commit SHA.</td>
+    </tr>
+    <tr>
+      <td><strong>Let's Encrypt rate limits</strong></td>
+      <td>Fifty certificates per registered domain per week, and five duplicate certificates per week. Repeated redeploys against the same hostname can exhaust the duplicate limit and leave the site without a certificate for days.</td>
+      <td>Caddy persists certificates in the <code>caddy-data</code> volume; keep that volume, or use the staging endpoint while iterating.</td>
+    </tr>
+    <tr>
+      <td><strong>Cosmetic: wrong error copy</strong></td>
+      <td>A 503 from the verification endpoint reads <em>"The invoice could not be created…"</em> — shared handler text from the merchant API, on a page that has nothing to do with invoices.</td>
+      <td>A verification-specific problem detail.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<h2><span class="num">10</span>Where we are, and where we are going</h2>
+
+<h3>10.1 Where we are</h3>
+<p>
+  The demo path is <strong>proven end to end on real infrastructure</strong> and then torn down. The
+  code to recreate it is committed. What exists today:
+</p>
+<ul>
+  <li>A CDK (Python) stack that provisions the whole environment reproducibly, with the toolchain containerised so no machine-level prerequisites are needed beyond Docker.</li>
+  <li>An idempotent Ansible playbook that configures the box over SSM with no SSH, and gates its own success on live HTTP checks from outside.</li>
+  <li>A production compose topology with a single public ingress, real service-to-service auth, out-of-service migrations and per-service database roles.</li>
+  <li>Backend services (auth, crypto, payment, notification) complete and heavily tested; the frontend at task 46 of its sequence, with a design system and authenticated shell landed.</li>
+</ul>
+
+<h3>10.2 The immediate next steps</h3>
+<ol>
+  <li><strong>Tie it to the real domain, behind Cloudflare</strong> — §11, the last mile.</li>
+  <li><strong>Move off unauthenticated public RPC</strong> — keyed endpoints so a demo cannot be throttled into a 503.</li>
+  <li><strong>Rate-limit the public endpoint</strong> — at the Cloudflare edge, before it costs upstream requests.</li>
+  <li><strong>Fix the 503 copy</strong> so a verification failure does not mention invoices.</li>
+  <li><strong>Tag images by commit SHA</strong> and stop deploying <code>latest</code>.</li>
+</ol>
+
+<h3>10.3 The longer arc</h3>
+<p>
+  The demo stack is explicitly <em>not</em> the production design, and its docstring says so. The
+  planned platform splits into CDK stacks by blast radius — network, data, security, edge, one per
+  service — running on EKS with RDS, MSK and KMS. The useful property of what was built here is
+  that the <em>contracts</em> are already right: one database per service, migrations outside the
+  services, pull-only image access, least-privilege IAM, a single public ingress with default-deny.
+  Each of those survives the move; only the implementations change.
+</p>
+
+<h2><span class="num">11</span>The last mile — a real domain behind Cloudflare</h2>
+
+<p>
+  Today the site answers on <code>54-216-107-16.sslip.io</code>, a wildcard DNS service that
+  resolves any dashed-IP hostname to that IP. It is genuinely useful — it earned a real Let's
+  Encrypt certificate — but it is not a name anyone should be given. This section is the full
+  procedure to move to an owned domain fronted by Cloudflare.
+</p>
+
+<h3>11.1 The decision that shapes everything else: who holds the certificate</h3>
+
+<div class="warn">
+  <b>Read this before turning the orange cloud on</b>
+  Caddy currently gets its certificate over the <strong>HTTP-01</strong> challenge, which requires
+  Let's Encrypt to reach port 80 on the origin. Once Cloudflare proxies the hostname, Cloudflare
+  terminates TLS at its edge and the origin is no longer directly addressable — so HTTP-01
+  renewal becomes unreliable or impossible. Enabling the proxy without changing certificate
+  strategy is the single most common way to break this setup, and it breaks at <em>renewal</em>,
+  sixty days later, not at switch-over.
+</div>
+
+<p>Two workable strategies, in order of preference:</p>
+
+<table>
+  <thead><tr><th style="width:22%">Strategy</th><th>How it works</th><th style="width:28%">Trade-off</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>A. Cloudflare Origin CA</strong> <span class="pill ok">recommended</span></td>
+      <td>Cloudflare issues a long-lived (up to 15-year) certificate valid only between its edge and your origin. Caddy serves it with an explicit <code>tls</code> directive and stops talking to Let's Encrypt entirely. Cloudflare presents its own public certificate to visitors.</td>
+      <td>No ACME on the origin at all — nothing to renew, nothing to break. Requires SSL mode <strong>Full (strict)</strong>.</td>
+    </tr>
+    <tr>
+      <td><strong>B. DNS-01 with a Cloudflare API token</strong></td>
+      <td>Caddy keeps using Let's Encrypt but proves control via a DNS TXT record instead of port 80, so the origin need not be reachable.</td>
+      <td>Needs a <strong>custom Caddy image</strong> (the Cloudflare DNS module is not in the standard build) and a scoped API token on the box.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>11.2 Procedure — strategy A, step by step</h3>
+
+<h4>Step 1 · Add the domain to Cloudflare</h4>
+<p>
+  Add the zone in the Cloudflare dashboard and change the nameservers at the registrar to the two
+  Cloudflare assigns. Propagation is typically minutes to a few hours. Cloudflare's own activation
+  check confirms it.
+</p>
+
+<h4>Step 2 · Create the DNS record</h4>
+<table>
+  <thead><tr><th>Type</th><th>Name</th><th>Content</th><th>Proxy</th><th>TTL</th></tr></thead>
+  <tbody>
+    <tr><td>A</td><td><code>verify</code></td><td>the stack's <code>PublicIp</code> output</td><td><strong>Proxied</strong> (orange)</td><td>Auto</td></tr>
+  </tbody>
+</table>
+<p class="cap">
+  Leave it <em>unproxied</em> (grey) at first if you want to confirm the origin works under the new
+  name before Cloudflare is in the path. With strategy A that is optional.
+</p>
+
+<h4>Step 3 · Issue an Origin CA certificate</h4>
+<p>
+  In <strong>SSL/TLS → Origin Server → Create Certificate</strong>, request a certificate for
+  <code>verify.example.com</code> (and <code>*.example.com</code> if wanted). Cloudflare returns a
+  certificate and a private key <em>once</em> — the key is never shown again. Save both.
+</p>
+
+<div class="file">
+  <div class="name"><span>place the pair on the box via Ansible, never by hand</span><span class="tag">new playbook tasks</span></div>
+<pre><code>- name: Install the Cloudflare Origin CA certificate
+  ansible.builtin.copy:
+    src: "{{ deploy_root }}/secrets/origin.pem"
+    dest: "{{ app_dir }}/config/origin.pem"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the stack
+
+- name: Install the Origin CA private key
+  ansible.builtin.copy:
+    src: "{{ deploy_root }}/secrets/origin.key"
+    dest: "{{ app_dir }}/config/origin.key"
+    owner: root
+    group: root
+    mode: "0600"       # the private key - never 0644
+  no_log: true
+  notify: Restart the stack</code></pre>
+</div>
+<p class="cap">
+  Add <code>infra/deploy/secrets/</code> to <code>.gitignore</code> in the same commit that creates
+  it. The key must never be committed.
+</p>
+
+<h4>Step 4 · Point Caddy at the certificate instead of Let's Encrypt</h4>
+<div class="file">
+  <div class="name"><span>config/Caddyfile — the only change needed</span><span class="tag">TLS</span></div>
+<pre><code>{$PUBLIC_HOST} {
+	# Cloudflare Origin CA, not Let's Encrypt. Caddy no longer performs ACME at all, so the
+	# origin does not need to be publicly reachable on port 80 for a renewal to succeed.
+	tls /etc/caddy/origin.pem /etc/caddy/origin.key
+
+	encode zstd gzip
+	# ... the rest of the file is unchanged ...
+}</code></pre>
+</div>
+
+<div class="file">
+  <div class="name"><span>compose.prod.yaml — mount the pair</span><span class="tag">edge service</span></div>
+<pre><code>edge:
+  image: caddy:2.10-alpine
+  ports: ["80:80", "443:443"]
+  volumes:
+    - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+    - ./config/origin.pem:/etc/caddy/origin.pem:ro
+    - ./config/origin.key:/etc/caddy/origin.key:ro
+    - ./landing:/srv/landing:ro
+    - caddy-data:/data
+    - caddy-config:/config</code></pre>
+</div>
+
+<h4>Step 5 · Set the SSL mode correctly</h4>
+<p>
+  <strong>SSL/TLS → Overview → Full (strict)</strong>. This is not optional with strategy A, and the
+  other modes are actively harmful:
+</p>
+<table>
+  <thead><tr><th style="width:22%">Mode</th><th>What it does</th><th style="width:22%">Verdict</th></tr></thead>
+  <tbody>
+    <tr><td>Off</td><td>No TLS to the visitor.</td><td><span class="pill no">never</span></td></tr>
+    <tr><td>Flexible</td><td>TLS to the visitor, <strong>plaintext HTTP to the origin</strong>. Traffic crosses the public internet unencrypted and redirect loops are common.</td><td><span class="pill no">never</span></td></tr>
+    <tr><td>Full</td><td>TLS to the origin, but the origin's certificate is <em>not validated</em> — a self-signed certificate is accepted, so the hop is encrypted but not authenticated.</td><td><span class="pill gap">insufficient</span></td></tr>
+    <tr><td>Full (strict)</td><td>TLS to the origin with full validation against the Origin CA.</td><td><span class="pill ok">use this</span></td></tr>
+  </tbody>
+</table>
+
+<h4>Step 6 · Lock the origin to Cloudflare</h4>
+<p>
+  With the proxy enabled, anyone who learns the IP can still bypass Cloudflare and hit the origin
+  directly — defeating the rate limiting and WAF entirely. The security group should accept 80 and
+  443 <strong>only from Cloudflare's published ranges</strong>.
+</p>
+
+<div class="file">
+  <div class="name"><span>demo_stack.py — replacing the two any-ipv4 rules</span><span class="tag">CDK</span></div>
+<pre><code># Cloudflare's published edge ranges, from https://www.cloudflare.com/ips-v4
+# Fetch them at synth time rather than pasting a list that will silently go stale:
+#   curl -s https://www.cloudflare.com/ips-v4
+# Treat the fetched list as data: validate each entry parses as a CIDR before using it.
+cloudflare_v4 = app.node.try_get_context("cloudflareIpsV4")  # newline- or comma-separated
+
+if cloudflare_v4:
+    for cidr in [c.strip() for c in cloudflare_v4.replace(",", "\n").split() if c.strip()]:
+        security_group.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(443), "Cloudflare edge")
+        security_group.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(80), "Cloudflare edge")
+else:
+    # Fallback: open, as today. Only correct while the hostname is unproxied.
+    security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP (ACME + redirect)")
+    security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")</code></pre>
+</div>
+
+<div class="note">
+  <b>A sturdier alternative</b>
+  <strong>Cloudflare Tunnel</strong> (<code>cloudflared</code> as a container in the compose file)
+  removes inbound ports altogether: the box dials out to Cloudflare and nothing needs to be open.
+  That is strictly better than an IP allowlist, which goes stale whenever Cloudflare adds a range.
+  It costs one more container and a tunnel token.
+</div>
+
+<h4>Step 7 · Recover the real client IP</h4>
+<p>
+  Behind a proxy, every request appears to come from a Cloudflare address. Caddy must be told to
+  trust the proxy before it will believe the forwarded header — otherwise logs and any origin-side
+  rate limiting see only Cloudflare.
+</p>
+<div class="file">
+  <div class="name"><span>config/Caddyfile — global options block</span><span class="tag">client IP</span></div>
+<pre><code># Cloudflare sends the visitor's address in CF-Connecting-IP. Caddy will only believe a
+# forwarded address from a proxy it has been told to trust, which is the correct default:
+# otherwise any client could spoof its own source address by setting the header.
+{
+	servers {
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 # ... the full Cloudflare list
+	}
+}</code></pre>
+</div>
+
+<h4>Step 8 · Turn on the protections that were the point of using Cloudflare</h4>
+<table>
+  <thead><tr><th style="width:26%">Setting</th><th>Value</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>Always Use HTTPS</td><td>On</td><td>Edge-level redirect; Caddy's own 308 becomes a backstop.</td></tr>
+    <tr><td>Minimum TLS Version</td><td>1.2</td><td>Drops obsolete clients.</td></tr>
+    <tr><td>HSTS</td><td>On, 12 months</td><td>Caddy already sends <code>max-age=31536000</code>; enabling it at the edge covers the proxied path too. Enable <em>only</em> once HTTPS is confirmed working — it is hard to undo.</td></tr>
+    <tr><td>Rate limiting rule</td><td><code>POST /api/v1/verifications</code> → e.g. 10 requests / minute / IP</td><td><strong>The most valuable single setting.</strong> Each call costs three upstream RPC requests; this is what stops a script exhausting the provider quotas.</td></tr>
+    <tr><td>Cache rule — API</td><td>Bypass cache for <code>/api/*</code></td><td>A cached verification result would be actively wrong: confirmations change every block.</td></tr>
+    <tr><td>Cache rule — page</td><td>Cache <code>/</code> and <code>/logo.png</code></td><td>The landing page is static; serving it from the edge takes load off a 2-vCPU box.</td></tr>
+    <tr><td>Bot Fight Mode / WAF</td><td>On</td><td>Free-tier protection against the commodity scanning that any public IP attracts.</td></tr>
+  </tbody>
+</table>
+
+<h4>Step 9 · Point the deployment at the new name and re-run</h4>
+<div class="file">
+  <div class="name"><span>infra/deploy/.env</span><span class="tag">one line</span></div>
+<pre><code>PUBLIC_HOST=verify.example.com</code></pre>
+</div>
+<p>
+  Then <code>./play</code>. The playbook's own post-deploy gates now exercise the <em>real</em>
+  hostname through Cloudflare: the landing page must return 200 and all ten private paths must
+  return 404. If Cloudflare is misconfigured — wrong SSL mode, a caching rule that swallows the
+  API — the deploy fails rather than appearing to succeed.
+</p>
+
+<h4>Step 10 · Verify what you actually built</h4>
+<div class="file">
+  <div class="name"><span>post-cutover checks</span><span class="tag">verification</span></div>
+<pre><code># 1. The certificate the visitor sees is Cloudflare's, and the name is right.
+openssl s_client -connect verify.example.com:443 -servername verify.example.com &lt;/dev/null \
+  | openssl x509 -noout -subject -issuer -dates
+
+# 2. Cloudflare is actually in the path (expect cf-ray and server: cloudflare).
+curl -sI https://verify.example.com/ | grep -iE 'cf-ray|server|strict-transport'
+
+# 3. The origin is NOT reachable directly any more (expect a timeout, not a page).
+curl -sS --max-time 10 https://&lt;PublicIp&gt;/ ; echo "exit=$?"
+
+# 4. The product still works through the proxy.
+curl -s -X POST https://verify.example.com/api/v1/verifications \
+  -H 'Content-Type: application/json' \
+  --data '{"txHash":"0x...","chain":"ETHEREUM"}'
+
+# 5. The rate limit engages where it should.
+for i in $(seq 1 25); do
+  curl -s -o /dev/null -w '%{http_code} ' -X POST https://verify.example.com/api/v1/verifications \
+    -H 'Content-Type: application/json' --data '{"txHash":"0x...","chain":"ETHEREUM"}'
+done; echo</code></pre>
+</div>
+
+<div class="warn">
+  <b>Order matters</b>
+  Install the origin certificate and set <strong>Full (strict)</strong> <em>before</em> enabling the
+  orange cloud. Doing it the other way round gives a window in which Cloudflare cannot validate the
+  origin and every visitor sees error 526.
+</div>
+
+<div class="page-break"></div>
+
+<h2><span class="num">12</span>Operations</h2>
+
+<h3>12.1 Deploy from nothing</h3>
+<div class="file">
+  <div class="name"><span>full sequence</span><span class="tag">runbook</span></div>
+<pre><code># 0. Credentials in the environment (never written to ~/.aws, never committed).
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=eu-west-1
+
+# 1. Infrastructure. First time in an account only:
+cd infra/deploy/cdk
+./cdk bootstrap
+./cdk deploy                     # ~4 minutes; prints the outputs below
+
+# 2. Fill in infra/deploy/.env from the outputs:
+#    PublicIp -> your DNS A record      EcrRegistry -> ECR_REGISTRY
+#    MfaSeedKekArn -> MFA_SEED_KEK_ARN
+#    InstanceId + SsmTransferBucketName -> ansible/inventory.ini
+
+# 3. Build and push the three images (from the repository root):
+#    docker build + docker push to $ECR_REGISTRY/checky-{auth,crypto,payment}:latest
+
+# 4. Configure and start. Idempotent - re-run it as often as you like.
+cd ../ansible
+./play
+
+# 5. Tear down. Removes the instance, EIP, ECR repositories, bucket and KMS key.
+cd ../cdk
+./cdk destroy</code></pre>
+</div>
+
+<h3>12.2 Access without SSH</h3>
+<ul>
+  <li><strong>Console:</strong> EC2 → Connect → Session Manager. The session lands as <code>ssm-user</code>.</li>
+  <li><code>sudo cd /home/ec2-user</code> <em>cannot</em> work — <code>cd</code> is a shell builtin, not a program. Use <code>sudo -i</code> or <code>sudo su - ec2-user</code>. The home directory is mode 700, which is why <code>ssm-user</code> cannot enter it.</li>
+  <li>The application is at <code>/opt/checky</code>. Do not edit it: the playbook overwrites it on the next run. Change the repository instead.</li>
+  <li>The Java images contain no shell, so <code>docker compose exec payment sh</code> fails by design. Use <code>docker compose logs</code>.</li>
+</ul>
+
+<h3>12.3 Cost</h3>
+<table>
+  <thead><tr><th>Component</th><th style="width:22%">Rate</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>t4g.medium, on-demand, eu-west-1</td><td>≈ $0.0368 /hr</td><td>The bulk of it.</td></tr>
+    <tr><td>30 GB gp3</td><td>≈ $0.0033 /hr</td><td>$2.40/month.</td></tr>
+    <tr><td>Elastic IP</td><td>≈ $0.005 /hr</td><td>Charged whether or not it is associated.</td></tr>
+    <tr><td>ECR, S3, KMS</td><td>negligible</td><td>KMS is $1/month per key while it exists.</td></tr>
+    <tr><td><strong>Total</strong></td><td><strong>≈ $0.05 /hr</strong></td><td>≈ $35/month if left running.</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">13</span>File inventory</h2>
+<table>
+  <thead><tr><th style="width:42%">Path</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td><code>infra/deploy/cdk/app.py</code></td><td>CDK entry point; the two refusals.</td></tr>
+    <tr><td><code>infra/deploy/cdk/demo_stack.py</code></td><td>The whole stack: ECR, S3, KMS, SG, IAM, EC2, EIP, outputs.</td></tr>
+    <tr><td><code>infra/deploy/cdk/{Dockerfile,cdk,requirements.txt,cdk.json}</code></td><td>Containerised CDK toolchain and wrapper.</td></tr>
+    <tr><td><code>infra/deploy/ansible/playbook.yml</code></td><td>Configuration, deployment and the two post-deploy gates.</td></tr>
+    <tr><td><code>infra/deploy/ansible/templates/init.sql.j2</code></td><td>Databases and application roles, rendered with secrets.</td></tr>
+    <tr><td><code>infra/deploy/ansible/{ansible.cfg,inventory.ini.example}</code></td><td>SSM connection settings.</td></tr>
+    <tr><td><code>infra/deploy/ansible/{Dockerfile,play}</code></td><td>Containerised Ansible with the SSM plugin.</td></tr>
+    <tr><td><code>infra/deploy/compose.prod.yaml</code></td><td>Runtime topology; the single public ingress.</td></tr>
+    <tr><td><code>infra/deploy/config/Caddyfile</code></td><td>TLS, security headers, four routes, default-deny.</td></tr>
+    <tr><td><code>infra/deploy/config/crypto.properties</code></td><td>The 2-of-3 quorum and the token allowlist.</td></tr>
+    <tr><td><code>infra/deploy/env.example</code></td><td>Every variable, with the measured guidance. Holds no real values.</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  Checkychain · Public Verification Demo · Infrastructure Record · 2026-11-25<br>
+  Branch <code>demo/onchain-verification</code>. Figures and outcomes in this document were measured
+  against the deployed stack, not estimated. The stack was destroyed after this record was written.
+</footer>
+
+</body>
+</html>

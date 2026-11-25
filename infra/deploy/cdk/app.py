@@ -8,9 +8,6 @@ from demo_stack import DemoStack
 
 app = cdk.App()
 
-# Required context, passed with -c or set in cdk.context.json. There is no default for ssh_cidr
-# on purpose: the default would be 0.0.0.0/0, and SSH open to the internet is not something
-# anyone should get by forgetting to think about it.
 # Both optional, and the default is no SSH at all: no open port and no key on the box.
 #
 # Ansible connects over SSM and the console connects through Session Manager, so an SSH rule
