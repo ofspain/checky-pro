@@ -115,13 +115,23 @@
         mode: "0600"
       no_log: true
 
-    - name: Copy the edge and service configuration
+    # Deliberately NOT a loop with one shared notify. These two files are read by two different
+    # containers, and the handler has to restart the one that reads the file that changed - a
+    # single "restart the stack" handler would take the whole site down to pick up a change only
+    # one container can see. Splitting the copy is what lets the notify be specific.
+    - name: Copy the edge configuration
       ansible.builtin.copy:
-        src: "{{ deploy_root }}/config/{{ item }}"
-        dest: "{{ app_dir }}/config/{{ item }}"
+        src: "{{ deploy_root }}/config/Caddyfile"
+        dest: "{{ app_dir }}/config/Caddyfile"
         mode: "0644"
-      loop: [Caddyfile, crypto.properties]
-      notify: Restart the stack
+      notify: Restart edge
+
+    - name: Copy the crypto service configuration
+      ansible.builtin.copy:
+        src: "{{ deploy_root }}/config/crypto.properties"
+        dest: "{{ app_dir }}/config/crypto.properties"
+        mode: "0644"
+      notify: Restart crypto
 
     # The passwords are substituted here rather than stored anywhere, and the file only has any
     # effect on an empty data volume - Postgres ignores it on every later start.
@@ -146,7 +156,9 @@
         dest: "{{ app_dir }}/landing/{{ item }}"
         mode: "0644"
       loop: [index.html, logo.png]
-      notify: Restart the stack
+      # No notify, and that is measured rather than assumed: Caddy's file_server opens the file
+      # per request, so an edited index.html is served immediately. Appending a marker to the
+      # live file and fetching / returned the marker with no restart at all.
 
     # Flyway runs outside the services, as it does locally, so the SQL has to be on the box. It is
     # a few kilobytes of text - the source tree stays off this machine.
@@ -208,7 +220,51 @@
       become: false
 
   handlers:
-    - name: Restart the stack
+    # `docker compose up -d` CANNOT pick up a bind-mounted config change, and this is the whole
+    # reason these handlers exist. Compose decides whether to recreate a container by comparing
+    # the service's image, environment and mount *definitions* - none of which change when the
+    # content of a mounted file changes. So it correctly reports there is nothing to do, and the
+    # container keeps running with whatever it parsed at startup. For Spring and for Caddy, that
+    # is the entire configuration.
+    #
+    # This cost two apparently-successful deploys: crypto.properties gained a second token, the
+    # file reached the box, the play reported changed, and the service went on using the old
+    # config. The symptom was a correct-looking UNKNOWN_TOKEN, which sent me looking at the
+    # allowlist code rather than at the container. Only an explicit restart re-reads the file.
+    #
+    # Handlers run in the order they are DEFINED here, not the order they are notified, which is
+    # what makes the readiness wait below reliably follow the restart that makes it necessary.
+    - name: Restart edge
       ansible.builtin.command:
-        cmd: docker compose up -d
+        cmd: docker compose restart edge
         chdir: "{{ app_dir }}"
+
+    - name: Restart crypto
+      ansible.builtin.command:
+        cmd: docker compose restart crypto
+        chdir: "{{ app_dir }}"
+      notify: Wait for verification to work again
+
+    # crypto takes about a minute to start, and payment answers every verification with 503
+    # until it is back. Without this, the play finishes green while the product is still down -
+    # which is exactly what happened: the landing-page gate passed because `edge` was fine, and
+    # the first real check after the deploy failed.
+    #
+    # A well-formed hash that does not exist is the probe: it exercises the whole path - payment
+    # mints a token, calls crypto, crypto asks all three providers - and settles as NOT_FOUND.
+    # Anything other than 503 therefore means the chain is serving again.
+    - name: Wait for verification to work again
+      ansible.builtin.uri:
+        url: "https://{{ deploy_env.PUBLIC_HOST }}/api/v1/verifications"
+        method: POST
+        body_format: json
+        body:
+          txHash: "0x0000000000000000000000000000000000000000000000000000000000000000"
+          chain: ETHEREUM
+        status_code: [200, 404, 422, 503]
+      register: crypto_ready
+      until: crypto_ready.status != 503
+      retries: 24
+      delay: 10
+      delegate_to: localhost
+      become: false
