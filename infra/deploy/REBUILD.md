@@ -207,9 +207,21 @@ Cloudflare zone, the DNS records, the delegation, the Origin CA keypair, `.env` 
 alone — which is exactly the set this file says survives.
 
 The DNS records will point at a released address until the next rebuild. That is harmless: the name
-resolves to Cloudflare either way, and Cloudflare returns a 522 to anyone who visits. If you would
-rather it said something deliberate, pause the zone (Overview → Advanced → Pause Cloudflare on Site)
-or set the records to the documentation-only address `192.0.2.1`.
+resolves to Cloudflare either way, and Cloudflare returns **`error code: 522`** to anyone who visits.
+
+Measured straight after the 2026-11-26 teardown: apex, `www` and plain HTTP all answer 522, and all
+three take **about 20 seconds** — Cloudflare's origin-connect timeout. That matters when you check
+it: `curl --max-time 8` reports `000` and looks like a DNS or TLS fault, when in fact the edge is
+working exactly as intended and is simply still waiting on a dead origin. Give it 30 seconds.
+
+If you would rather it said something deliberate, pause the zone (Overview → Advanced → Pause
+Cloudflare on Site) or set the records to `192.0.2.1`, which is reserved for documentation and
+routes nowhere.
+
+**One residual cost.** The KMS key sits in `PendingDeletion` for 30 days (the 2026-11-26 teardown
+scheduled it for 2026-12-26) and AWS bills $1/month for a key in that state — so roughly a dollar
+trails each teardown. The alias is released immediately, which is what lets a rebuild reclaim it;
+there is no reason to cancel the deletion.
 
 ---
 

@@ -2147,9 +2147,19 @@ cd ../cdk &amp;&amp; ./cdk destroy</code></pre>
 <div class="note">
   <b>What the DNS records point at between demos</b>
   A released Elastic IP, until the next rebuild. That is harmless rather than dangerous — the name
-  resolves to Cloudflare either way, and Cloudflare answers a 522 to anyone who visits. If a
-  deliberate answer is wanted instead, pause the zone (Overview → Advanced) or set the records to
+  resolves to Cloudflare either way, and Cloudflare answers <code>error code: 522</code>. Measured
+  immediately after this teardown: apex, <code>www</code> and plain HTTP all return 522, and all
+  three take <strong>about 20 seconds</strong> to do it, which is Cloudflare's origin-connect
+  timeout. That is worth knowing before checking it, because a short
+  <code>curl --max-time 8</code> reports <code>000</code> and looks like a DNS or TLS fault when the
+  edge is in fact behaving exactly as designed and merely waiting on a dead origin. If a deliberate
+  answer is wanted instead, pause the zone (Overview → Advanced) or set the records to
   <code>192.0.2.1</code>, which is reserved for documentation and routes nowhere.
+  <br><br>
+  One cost trails a teardown: the KMS key sits in <code>PendingDeletion</code> for thirty days — this
+  one until 2026-12-26 — and AWS bills $1/month for a key in that state, so roughly a dollar. The
+  <em>alias</em> is released at once, which is what lets a rebuild reclaim it, so there is no reason
+  to cancel the deletion.
 </div>
 
 <div class="info">
