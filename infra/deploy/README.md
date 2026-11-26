@@ -14,7 +14,7 @@ Where it differs, and why:
 | EKS | Docker Compose on one box | One demo. Compose keeps the same service boundaries. |
 | RDS Multi-AZ | Postgres container | Still one database per service, so the move is a connection string. |
 | MSK | Kafka container | MSK costs more per month than this whole deployment. |
-| CloudFront + WAF + ALB | Caddy with Let's Encrypt | Free, automatic, renews itself. An ALB is ~$16/month to serve one page. |
+| CloudFront + WAF + ALB | Cloudflare (free plan) in front of Caddy | Free, and it gives the demo caching, a WAF and the only place rate limiting can live now that the origin is closed. An ALB is ~$16/month to serve one page. |
 | Private subnets | Public subnet + security group | A private subnet needs a NAT gateway, which costs more than the instance. |
 
 ## What ends up on the box
@@ -30,36 +30,54 @@ The source tree never reaches the box. Images are built and pushed from a develo
 the box only pulls. The only repository content copied up is the landing page and the Flyway SQL,
 which is a few kilobytes of text.
 
-## Once
+## Bringing it up
+
+**If you are rebuilding the demo that already ran at `checkychain.com.ng`, read
+[`REBUILD.md`](REBUILD.md) instead of this section.** It is four commands and one dashboard visit,
+and it says which of the slow once-only steps below are already permanent — the Cloudflare zone, the
+nameserver delegation and the Origin CA certificate all survive a teardown, so none of them is ever
+done twice.
+
+This section is the from-nothing path: a new account, or a different hostname.
 
 ```sh
-# 1. Infrastructure. sshCidr has no default on purpose - the default would be 0.0.0.0/0.
-#    ./cdk runs the toolchain in a container, so nothing has to be installed on this machine.
+# 1. Infrastructure. The defaults are the deployed configuration: Cloudflare-only ingress on
+#    80/443, no SSH rule and no key pair at all, t4g.medium (Graviton/arm64).
 cd infra/deploy/cdk
 ./cdk bootstrap                         # first time in this account/region only
-./cdk deploy -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32
-#    Add -c keyName=<your-ec2-key-pair> only if you want an SSH key on the box as well.
-#    Ansible does not need one, and neither does the console.
-# Note the InstanceId, SsmTransferBucketName, PublicIp and EcrRegistry outputs.
+./cdk deploy
+#    Optional: -c sshCidr=$(curl -s https://checkip.amazonaws.com)/32 -c keyName=<key-pair>
+#    for break-glass SSH. Both are needed together, and app.py refuses a /0 outright.
+#    Optional: -c edge=public for a hostname with NO proxy in front - see the note below.
+# Note the PublicIp, InstanceId, SsmTransferBucketName, MfaSeedKekArn and EcrRegistry outputs.
 
-# 2. DNS. Point your hostname's A record at PublicIp and wait for it to resolve.
-#    Caddy cannot obtain a certificate before this is true.
+# 2. A Cloudflare zone for the hostname, with the registrar's nameservers pointed at it.
+#    Allow for this taking up to a day: the registry, not the registrar, is authoritative, and
+#    the registrar's panel reports success while the delegation has not moved. Check with
+#      dig +norecurse @<registry nameserver> <your-domain> NS
+#    Then set SSL/TLS mode to Full (strict), and create an Origin CA certificate covering the
+#    apex and *.apex (SSL/TLS -> Origin Server). That step needs the zone to be ACTIVE, so it
+#    cannot be done while still waiting. Save the pair to secrets/origin.{pem,key}; chmod 600
+#    the key. Point both A records (@ and www) at PublicIp, proxied.
 
 # 3. Configuration.
 cd ..
 cp env.example .env && $EDITOR .env     # .env is gitignored
-cp ansible/inventory.ini.example ansible/inventory.ini && $EDITOR ansible/inventory.ini
+bin/from-stack.sh                       # writes inventory.ini, fills in MFA_SEED_KEK_ARN
 
-# 4. Images. The AWS CLI is in the ansible toolchain image, so it needs no install either.
-docker run --rm -e AWS_PROFILE -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
-  -e AWS_SESSION_TOKEN -v "$HOME/.aws:/root/.aws:ro" --entrypoint aws checky-ansible \
-  ecr get-login-password --region <region> \
-  | docker login --username AWS --password-stdin <EcrRegistry>
-for s in auth crypto payment; do
-  docker build -f services/$s/Dockerfile -t <EcrRegistry>/checky-$s:latest .   # from the repo root
-  docker push <EcrRegistry>/checky-$s:latest
-done
+# 4. Images. The AWS CLI comes from the ansible toolchain image, so it needs no install.
+bin/push-images.sh                      # REBUILD=1 to build them first
 ```
+
+> **`edge=public` and the `tls` directive in `config/Caddyfile` are one decision, not two.**
+> The default `edge=cloudflare` admits only Cloudflare's published ranges on 80 and 443, which is
+> what makes the proxy mandatory rather than merely usual — the origin address is not a secret, it
+> sits in certificate transparency logs and old DNS history. Those same rules are also what stops
+> an ACME HTTP-01 challenge reaching port 80, which is why Caddy serves a pinned Origin CA
+> certificate and performs no ACME at all. If you switch to `edge=public`, you must revert that
+> `tls` directive in the same change, or the box has no usable certificate. Get it the wrong way
+> round and the site breaks at the first *renewal*, about sixty days after a cutover that looked
+> perfect.
 
 ## Every deploy after that
 
@@ -158,10 +176,12 @@ sepolia.etherscan.io before using it.**
 - `caddy validate` on the Caddyfile: valid, with automatic HTTP→HTTPS redirects.
 - **The CDK stack synthesises.** Run on Python 3.12 with the VPC lookup stubbed (the lookup is
   the only part that needs an AWS account), `app.py` produced a CloudFormation template with the
-  security group ingress exactly as intended — 80 and 443 from `0.0.0.0/0`, 22 from the single
-  supplied CIDR and nowhere else — a `t3.medium` with a 30 GB encrypted gp3 root volume, the
-  three `checky-*` ECR repositories, and the `PublicIp`, `EcrRegistry` and `SshCommand` outputs.
-  The missing-context guard was checked separately and refuses to synthesise without `sshCidr`.
+  security group ingress exactly as intended, a 30 GB encrypted gp3 root volume, the three
+  `checky-*` ECR repositories and the five outputs. *This was measured against the stack's first
+  shape — open ingress, `t3.medium`, a required `sshCidr` — all three of which have since changed:
+  ingress is now Cloudflare's ranges only, the instance is `t4g.medium` on Graviton, and SSH is
+  off by default rather than mandatory. The `/0` refusal in `app.py` is still there and still
+  tested.*
 - **The whole stack run locally from `compose.prod.yaml` with the real images and no LocalStack**:
   migrations applied (crypto v10, payments v11), all three services started cleanly, and a check
   returned a correct RFC 9457 `503` after trying three unreachable providers — proving payment
@@ -172,10 +192,14 @@ against a real host.
 
 ## Known limits
 
-- **Rate-limit counters are in memory**, so they are per instance. One instance is the design.
 - **The receipt is not signed.** This path writes no `quorum_decisions` and no `observations` row,
   so it cannot feed attestation.
 - **One box, no redundancy.** Restarting it is about four minutes of downtime; on a laptop the
-  three JVMs took 188 seconds to start together, which is why the default instance is `t3.medium`
-  and not `t3.small`.
-- **No backups.** The Postgres volume is the only copy of the check history.
+  three JVMs took 188 seconds to start together, which is why the default instance is `t4g.medium`
+  and not `t4g.small`.
+- **No backups.** The Postgres volume is the only copy of the check history, it lives on a root
+  EBS volume with `delete_on_termination=True`, and the stack is destroyed between demos — so
+  every receipt goes with it. `REBUILD.md` says so where it will be read in time.
+- **Rate limiting is not configured.** In-memory counters were the design when the box was
+  directly reachable; now that only Cloudflare can reach it, the edge is the only place a limit
+  can be enforced, and the rule has not been created. See `REBUILD.md` step 7.

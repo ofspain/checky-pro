@@ -10,3 +10,6 @@ cdk/cdk.context.json
 
 # Cloudflare Origin CA keypair. Never committed.
 secrets/
+
+# The previous .env, kept by bin/from-stack.sh when it patches the KMS ARN.
+.env.bak

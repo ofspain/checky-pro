@@ -120,16 +120,16 @@
   <div class="kicker">Checkychain · Infrastructure Record · Branch <code>demo/onchain-verification</code></div>
   <h1>Public Verification Demo</h1>
   <div class="sub">Everything provisioned, configured and measured to put one on-chain check on the public internet — and the eight failures that only appeared once it was there.</div>
-  <div class="meta">2026-11-26 · AWS eu-west-1 · CDK (Python) + Ansible (SSM) + Docker Compose · Status: live at checkychain.com.ng, behind Cloudflare</div>
+  <div class="meta">2026-11-26 · AWS eu-west-1 · CDK (Python) + Ansible (SSM) + Docker Compose · Status: proven at <code>checkychain.com.ng</code> behind Cloudflare, then torn down — rebuildable in ~20 min (§12)</div>
 </div>
 
 <div class="factbox">
   <div><dt>Public URL</dt><dd>https://checkychain.com.ng</dd></div>
-  <div><dt>Instance</dt><dd>i-055cc2126616ab204 · t4g.medium · aarch64</dd></div>
-  <div><dt>Elastic IP</dt><dd>52.30.100.74 · closed to the internet</dd></div>
+  <div><dt>Instance (while up)</dt><dd>i-055cc2126616ab204 · t4g.medium · aarch64</dd></div>
+  <div><dt>Elastic IP (released)</dt><dd>52.30.100.74 · was closed to the internet</dd></div>
   <div><dt>Certificates</dt><dd>Universal SSL at the edge · Origin CA to 2041 on the box</dd></div>
   <div><dt>Registry</dt><dd>774173912604.dkr.ecr.eu-west-1.amazonaws.com</dd></div>
-  <div><dt>Running cost</dt><dd>≈ USD 0.05 / hour</dd></div>
+  <div><dt>Running cost</dt><dd>≈ USD 0.05 / hour · down between demos</dd></div>
 </div>
 
 <h2><span class="num">1</span>What this is</h2>
@@ -1978,35 +1978,191 @@ openssl pkey  -in origin.key -pubout      | openssl md5   # this</code></pre></d
 
 <h2><span class="num">12</span>Operations</h2>
 
-<h3>12.1 Deploy from nothing</h3>
-<div class="file">
-  <div class="name"><span>full sequence</span><span class="tag">runbook</span></div>
-<pre><code># 0. Credentials in the environment (never written to ~/.aws, never committed).
-export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=eu-west-1
+<h3>12.1 What survives a teardown, and what does not</h3>
 
-# 1. Infrastructure. First time in an account only:
-cd infra/deploy/cdk
-./cdk bootstrap
-./cdk deploy                     # ~4 minutes; prints the outputs below
+<p>
+  The stack was destroyed again after this record was written, because leaving it up costs about
+  USD 35 a month to serve one page to nobody. That makes <strong>rebuilding a routine operation
+  rather than an exception</strong>, and the thing worth documenting is not the command sequence —
+  which is four commands — but the <em>boundary</em>: which of the expensive, slow, once-only steps
+  are permanent, and which four values come back different every time.
+</p>
+<p>
+  The expensive parts of the first cutover were never the infrastructure. They were a 54-minute
+  nameserver delegation, a certificate that could only be issued once a zone went Active, and four
+  strings copied by hand out of CloudFormation output into two files. <strong>The first two never
+  have to happen again. The third is now a script.</strong>
+</p>
 
-# 2. Fill in infra/deploy/.env from the outputs:
-#    PublicIp -> your DNS A record      EcrRegistry -> ECR_REGISTRY
-#    MfaSeedKekArn -> MFA_SEED_KEK_ARN
-#    InstanceId + SsmTransferBucketName -> ansible/inventory.ini
+<h4>Permanent — never redo</h4>
+<table>
+  <thead><tr><th style="width:30%">What</th><th style="width:28%">Where it lives</th><th>Why it is safe</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>The Cloudflare zone, <strong>Active</strong></td>
+      <td>Cloudflare account</td>
+      <td>A DNS fact, not an AWS one. Unaffected by anything <code>cdk destroy</code> does.</td>
+    </tr>
+    <tr>
+      <td>Nameserver delegation to <code>curt</code> / <code>ligia</code></td>
+      <td>DomainKing + the <code>.ng</code> registry</td>
+      <td>The 54-minute wait, done once. <strong>Never click “Revert Nameserver Change”</strong> in a DomainKing email — that undoes the migration (§11.3).</td>
+    </tr>
+    <tr>
+      <td>The two A records, proxied</td>
+      <td>Cloudflare → DNS</td>
+      <td>The records survive; only the IP <em>value</em> inside them goes stale.</td>
+    </tr>
+    <tr>
+      <td>SSL/TLS mode <strong>Full (strict)</strong></td>
+      <td>Cloudflare → SSL/TLS</td>
+      <td>Anything less and the Origin CA certificate is never validated, so installing it proves nothing (§11.4).</td>
+    </tr>
+    <tr>
+      <td>The Origin CA keypair, valid to <strong>2041-11-22</strong></td>
+      <td><code>infra/deploy/secrets/</code>, gitignored</td>
+      <td>Bound to the hostname, not the instance. A new box reuses the same pair for fifteen years.</td>
+    </tr>
+    <tr>
+      <td><code>infra/deploy/.env</code> — all sixteen values</td>
+      <td>gitignored, mode 0600</td>
+      <td>Includes the three RPC endpoints chosen by testing <em>from the box</em> (§7.2). One line changes per rebuild.</td>
+    </tr>
+    <tr>
+      <td>CDK bootstrap (<code>CDKToolkit</code>)</td>
+      <td>the AWS account, since 2026-05-21</td>
+      <td><code>./cdk bootstrap</code> is once per account and region. Skip it.</td>
+    </tr>
+    <tr>
+      <td>Local <code>arm64</code> service images</td>
+      <td>this laptop's Docker</td>
+      <td><strong>This is what makes a rebuild 20 minutes rather than 40.</strong> See the warning below.</td>
+    </tr>
+  </tbody>
+</table>
 
-# 3. Build and push the three images (from the repository root):
-#    docker build + docker push to $ECR_REGISTRY/checky-{auth,crypto,payment}:latest
-
-# 4. Configure and start. Idempotent - re-run it as often as you like.
-cd ../ansible
-./play
-
-# 5. Tear down. Removes the instance, EIP, ECR repositories, bucket and KMS key.
-cd ../cdk
-./cdk destroy</code></pre>
+<div class="warn">
+  <b>Never run <code>docker system prune</code></b>
+  <code>cdk destroy</code> deletes the three ECR repositories, because they are declared with
+  <code>empty_on_delete=True</code> and <code>RemovalPolicy.DESTROY</code> — so after a teardown
+  <strong>the laptop holds the only copy of the images</strong>. Pushing them back costs about two
+  minutes; rebuilding them costs about thirteen. This was learned by asserting the opposite: this
+  document's earlier draft said images would survive a teardown in ECR, and they did not (§11.8).
 </div>
 
-<h3>12.2 Access without SSH</h3>
+<h4>Different every rebuild — exactly four values</h4>
+<table>
+  <thead><tr><th style="width:30%">Stack output</th><th style="width:36%">Destination</th><th>Who</th></tr></thead>
+  <tbody>
+    <tr><td><code>PublicIp</code></td><td>the two Cloudflare <strong>A records</strong></td><td><strong>a human</strong>, in the dashboard</td></tr>
+    <tr><td><code>InstanceId</code></td><td><code>ansible/inventory.ini</code> → <code>ansible_host</code></td><td><code>bin/from-stack.sh</code></td></tr>
+    <tr><td><code>SsmTransferBucketName</code></td><td><code>ansible/inventory.ini</code> → bucket</td><td><code>bin/from-stack.sh</code></td></tr>
+    <tr><td><code>MfaSeedKekArn</code></td><td><code>.env</code> → <code>MFA_SEED_KEK_ARN</code></td><td><code>bin/from-stack.sh</code></td></tr>
+    <tr><td><code>EcrRegistry</code></td><td>— <em>unchanged</em></td><td>account and region are both fixed</td></tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>Why a new KMS ARN does not collide with the old alias.</strong> The key carries
+  <code>RemovalPolicy.DESTROY</code>, which CloudFormation implements as <em>schedule deletion</em> —
+  the key sits in <code>PendingDeletion</code> for thirty days — while the alias
+  <code>alias/checky-demo-mfa-seed-kek</code> is deleted immediately. So a rebuild the same
+  afternoon reclaims the alias cleanly, and only the ARN moves. auth-service refuses to start
+  without it (ADR-0003), which is why this line matters even though nothing in the demo path signs in.
+</p>
+
+<h4>Gone for good</h4>
+<ul>
+  <li>
+    <strong>Every receipt.</strong> <code>postgres-data</code> lives on the root EBS volume, which is
+    <code>delete_on_termination=True</code>, and there are no backups (§9.3). A rebuilt demo starts
+    with an empty check history — worth knowing <em>before</em> promising someone a link to a check
+    run last week.
+  </li>
+  <li><strong>Kafka's log.</strong> Same volume, same fate. Nothing in this slice consumes it.</li>
+  <li><strong>The ECR images</strong>, re-pushed from local rather than rebuilt.</li>
+</ul>
+
+<h3>12.2 The rebuild, in four commands and one dashboard visit</h3>
+
+<div class="file">
+  <div class="name"><span>infra/deploy/REBUILD.md</span><span class="tag">runbook</span></div>
+<pre><code># 0. Credentials, exported rather than written to ~/.aws. Temporary ones are preferred:
+#    there is then nothing left behind to leak or rotate when the demo is over.
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=eu-west-1
+
+# 1. Infrastructure, ~4 min. No -c flags: the defaults ARE the deployed configuration
+#    (edge=cloudflare, no SSH rule, no key pair, t4g.medium). Do not bootstrap again.
+cd infra/deploy/cdk &amp;&amp; ./cdk deploy
+
+# 2. Wire the outputs in, seconds. Writes inventory.ini, patches the one changed line in
+#    .env (keeping .env.bak), and prints the DNS step with the new address.
+cd .. &amp;&amp; bin/from-stack.sh
+
+# 3. DNS, ~1 min, and the only manual step. Cloudflare -> DNS -> Records:
+#      A  @     &lt;new PublicIp&gt;   Proxied (orange)
+#      A  www   &lt;new PublicIp&gt;   Proxied (orange)
+#    Propagation is seconds - Cloudflare is authoritative here, so there is no registry wait.
+
+# 4. Images, ~2 min from local images. REBUILD=1 to build them first (~13 min).
+bin/push-images.sh
+
+# 5. Configure and start, ~6 min. Idempotent; re-run it as often as you like.
+cd ansible &amp;&amp; ./play
+
+# 6. Verify the part that is easy to skip: the origin must be UNREACHABLE directly.
+curl -sI https://checkychain.com.ng | head -3                      # 200, server: cloudflare
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 8 https://&lt;PublicIp&gt;/   # expect 000
+
+# 7. Tear down again, ~3 min.
+cd ../cdk &amp;&amp; ./cdk destroy</code></pre>
+</div>
+
+<p>
+  About twenty minutes, most of it three JVMs, Kafka and Postgres starting on a shared two-core box.
+  The two scripts in <code>infra/deploy/bin/</code> are new, and both run the AWS CLI out of the
+  <code>checky-ansible</code> image rather than requiring it on the machine — the promise that a
+  rebuild needs nothing installed but Docker (§3) is worth nothing if the runbook then says
+  <em>“and also install the AWS CLI”</em>.
+</p>
+<p>
+  <code>from-stack.sh</code> exists because hand-copying four strings was the most error-prone step
+  of the first deployment, and each mistake surfaces indirectly: a wrong instance ID is
+  <em>“no hosts matched”</em>, a wrong bucket is an opaque S3 permission error several layers inside
+  a connection plugin, and a wrong KMS ARN is auth-service refusing to boot. It reads from AWS,
+  writes two local files, and changes no infrastructure. It refuses to run at all if
+  <code>.env</code> or the Origin CA pair is missing, rather than writing an inventory for a deploy
+  that cannot possibly succeed.
+</p>
+
+<div class="warn">
+  <b>If <code>cdk diff</code> or <code>cdk deploy</code> ever says <code>DemoInstance may be replaced</code>, stop</b>
+  A replaced instance is a new EBS volume, so the database goes with it. The known cause is editing
+  the security group's <code>description</code>: <code>GroupDescription</code> is immutable in AWS,
+  so changing it replaces the <em>group</em>, which repoints the instance's
+  <code>SecurityGroupIds</code> (§11.5). There is a comment in <code>demo_stack.py</code> telling
+  you not to correct that string. It means it.
+</div>
+
+<div class="note">
+  <b>What the DNS records point at between demos</b>
+  A released Elastic IP, until the next rebuild. That is harmless rather than dangerous — the name
+  resolves to Cloudflare either way, and Cloudflare answers a 522 to anyone who visits. If a
+  deliberate answer is wanted instead, pause the zone (Overview → Advanced) or set the records to
+  <code>192.0.2.1</code>, which is reserved for documentation and routes nowhere.
+</div>
+
+<div class="info">
+  <b>Still outstanding, and it survives teardown</b>
+  The Cloudflare rate limiting rule on <code>POST /api/v1/verifications</code> — 10 requests per
+  minute per IP, Block for one minute (§11.9). It was never created. With the origin closed, the
+  edge is the only place it <em>can</em> be enforced, and until it exists every unthrottled request
+  costs three upstream RPC calls against providers that rate-limit by IP — and the IP they see is
+  Cloudflare's, not the caller's. Being edge configuration, it is a once-ever task rather than a
+  per-rebuild one.
+</div>
+
+<h3>12.3 Access without SSH</h3>
 <ul>
   <li><strong>Console:</strong> EC2 → Connect → Session Manager. The session lands as <code>ssm-user</code>.</li>
   <li><code>sudo cd /home/ec2-user</code> <em>cannot</em> work — <code>cd</code> is a shell builtin, not a program. Use <code>sudo -i</code> or <code>sudo su - ec2-user</code>. The home directory is mode 700, which is why <code>ssm-user</code> cannot enter it.</li>
@@ -2014,7 +2170,7 @@ cd ../cdk
   <li>The Java images contain no shell, so <code>docker compose exec payment sh</code> fails by design. Use <code>docker compose logs</code>.</li>
 </ul>
 
-<h3>12.3 Cost</h3>
+<h3>12.4 Cost</h3>
 <table>
   <thead><tr><th>Component</th><th style="width:22%">Rate</th><th>Note</th></tr></thead>
   <tbody>
@@ -2041,13 +2197,20 @@ cd ../cdk
     <tr><td><code>infra/deploy/config/Caddyfile</code></td><td>TLS, security headers, four routes, default-deny.</td></tr>
     <tr><td><code>infra/deploy/config/crypto.properties</code></td><td>The 2-of-3 quorum and the token allowlist.</td></tr>
     <tr><td><code>infra/deploy/env.example</code></td><td>Every variable, with the measured guidance. Holds no real values.</td></tr>
+    <tr><td><code>infra/deploy/REBUILD.md</code></td><td>The runbook of §12: what survives, the four values that do not, and the traps.</td></tr>
+    <tr><td><code>infra/deploy/bin/from-stack.sh</code></td><td>Writes <code>inventory.ini</code> and patches <code>.env</code> from the live stack outputs.</td></tr>
+    <tr><td><code>infra/deploy/bin/push-images.sh</code></td><td>Pushes the three local arm64 images to the freshly created ECR repositories.</td></tr>
+    <tr><td><code>infra/deploy/bin/_aws.sh</code></td><td>The AWS CLI out of the ansible image, so a rebuild still needs only Docker.</td></tr>
+    <tr><td><code>infra/deploy/secrets/</code></td><td>The Cloudflare Origin CA keypair. Gitignored; valid to 2041.</td></tr>
   </tbody>
 </table>
 
 <footer>
-  Checkychain · Public Verification Demo · Infrastructure Record · 2026-11-25<br>
+  Checkychain · Public Verification Demo · Infrastructure Record · 2026-11-26<br>
   Branch <code>demo/onchain-verification</code>. Figures and outcomes in this document were measured
-  against the deployed stack, not estimated. The stack was destroyed after this record was written.
+  against the deployed stack, not estimated. The stack was destroyed again once this record was
+  complete; §12 is what brings it back, and was written and its scripts exercised against the live
+  stack before it was torn down, rather than from memory afterwards.
 </footer>
 
 </body>

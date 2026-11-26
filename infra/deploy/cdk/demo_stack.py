@@ -71,9 +71,11 @@ class DemoStack(Stack):
       security group doing the work.
     - **Postgres and Kafka run as containers, not RDS and MSK.** One box, one demo. The compose
       file keeps one database per service, so moving to RDS later is a connection string.
-    - **No load balancer.** Caddy terminates TLS on the box with Let's Encrypt, which is free and
-      renews itself. An ALB with ACM is the production answer and costs about sixteen dollars a
-      month to serve one page.
+    - **No load balancer.** Cloudflare's free plan sits in front, and Caddy terminates TLS on the
+      box with a pinned Cloudflare Origin CA certificate rather than ACME (see the ingress rules
+      below: closing the origin and dropping ACME are the same decision). That also gives the demo
+      the only place a rate limit can now be enforced. An ALB with ACM is the production answer and
+      costs about sixteen dollars a month to serve one page.
     """
 
     def __init__(

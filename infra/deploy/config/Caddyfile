@@ -1,10 +1,16 @@
 # The public surface, and nothing else.
 #
-# Caddy obtains and renews a Let's Encrypt certificate for PUBLIC_HOST automatically, which is why
-# the box needs ports 80 and 443 open and the DNS record pointing at it before the first start.
-# No `email` directive: Let's Encrypt permits an ACME account with no contact address, and
-# certificates issue and renew identically without one. The only thing given up is expiry warning
-# mail. To turn that on, add `email you@example.com` inside a global block here.
+# Caddy performs NO ACME here. It serves a pinned Cloudflare Origin CA certificate, valid only
+# between Cloudflare's edge and this box, and renews nothing - see the site block below for why,
+# and infra/deploy/REBUILD.md for what that means operationally.
+#
+# This header said the opposite until 2026-11-26, describing automatic Let's Encrypt issuance and
+# claiming the box needs port 80 reachable from the internet before first start. Both stopped being
+# true when the origin was closed, and the `tls` line below had already stopped doing it.
+#
+# For a direct-to-origin deployment (`./cdk deploy -c edge=public`), delete that `tls` line and
+# Caddy returns to automatic ACME - at which point ACME_EMAIL in .env becomes live again, though
+# it is safe to leave empty.
 
 {$PUBLIC_HOST} {
 	# Cloudflare Origin CA, not Let's Encrypt. Caddy performs no ACME at all, which is the point:
