@@ -15,6 +15,46 @@ from constructs import Construct
 
 SERVICES = ("auth", "crypto", "payment")
 
+# Cloudflare's published origin-facing ranges, fetched 2026-11-26 from
+# https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6.
+#
+# Hardcoded on purpose rather than fetched during synth. A synth that reaches the network is a
+# synth that behaves differently depending on when and where it runs, and a deploy that cannot
+# happen while that endpoint is down. The cost is that this list goes stale, so refresh it with:
+#
+#   curl -s https://www.cloudflare.com/ips-v4; curl -s https://www.cloudflare.com/ips-v6
+#
+# Verified when written rather than trusted: the edge addresses actually serving
+# checkychain.com.ng at the time (188.114.96.0, 188.114.97.0) both fall inside 188.114.96.0/20
+# below. A published list that did not contain the address in use would be the wrong list.
+CLOUDFLARE_IPV4 = (
+    "173.245.48.0/20",
+    "103.21.244.0/22",
+    "103.22.200.0/22",
+    "103.31.4.0/22",
+    "141.101.64.0/18",
+    "108.162.192.0/18",
+    "190.93.240.0/20",
+    "188.114.96.0/20",
+    "197.234.240.0/22",
+    "198.41.128.0/17",
+    "162.158.0.0/15",
+    "104.16.0.0/13",
+    "104.24.0.0/14",
+    "172.64.0.0/13",
+    "131.0.72.0/22",
+)
+
+CLOUDFLARE_IPV6 = (
+    "2400:cb00::/32",
+    "2606:4700::/32",
+    "2803:f800::/32",
+    "2405:b500::/32",
+    "2405:8100::/32",
+    "2a06:98c0::/29",
+    "2c0f:f248::/32",
+)
+
 
 class DemoStack(Stack):
     """The demo's infrastructure.
@@ -43,6 +83,7 @@ class DemoStack(Stack):
         *,
         ssh_cidr: str | None,
         key_name: str | None,
+        edge: str,
         instance_type: str,
         **kwargs,
     ) -> None:
@@ -105,14 +146,50 @@ class DemoStack(Stack):
             self,
             "DemoSg",
             vpc=vpc,
+            # DO NOT "correct" this string. A security group's GroupDescription is immutable in
+            # AWS, so editing it replaces the group - which repoints the instance's
+            # SecurityGroupIds and makes CloudFormation report the INSTANCE as "may be replaced".
+            # A replaced instance is a new EBS volume, so the postgres-data volume and every
+            # receipt in it would go with it. Making this sentence accurate is a cosmetic gain
+            # worth precisely nothing against that, so the truth lives in the comment above the
+            # ingress rules instead: in the default `edge=cloudflare` mode, 80 and 443 admit
+            # Cloudflare's published ranges only, not "anywhere".
             description="Public demo: HTTP/HTTPS from anywhere, SSH from one address only.",
             allow_all_outbound=True,
         )
-        # 80 is not optional: Let's Encrypt validates over it, and Caddy redirects it to 443.
-        security_group.add_ingress_rule(
-            ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP (ACME + redirect)"
-        )
-        security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")
+        # Who may reach the web ports at all. With Cloudflare in front, leaving these open to the
+        # internet leaves the proxy entirely optional: anyone who learns the origin address - and
+        # it is not a secret, it is in certificate transparency logs and old DNS history - can
+        # skip the rate limiting, the WAF and the caching by talking to the box directly. The
+        # firewall is what makes the edge mandatory rather than merely usual.
+        #
+        # This is also why Caddy no longer uses ACME. An HTTP-01 challenge needs Let's Encrypt to
+        # reach port 80 HERE, which these rules now forbid, so the origin serves a Cloudflare
+        # Origin CA certificate instead and renews nothing. The two decisions are the same
+        # decision; changing one without the other breaks the site about sixty days later.
+        if edge == "cloudflare":
+            for cidr in CLOUDFLARE_IPV4:
+                security_group.add_ingress_rule(
+                    ec2.Peer.ipv4(cidr), ec2.Port.tcp(443), "HTTPS from Cloudflare"
+                )
+                security_group.add_ingress_rule(
+                    ec2.Peer.ipv4(cidr), ec2.Port.tcp(80), "HTTP from Cloudflare (redirect)"
+                )
+            for cidr in CLOUDFLARE_IPV6:
+                security_group.add_ingress_rule(
+                    ec2.Peer.ipv6(cidr), ec2.Port.tcp(443), "HTTPS from Cloudflare (v6)"
+                )
+                security_group.add_ingress_rule(
+                    ec2.Peer.ipv6(cidr), ec2.Port.tcp(80), "HTTP from Cloudflare (v6, redirect)"
+                )
+        else:
+            # Direct-to-origin, for a hostname with no proxy in front - an sslip.io address while
+            # a domain is still being arranged, say. Caddy then needs port 80 for ACME, so this
+            # mode and the `tls` directive in config/Caddyfile are mutually exclusive.
+            security_group.add_ingress_rule(
+                ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP (ACME + redirect)"
+            )
+            security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")
         # No SSH unless an address was named. Ansible connects over SSM and the console uses
         # Session Manager, so with no key pair on the box an open port 22 cannot be authenticated
         # against at all - it is surface with no use. Real break-glass for a broken agent is the

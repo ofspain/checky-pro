@@ -7,6 +7,14 @@
 # mail. To turn that on, add `email you@example.com` inside a global block here.
 
 {$PUBLIC_HOST} {
+	# Cloudflare Origin CA, not Let's Encrypt. Caddy performs no ACME at all, which is the point:
+	# once Cloudflare proxies this hostname and the security group only admits Cloudflare, nothing
+	# can reach port 80 from the public internet, so an HTTP-01 renewal would fail - and it would
+	# fail at the first RENEWAL, about sixty days after a cutover that looked perfect. This
+	# certificate is valid only between Cloudflare's edge and this box, and expires in 2041.
+	# Visitors are served Cloudflare's own public certificate, which Cloudflare renews.
+	tls /etc/caddy/origin.pem /etc/caddy/origin.key
+
 	encode zstd gzip
 
 	header {

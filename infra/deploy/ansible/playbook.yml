@@ -61,6 +61,31 @@
         - DEMO_TOKEN_ADDRESS
       no_log: true
 
+    # Caddy performs no ACME any more (see config/Caddyfile), so these two files ARE the TLS
+    # configuration. Without them Caddy cannot load its site block and the edge serves nothing -
+    # which, through Cloudflare, surfaces as a bare "error code: 526" naming no missing file at
+    # all. Failing here instead costs one second and says exactly what to do.
+    - name: Check that the Cloudflare Origin CA keypair is present
+      ansible.builtin.stat:
+        path: "{{ deploy_root }}/secrets/{{ item }}"
+      register: origin_stat
+      loop: [origin.pem, origin.key]
+      delegate_to: localhost
+      become: false
+
+    - name: Explain how to obtain the keypair rather than failing inside Caddy
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: >-
+          infra/deploy/secrets/{{ item.item }} is missing. In Cloudflare go to SSL/TLS ->
+          Origin Server -> Create Certificate, cover checkychain.com.ng and *.checkychain.com.ng,
+          and save the certificate to origin.pem and the private key to origin.key. That directory
+          is gitignored. Cloudflare's SSL/TLS mode must also be Full (strict), or the certificate
+          is never validated and installing it proves nothing.
+      loop: "{{ origin_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
   tasks:
     # This used to wait for the compose plugin's path to exist, which is not the same as the
     # plugin working: an x86_64 binary on this arm64 box satisfied the path check and then failed
@@ -126,6 +151,24 @@
         mode: "0644"
       notify: Restart edge
 
+    # 0644 for the certificate and 0600 for the key, both root-owned. The caddy image runs as
+    # root, so it reads both; no other account on the box can read the key. no_log on the key
+    # keeps its contents out of the play output if anyone ever runs this with --diff.
+    - name: Install the Cloudflare Origin CA certificate
+      ansible.builtin.copy:
+        src: "{{ deploy_root }}/secrets/origin.pem"
+        dest: "{{ app_dir }}/config/origin.pem"
+        mode: "0644"
+      notify: Restart edge
+
+    - name: Install the Cloudflare Origin CA private key
+      ansible.builtin.copy:
+        src: "{{ deploy_root }}/secrets/origin.key"
+        dest: "{{ app_dir }}/config/origin.key"
+        mode: "0600"
+      no_log: true
+      notify: Restart edge
+
     - name: Copy the crypto service configuration
       ansible.builtin.copy:
         src: "{{ deploy_root }}/config/crypto.properties"
@@ -189,12 +232,17 @@
         chdir: "{{ app_dir }}"
       changed_when: true
 
-    - name: Wait for the landing page to answer over HTTPS
+    # Checking for 200 alone is not enough once a proxy is in front. The apex pointed at a
+    # DomainKing placeholder that answered 200 to everything, so a status-only gate would have
+    # passed against entirely the wrong server. The gate therefore asserts a string only this
+    # landing page serves.
+    - name: Wait for OUR landing page to answer over HTTPS
       ansible.builtin.uri:
         url: "https://{{ deploy_env.PUBLIC_HOST }}/"
         status_code: 200
+        return_content: true
       register: landing
-      until: landing.status == 200
+      until: landing.status == 200 and 'Is this payment real?' in (landing.content | default(''))
       retries: 30
       delay: 10
       delegate_to: localhost

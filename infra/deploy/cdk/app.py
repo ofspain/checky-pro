@@ -16,6 +16,16 @@ app = cdk.App()
 ssh_cidr = app.node.try_get_context("sshCidr")
 key_name = app.node.try_get_context("keyName")
 
+# Who may reach ports 80 and 443: "cloudflare" (the default) admits only Cloudflare's published
+# ranges, so the proxy cannot be bypassed by anyone who learns the origin address - and it is not
+# a secret, it sits in certificate transparency logs and old DNS history. Pass `-c edge=public`
+# for a box that must be reached directly, such as an sslip.io hostname with no proxy in front;
+# that also requires reverting the `tls` directive in config/Caddyfile so Caddy can use ACME,
+# because these rules are exactly what stops an HTTP-01 challenge reaching port 80.
+edge = (app.node.try_get_context("edge") or "cloudflare").strip().lower()
+if edge not in ("cloudflare", "public"):
+    raise SystemExit(f"Unknown edge={edge}. Use 'cloudflare' (the default) or 'public'.")
+
 # The one thing worth refusing outright. An address is a deliberate choice; the whole internet
 # on port 22 is almost always a slip, and it is the slip this project should not make quietly.
 if ssh_cidr and ssh_cidr.strip().endswith("/0"):
@@ -46,6 +56,7 @@ DemoStack(
     description="Public verification demo: one EC2 instance, three ECR repositories.",
     ssh_cidr=ssh_cidr,
     key_name=key_name,
+    edge=edge,
     # t4g.medium: Graviton, arm64. Three JVMs, Kafka and Postgres share this box; measured
     # against the real images, payment-service alone took 188 seconds to start when all three
     # booted together, so 2 GB leaves no headroom and an OOM during startup looks like a hang.

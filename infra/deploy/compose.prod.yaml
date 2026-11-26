@@ -164,6 +164,8 @@ services:
       ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
       - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./config/origin.pem:/etc/caddy/origin.pem:ro
+      - ./config/origin.key:/etc/caddy/origin.key:ro
       - ./landing:/srv/landing:ro
       - caddy-data:/data
       - caddy-config:/config
