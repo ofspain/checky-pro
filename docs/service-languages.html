@@ -65,7 +65,7 @@
 <header>
   <div class="kicker">Themistra · Engineering Standard</div>
   <h1>Service Language Selection &amp; Architecture Flow</h1>
-  <div class="meta">Phase 1 baseline · 2026-07-11 · Companion to <em>ARCHITECTURE.md</em> · Status: Approved</div>
+  <div class="meta">Phase 1 baseline · 2026-07-11, status section added 2026-11-26 · Companion to <em>ARCHITECTURE.md</em> · Status: Approved, partially deployed</div>
 </header>
 
 <h2>1. Governing Principle: Two Languages, Not Five</h2>
@@ -378,11 +378,77 @@
     <tr><td>Java 21 for all backend services</td><td>Slightly slower access to newest web3 SDKs; mitigated by the TS sidecar pattern.</td></tr>
     <tr><td>TypeScript sidecars are translation-only</td><td>Some duplicated chain models across the boundary; accepted to keep quorum/signing authority in one audited codebase.</td></tr>
     <tr><td>No Go / Python / Kotlin in Phase 1</td><td>Python enters in Phase 2 with the Intelligence Service (ML ecosystem) via a new ADR — the event contracts are already language-neutral.</td></tr>
-    <tr><td>AWS CDK (TypeScript) over Terraform</td><td>CloudFormation semantics: slower deploys, occasionally painful rollbacks, weaker drift detection than <code>terraform plan</code>, and deeper AWS coupling — all accepted since we are AWS-domiciled and gain a type-checked IaC in a language we already run.</td></tr>
+    <tr><td>AWS CDK (Python) over Terraform</td><td>CloudFormation semantics: slower deploys, occasionally painful rollbacks, weaker drift detection than <code>terraform plan</code>, and deeper AWS coupling — all accepted since we are AWS-domiciled. This row said <em>TypeScript</em> until 2026-11-26, contradicting §1 of this same document; the deployed stack in <code>infra/deploy/cdk/</code> is Python, which keeps IaC and Ansible in one language rather than two.</td></tr>
     <tr><td>ingress-nginx instead of a gateway service</td><td>No edge-level JWT rejection or response aggregation for now; every service validates tokens itself (needed anyway for zero trust). Revisit on merchant API keys, partner API plane, or BFF aggregation needs.</td></tr>
     <tr><td>Managed AWS for Kafka, Postgres, keys, storage</td><td>Vendor coupling; accepted — our differentiation is the verification engine, not infrastructure operation.</td></tr>
   </tbody>
 </table>
+
+<h2>7. Status — the topology, as actually deployed</h2>
+
+<p>
+  Sections 4 and 5 describe a topology. As of <strong>2026-11-26</strong> a reduced form of it is
+  running on the public internet at <a href="https://checkychain.com.ng">checkychain.com.ng</a>,
+  which is the first time any of these language and boundary decisions has been tested by something
+  other than a test suite. The full infrastructure record — every file, every command, and the
+  failures that only deploying could find — is <code>docs/demo-deployment.pdf</code>; this section
+  records only what it means for <em>this</em> document's claims.
+</p>
+
+<h3>7.1 What the deployment confirms about these choices</h3>
+<table>
+  <thead><tr><th style="width:30%">Claim in this document</th><th>What deploying showed</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Java 21 for all backend services</strong></td><td>Held. <code>auth</code>, <code>crypto</code> and <code>payment</code> run as three distroless JVM images on one <code>t4g.medium</code>. The cost is startup time, and it is real: <code>payment</code> alone took 188 seconds when all three booted together, which is why the box is 4 GB rather than 2 GB.</td></tr>
+    <tr><td><strong>Two languages, not five</strong></td><td>Held, and extended rather than broken. The deployment added Python (CDK and Ansible) and a Caddyfile, neither of which is a service language — the rule governs what a service is written in, not what provisions it. No chain-adapter sidecar was needed for the demo path, so the TypeScript boundary was not exercised at all.</td></tr>
+    <tr><td><strong>AWS CDK for infrastructure</strong></td><td>Held, in Python, as the corrected Decision Record row above now says. The choice paid for itself in one specific place: a single containerised-toolchain pattern serves both CDK and Ansible, because both are Python.</td></tr>
+    <tr><td><strong>Quorum before attestation</strong> (Fig. 2, steps 10–12)</td><td>The claim this document could least afford to be wrong about, and the one that had never actually run. See 7.2.</td></tr>
+  </tbody>
+</table>
+
+<h3>7.2 The claim that had never been exercised</h3>
+<p>
+  Figure 2 shows signing occurring only after quorum-agreed finality, and §3 argues that this is why
+  the verification engine is Java rather than split across languages. That path was fully implemented
+  and heavily unit-tested — and the <code>HELD</code> outcome, which exists precisely to say <em>the
+  witnesses do not yet agree</em>, was <strong>unreachable</strong> in every environment it had ever
+  run in. Locally, all three configured chain providers point at a single anvil node, so they cannot
+  disagree; disagreement is not a case the local stack is able to produce.
+</p>
+<p>
+  Against three genuinely independent providers it appeared immediately. Queried at one instant from
+  the deployed box, the three answered blocks <strong>12211599, 12211600 and 12211600</strong> — a
+  one-block spread, which is the normal condition of a gossip network rather than a fault, and
+  exactly the condition <code>HELD</code> was written for. The first transaction submitted to the
+  public deployment returned it.
+</p>
+<p>
+  Two of the three providers also had to be replaced before any of this worked, for reasons no test
+  suite can reproduce: one returned HTTP 403 to datacenter addresses while answering a laptop
+  normally, and one returned 429 after a single successful request, which only a ten-request burst
+  <em>from the instance</em> exposed. Endpoint reachability turned out to be a property of the
+  caller's origin, not of the URL.
+</p>
+
+<h3>7.3 What is deployed, and what is not</h3>
+<p>
+  The running system is deliberately a reduced form of Figure 1, and the gap is worth stating plainly
+  so this document is not read as describing something that exists. Postgres and Kafka run as
+  containers rather than RDS and MSK; there is one box rather than EKS; there is no gateway, no
+  ingress-nginx and no load balancer, with Caddy terminating TLS directly; and the public surface is
+  a single page with one endpoint, because the frontend is at task 46 of its plan. The
+  <em>contracts</em> in §4 survive that reduction unchanged — one database per service, migrations
+  run outside the services that use them, pull-only registry access, least-privilege IAM, and a
+  single public ingress with default-deny — and those are what a production move preserves. Only the
+  implementations change.
+</p>
+
+<h3>7.4 Where the language boundary still has not been tested</h3>
+<ul>
+  <li><strong>The TypeScript sidecar pattern.</strong> No sidecar was deployed, so the translation-only boundary §2 commits to remains an untested design decision.</li>
+  <li><strong>Python in Phase 2.</strong> The Intelligence Service is specified but has no code, so the claim that Python enters cleanly via a new ADR is unexercised.</li>
+  <li><strong>Service-to-service auth at scale.</strong> It works — <code>payment</code> mints a client-credentials token to call <code>crypto</code> on every verification — but with one caller, one audience, and no rotation under load.</li>
+</ul>
 
 <footer>
   Themistra Engineering · Documentation pattern: HTML working draft → rendered PDF as the concrete artifact ·

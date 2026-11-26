@@ -120,14 +120,14 @@
   <div class="kicker">Checkychain · Infrastructure Record · Branch <code>demo/onchain-verification</code></div>
   <h1>Public Verification Demo</h1>
   <div class="sub">Everything provisioned, configured and measured to put one on-chain check on the public internet — and the eight failures that only appeared once it was there.</div>
-  <div class="meta">2026-11-25 · AWS eu-west-1 · CDK (Python) + Ansible (SSM) + Docker Compose · Status: deployed, verified, then destroyed</div>
+  <div class="meta">2026-11-26 · AWS eu-west-1 · CDK (Python) + Ansible (SSM) + Docker Compose · Status: live at checkychain.com.ng, behind Cloudflare</div>
 </div>
 
 <div class="factbox">
-  <div><dt>Public URL (while live)</dt><dd>https://54-216-107-16.sslip.io</dd></div>
-  <div><dt>Instance</dt><dd>i-0bcb1cfffa33598e3 · t4g.medium · aarch64</dd></div>
-  <div><dt>Elastic IP</dt><dd>54.216.107.16</dd></div>
-  <div><dt>Certificate</dt><dd>Let's Encrypt · CN=54-216-107-16.sslip.io</dd></div>
+  <div><dt>Public URL</dt><dd>https://checkychain.com.ng</dd></div>
+  <div><dt>Instance</dt><dd>i-055cc2126616ab204 · t4g.medium · aarch64</dd></div>
+  <div><dt>Elastic IP</dt><dd>52.30.100.74 · closed to the internet</dd></div>
+  <div><dt>Certificates</dt><dd>Universal SSL at the edge · Origin CA to 2041 on the box</dd></div>
   <div><dt>Registry</dt><dd>774173912604.dkr.ecr.eu-west-1.amazonaws.com</dd></div>
   <div><dt>Running cost</dt><dd>≈ USD 0.05 / hour</dd></div>
 </div>
@@ -1545,9 +1545,13 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
       <td>A pipeline that tags images with the commit SHA.</td>
     </tr>
     <tr>
-      <td><strong>Let's Encrypt rate limits</strong></td>
-      <td>Fifty certificates per registered domain per week, and five duplicate certificates per week. Repeated redeploys against the same hostname can exhaust the duplicate limit and leave the site without a certificate for days.</td>
-      <td>Caddy persists certificates in the <code>caddy-data</code> volume; keep that volume, or use the staging endpoint while iterating.</td>
+      <td><strong>Pinned Cloudflare ranges go stale</strong></td>
+      <td>The security group admits fifteen IPv4 and seven IPv6 ranges pinned in <code>demo_stack.py</code> as of 2026-11-26. Cloudflare changes them rarely but does change them, and nothing here notices. The failure is fail-closed — legitimate edge traffic is refused — which is the safe direction, but it presents as a total outage with a healthy-looking origin.</td>
+      <td>Refresh from <code>cloudflare.com/ips-v4</code> and <code>ips-v6</code> and redeploy; the command sits in a comment beside the list. Generating the list and Caddy's <code>trusted_proxies</code> from one source is the real fix (§11.9).</td></tr>
+    <tr>
+      <td><strong>Let's Encrypt rate limits — in <code>edge=public</code> only</strong></td>
+      <td>Fifty certificates per registered domain per week, and five duplicate certificates per week. This no longer applies to the default deployment, which serves a pinned Origin CA certificate and performs no ACME at all (§11.4); it applies to <code>-c edge=public</code>, where Caddy issues its own.</td>
+      <td>Keep the <code>caddy-data</code> volume so certificates persist across redeploys, or use the staging endpoint while iterating.</td>
     </tr>
     <tr>
       <td><strong>Cosmetic: wrong error copy</strong></td>
@@ -1563,21 +1567,36 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
 
 <h3>10.1 Where we are</h3>
 <p>
-  The demo path is <strong>proven end to end on real infrastructure</strong> and then torn down. The
-  code to recreate it is committed. What exists today:
+  The demo is <strong>live on the public internet at
+  <a href="https://checkychain.com.ng">checkychain.com.ng</a></strong>, served through Cloudflare,
+  with the origin closed to everything except Cloudflare's published ranges. A real Sepolia
+  transaction was verified through that path and settled <code>AGREED</code> at 6.1425 USDC with
+  3035 confirmations. §11 is the record of how it got there.
 </p>
+<p>What exists today:</p>
 <ul>
-  <li>A CDK (Python) stack that provisions the whole environment reproducibly, with the toolchain containerised so no machine-level prerequisites are needed beyond Docker.</li>
-  <li>An idempotent Ansible playbook that configures the box over SSM with no SSH, and gates its own success on live HTTP checks from outside.</li>
-  <li>A production compose topology with a single public ingress, real service-to-service auth, out-of-service migrations and per-service database roles.</li>
-  <li>Backend services (auth, crypto, payment, notification) complete and heavily tested; the frontend at task 46 of its sequence, with a design system and authenticated shell landed.</li>
+  <li>A CDK (Python) stack that provisions the whole environment reproducibly, with the toolchain containerised so no machine needs Node, Python, Ansible or the AWS CLI installed to operate it.</li>
+  <li>An idempotent Ansible playbook that configures the box over SSM with no SSH, ships the TLS keypair, and gates its own success on live HTTPS checks that identify <em>our</em> server rather than merely finding a 200.</li>
+  <li>A production compose topology with a single public ingress, real service-to-service auth, out-of-service migrations and pull-only registry access.</li>
+  <li>A real domain behind a real edge: Cloudflare DNS and proxy, Universal SSL to visitors, a pinned Cloudflare Origin CA certificate on the box, and a security group that makes the proxy mandatory rather than optional.</li>
+  <li>Backend services (auth, crypto, payment, notification) complete and heavily tested; the frontend at task 46 of its plan, which is why the deployed surface is one page rather than the product.</li>
 </ul>
+
+<div class="note">
+  <b>What the deployment proved that the test suite could not</b>
+  Three things only became observable here. <code>HELD</code> was <strong>unreachable locally</strong>,
+  because all three configured providers pointed at one anvil node and could never disagree (§7.1).
+  Two RPC providers that answered perfectly from a laptop failed from EC2 — one with a 403, one with
+  a 429 that only a ten-request burst exposed (§7.2). And a bind-mounted configuration file that
+  <code>docker compose up -d</code> silently ignores cost two apparently-successful deploys before
+  being understood (§4.8). None of these is reachable by a unit test, and none was hypothetical.
+</div>
 
 <h3>10.2 The immediate next steps</h3>
 <ol>
-  <li><strong>Tie it to the real domain</strong> — <code>verify.checky.pro</code>. §11 gives a ten-minute route that touches nothing else, and the full Cloudflare migration separately.</li>
-  <li><strong>Move off unauthenticated public RPC</strong> — keyed endpoints so a demo cannot be throttled into a 503.</li>
-  <li><strong>Rate-limit the public endpoint</strong> — at the Cloudflare edge, before it costs upstream requests.</li>
+  <li><strong>Rate-limit the public endpoint</strong> at the Cloudflare edge. This is now the only thing standing between a working demo and a bill: closing the origin (§11.5) made the edge the single place where such a limit can be enforced, and the limit itself is not yet in place.</li>
+  <li><strong>Move off unauthenticated public RPC</strong> — keyed endpoints, so a demo cannot be throttled into a 503 by a stranger's traffic.</li>
+  <li><strong>Recover the real client IP</strong> with Caddy's <code>trusted_proxies</code>, which every request now needs and nothing currently provides (§11.9).</li>
   <li><strong>Fix the 503 copy</strong> so a verification failure does not mention invoices.</li>
   <li><strong>Tag images by commit SHA</strong> and stop deploying <code>latest</code>.</li>
 </ol>
@@ -1592,418 +1611,370 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
   Each of those survives the move; only the implementations change.
 </p>
 
-<h2><span class="num">11</span>The last mile — the real domain, and Cloudflare</h2>
+<h2><span class="num">11</span>The last mile — the real domain, behind Cloudflare</h2>
 
 <p>
-  Today the site answers on <code>54-216-107-16.sslip.io</code>, a wildcard DNS service that
-  resolves any dashed-IP hostname to that address. It earned a genuine Let's Encrypt certificate,
-  but it is not a name to give anyone. The real domain is <strong><code>checky.pro</code></strong>,
-  and moving to it is not a blank-slate exercise — that domain is already carrying production
-  traffic and production email.
+  This section was written as a plan. It is now a record: on <strong>2026-11-26</strong> the demo was
+  rebuilt and put behind Cloudflare on <code>checkychain.com.ng</code>, a domain registered with
+  DomainKing (HostAfrica) and served through a free Cloudflare account. What follows is what was
+  actually done, in order, with what each step measured rather than what it was expected to do — and
+  the five things that did not go to plan, which are the parts worth reading.
 </p>
 
-<h3>11.1 What is there now — measured, not assumed</h3>
+<div class="factbox">
+  <div><dt>Public URL</dt><dd>https://checkychain.com.ng</dd></div>
+  <div><dt>Instance</dt><dd>i-055cc2126616ab204 · t4g.medium · aarch64</dd></div>
+  <div><dt>Elastic IP</dt><dd>52.30.100.74 · unreachable from the internet</dd></div>
+  <div><dt>Edge certificate</dt><dd>Cloudflare Universal SSL · CN=checkychain.com.ng</dd></div>
+  <div><dt>Origin certificate</dt><dd>Cloudflare Origin CA · expires 2041-11-22</dd></div>
+  <div><dt>Nameservers</dt><dd>curt / ligia .ns.cloudflare.com</dd></div>
+</div>
+
+<h3>11.1 The order things were done in, and why that order</h3>
+
 <p>
-  Every row below was resolved live before writing this section. <strong>Re-check it immediately
-  before you act</strong>, because a plan built on a stale inventory is how domains break.
+  The sequencing matters more than any individual step. The rule followed was: <strong>get a
+  known-good server on a throwaway hostname first, install the origin certificate second, and move
+  the domain last.</strong> Debugging a fresh deployment and a DNS cutover simultaneously leaves no
+  way to tell which of the two is broken, and both fail in ways that look like the other.
 </p>
 
 <table>
-  <thead><tr><th style="width:20%">Record</th><th style="width:34%">Value</th><th>What it is</th></tr></thead>
+  <thead><tr><th style="width:5%">#</th><th style="width:13%">Where</th><th>Step, and what it measured</th></tr></thead>
   <tbody>
-    <tr><td><code>NS</code></td><td><code>ns10.wixdns.net</code>, <code>ns11.wixdns.net</code></td><td><strong>DNS is hosted at Wix.</strong> This is what a Cloudflare migration would change.</td></tr>
-    <tr><td><code>checky.pro</code> A</td><td><code>147.79.108.66</code></td><td>A <strong>live WordPress site</strong> (responds <code>PHP/8.3.37</code>, serves <code>/wp-json/</code>). Not Wix-hosted despite the nameservers.</td></tr>
-    <tr><td><code>www</code></td><td>CNAME → <code>checky.pro</code></td><td>Follows the apex.</td></tr>
-    <tr><td><code>app</code></td><td>Cloudflare IPs → <strong>Bubble.io</strong></td><td>Currently returns <code>302 → bubble.io/domain_not_supported</code>. <strong>Broken, and the name is spoken for</strong> — see 11.2.</td></tr>
-    <tr><td><code>MX</code> ×5</td><td><code>aspmx.l.google.com</code> + 4 alternates (10/20/30/40/50)</td><td><strong>Live Google Workspace email.</strong> The highest-stakes item on this page.</td></tr>
-    <tr><td><code>TXT</code></td><td><code>v=spf1 include:_spf.google.com ~all</code><br><code>google-site-verification=2qxWQk-…</code></td><td>Mail authorisation and domain ownership proof.</td></tr>
-    <tr><td><code>_dmarc</code></td><td style="color:#9f1239"><strong>absent</strong></td><td>No DMARC policy exists. See 11.2.</td></tr>
-    <tr><td><code>CAA</code></td><td style="color:#9f1239"><strong>absent</strong></td><td>Any CA may issue for this domain.</td></tr>
-    <tr><td><code>verify</code>, <code>demo</code>, <code>api</code>, <code>staging</code>, <code>auth</code></td><td>—</td><td>All free.</td></tr>
+    <tr><td>1</td><td>Pre-flight</td><td>Inventoried the existing zone before touching it — see §11.2. The finding that mattered was the absence of MX records.</td></tr>
+    <tr><td>2</td><td>Cloudflare</td><td>Added the zone, let the scan import records, corrected the proxy flags by hand.</td></tr>
+    <tr><td>3</td><td>DomainKing</td><td>Replaced the nameservers with the two Cloudflare names. Took about 54 minutes to reach the registry — §11.3.</td></tr>
+    <tr><td>4</td><td>AWS</td><td><code>cdk deploy</code> — about four minutes. New Elastic IP, new KMS key, new ECR repositories.</td></tr>
+    <tr><td>5</td><td>Local</td><td>Re-pushed the three images already built on the laptop. No Maven build was needed — §11.8.</td></tr>
+    <tr><td>6</td><td>Cloudflare</td><td>Created the Origin CA certificate and set SSL/TLS to <strong>Full (strict)</strong>, then pointed the apex and <code>www</code> at the new address.</td></tr>
+    <tr><td>7</td><td>Ansible</td><td>Installed the keypair, switched <code>PUBLIC_HOST</code> to the real name, redeployed.</td></tr>
+    <tr><td>8</td><td>AWS</td><td>Narrowed the security group from <code>0.0.0.0/0</code> to Cloudflare's published ranges — §11.5.</td></tr>
+    <tr><td>9</td><td>Both</td><td>Verified from both sides of the proxy, including that the origin can no longer be reached directly — §11.7.</td></tr>
   </tbody>
 </table>
 
-<h3>11.2 Three findings that change the plan</h3>
+<h3>11.2 What was there before, measured rather than assumed</h3>
 
-<div class="bug">
-  <b>1 · Moving nameservers can silently destroy email</b>
-  <code>checky.pro</code> runs Google Workspace. Changing the nameservers to Cloudflare means
-  <strong>every record must exist at Cloudflare before the switch</strong> — all five MX records and
-  both TXT records included. Cloudflare's import scan is good but not guaranteed to be complete,
-  and the failure mode is brutal: mail stops being delivered, with no error anyone sees until
-  someone mentions they have not heard back. This risk is entirely absent from Route A below.
+<p>
+  A migration is only safe if you know what you are replacing, and a nameserver change replaces
+  <em>everything</em> at once — every record the old provider served stops being consulted the moment
+  the registry points elsewhere. So the zone was inventoried first:
+</p>
+
+<table>
+  <thead><tr><th style="width:26%">Checked</th><th style="width:30%">Found</th><th>Why it mattered</th></tr></thead>
+  <tbody>
+    <tr><td><strong>MX records</strong></td><td><em>None</em></td><td>The single most important finding. Mail is what a botched nameserver change silently destroys, and it fails quietly — senders get acceptances for days. With no MX there was nothing to break.</td></tr>
+    <tr><td><strong>Apex A</strong></td><td>A 47-byte DomainKing placeholder reading <em>"webserver is functioning normally"</em></td><td>Nothing of value was being served, so there was no content to preserve and no downtime cost to a cutover.</td></tr>
+    <tr><td><strong>Nameservers</strong></td><td><code>dan1–dan4.host-ww.net</code></td><td>The baseline to compare against, and the thing to watch for change.</td></tr>
+    <tr><td><strong>TXT</strong></td><td>An SPF record</td><td>Had to be carried across verbatim. SPF is consulted by other people's mail servers, not ours, so losing it degrades deliverability invisibly.</td></tr>
+    <tr><td><strong>Subdomains</strong></td><td><code>www</code> only, same address</td><td>Bounded the work. A zone with a dozen hosts is a different exercise entirely.</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <b>The same check on a different domain gave the opposite answer</b>
+  An earlier revision of this section planned the cutover around <code>checky.pro</code>. The same
+  inventory run against that domain found a live WordPress site <em>and</em> Google Workspace MX
+  records — so the recommendation there was a subdomain on the existing DNS, touching nothing.
+  The inventory is what distinguishes the two cases; the domain's apparent emptiness is not.
 </div>
 
-<div class="warn">
-  <b>2 · <code>app.checky.pro</code> is already reserved — and already broken</b>
-  It points at a Bubble.io app that answers <code>domain_not_supported</code>. That hostname is
-  <em>also</em> the SPA's registered OAuth redirect host in the auth-service seed data
-  (<code>https://app.checky.pro/auth/callback</code>). So it is the frontend's name, it is
-  currently dead, and the demo must <strong>not</strong> take it. Use <code>verify.checky.pro</code>.
-</div>
+<h3>11.3 What a registrar controls, and what it does not</h3>
+
+<p>
+  The nameserver change was saved at DomainKing, the client area showed the new values, and a
+  confirmation email arrived — and for roughly an hour the <code>.ng</code> registry still delegated
+  to <code>dan1–dan4.host-ww.net</code>. Nothing was broken; the two are simply different systems,
+  and only one of them is authoritative.
+</p>
+
+<div class="file"><div class="name"><span>the only query that answers the question</span><span class="tag">dig</span></div>
+<pre><code>dig +norecurse @ns3.nic.net.ng NS checkychain.com.ng</code></pre></div>
+
+<p>
+  Both halves carry weight. <code>@ns3.nic.net.ng</code> asks the <code>.ng</code> registry's own
+  nameserver, bypassing every resolver — delegation is a record the registry holds, and everyone else
+  is repeating what they heard from it. <code>+norecurse</code> means <em>answer from your own
+  records, do not go asking anyone else</em>; without it a server may return a cached or recursively
+  fetched answer, which tells you nothing about what that server actually holds.
+</p>
+
+<p>
+  This is the check that kept the migration honest. The registrar's panel, the registrar's
+  confirmation email and the registrar's support would all have said the change was made. Only the
+  registry says whether it took effect, and for about 54 minutes the answer was no.
+</p>
 
 <div class="info">
-  <b>3 · Two free hardening wins while you are in there</b>
-  There is <strong>no DMARC record</strong> and <strong>no CAA record</strong>. Neither is required
-  for this deployment, but both are a few minutes of work in the same DNS panel, and DMARC in
-  particular is worth having on a domain whose entire business is telling people what is genuine.
-  Start with <code>v=DMARC1; p=none; rua=mailto:…</code> — report-only, so it cannot bounce
-  legitimate mail — and tighten to <code>p=quarantine</code> once the reports look clean. Also
-  confirm DKIM is switched on in the Google Admin console: nothing is published at the usual
-  <code>google._domainkey</code> selector.
+  <b>Four resolvers, not one</b>
+  Once the registry flipped, propagation was confirmed against Cloudflare (1.1.1.1), Google
+  (8.8.8.8), Quad9 (9.9.9.9) and OpenDNS on four different networks. The registry can be correct
+  while resolvers still serve a stale answer for the length of the TTL — 3600 seconds here. One
+  resolver agreeing proves very little; four agreeing means the caches have turned over. The chain
+  was then followed to the end: the apex resolved to 188.114.96.0, <code>whois</code> on that
+  address returned <code>CLOUDFLARENET-EU</code>, and a real request came back with
+  <code>server: cloudflare</code> and a <code>cf-ray</code> header naming the Amsterdam edge.
+  Delegation being correct does not mean the proxy is serving; each link was measured separately.
 </div>
-
-<h3>11.3 Two routes, and which to take</h3>
-
-<table>
-  <thead><tr><th style="width:18%">Route</th><th>What it involves</th><th style="width:22%">Gets you</th><th style="width:16%">Risk</th></tr></thead>
-  <tbody>
-    <tr>
-      <td><strong>A · Subdomain on the existing DNS</strong> <span class="pill ok">do this first</span></td>
-      <td>Add one A record at Wix: <code>verify</code> → the EIP. Change one line of <code>.env</code>. Re-run <code>./play</code>. Let's Encrypt works exactly as it does today.</td>
-      <td>A real, professional hostname with a real certificate.</td>
-      <td><span class="pill ok">none</span> — touches nothing else in the zone.</td>
-    </tr>
-    <tr>
-      <td><strong>B · Full Cloudflare migration</strong></td>
-      <td>Move the whole zone to Cloudflare, replicating every record first. Then proxy <code>verify</code> and switch the origin to a Cloudflare Origin CA certificate.</td>
-      <td>WAF, rate limiting, caching, DDoS absorption, origin IP hidden.</td>
-      <td><span class="pill gap">real</span> — email and the live WordPress site are both in the blast radius.</td>
-    </tr>
-  </tbody>
-</table>
-
-<p>
-  <strong>Recommendation: do A now, B deliberately and separately.</strong> Route A takes about ten
-  minutes and gets the demo onto <code>verify.checky.pro</code> with nothing else at stake. Route B
-  is worth doing — the rate limiting in particular is the only real answer to an unauthenticated
-  endpoint that costs three upstream RPC calls per request — but it is a DNS migration of a live
-  domain, and it deserves its own change window rather than being bundled into a demo deploy.
-</p>
 
 <div class="warn">
-  <b>Why there is no middle option on the free plan</b>
-  Cloudflare can proxy a single hostname while another provider keeps the zone — "partial" or
-  "CNAME setup" — but that is a <strong>Business-plan feature</strong> (around USD 200/month).
-  On Free and Pro, proxying anything means Cloudflare must be authoritative for the whole zone.
-  That is precisely why Route B is all-or-nothing and why Route A exists.
+  <b>DomainKing's revert email is a security notice, not a hold</b>
+  Shortly after the change, DomainKing emailed: <em>"If you did not authorise this change, you can
+  revert to the previous nameservers within 24 hours."</em> It is tempting to read that as a
+  24-hour hold before the change is pushed. It is the opposite — the change is applied and the link
+  is an undo. Clicking it would have reverted the migration. The email is worth keeping as the
+  escape hatch and otherwise ignoring, exactly as it says.
 </div>
 
-<h3>11.4 Route A — the ten-minute version</h3>
-
-<h4>What you need</h4>
-<ul>
-  <li>Login to whoever manages DNS for <code>checky.pro</code> (currently the Wix DNS panel).</li>
-  <li>The stack's <code>PublicIp</code> output — the Elastic IP, which survives instance replacement.</li>
-</ul>
-
-<div class="file">
-  <div class="name"><span>Route A</span><span class="tag">three steps</span></div>
-<pre><code># 1. At the DNS provider, add ONE record. Change nothing else.
-#    Type: A    Name: verify    Value: &lt;PublicIp&gt;    TTL: 300 (low, while you iterate)
-
-# 2. Confirm it resolves before deploying - Caddy cannot get a certificate until it does.
-dig +short verify.checky.pro          # must print the Elastic IP
-
-# 3. Point the deployment at it and re-run.
-#    infra/deploy/.env:
-PUBLIC_HOST=verify.checky.pro
-cd infra/deploy/ansible &amp;&amp; ./play</code></pre>
-</div>
+<h3>11.4 The certificate, and why ACME had to go</h3>
 
 <p>
-  The playbook's own gates then prove it: the landing page must return 200 over HTTPS on the new
-  name, and all ten private paths must return 404. Caddy obtains the certificate automatically on
-  first request. Nothing about the apex, <code>www</code>, <code>app</code> or email is touched.
+  This is the decision that silently breaks setups two months after they appear to work.
 </p>
 
-<div class="note">
-  <b>Keep the TTL low until you are settled</b>
-  300 seconds while iterating means a mistake is corrected in five minutes rather than a day. Raise
-  it to 3600 once the address is stable.
-</div>
-
-<h3>11.5 Route B — the full Cloudflare migration</h3>
-
-<h4>What you will need before starting</h4>
-<table>
-  <thead><tr><th style="width:30%">Item</th><th>Detail</th></tr></thead>
-  <tbody>
-    <tr><td>A Cloudflare account</td><td>Free plan is sufficient for everything described here, including WAF managed rules and one rate-limiting rule.</td></tr>
-    <tr><td><strong>Registrar access</strong></td><td>Not Wix DNS — the <em>registrar</em>, where nameservers are set. If the domain was registered through Wix, that is the Wix domain panel.</td></tr>
-    <tr><td><strong>A complete record export</strong></td><td>The inventory in 11.1, re-verified. Export a zone file from Wix if it offers one; otherwise transcribe every record by hand and check it twice.</td></tr>
-    <tr><td>Google Workspace admin</td><td>Only to confirm MX and DKIM afterwards. You should not need to change anything there.</td></tr>
-    <tr><td>Origin CA certificate + key</td><td>Generated in the Cloudflare dashboard during step 4. The private key is shown <strong>once</strong>.</td></tr>
-    <tr><td>A change window</td><td>Nameserver propagation is typically under an hour but is allowed to take 48. Do not start this on a Friday.</td></tr>
-  </tbody>
-</table>
-
-<h4>Step 1 · Inventory and verify, before touching anything</h4>
-<div class="file">
-  <div class="name"><span>capture the current truth</span><span class="tag">pre-flight</span></div>
-<pre><code># Save this output. It is your rollback reference and your completeness checklist.
-for r in SOA NS A AAAA MX TXT CAA; do echo "== $r"; dig +short $r checky.pro; done
-for n in www app mail blog shop portal cdn; do echo "== $n"; dig +short "$n.checky.pro"; done
-dig +short TXT _dmarc.checky.pro
-dig +short TXT google._domainkey.checky.pro</code></pre>
-</div>
-
-<h4>Step 2 · Add the zone to Cloudflare and recreate every record</h4>
 <p>
-  Add <code>checky.pro</code> in the Cloudflare dashboard. Its scan will import most records.
-  <strong>Then audit the imported set against your inventory, line by line.</strong> For this zone
-  that means confirming:
+  Caddy had been getting its certificate from Let's Encrypt over the <strong>HTTP-01</strong>
+  challenge, which requires Let's Encrypt to reach port 80 <em>on the box</em>. The moment Cloudflare
+  proxies the hostname and the firewall admits only Cloudflare, that path no longer exists. Nothing
+  fails at cutover: the existing certificate is still valid, the site serves perfectly, and every
+  check passes. The failure arrives at the <strong>first renewal, roughly sixty days later</strong>,
+  by which time nobody is looking at the deployment that caused it.
 </p>
-<table>
-  <thead><tr><th style="width:12%">Type</th><th style="width:14%">Name</th><th style="width:34%">Value</th><th style="width:14%">Proxy</th><th>Note</th></tr></thead>
-  <tbody>
-    <tr><td>A</td><td><code>@</code></td><td><code>147.79.108.66</code></td><td>DNS only (grey)</td><td>The WordPress site. Proxying it is a separate decision — do not change behaviour during a migration.</td></tr>
-    <tr><td>CNAME</td><td><code>www</code></td><td><code>checky.pro</code></td><td>match the apex</td><td>—</td></tr>
-    <tr><td>CNAME/A</td><td><code>app</code></td><td>whatever Bubble specifies</td><td>DNS only</td><td>Broken today. Fix or remove it deliberately, not by accident.</td></tr>
-    <tr><td>MX</td><td><code>@</code></td><td><code>aspmx.l.google.com</code> (10)</td><td>n/a</td><td rowspan="5"><strong>All five. A missing MX record is undelivered mail.</strong></td></tr>
-    <tr><td>MX</td><td><code>@</code></td><td><code>alt1.aspmx.l.google.com</code> (20)</td><td>n/a</td></tr>
-    <tr><td>MX</td><td><code>@</code></td><td><code>alt2.aspmx.l.google.com</code> (30)</td><td>n/a</td></tr>
-    <tr><td>MX</td><td><code>@</code></td><td><code>alt3.aspmx.l.google.com</code> (40)</td><td>n/a</td></tr>
-    <tr><td>MX</td><td><code>@</code></td><td><code>alt4.aspmx.l.google.com</code> (50)</td><td>n/a</td></tr>
-    <tr><td>TXT</td><td><code>@</code></td><td><code>v=spf1 include:_spf.google.com ~all</code></td><td>n/a</td><td>Mail will start failing SPF without it.</td></tr>
-    <tr><td>TXT</td><td><code>@</code></td><td><code>google-site-verification=2qxWQk-…</code></td><td>n/a</td><td>Removing it can un-verify the Workspace domain.</td></tr>
-    <tr><td><strong>A</strong></td><td><strong><code>verify</code></strong></td><td><strong>the Elastic IP</strong></td><td><strong>Proxied (orange)</strong></td><td>The new record. The only one this project adds.</td></tr>
-  </tbody>
-</table>
 
-<div class="warn">
-  <b>Verify at Cloudflare before switching nameservers</b>
-  Query Cloudflare's own servers directly while Wix is still authoritative — this is free and
-  catches a missing MX before it can hurt:
-  <div class="file" style="margin-top:8px">
-<pre><code>dig @&lt;your-cloudflare-ns&gt;.ns.cloudflare.com checky.pro MX +short
-dig @&lt;your-cloudflare-ns&gt;.ns.cloudflare.com checky.pro TXT +short</code></pre>
-  </div>
-  The answers must match your inventory exactly. Only then change the nameservers at the registrar.
-</div>
-
-<h4>Step 3 · Switch the nameservers</h4>
 <p>
-  At the registrar, replace <code>ns10.wixdns.net</code> / <code>ns11.wixdns.net</code> with the two
-  Cloudflare assigns. Cloudflare emails when the zone goes active. Keep the Wix zone intact for a
-  few days — it costs nothing and is your rollback.
+  So the origin stopped doing ACME altogether and was given a <strong>Cloudflare Origin CA</strong>
+  certificate instead — valid only between Cloudflare's edge and this box, covering the apex and
+  <code>*.checkychain.com.ng</code>, and expiring in <strong>2041</strong>. There is nothing to renew.
 </p>
 
-<h4>Step 4 · The certificate decision</h4>
-<div class="warn">
-  <b>This is the step most people get wrong, and it fails sixty days later</b>
-  Caddy currently uses the <strong>HTTP-01</strong> challenge, which needs Let's Encrypt to reach
-  port 80 <em>on the origin</em>. Once Cloudflare proxies the hostname, the origin is no longer
-  directly addressable and HTTP-01 renewal becomes unreliable. Everything keeps working at
-  switch-over — the break happens at the first renewal, about two months later, which is the worst
-  possible time to discover it.
-</div>
-
-<table>
-  <thead><tr><th style="width:22%">Option</th><th>How it works</th><th style="width:26%">Trade-off</th></tr></thead>
-  <tbody>
-    <tr>
-      <td><strong>Cloudflare Origin CA</strong> <span class="pill ok">recommended</span></td>
-      <td>Cloudflare issues a certificate (up to 15 years) valid only between its edge and your origin. Caddy serves it via an explicit <code>tls</code> directive and stops doing ACME entirely. Visitors see Cloudflare's own public certificate.</td>
-      <td>Nothing to renew, nothing to break. Requires SSL mode <strong>Full (strict)</strong>.</td>
-    </tr>
-    <tr>
-      <td>DNS-01 with an API token</td>
-      <td>Caddy keeps Let's Encrypt but proves control via a DNS TXT record, so the origin need not be reachable.</td>
-      <td>Needs a <strong>custom Caddy image</strong> — the Cloudflare DNS module is not in the standard build — plus a scoped API token stored on the box.</td>
-    </tr>
-  </tbody>
-</table>
-
-<h4>Step 5 · Install the origin certificate</h4>
-<p>
-  <strong>SSL/TLS → Origin Server → Create Certificate</strong>, for <code>verify.checky.pro</code>
-  (or <code>*.checky.pro</code>). Save both halves; the key is displayed once.
-</p>
-<div class="file">
-  <div class="name"><span>ship it with Ansible, never by hand</span><span class="tag">new playbook tasks</span></div>
-<pre><code>- name: Install the Cloudflare Origin CA certificate
-  ansible.builtin.copy:
-    src: "{{ deploy_root }}/secrets/origin.pem"
-    dest: "{{ app_dir }}/config/origin.pem"
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart the stack
-
-- name: Install the Origin CA private key
-  ansible.builtin.copy:
-    src: "{{ deploy_root }}/secrets/origin.key"
-    dest: "{{ app_dir }}/config/origin.key"
-    owner: root
-    group: root
-    mode: "0600"       # the private key - never 0644
-  no_log: true
-  notify: Restart the stack</code></pre>
-</div>
-<p class="cap">
-  Add <code>infra/deploy/secrets/</code> to <code>.gitignore</code> in the same commit that creates
-  the directory. The key must never be committed.
-</p>
-
-<div class="file">
-  <div class="name"><span>config/Caddyfile — the only line that changes</span><span class="tag">TLS</span></div>
+<div class="file"><div class="name"><span>infra/deploy/config/Caddyfile</span><span class="tag">TLS</span></div>
 <pre><code>{$PUBLIC_HOST} {
-	# Cloudflare Origin CA, not Let's Encrypt. Caddy performs no ACME at all, so the origin
-	# does not need to be publicly reachable on port 80 for a renewal to succeed.
-	tls /etc/caddy/origin.pem /etc/caddy/origin.key
+	# Cloudflare Origin CA, not Let's Encrypt. Caddy performs no ACME at all, which is the point:
+	# once Cloudflare proxies this hostname and the security group only admits Cloudflare, nothing
+	# can reach port 80 from the public internet, so an HTTP-01 renewal would fail - and it would
+	# fail at the first RENEWAL, about sixty days after a cutover that looked perfect. This
+	# certificate is valid only between Cloudflare's edge and this box, and expires in 2041.
+	# Visitors are served Cloudflare's own public certificate, which Cloudflare renews.
+	tls /etc/caddy/origin.pem /etc/caddy/origin.key</code></pre></div>
 
-	encode zstd gzip
-	# ... the rest of the file is unchanged ...
-}</code></pre>
-</div>
-
-<div class="file">
-  <div class="name"><span>compose.prod.yaml — mount the pair</span><span class="tag">edge</span></div>
-<pre><code>edge:
-  image: caddy:2.10-alpine
-  ports: ["80:80", "443:443"]
-  volumes:
-    - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
-    - ./config/origin.pem:/etc/caddy/origin.pem:ro
-    - ./config/origin.key:/etc/caddy/origin.key:ro
-    - ./landing:/srv/landing:ro
-    - caddy-data:/data
-    - caddy-config:/config</code></pre>
-</div>
-
-<h4>Step 6 · Set the SSL mode</h4>
-<p><strong>SSL/TLS → Overview → Full (strict)</strong>. The other modes are not merely weaker; two are harmful.</p>
-<table>
-  <thead><tr><th style="width:22%">Mode</th><th>Behaviour</th><th style="width:20%">Verdict</th></tr></thead>
-  <tbody>
-    <tr><td>Off</td><td>No TLS to the visitor.</td><td><span class="pill no">never</span></td></tr>
-    <tr><td>Flexible</td><td>TLS to the visitor, <strong>plaintext to the origin</strong>. Traffic crosses the public internet unencrypted, and redirect loops are common because Caddy will 308 to HTTPS.</td><td><span class="pill no">never</span></td></tr>
-    <tr><td>Full</td><td>TLS to the origin, certificate <em>not validated</em> — a self-signed one is accepted. Encrypted but not authenticated.</td><td><span class="pill gap">insufficient</span></td></tr>
-    <tr><td>Full (strict)</td><td>TLS to the origin with full validation against the Origin CA.</td><td><span class="pill ok">use this</span></td></tr>
-  </tbody>
-</table>
-
-<div class="warn">
-  <b>Order matters</b>
-  Install the certificate and set Full (strict) <em>before</em> turning the orange cloud on for
-  <code>verify</code>. The other order leaves a window where Cloudflare cannot validate the origin
-  and every visitor sees error 526.
-</div>
-
-<h4>Step 7 · Lock the origin to Cloudflare</h4>
 <p>
-  With the proxy on, anyone who learns the Elastic IP can bypass Cloudflare and hit the box
-  directly, defeating the WAF and the rate limit entirely. Accept 80 and 443 only from Cloudflare.
+  The keypair is validated locally before it is shipped, because a certificate and a key that do not
+  belong together produce a Caddy that starts and then refuses every connection:
 </p>
-<div class="file">
-  <div class="name"><span>demo_stack.py — replacing the two any-ipv4 rules</span><span class="tag">CDK</span></div>
-<pre><code># Cloudflare's published edge ranges: https://www.cloudflare.com/ips-v4
-# Pass them in at synth time rather than pasting a list that will silently go stale:
-#   ./cdk deploy -c cloudflareIpsV4="$(curl -s https://www.cloudflare.com/ips-v4)"
-# Treat the fetched list as data: every entry must parse as a CIDR before it becomes a rule.
-cloudflare_v4 = app.node.try_get_context("cloudflareIpsV4")
 
-if cloudflare_v4:
-    for cidr in [c.strip() for c in cloudflare_v4.replace(",", "\n").split() if c.strip()]:
-        security_group.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(443), "Cloudflare edge")
-        security_group.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(80), "Cloudflare edge")
-else:
-    # Fallback: open, as today. Correct only while the hostname is unproxied (Route A).
-    security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP (ACME + redirect)")
-    security_group.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")</code></pre>
+<div class="file"><div class="name"><span>validating the pair without printing the key</span><span class="tag">openssl</span></div>
+<pre><code>openssl x509 -in origin.pem -noout -subject -dates -ext subjectAltName
+openssl x509 -in origin.pem -noout -pubkey | openssl md5   # must equal
+openssl pkey  -in origin.key -pubout      | openssl md5   # this</code></pre></div>
+
+<p>
+  Ansible then installs it at <code>0644</code> for the certificate and <code>0600</code> for the key,
+  both root-owned — the <code>caddy</code> image runs as root so it reads both, and no other account
+  on the host can read the key. The key task carries <code>no_log: true</code> so its contents cannot
+  reach the play output, and both notify the <code>Restart edge</code> handler, because a bind-mounted
+  file that changes is invisible to <code>docker compose up -d</code> (§4.8).
+</p>
+
+<div class="bug">
+  <b>A wrong instruction, corrected by hitting it</b>
+  The sequence originally given was to create the Origin CA certificate while the nameservers
+  propagated, on the grounds that it needed no propagation. That is false, and Cloudflare answered
+  <code>Failed to validate requested hostname *.checkychain.com.ng</code>. Origin CA only issues for
+  a zone in <strong>Active</strong> state, and a zone becomes Active only once Cloudflare sees the
+  delegation. The certificate step cannot be parallelised with the wait; it depends on it.
 </div>
 
 <div class="note">
-  <b>A sturdier alternative: Cloudflare Tunnel</b>
-  Running <code>cloudflared</code> as one more container removes inbound ports altogether — the box
-  dials out and nothing needs to be open, so there is no IP allowlist to go stale and no origin
-  address to leak. It costs one container and a tunnel token, and it still requires the zone to be
-  on Cloudflare. If Route B is happening anyway, this is the better endpoint.
+  <b>The certificate a visitor sees is issued by Let's Encrypt</b>
+  Checked after cutover, the public certificate is <code>CN=checkychain.com.ng</code> issued by
+  <em>Let's Encrypt</em>, not by Cloudflare. That is Cloudflare Universal SSL, which Cloudflare
+  provisions and renews through Let's Encrypt as its CA; it expires in February 2027 and needs no
+  attention. Worth recording only because the preceding paragraphs promise "Cloudflare's own
+  certificate", and a reader checking in a browser would otherwise think something had gone wrong.
 </div>
 
-<h4>Step 8 · Recover the real client IP</h4>
+<h3>11.5 Closing the origin, and the trap inside it</h3>
+
 <p>
-  Behind a proxy every request appears to come from Cloudflare. Caddy will only believe a forwarded
-  address from a proxy it has been told to trust — which is the correct default, since otherwise
-  any client could spoof its own source address with a header.
+  With Cloudflare in front but ports 80 and 443 still open to <code>0.0.0.0/0</code>, the proxy is
+  <em>optional</em>. The origin address is not a secret — it sits in certificate transparency logs
+  and in old DNS history — so anyone who looks it up can skip the rate limiting, the WAF and the
+  caching by talking to the box directly. <strong>The firewall is what makes the edge mandatory
+  rather than merely usual.</strong>
 </p>
-<div class="file">
-  <div class="name"><span>config/Caddyfile — global options block</span><span class="tag">client IP</span></div>
-<pre><code>{
-	servers {
-		client_ip_headers CF-Connecting-IP X-Forwarded-For
-		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 # ... the full Cloudflare list
-	}
-}</code></pre>
+
+<div class="file"><div class="name"><span>infra/deploy/cdk/demo_stack.py</span><span class="tag">ingress</span></div>
+<pre><code>if edge == "cloudflare":
+    for cidr in CLOUDFLARE_IPV4:
+        security_group.add_ingress_rule(
+            ec2.Peer.ipv4(cidr), ec2.Port.tcp(443), "HTTPS from Cloudflare"
+        )
+        security_group.add_ingress_rule(
+            ec2.Peer.ipv4(cidr), ec2.Port.tcp(80), "HTTP from Cloudflare (redirect)"
+        )
+    for cidr in CLOUDFLARE_IPV6:
+        ...</code></pre></div>
+
+<p>
+  Fifteen IPv4 and seven IPv6 ranges, pinned in the source rather than fetched during synth — a synth
+  that reaches the network behaves differently depending on when and where it runs, and cannot
+  deploy while that endpoint is down. The cost is that the list goes stale, so the refresh command
+  sits in a comment beside it. The list was <em>verified rather than trusted</em>: the edge addresses
+  actually serving the site at the time (188.114.96.0 and 188.114.97.0) were both confirmed to fall
+  inside <code>188.114.96.0/20</code>. A published list that did not contain the address in use would
+  be the wrong list.
+</p>
+
+<p>
+  A <code>-c edge=public</code> escape hatch retains the open-to-the-internet mode for a hostname with
+  no proxy in front. That mode and the <code>tls</code> directive above are mutually exclusive, and
+  both files say so: the firewall rules are precisely what stops an HTTP-01 challenge reaching port
+  80, so changing one without the other is the sixty-day failure described in §11.4.
+</p>
+
+<div class="bug">
+  <b>A one-line cosmetic edit that would have destroyed the database</b>
+  The security group's description still read <em>"Public demo: HTTP/HTTPS from anywhere"</em>, which
+  had become false, so it was corrected to say Cloudflare only. The <code>cdk diff</code> for that
+  one-line change reported:
+  <pre><code>[~] AWS::EC2::SecurityGroup DemoSg  replace
+ └─ [~] GroupDescription (requires replacement)
+[~] AWS::EC2::Instance DemoInstance  may be replaced
+ └─ [~] SecurityGroupIds (may cause replacement)</code></pre>
+  A security group's <code>GroupDescription</code> is immutable in AWS. Editing it replaces the
+  group, which repoints the instance's <code>SecurityGroupIds</code>, which CloudFormation reports as
+  a possible <strong>instance</strong> replacement — and a replaced instance is a new EBS volume, so
+  the <code>postgres-data</code> volume and every receipt in it would have gone with it. The ingress
+  rules themselves are perfectly mutable; the description was the only thing forcing replacement.
+  It is therefore <strong>left stale on purpose</strong>, with a comment in the source saying why it
+  must not be corrected, and the accurate description recorded above the rules instead. Caught by
+  reading the diff rather than by deploying it, which is the entire argument for reading diffs.
 </div>
 
-<h4>Step 9 · Turn on the protections that were the point</h4>
+<h3>11.6 The gate that would have reported success against the wrong server</h3>
+
+<p>
+  The playbook ends by proving the site answers before it calls the deploy a success. That gate read:
+</p>
+
+<div class="file"><div class="name"><span>what it was</span><span class="tag">before</span></div>
+<pre><code>- name: Wait for the landing page to answer over HTTPS
+  ansible.builtin.uri:
+    url: "https://{{ deploy_env.PUBLIC_HOST }}/"
+    status_code: 200</code></pre></div>
+
+<p>
+  That was sound while <code>PUBLIC_HOST</code> was an sslip.io name, because the only thing that
+  could answer on it was our own box. It stopped being sound the moment the hostname became a real
+  domain with a proxy in front: the apex was pointed at a <strong>DomainKing placeholder that
+  returned 200 to everything</strong>. A deploy against the wrong origin, or against an edge not yet
+  pointed at us, would have passed this gate and been reported green.
+</p>
+
+<div class="file"><div class="name"><span>infra/deploy/ansible/playbook.yml</span><span class="tag">after</span></div>
+<pre><code>- name: Wait for OUR landing page to answer over HTTPS
+  ansible.builtin.uri:
+    url: "https://{{ deploy_env.PUBLIC_HOST }}/"
+    status_code: 200
+    return_content: true
+  register: landing
+  until: landing.status == 200 and 'Is this payment real?' in (landing.content | default(''))</code></pre></div>
+
+<p>
+  This is the same lesson as the x86_64 compose binary in §8 and the readiness probe in §4.8, in a
+  third costume: <strong>presence is not usability, and a 200 is not an identity.</strong> A check
+  that cannot distinguish our server from somebody else's is not checking the thing its name claims.
+</p>
+
+<div class="note">
+  <b>Error 526 is the expected intermediate state, not a fault</b>
+  Between pointing the DNS record at the box and installing the origin certificate, the site returns
+  Cloudflare's <code>error code: 526</code> — invalid origin certificate. It is worth expecting,
+  because it is also diagnostic: a 526 proves DNS reaches the right box <em>and</em> that Full
+  (strict) is genuinely validating, which is two of the three things you wanted confirmed. It was
+  seen here exactly once, and resolved by the step that was always going to resolve it.
+</div>
+
+<h3>11.7 What was verified at the end</h3>
+
+<p>
+  The cutover was checked from both sides of the proxy, because each side can be healthy while the
+  other is not:
+</p>
+
 <table>
-  <thead><tr><th style="width:24%">Setting</th><th style="width:30%">Value</th><th>Why</th></tr></thead>
+  <thead><tr><th style="width:38%">Check</th><th style="width:22%">Result</th><th>What it establishes</th></tr></thead>
   <tbody>
-    <tr><td><strong>Rate limiting rule</strong></td><td><code>POST /api/v1/verifications</code> → ~10 req/min per IP</td><td><strong>The single most valuable setting here.</strong> Every call costs three upstream RPC requests; this is what stops one script exhausting the provider quotas and turning the demo into a 503.</td></tr>
-    <tr><td>Cache rule — API</td><td>Bypass cache for <code>/api/*</code></td><td>A cached verification would be actively wrong: confirmations change every block.</td></tr>
-    <tr><td>Cache rule — page</td><td>Cache <code>/</code> and <code>/logo.png</code></td><td>Static. Takes load off a 2-vCPU box.</td></tr>
-    <tr><td>Always Use HTTPS</td><td>On</td><td>Edge-level redirect; Caddy's 308 becomes a backstop.</td></tr>
-    <tr><td>Minimum TLS Version</td><td>1.2</td><td>Drops obsolete clients.</td></tr>
-    <tr><td>HSTS</td><td>On, 12 months</td><td>Caddy already sends <code>max-age=31536000</code>. Enable at the edge <em>only</em> once HTTPS is confirmed — it is hard to undo.</td></tr>
-    <tr><td>Bot Fight Mode / WAF</td><td>On</td><td>Free-tier protection against the commodity scanning any public IP attracts.</td></tr>
+    <tr><td>Origin direct, SNI overridden to the box, port 443</td><td><code>000</code></td><td>No connection at all. The bypass is closed.</td></tr>
+    <tr><td>Origin direct, port 80</td><td><code>000</code></td><td>Same, and confirms ACME could not work even if configured.</td></tr>
+    <tr><td><code>https://checkychain.com.ng/</code></td><td><code>200</code>, <code>server: cloudflare</code></td><td>The page is served, and served through the edge.</td></tr>
+    <tr><td>Page title</td><td><em>Checkychain — Is this payment real?</em></td><td>It is <em>our</em> page, not a placeholder answering 200.</td></tr>
+    <tr><td>Public certificate</td><td><code>CN=checkychain.com.ng</code></td><td>Universal SSL is live and matches the name.</td></tr>
+    <tr><td>Origin certificate, via SNI override</td><td>Origin CA, to 2041</td><td>Full (strict) has something real to validate.</td></tr>
+    <tr><td><code>http://</code> and <code>www</code></td><td><code>308 → https</code>, <code>200</code></td><td>Both entry points work.</td></tr>
+    <tr><td><strong>A real Sepolia transaction</strong></td><td><strong><code>AGREED</code>, 6.1425 USDC, 3035 confirmations</strong></td><td>The product itself works end to end, through the proxy, on the real domain.</td></tr>
+    <tr><td><code>./play --check</code></td><td>clean</td><td>Ansible still reaches the box. SSM is outbound, so the firewall change did not cut off management.</td></tr>
   </tbody>
 </table>
 
-<h4>Step 10 · Point the deployment at the name and re-run</h4>
-<div class="file">
-  <div class="name"><span>infra/deploy/.env</span><span class="tag">one line</span></div>
-<pre><code>PUBLIC_HOST=verify.checky.pro</code></pre>
-</div>
-<p>
-  Then <code>./play</code>. The playbook's gates now exercise the real hostname <em>through</em>
-  Cloudflare: 200 on the landing page, 404 on all ten private paths. A wrong SSL mode or a caching
-  rule that swallows the API makes the deploy fail rather than appear to succeed.
-</p>
-
-<h4>Step 11 · Verify what you actually built</h4>
-<div class="file">
-  <div class="name"><span>post-cutover checks</span><span class="tag">verification</span></div>
-<pre><code># 1. Email still works - CHECK THIS FIRST, and send a real test message both ways.
-dig +short MX checky.pro
-dig +short TXT checky.pro
-
-# 2. The apex WordPress site is unaffected.
-curl -sI https://checky.pro/ | head -1
-
-# 3. The visitor-facing certificate is Cloudflare's, with the right name.
-openssl s_client -connect verify.checky.pro:443 -servername verify.checky.pro &lt;/dev/null \
-  | openssl x509 -noout -subject -issuer -dates
-
-# 4. Cloudflare is actually in the path (expect cf-ray, server: cloudflare).
-curl -sI https://verify.checky.pro/ | grep -iE 'cf-ray|server|strict-transport'
-
-# 5. The origin is NOT reachable directly any more (expect a timeout, not a page).
-curl -sS --max-time 10 https://&lt;PublicIp&gt;/ ; echo "exit=$?"
-
-# 6. The product still works through the proxy.
-curl -s -X POST https://verify.checky.pro/api/v1/verifications \
-  -H 'Content-Type: application/json' \
-  --data '{"txHash":"0x...","chain":"ETHEREUM"}'
-
-# 7. The rate limit engages where it should.
-for i in $(seq 1 25); do
-  curl -s -o /dev/null -w '%{http_code} ' -X POST https://verify.checky.pro/api/v1/verifications \
-    -H 'Content-Type: application/json' --data '{"txHash":"0x...","chain":"ETHEREUM"}'
-done; echo</code></pre>
+<div class="info">
+  <b>Why the firewall did not lock us out</b>
+  Narrowing ingress to Cloudflare would sever SSH — but there is no SSH here. Ansible connects over
+  <strong>SSM Session Manager</strong>, which the instance establishes <em>outbound</em> to AWS
+  (§4.2). Inbound rules are irrelevant to it. The decision in §4 to drop SSH entirely is what made
+  this step safe to take at all, which was not its original motivation.
 </div>
 
-<h4>Rollback</h4>
+<h3>11.8 Rebuilding, and a correction about what survives a teardown</h3>
+
 <p>
-  Until the Wix zone is deleted, rollback is a nameserver change at the registrar back to
-  <code>ns10/ns11.wixdns.net</code>. Propagation is the same hour-ish wait. This is the reason to
-  leave the old zone in place for a week rather than tidying it up immediately — and the reason to
-  keep the TTLs low through the cutover.
+  The stack had been destroyed the previous day to stop it billing, and the rebuild took about
+  <strong>thirteen minutes</strong>: four for <code>cdk deploy</code>, three to push images, six for
+  Ansible. That is possible only because the built images still existed <em>on the laptop</em>.
 </p>
 
-<div class="page-break"></div>
+<div class="warn">
+  <b>ECR repositories do not survive <code>cdk destroy</code></b>
+  It was stated during the teardown that the images would remain in ECR and the rebuild would
+  therefore be quick. That was wrong: <code>demo_stack.py</code> sets
+  <code>empty_on_delete=True</code> and <code>RemovalPolicy.DESTROY</code> on each repository —
+  deliberately, so a teardown leaves nothing behind — and all three repositories went with the
+  stack. The rebuild was fast for a different reason: the arm64 images were still in the local
+  Docker cache and only needed re-pushing, with no Maven build. The practical consequence is a
+  standing instruction between teardown and rebuild: <strong>do not run
+  <code>docker system prune</code></strong>, or a thirteen-minute rebuild becomes a forty-minute one.
+</div>
+
+<h3>11.9 What remains</h3>
+
+<ol>
+  <li>
+    <strong>Rate limiting on <code>POST /api/v1/verifications</code></strong> — dashboard work, and
+    the reason the origin was closed. Ten requests per minute per IP, blocking for one minute, which
+    is within the free tier's single-rule allowance. The endpoint costs <em>three upstream RPC
+    calls</em> per request, so ten per minute is thirty RPC calls per minute — comfortably inside
+    the free provider quotas whose limits are documented in §7.2.
+  </li>
+  <li>
+    <strong>Recovering the real client IP.</strong> Every request now arrives from a Cloudflare
+    address, so logs and any future per-IP logic see the proxy rather than the caller. Caddy needs a
+    <code>trusted_proxies</code> directive carrying the same ranges as the security group. Deferred
+    deliberately: it duplicates the pinned list, and the honest fix is to generate both from one
+    source rather than maintain two.
+  </li>
+  <li>
+    <strong>Refreshing the pinned ranges.</strong> Cloudflare changes them rarely but does change
+    them. A stale list fails closed — legitimate edge traffic is refused — which is the safe
+    direction, but it fails as an outage.
+  </li>
+  <li>
+    <strong>The items §10.2 already names</strong> that this section did not touch: keyed RPC
+    endpoints, the 503 copy that still mentions invoices, and tagging images by commit SHA instead
+    of deploying <code>latest</code>.
+  </li>
+</ol>
 
 <h2><span class="num">12</span>Operations</h2>
 
