@@ -284,8 +284,17 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
 
     it('renders eight of them without redirecting, and stays put (AC4, R28)', async () => {
       // `callback` is excluded and the file header says why: its screen acts on arrival, and that is task 6's
-      // behaviour, not task 41's. Six of the eight have no element yet, so "not redirected" is the claim -
+      // behaviour, not task 41's. FOUR of the eight have no element yet, so "not redirected" is the claim -
       // the location is unchanged and the action is the initial POP.
+      //
+      // THIS NUMBER WAS ALREADY WRONG BEFORE TASK 47 TOUCHED IT (T47 phase 7, F5). It said six, which was
+      // true when written; task 43 attached `register` and made it five without correcting it, and task 47
+      // attaches `register/sent` and makes it four. **No assertion can catch a wrong number in a comment** -
+      // the case passes either way, because what it asserts is that none of the eight redirects, not how
+      // many of them render. The count is kept rather than deleted because it is the thing a reader uses to
+      // decide whether "not redirected" is a weak claim or a strong one, and a task that attaches a screen
+      // should edit it here. The remaining four are `verify`, `resend-verification`, `reset/request`
+      // and `reset` - tasks 48 to 54.
       for (const path of PUBLIC_ROUTE_PATHS.filter((candidate) => candidate !== CALLBACK_PATH)) {
         const { router } = await arrive(`${APP_BASENAME}/${path}`);
         expect(router.state.location.pathname, path).toBe(`${APP_BASENAME}/${path}`);

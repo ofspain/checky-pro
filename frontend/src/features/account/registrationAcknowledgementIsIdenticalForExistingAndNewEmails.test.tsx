@@ -62,10 +62,17 @@ function installBrowserRequest(): void {
   });
 }
 
-function installTransport(reply: Reply): { sent: Request[] } {
-  const sent: Request[] = [];
+type Sent = { path: string; body: string };
+
+/**
+ * THE BODY IS READ INSIDE THE HANDLER, which is not a style choice: a `Request`'s body can be consumed
+ * once, so reading it after the fact in a case gets an exception or an empty string depending on who got
+ * there first. `request.clone().text()` here is the shape the sibling registration suite uses.
+ */
+function installTransport(reply: Reply): { sent: Sent[] } {
+  const sent: Sent[] = [];
   vi.stubGlobal('fetch', vi.fn(async (request: Request) => {
-    sent.push(request);
+    sent.push({ path: new URL(request.url).pathname, body: await request.clone().text() });
     return new Response(reply.body ?? '{}', {
       status: reply.status,
       headers: { 'Content-Type': 'application/json' },
@@ -116,8 +123,23 @@ const field = (container: HTMLElement, type: string) =>
   container.querySelector<HTMLInputElement>(`input[type="${type}"]`)!;
 
 async function type(input: HTMLInputElement, value: string): Promise<void> {
+  // THROUGH THE PROTOTYPE'S SETTER, NOT `input.value =`, AND THE FIRST VERSION OF THIS HELPER GOT IT WRONG
+  // (phase 8, I9). React installs its own `value` setter on the element instance to keep the change tracker
+  // in step, so assigning through the instance updates the tracker as well and React can conclude nothing
+  // changed. It happens to work here, because no case in this file types twice into one field - every field
+  // goes from empty to a value exactly once - which is precisely the kind of accident that survives review
+  // and then fails in the next suite that copies it.
+  //
+  // The sibling registration suite already landed on this form, and the reason is in ITS phase 7 F7 and
+  // phase 8 I11: `setter?.call` silently did nothing when the descriptor lacked a setter, and the failure
+  // surfaced as an empty request body three cases away from the cause. So the descriptor is ASSERTED rather
+  // than optional-chained past. This task re-introduced the weaker shape a closed task had already paid to
+  // learn about, which is the argument for FU-T43-2 (no shared test-util module) getting stronger, not for
+  // copying the fix a fourth time quietly.
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  expect(setter, 'HTMLInputElement has no value setter, so nothing below types anything').toBeTypeOf('function');
   await act(async () => {
-    input.value = value;
+    setter?.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
@@ -281,7 +303,18 @@ describe('AC4/AC5 the acknowledgement reads nothing and delays nothing', () => {
     await settle();
 
     expect(sent, 'the journey sent more than the one POST, so something retried').toHaveLength(1);
-    expect(new URL(sent[0]!.url).pathname).toBe('/accounts');
+    expect(sent[0]!.path).toBe('/accounts');
+    // AND WHAT WAS TYPED REALLY LEFT THE TAB, which is the assertion that makes `type()` above an
+    // instrument instead of a hope (phase 8, I9; measured in phase 9). Without it a helper that typed
+    // NOTHING passed all eighteen cases in this file: the transport is mocked, so an empty form still
+    // gets a 202 and still navigates, and every identical-output and focus case stays green. The
+    // asserted descriptor in `type()` catches a MISSING setter; only this line catches a setter that is
+    // never called. The sibling suite had body assertions from the start, which is why its helper was
+    // never silently inert, and why copying its helper without copying this line would have left the
+    // same hole with better-looking code in it.
+    expect(JSON.parse(sent[0]!.body) as { email: string; password: string },
+      'the form sent something other than what was typed into it')
+      .toEqual({ email: 'visitor@example.test', password: 'a'.repeat(12) });
   });
 });
 
