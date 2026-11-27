@@ -192,9 +192,39 @@ describe('AC7 one request per arrival', () => {
     expect(container.textContent).toBe(`${en.verify.heading}${en.verify.success}`);
   });
 
+  it('a token arriving AFTER a tokenless visit is still sent (AC7, AC12)', async () => {
+    // THE SCREEN'S HEADER CLAIMS THIS AND NOTHING MEASURED IT (phase 7, F1; phase 8, I1). The comment says
+    // the guard exists to mean "a request has been made", not "this effect has run" - and the difference is
+    // only visible on a screen that goes from having no token to having one WITHOUT REMOUNTING. Every other
+    // case here starts in its final state, so harness row TR05, which latches the guard above the
+    // empty-token return, survived all 2042 cases.
+    //
+    // Navigating to the same path with a new query string keeps the same route matched, so React Router
+    // re-renders the mounted screen with new `params` rather than building a new one - which is exactly the
+    // condition the guard must survive.
+    const { sent } = installTransport();
+    await arrive(VERIFY_PATH);
+    expect(sent, 'the tokenless arrival already posted, so this case cannot show anything').toHaveLength(0);
+
+    await act(async () => { await router?.navigate(`/${VERIFY_PATH}?token=${TOKEN}`); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(sent, 'the guard latched on the tokenless arrival, so the real token was never sent')
+      .toHaveLength(1);
+    expect((JSON.parse(sent[0]!.body) as { token: string }).token).toBe(TOKEN);
+    expect(mounted!.container.textContent).toBe(`${en.verify.heading}${en.verify.success}`);
+  });
+
   it('sets the guard BEFORE the request, not after (AC7)', async () => {
     // ORDER, not presence. A guard set after the call returns is no guard at all under StrictMode: both
     // invocations read `false` before either writes `true`, because nothing between them yields.
+    //
+    // KEPT, THOUGH IT IS THE BRITTLE HALF (phase 8, I10). This reads source text, so extracting a helper or
+    // renaming a variable breaks it without anything being wrong - loudly, which is why Kimi rated it
+    // acceptable. Its robust counterpart now exists: the case above drives the same property through
+    // behaviour, by handing a mounted screen a token it did not arrive with. Both are kept because they
+    // fail for different reasons - this one when the ORDER changes, that one when the guard's MEANING does -
+    // and the StrictMode case covers a third, when the guard goes missing altogether.
     const code = (await read('features/account/VerifyScreen.tsx'))
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
 
@@ -280,6 +310,14 @@ describe('AC5/AC6 the copy is the catalogue\'s and the outcome is announced', ()
     const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
 
     expect(container.textContent, 'the screen rendered the response body').not.toContain('SERVER-SUPPLIED-COPY');
+    // AND THE SUCCESS SENTENCE IS SHOWN FOR A 200, which is what holds `response.ok` against `=== 204`
+    // (phase 7, F2; phase 8, I2). This case already mocked a non-204 success and asserted only what must
+    // NOT appear, so harness row TR10 - narrowing the condition to the one status the contract declares -
+    // survived all 2042 cases. The direction matters: with `=== 204`, a server answering 200 would leave
+    // the visitor on `idle`, which after task 49 is the uniform FAILURE message, for a verification that
+    // actually succeeded. Any 2xx means the account is verified, so any 2xx shows the success state.
+    expect(container.textContent, 'a 200 did not reach the success state, so `response.ok` is not held')
+      .toContain(en.verify.success);
   });
 
   it('CONTROL: focus is on body before anything mounts', () => {
