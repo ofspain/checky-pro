@@ -83,6 +83,16 @@ PHASE 10 ADDED TWO ROWS, both for criteria that were written down and never aime
                                             because its first use would be this, and nothing counted
                                             headings until phase 10.
 
+PHASE 11 ADDED ONE ROW, for the half of Kimi's F3/F4 pair that can actually be falsified:
+
+  TR20  the screen acquires useNavigate   - invisible to every behavioural case in the suite: no new
+                                            markup, no new key, no lowercase tag. If phase 11's two added
+                                            patterns did not work, this passes all 2016 cases. F3's
+                                            widened role selectors get NO row, because AC11 forbids
+                                            `/<[a-z]/` in this file and kills every mutant that would
+                                            exercise them first - recorded at the pin rather than dressed
+                                            up with a mutant that dies for another reason.
+
 FOUR OUTCOMES, AND EVERY ROW PREDICTS ONE: `own` (killed with a named failure in a file this task wrote
 or grew), `inherited` (killed only elsewhere), `phase 10` (expected to survive now and be closed there),
 `unfalsifiable` (no observable effect).
@@ -217,6 +227,15 @@ MUTANTS = [
      SENT, TEXT_LINE,
      "      <Text>{t('register.success')}</Text>\n"
      "      <Heading>{t('register.heading')}</Heading>", "own"),
+    # --- PHASE 11's row, for the half of Kimi's F3/F4 pair that CAN be falsified ---------------------
+    # The acknowledgement acquires a navigator. Only the AC4 source scan can see this: it renders nothing
+    # new, adds no lowercase tag, introduces no catalogue key and changes no markup, so if the two
+    # patterns added in phase 11 did not work this would sail through all 2016 cases. F3's half of the
+    # pair gets NO row on purpose - see the comment at the OQ-T47-4 pin.
+    ("TR20 the acknowledgement acquires useNavigate, which only the AC4 scan can see",
+     SENT, ("import { useTranslation } from 'react-i18next';", "  const { t } = useTranslation();"),
+     ("import { useTranslation } from 'react-i18next';\nimport { useNavigate } from 'react-router';",
+      "  const { t } = useTranslation();\n  const navigate = useNavigate();\n  void navigate;"), "own"),
 ]
 
 def as_tuple(value):

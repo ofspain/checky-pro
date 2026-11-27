@@ -328,7 +328,14 @@ describe('phase 10: the claims the implementation left structural', () => {
     // `TextLink`, this breaks and names the open question instead of letting a quiet change answer it.
     const container = await arrive(REGISTER_SENT_PATH);
 
-    expect(container.querySelectorAll('a, button, input, select, textarea'),
+    // THE ROLE SELECTORS ARE DEFENCE IN DEPTH AND CANNOT BE FALSIFIED FROM HERE, which is worth saying
+    // plainly rather than leaving a reader to assume a mutant proved them (phase 11, F3). Kimi's point is
+    // right on the wording: "nowhere to go" should cover a focusable `div` with `role="link"`, and the
+    // five-element list did not. But the only way to put a roled element on this screen is a lowercase
+    // tag, and AC11 below forbids `/<[a-z]/` in this file's source outright - so every mutant that would
+    // exercise the widening is killed by a different assertion first. It is kept because it costs nothing
+    // and because the day AC11 is relaxed for some primitive that forwards a role, this is already right.
+    expect(container.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [contenteditable]'),
       'the acknowledgement grew a control - if that is intended, answer OQ-T47-4 and delete this case')
       .toHaveLength(0);
     // The one focusable node is the heading, and it is not a tab stop.
@@ -378,8 +385,15 @@ describe('AC4/AC5 the acknowledgement reads nothing and delays nothing', () => {
     // STRUCTURAL, and it is the only honest shape: a behavioural case cannot tell "did not read the status"
     // from "read it and did the same thing either way". The identical-output cases above measure the
     // OUTCOME; this measures the property that guarantees it for inputs nobody has mocked yet.
+    // `useNavigate` AND `useHref` JOINED THE LIST IN PHASE 11 (F4). Every other router hook here is
+    // forbidden because READING route state would give the screen an input; these two are forbidden for
+    // the opposite reason - an acknowledgement that navigates, or that computes a URL to navigate to, is
+    // no longer the end of the journey. Both are real react-router exports, which is checked rather than
+    // assumed: a pattern aimed at a name that does not exist forbids nothing and invalidates its own
+    // mutant, which is how T37 lost a row.
     for (const shape of [/\bfetch\s*\(/, /\.status\b/, /\bdata\b/, /\berror\b/, /setTimeout/, /setInterval/,
-      /useLocation/, /useSearchParams/, /useParams/, /sessionStorage/, /localStorage/, /\bprops\b/]) {
+      /useLocation/, /useSearchParams/, /useParams/, /useNavigate/, /useHref/,
+      /sessionStorage/, /localStorage/, /\bprops\b/]) {
       expect(code, `the acknowledgement reaches ${String(shape)}`).not.toMatch(shape);
     }
   });
