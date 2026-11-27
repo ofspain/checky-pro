@@ -1,0 +1,187 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 0 failed of 2016, exit 0
+baseline failing cases (excluded from every attribution below): []
+
+  KILLED    own            TR01 the acknowledgement renders no heading, so nothing names the screen  (14 failed of 2016, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ and the exception does the opposite: RegisterSentScreen takes focus (task 47)
+            └ renders a non-empty acknowledgement at /app/register/sent (AC1)
+            └ renders the catalogue sentence and NOT the message the server sent (AC6, trap 3)
+            └ spells both catalogue keys as literal English (AC6, D7)
+            └ is identical for a reply that is not JSON at all (AC2, AC4)
+            └ renders exactly one heading, so the document outline has no gap (L11)
+            └ OPEN QUESTION PINNED - the acknowledgement offers nowhere to go (D3, OQ-T47-4)
+            └ OPEN QUESTION PINNED - a double submit sends TWO requests (OQ-T43-11)
+            └ focuses the h1 when arrived at through the real route table
+            └ focuses the h1 at the end of the real submit journey, not only on a direct arrival
+            └ survives StrictMode double invocation
+            └ adds no tab stop: the heading is focusable but not tabbable
+            └ renders on a cold arrival with no preceding submit and no router state (AC8)
+            └ NAVIGATES to the acknowledgement, which is what D1 chose against until there was one
+  KILLED    own            TR02 the focus move is deleted, so arrival announces nothing  (4 failed of 2016, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ and the exception does the opposite: RegisterSentScreen takes focus (task 47)
+            └ focuses the h1 when arrived at through the real route table
+            └ focuses the h1 at the end of the real submit journey, not only on a direct arrival
+            └ survives StrictMode double invocation
+  KILLED    own            TR03 the heading never receives the ref, so the effect focuses nothing  (4 failed of 2016, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ and the exception does the opposite: RegisterSentScreen takes focus (task 47)
+            └ focuses the h1 when arrived at through the real route table
+            └ focuses the h1 at the end of the real submit journey, not only on a direct arrival
+            └ survives StrictMode double invocation
+  KILLED    own            TR04 the sentence is hardcoded in the screen - BYTE-IDENTICAL on screen  (1 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ reaches the catalogue for every word it renders, which the DOM cannot tell from a literal
+  KILLED    own            TR05 the two catalogue keys are swapped  (8 failed of 2016, exit 1)
+            └ in: ['src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ and the exception does the opposite: RegisterSentScreen takes focus (task 47)
+            └ renders the catalogue sentence and NOT the message the server sent (AC6, trap 3)
+            └ spells both catalogue keys as literal English (AC6, D7)
+            └ is identical for a reply that is not JSON at all (AC2, AC4)
+            └ OPEN QUESTION PINNED - a double submit sends TWO requests (OQ-T43-11)
+            └ focuses the h1 when arrived at through the real route table
+            └ renders on a cold arrival with no preceding submit and no router state (AC8)
+            └ NAVIGATES to the acknowledgement, which is what D1 chose against until there was one
+  KILLED    own            TR06 the heading REPORTS instead of instructing, disclosing what R2 withholds  (1 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ spells both catalogue keys as literal English (AC6, D7)
+  KILLED    own            TR07 the sentence distinguishes a new account from an existing one  (2 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ spells both catalogue keys as literal English (AC6, D7)
+            └ renders the success sentence from the catalogue at the end of the submit, as literal English
+  KILLED    own            TR08 the submit goes nowhere, so the acknowledgement is never reached  (16 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ renders byte-identical markup for a new address and an already-registered one (AC2, AC3)
+            └ is identical even for a status the contract never declares (AC2, trap 1)
+            └ lands on the same path in both cases, and it is REGISTER_SENT_PATH (AC3)
+            └ REPLACES the form in history, so Back cannot resubmit the address (AC3)
+            └ renders the catalogue sentence and NOT the message the server sent (AC6, trap 3)
+            └ renders IDENTICALLY on a cold arrival and at the end of a submit (AC2, AC8)
+            └ is identical for a reply that is not JSON at all (AC2, AC4)
+            └ OPEN QUESTION PINNED - a double submit sends TWO requests (OQ-T43-11)
+            └ focuses the h1 at the end of the real submit journey, not only on a direct arrival
+            └ renders the success sentence from the catalogue at the end of the submit, as literal English
+            └ renders the same success state for a 202 accepted
+            └ renders the same success state for a 409 conflict, which the server does not send and this screen would not read
+            └ renders the same success state for a 500 with no body at all
+            └ returns the form to its idle state when the send rejects, and claims nothing
+            └ shows the submitting word while the request is in flight, then the acknowledgement (D7)
+            └ NAVIGATES to the acknowledgement, which is what D1 chose against until there was one
+  KILLED    own            TR09 the navigation is relative, so it lands on /register/register/sent  (14 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ renders byte-identical markup for a new address and an already-registered one (AC2, AC3)
+            └ lands on the same path in both cases, and it is REGISTER_SENT_PATH (AC3)
+            └ renders the catalogue sentence and NOT the message the server sent (AC6, trap 3)
+            └ renders IDENTICALLY on a cold arrival and at the end of a submit (AC2, AC8)
+            └ is identical for a reply that is not JSON at all (AC2, AC4)
+            └ OPEN QUESTION PINNED - a double submit sends TWO requests (OQ-T43-11)
+            └ focuses the h1 at the end of the real submit journey, not only on a direct arrival
+            └ renders the success sentence from the catalogue at the end of the submit, as literal English
+            └ renders the same success state for a 202 accepted
+            └ renders the same success state for a 409 conflict, which the server does not send and this screen would not read
+            └ renders the same success state for a 500 with no body at all
+            └ returns the form to its idle state when the send rejects, and claims nothing
+            └ shows the submitting word while the request is in flight, then the acknowledgement (D7)
+            └ NAVIGATES to the acknowledgement, which is what D1 chose against until there was one
+  KILLED    own            TR10 `replace: true` is dropped, so Back returns to a form that would resubmit  (2 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ REPLACES the form in history, so Back cannot resubmit the address (AC3)
+            └ OPEN QUESTION PINNED - a double submit sends TWO requests (OQ-T43-11)
+  KILLED    own            TR11 the screen READS THE STATUS and navigates only on a 202  (4 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ is identical even for a status the contract never declares (AC2, trap 1)
+            └ renders the same success state for a 409 conflict, which the server does not send and this screen would not read
+            └ renders the same success state for a 500 with no body at all
+            └ reads neither the body nor the status, and sets no timer
+  KILLED    own            TR12 it navigates on failure too, reporting an account nobody requested  (1 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ returns the form to its idle state when the send rejects, and claims nothing
+  KILLED    own            TR13 the route's condition is made unreachable, so the path gets no element  (18 failed of 2016, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/homeRouteRendersLandingScreenAndManagesFocus.test.tsx', 'src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ and the exception does the opposite: RegisterSentScreen takes focus (task 47)
+            └ renders a non-empty acknowledgement at /app/register/sent (AC1)
+            └ renders byte-identical markup for a new address and an already-registered one (AC2, AC3)
+            └ renders the catalogue sentence and NOT the message the server sent (AC6, trap 3)
+            └ spells both catalogue keys as literal English (AC6, D7)
+            └ renders IDENTICALLY on a cold arrival and at the end of a submit (AC2, AC8)
+            └ is identical for a reply that is not JSON at all (AC2, AC4)
+            └ renders exactly one heading, so the document outline has no gap (L11)
+            └ OPEN QUESTION PINNED - the acknowledgement offers nowhere to go (D3, OQ-T47-4)
+            └ OPEN QUESTION PINNED - a double submit sends TWO requests (OQ-T43-11)
+            └ focuses the h1 when arrived at through the real route table
+            └ focuses the h1 at the end of the real submit journey, not only on a direct arrival
+            └ survives StrictMode double invocation
+            └ adds no tab stop: the heading is focusable but not tabbable
+            └ renders on a cold arrival with no preceding submit and no router state (AC8)
+  KILLED    own            TR14 the path's spelling changes, so the declared set no longer holds it  (3 failed of 2016, exit 1)
+            └ in: ['src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ changes neither declared path set: `register` was already there, with no element
+  SURVIVED  -              TR15 useEffect becomes useLayoutEffect - the focus still moves  (0 failed of 2016, exit 0)
+  KILLED    own            TR16 CANARY the two probe replies are made IDENTICAL, so trap 1 is disarmed  (1 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ renders byte-identical markup for a new address and an already-registered one (AC2, AC3)
+  KILLED    own            TR17 CANARY the held transport answers at once, inverting phase 6's own decision  (13 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ sends 12 ASCII characters, the lower bound it… to the server either way
+            └ sends 13 ASCII characters, just inside to the server either way
+            └ sends 12 astral code points, which are 24 UTF… to the server either way
+            └ sends 128 ASCII characters, the upper bound i… to the server either way
+            └ sends 128 astral code points, which are 256 U… to the server either way
+            └ sends 11 ASCII characters, one short to the server either way
+            └ sends 7 emoji, which `.length` would call 14 to the server either way
+            └ sends 129 ASCII characters, one past the uppe… to the server either way
+            └ sends the empty string, which must not crash … to the server either way
+            └ T44 AC2 — 128 emoji are 256 UTF-16 units in the DOM and 128 code points to the check
+            └ submits with BOTH fields empty, because the server is the authority on an empty address too
+            └ leaves the password nowhere but the field that holds it, before or after the submit
+            └ mounts the live region before the submit, empty, so the fill is an announcement (D1)
+  KILLED    own            TR18 the acknowledgement grows a TextLink, answering OQ-T47-4 by edit  (5 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ renders the catalogue sentence and NOT the message the server sent (AC6, trap 3)
+            └ is identical for a reply that is not JSON at all (AC2, AC4)
+            └ OPEN QUESTION PINNED - the acknowledgement offers nowhere to go (D3, OQ-T47-4)
+            └ OPEN QUESTION PINNED - a double submit sends TWO requests (OQ-T43-11)
+            └ renders on a cold arrival with no preceding submit and no router state (AC8)
+  KILLED    own            TR19 a second heading appears, so the document has two h1 elements  (6 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ renders the catalogue sentence and NOT the message the server sent (AC6, trap 3)
+            └ is identical for a reply that is not JSON at all (AC2, AC4)
+            └ renders exactly one heading, so the document outline has no gap (L11)
+            └ OPEN QUESTION PINNED - the acknowledgement offers nowhere to go (D3, OQ-T47-4)
+            └ OPEN QUESTION PINNED - a double submit sends TWO requests (OQ-T43-11)
+            └ renders on a cold arrival with no preceding submit and no router state (AC8)
+  KILLED    own            TR20 the acknowledgement acquires useNavigate, which only the AC4 scan can see  (1 failed of 2016, exit 1)
+            └ in: ['src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ reaches for no response, no route state and no timer
+
+regressions: 17/17 killed
+canaries:    ['TR16', 'TR17'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
+unfalsifiable: ['TR15'] - no observable effect to detect
+survivors:   ['TR15']
+broken:      none
+
+--- expectation vs outcome ---
+  TR01   expected own           got KILLED/own       as expected
+  TR02   expected own           got KILLED/own       as expected
+  TR03   expected own           got KILLED/own       as expected
+  TR04   expected own           got KILLED/own       as expected
+  TR05   expected own           got KILLED/own       as expected
+  TR06   expected own           got KILLED/own       as expected
+  TR07   expected own           got KILLED/own       as expected
+  TR08   expected own           got KILLED/own       as expected
+  TR09   expected own           got KILLED/own       as expected
+  TR10   expected own           got KILLED/own       as expected
+  TR11   expected own           got KILLED/own       as expected
+  TR12   expected own           got KILLED/own       as expected
+  TR13   expected own           got KILLED/own       as expected
+  TR14   expected inherited     got KILLED/own       DISAGREES - this task's own files caught it too (stronger than claimed)
+  TR15   expected unfalsifiable got SURVIVED         as expected
+  TR16   expected own           got KILLED/own       as expected
+  TR17   expected own           got KILLED/own       as expected
+  TR18   expected own           got KILLED/own       as expected
+  TR19   expected own           got KILLED/own       as expected
+  TR20   expected own           got KILLED/own       as expected
+
+disagreements: ['TR14']
