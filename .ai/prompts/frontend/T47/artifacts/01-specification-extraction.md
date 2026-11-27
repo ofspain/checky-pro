@@ -143,12 +143,23 @@ artifact and quote it rather than infer it from a downstream comment.
 
 - **`package.md` §11 holds no open question touching R2.** Q6 (route set) is resolved as proposed,
   which is what makes L14's acknowledgement route binding.
-- **Environmental, outside the spec:** `pnpm` is absent from this machine, so the two cases in
-  `src/api/lintRejectsHandWrittenBackendFetch.test.ts` fail with `spawn pnpm ENOENT`. Baseline measured
-  2026-11-27: **1990 passed / 2 failed of 1992**, both failures that file, both this cause. The repo
-  pins `pnpm@12.14.0` via `packageManager`; Node 26 removed corepack, which used to supply it. **This
-  is not a code regression and not T47's to fix**, but it degrades the gate L6 depends on and must be
-  restored before Phase 6 claims a clean run.
+- **Environmental, outside the spec — resolved in part, and an earlier claim here was wrong.**
+  First measurement 2026-11-27: **1990 / 1992**, both failures in
+  `src/api/lintRejectsHandWrittenBackendFetch.test.ts` with `spawn pnpm ENOENT`, because `pnpm` was
+  absent (the repo pins `pnpm@12.14.0` via `packageManager`; Node 26 removed corepack, which used to
+  supply it). `pnpm@12.14.0` was then installed, and the end-to-end case passes again.
+
+  **Baseline for this task is therefore 1991 / 1992**, which matches T46's recorded close exactly.
+
+  The one remaining failure is **a stale assertion, not a dead gate**, and the distinction matters
+  because this file is the only instrument enforcing L6. Measured directly: **oxlint 1.87.0 prints no
+  summary line at all** — not on a clean run, and not even on a failing one — so
+  `expect(output).toContain('Found 0 warnings and 0 errors')` (line 118) and `'with 2 rules'`
+  (line 119) assert strings the tool no longer emits. **The L6 rule itself still fires**: a
+  hand-written `fetch` to a backend route produces
+  `error eslint(no-restricted-globals) ... Call the backend through @themistra/api-client (L6)` and
+  exit 1. So the protection is intact and only the assertion about the tool's chatter is stale.
+  Recorded as **FU-T47-1**; fixing it is outside T47's mandate.
 
 ---
 
