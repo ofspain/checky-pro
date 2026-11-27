@@ -34,7 +34,7 @@ import { AuthenticatedLayout } from './AuthenticatedLayout';
 import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
 import { APP_BASENAME, AUTHENTICATED_ROUTE_PATHS, HOME_PATH, PUBLIC_ROUTE_PATHS, REGISTER_PATH,
-  REGISTER_SENT_PATH, SIGNED_OUT_PATH, SIGN_IN_PATH, appRoutes } from './routes';
+  REGISTER_SENT_PATH, SIGNED_OUT_PATH, SIGN_IN_PATH, appRoutes, VERIFY_PATH} from './routes';
 
 /** The words, spelled once here so a silent catalogue edit fails rather than passes. */
 const COPY = {
@@ -707,8 +707,8 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
   });
 
-  describe('AC9 exactly six screens are attached', () => {
-    it('attaches an element to sign-in, callback, register, register/sent, signed-out and home, and to nothing else', () => {
+  describe('AC9 exactly seven screens are attached', () => {
+    it('attaches an element to sign-in, callback, register, register/sent, verify, signed-out and home, and to nothing else', () => {
       // A deliberate COUNT PIN, and it will fail the day the next screen is attached - which is the handoff
       // working, exactly as task 16's did for this task. Whoever attaches the next one extends this list and
       // task 16's SCREENS_ATTACHED_SO_FAR together.
@@ -748,7 +748,7 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // this pin exists to make visible: the path was always in the set, and only today is it a screen.
       const attached = appRoutes.flatMap(walk);
       expect(attached).toEqual([
-        'sign-in', 'callback', REGISTER_PATH, REGISTER_SENT_PATH, SIGNED_OUT_PATH, HOME_PATH, '*',
+        'sign-in', 'callback', REGISTER_PATH, REGISTER_SENT_PATH, VERIFY_PATH, SIGNED_OUT_PATH, HOME_PATH, '*',
       ]);
 
       // CONTROL, the one task 16's case has and this one was missing: `walk` must COUNT, rather than return a

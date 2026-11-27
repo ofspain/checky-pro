@@ -349,7 +349,7 @@ describe('AC7 the instruments this task was obliged to grow', () => {
     // claim is kept and the count follows the two lists rather than being frozen at a figure task 174
     // happened to see.
     expect(source, 'the union pin no longer says twenty-two, so a render site or a primitive is unpinned')
-      .toMatch(/\.toBe\(22\)/);
+      .toMatch(/\.toBe\(23\)/);
   });
 
   it('names home in the attached-element pin, which is read from the route table itself', () => {

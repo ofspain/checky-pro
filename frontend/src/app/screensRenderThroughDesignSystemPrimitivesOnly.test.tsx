@@ -103,6 +103,9 @@ const RENDER_SITES = [
   // no change to the barrel-import scan that task 43 had to fix: that scan now matches any depth, so this
   // file was visible to it immediately and the equality below is what demanded this line.
   'features/account/RegisterSentScreen.tsx',
+  // TASK 48 - the verification screen, the tenth render site. The first whose visitor arrives from an EMAIL
+  // rather than from a link inside the application, which is why it is the first to read a query parameter.
+  'features/account/VerifyScreen.tsx',
 ] as const;
 
 /**
@@ -255,7 +258,7 @@ afterEach(async () => {
 
 describe('T173 AC2/AC3: only the primitives render bare elements', () => {
   it('pins both lists at the sizes the brief froze, with nothing in both (§6e(1))', () => {
-    // SIX SINCE TASK 174, NINE SINCE TASK 47. The number is pinned rather than derived on purpose - a list
+    // SIX SINCE TASK 174, NINE SINCE TASK 47, TEN SINCE TASK 48. The number is pinned rather than derived - a list
     // that counted itself would accept any edit - so each task that adds a screen moves it here,
     // deliberately, once.
     //
@@ -264,7 +267,12 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // failed on the first run after the screen landed. That is the same blind spot the F9 paragraph further
     // down records against task 42, now earned a second time, which is why both notes are left standing.
     // A task adding a screen should expect to edit four lines here, not one.
-    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(9);
+    //
+    // TASK 48 CONFIRMED THE WARNING AND FOUND IT STILL UNDERSTATED. Four lines was right, but its phase 5
+    // plan predicted the catalogue step alone would leave the suite green, reasoning about the pin that
+    // checks every key is RENDERED. The key-set pin below is set equality against the catalogue itself, so
+    // it fires the moment a key exists, rendered or not - two steps earlier than the plan expected.
+    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(10);
     expect(PRIMITIVES, 'the primitive list changed size without the brief changing').toHaveLength(13);
     expect(new Set(PRIMITIVES).size).toBe(PRIMITIVES.length);
     expect(PRIMITIVES, 'the primitive list is not sorted, so a duplicate is easy to miss')
@@ -303,7 +311,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // That is the second floor of I7's trap holding exactly as the comment above predicted - the two numbers
     // are allowed to move apart, and this one moved alone.
     expect(new Set([...PRIMITIVE_FILES, ...RENDER_SITES]).size,
-      'the union of the two pinned lists is no longer twenty-two').toBe(22);
+      'the union of the two pinned lists is no longer twenty-three').toBe(23);
     // and every file the sweep found is in one of them, which is the cross-check §6e(2) actually asks for.
     for (const file of bearing) {
       expect([...PRIMITIVE_FILES, ...RENDER_SITES], `${file} renders an element and is in neither list`)
@@ -959,6 +967,14 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
       // forbids a primitive or a restyling quietly editing or dropping a string. Both halves of that claim
       // are untouched by the move, and the spelled-out pin further down still holds its exact words.
       'registerSent.heading',
+      // TASK 48 - the verification screen. BOTH KEYS ARRIVED BEFORE THE SCREEN DID, and this pin is what
+      // noticed: the implementation plan predicted the catalogue step would leave the suite at 2016/2016,
+      // because it reasoned about the OTHER instrument - the one that checks every key is rendered. This one
+      // is set equality against the catalogue itself, so it fires the moment a key exists, rendered or not.
+      // The prediction was wrong and the pin was right; recorded because a plan corrected by measurement is
+      // worth more than a plan that happened to be right.
+      'verify.heading',
+      'verify.success',
     ].sort());
   });
 

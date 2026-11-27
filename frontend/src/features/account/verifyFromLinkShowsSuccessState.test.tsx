@@ -1,0 +1,437 @@
+/// <reference types="node" />
+/**
+ * T48 — `verifyFromLinkShowsSuccessState` (`package.md` §8), R3.
+ *
+ * **EVERY CASE ARRIVES THROUGH THE REAL ROUTE TABLE**, because the claim is about a link. A direct mount of
+ * `VerifyScreen` would prove the component works and say nothing about whether an emailed URL reaches it,
+ * which is the half that had been missing since task 16 - `/app/verify` was declared with no element, so
+ * every verification email the platform ever sent landed on a blank document.
+ *
+ * **THE TOKEN IS THE ONLY INPUT, AND THAT IS WHY THIS SCREEN IS THE MIRROR OF TASK 47'S.**
+ * `RegisterSentScreen` is forbidden by a source scan from so much as mentioning `useSearchParams`, because
+ * R2 asks it to render identically for two outcomes and an input is how two journeys would differ. R3 asks
+ * this screen to act on the one input the visitor brought with them. Opposite requirements, adjacent files.
+ *
+ * **WHAT THIS SUITE DELIBERATELY CANNOT SEE.** `idle` is the rendering for three different situations - the
+ * request in flight, no token in the link, and a request that failed - and task 48 does not distinguish them.
+ * R4's single uniform failure message is task 49's, and inventing its copy here would pre-empt it. So the
+ * cases below pin the no-token branch by its CONSEQUENCE (no request is sent) rather than by anything on
+ * screen, which is the only part of it that is this task's to claim.
+ */
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { act, StrictMode } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { I18nextProvider } from 'react-i18next';
+import { createMemoryRouter, RouterProvider, type createMemoryRouter as CreateMemoryRouter } from 'react-router';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { APP_BASENAME, appRoutes, PUBLIC_ROUTE_PATHS, VERIFY_PATH } from '../../app/routes';
+import { en } from '../../i18n/catalogue';
+import { createI18n } from '../../i18n/i18n';
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const srcDir = dirname(dirname(dirname(expect.getState().testPath as string)));
+const read = (relativePath: string) => readFile(join(srcDir, relativePath), 'utf8');
+
+/**
+ * A token in the alphabet the server actually issues.
+ *
+ * `VerificationTokenService.generateRawToken` (`:189-193`) is
+ * `Base64.getUrlEncoder().withoutPadding().encodeToString(32 bytes)`, so the alphabet is `A-Za-z0-9-_` with
+ * no padding - **no `+`, no `/`, no `=`**. That is not decoration: see the last case in this file, which
+ * measures what a `+` would do if the encoder were ever changed.
+ */
+const TOKEN = 'abcDEF123_-xyzABC456_-defGHI789_-jklMNO012_x';
+
+let mounted: { root: Root; container: HTMLElement } | undefined;
+let router: ReturnType<typeof CreateMemoryRouter> | undefined;
+
+/** Node's Request rejects a relative URL; a browser resolves it against the document (T05). */
+function installBrowserRequest(): void {
+  const NodeRequest = globalThis.Request;
+  vi.stubGlobal('Request', class extends NodeRequest {
+    constructor(input: RequestInfo | URL, init?: RequestInit) {
+      super(typeof input === 'string' ? new URL(input, window.location.href) : input, init);
+    }
+  });
+}
+
+type Sent = { path: string; body: string; authorization: string | null };
+
+/**
+ * The body AND the headers are read inside the handler. The body because a `Request`'s body can be consumed
+ * only once, so reading it from a case afterwards gets an exception or an empty string depending on who got
+ * there first; the headers because `authorization` is the whole of AC3's second half and reading it later
+ * would be reading a request the client may already have released.
+ */
+function installTransport(status = 204): { sent: Sent[] } {
+  const sent: Sent[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (request: Request) => {
+    sent.push({
+      path: new URL(request.url).pathname,
+      body: await request.clone().text(),
+      authorization: request.headers.get('authorization'),
+    });
+    return new Response(null, { status });
+  }));
+  return { sent };
+}
+
+beforeEach(() => {
+  installBrowserRequest();
+});
+
+afterEach(async () => {
+  if (mounted) {
+    const { root, container } = mounted;
+    await act(async () => root.unmount());
+    container.remove();
+    mounted = undefined;
+  }
+  router?.dispose?.();
+  router = undefined;
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+async function arrive(path: string, options: { strict?: boolean } = {}): Promise<HTMLElement> {
+  const container = document.createElement('div');
+  document.body.append(container);
+  router = createMemoryRouter(appRoutes, {
+    basename: APP_BASENAME,
+    initialEntries: [`${APP_BASENAME}/${path}`],
+  });
+  const root = createRoot(container);
+  mounted = { root, container };
+  const tree = (
+    <I18nextProvider i18n={createI18n()}>
+      <RouterProvider router={router} />
+    </I18nextProvider>
+  );
+  await act(async () => {
+    root.render(options.strict === true ? <StrictMode>{tree}</StrictMode> : tree);
+  });
+  // Lets the POST's promise and the state update that follows it settle.
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  return container;
+}
+
+// ==========================================================================================================
+// AC1 / AC2 / AC3 / AC4 — the link arrives, the token is sent, the success state shows
+// ==========================================================================================================
+
+describe('AC1-AC4 a valid token shows the verified success state', () => {
+  it('renders the success state for a 204 at /app/verify?token=... (AC1, AC4)', async () => {
+    installTransport(204);
+
+    const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    expect(container.textContent).toBe(`${en.verify.heading}${en.verify.success}`);
+    expect(router?.state.location.pathname).toBe(`${APP_BASENAME}/${VERIFY_PATH}`);
+  });
+
+  it('sends the token FROM THE URL, as the body of one public POST (AC2, AC3)', async () => {
+    const { sent } = installTransport();
+
+    await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.path).toBe('/accounts/verify-email');
+    // THE TOKEN ITSELF, not merely "a body". A screen that posted `{ token: '' }` would satisfy a case that
+    // only counted requests, and would then show task 49's failure for every visitor.
+    expect(JSON.parse(sent[0]!.body) as { token: string }).toEqual({ token: TOKEN });
+  });
+
+  it('carries NO Authorization header, because the operation is security: [] (AC3, L6)', async () => {
+    const { sent } = installTransport();
+
+    await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    // `createPublicAuthApi` exists precisely to have no session boundary. `createAuthApi` here would attach
+    // a bearer the visitor does not have and arm renewal on a 401 - on a screen reached with no session at
+    // all, which is the one place renewal can only loop.
+    expect(sent[0]!.authorization, 'the verification call carried a bearer').toBeNull();
+  });
+
+  it('stays on the screen: nothing navigates away from a successful verification', async () => {
+    installTransport(204);
+
+    await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    expect(router?.state.location.pathname).toBe(`${APP_BASENAME}/${VERIFY_PATH}`);
+    expect(router?.state.location.search).toBe(`?token=${TOKEN}`);
+    expect(router?.state.historyAction, 'the screen pushed or replaced a history entry').toBe('POP');
+  });
+});
+
+// ==========================================================================================================
+// AC7 — exactly one request, including under StrictMode
+// ==========================================================================================================
+
+describe('AC7 one request per arrival', () => {
+  it('sends exactly one request', async () => {
+    const { sent } = installTransport();
+
+    await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    expect(sent).toHaveLength(1);
+  });
+
+  it('sends exactly one request under StrictMode double invocation (AC7)', async () => {
+    // THE CASE THIS SCREEN EXISTS TO SURVIVE. StrictMode runs effects twice in development; the token is
+    // one-time and `markConsumed` burns it, so a second POST is REJECTED - the visitor would watch a
+    // successful verification turn into task 49's failure, in development only. `CallbackScreen` carries a
+    // comment saying its own missing guard once made it never navigate at all, under exactly these
+    // conditions, while every other assertion still passed.
+    const { sent } = installTransport();
+
+    const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`, { strict: true });
+
+    expect(sent, 'the effect ran twice and spent the token twice').toHaveLength(1);
+    expect(container.textContent).toBe(`${en.verify.heading}${en.verify.success}`);
+  });
+
+  it('sets the guard BEFORE the request, not after (AC7)', async () => {
+    // ORDER, not presence. A guard set after the call returns is no guard at all under StrictMode: both
+    // invocations read `false` before either writes `true`, because nothing between them yields.
+    const code = (await read('features/account/VerifyScreen.tsx'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
+
+    const guard = code.indexOf('handled.current = true');
+    const post = code.indexOf('.POST(');
+    expect(guard, 'the guard is gone').toBeGreaterThan(-1);
+    expect(post, 'the request is gone').toBeGreaterThan(-1);
+    expect(guard, 'the guard is set after the request, so StrictMode sends two').toBeLessThan(post);
+  });
+});
+
+// ==========================================================================================================
+// AC12 — no token, and an empty token, send nothing
+// ==========================================================================================================
+
+describe('AC12 a link with no usable token sends no request', () => {
+  it('sends nothing when the link carries no token at all', async () => {
+    const { sent } = installTransport();
+
+    const container = await arrive(VERIFY_PATH);
+
+    expect(sent, 'a tokenless arrival posted something').toHaveLength(0);
+    expect(container.textContent).toBe(en.verify.heading);
+  });
+
+  it('sends nothing when the token is present but empty', async () => {
+    const { sent } = installTransport();
+
+    const container = await arrive(`${VERIFY_PATH}?token=`);
+
+    expect(sent, 'an empty token was posted, and the server would reject it').toHaveLength(0);
+    expect(container.textContent).toBe(en.verify.heading);
+  });
+
+  it('PINS A LIMIT - idle is one rendering for three different situations (task 49 owns this)', async () => {
+    // DELIBERATE, AND THE CASE EXISTS SO IT CANNOT BE CLOSED BY ACCIDENT. A tokenless arrival and a failed
+    // request are indistinguishable on screen, because R4's single uniform failure message belongs to task
+    // 49 and task 48 may not invent it. When task 49 lands, this case MUST FAIL - that is its purpose - and
+    // whoever changes it should replace it with the uniform-failure assertions rather than delete it.
+    const { sent } = installTransport(400);
+
+    const noToken = (await arrive(VERIFY_PATH)).textContent;
+    await act(async () => mounted!.root.unmount());
+    mounted!.container.remove();
+    mounted = undefined;
+    router?.dispose?.();
+
+    const rejected = (await arrive(`${VERIFY_PATH}?token=${TOKEN}`)).textContent;
+
+    expect(rejected, 'a rejected token now renders differently from a tokenless arrival - task 49 has landed')
+      .toBe(noToken);
+    expect(sent, 'the rejected arm did not actually send a request, so this proves nothing').toHaveLength(1);
+  });
+});
+
+// ==========================================================================================================
+// AC5 / AC6 — catalogue copy, moved focus, and an announcement
+// ==========================================================================================================
+
+describe('AC5/AC6 the copy is the catalogue\'s and the outcome is announced', () => {
+  it('spells both catalogue keys as literal English (AC5, D7)', async () => {
+    expect(en.verify.heading).toBe('Verify email');
+    expect(en.verify.success).toBe('Your email has been verified.');
+  });
+
+  it('renders no untranslated key, which is what a missing catalogue entry looks like (AC5)', async () => {
+    installTransport();
+
+    const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    expect(container.textContent, 'a raw i18n key reached the DOM').not.toMatch(/verify\.(heading|success)/);
+  });
+
+  it('renders nothing the server sent (AC5)', async () => {
+    // The contract gives 204 - NO body at all - so there is nothing to render even by mistake. The case is
+    // here because `VerifyScreen` is shared with task 49, which will read a FAILURE response, and the first
+    // edit that renders part of one breaks L11 in a file this assertion already watches.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ message: 'SERVER-SUPPLIED-COPY' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    expect(container.textContent, 'the screen rendered the response body').not.toContain('SERVER-SUPPLIED-COPY');
+  });
+
+  it('CONTROL: focus is on body before anything mounts', () => {
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('moves focus to the heading on arrival (AC6, L11)', async () => {
+    installTransport();
+
+    const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    const heading = container.querySelector('h1');
+    expect(heading, 'the screen has no h1 to receive focus').not.toBeNull();
+    expect(document.activeElement, 'focus stayed on body, so an arriving visitor hears nothing').toBe(heading);
+  });
+
+  it('moves focus even when the link carried no token (AC6)', async () => {
+    // Focus is unconditional and the request is not - which is why they are two effects in the screen. A
+    // visitor who arrives at a broken link must still be told where they are.
+    installTransport();
+
+    const container = await arrive(VERIFY_PATH);
+
+    expect(document.activeElement).toBe(container.querySelector('h1'));
+  });
+
+  it('announces the success sentence by filling a region that was already mounted (AC6)', async () => {
+    // THE ANNOUNCEMENT IS A PROPERTY OF THE ORDER, NOT THE WORDS. `StatusRegion`'s own header says a live
+    // region mounted at the same moment its text arrives is a new element with content already in it, and a
+    // screen reader announces nothing. So the region must exist, empty, on arrival - which is observable:
+    // a transport that never answers leaves the screen in exactly that state.
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+
+    const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    const region = container.querySelector('[role="status"]');
+    expect(region, 'there is no live region on arrival, so the success sentence cannot be announced').not.toBeNull();
+    expect(region!.getAttribute('aria-live')).toBe('polite');
+    expect(region!.textContent, 'the region already holds text before the reply lands').toBe('');
+  });
+
+  it('adds no tab stop: the heading is focusable but not tabbable (AC6, L11)', async () => {
+    installTransport();
+
+    const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    expect(container.querySelector('h1')!.getAttribute('tabindex')).toBe('-1');
+    expect([...container.querySelectorAll('[tabindex]')]
+      .filter((node) => Number(node.getAttribute('tabindex')) >= 0),
+    'the screen added a tab stop').toHaveLength(0);
+  });
+});
+
+// ==========================================================================================================
+// AC8 — the token is stored nowhere
+// ==========================================================================================================
+
+describe('AC8 the token reaches no storage', () => {
+  it('writes no storage, and the token appears in none of it (AC8, L16)', async () => {
+    // ON `Storage.prototype`, NEVER AN INSTANCE. T42 shipped a vacuous version of this exact claim because
+    // an instance spy on jsdom storage does not intercept, and the assertion was NEGATIVE, so it passed
+    // while eighty real writes went by.
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    installTransport();
+
+    await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    expect(setItem.mock.calls.map(([key]) => key), 'the screen wrote to storage').toEqual([]);
+    expect(JSON.stringify({ ...sessionStorage, ...localStorage }),
+      'the token is sitting in a web storage somewhere').not.toContain(TOKEN);
+  });
+
+  it('CONTROL: the storage spy really does intercept', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    sessionStorage.setItem('probe', 'value');
+    expect(setItem, 'the spy is inert, so the negative assertion above measures nothing').toHaveBeenCalledWith('probe', 'value');
+    sessionStorage.removeItem('probe');
+  });
+});
+
+// ==========================================================================================================
+// AC9 / AC10 — the route and the primitives
+// ==========================================================================================================
+
+describe('AC9/AC10 the path is declared and the screen is built from primitives', () => {
+  it('changes no declared path set: `verify` was already there, with no element (AC9)', async () => {
+    expect(PUBLIC_ROUTE_PATHS).toEqual(['sign-in', 'callback', 'register', 'register/sent', 'verify',
+      'resend-verification', 'reset/request', 'reset', 'signed-out']);
+    expect(VERIFY_PATH, 'the published constant and the declared path have drifted apart').toBe('verify');
+    expect(PUBLIC_ROUTE_PATHS).toContain(VERIFY_PATH);
+  });
+
+  it('is attached by matching the constant, not by a literal (AC9, L14)', async () => {
+    const code = await read('app/routes.tsx');
+
+    expect(code, 'the attach branch spells the path instead of matching the constant')
+      .toMatch(/if \(path === VERIFY_PATH\) return \{ path, element: <VerifyScreen \/> \};/);
+  });
+
+  it('bears no lowercase tag of its own, and takes no props (AC10)', async () => {
+    const code = (await read('features/account/VerifyScreen.tsx'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
+
+    expect(code, 'the screen renders an element instead of a primitive').not.toMatch(/<[a-z]/);
+    expect(code, 'the screen takes a prop, so its one-input claim needs a case per value')
+      .toMatch(/export function VerifyScreen\(\): ReactElement \{/);
+  });
+
+  it('reaches for no storage, no bare fetch and no timer (AC8, module boundaries)', async () => {
+    const code = (await read('features/account/VerifyScreen.tsx'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
+
+    // SCOPED TO WHAT TASK 48 OWNS, and `useNavigate` is deliberately NOT on this list. R4 gives task 49 "a
+    // neutral resend action" on this same screen; a pin written here would box in a task nobody has designed
+    // yet, which is the mistake T47's AC7 count pin made in the other direction.
+    for (const shape of [/sessionStorage/, /localStorage/, /\bfetch\s*\(/, /setTimeout/, /setInterval/,
+      /console\./]) {
+      expect(code, `the verification screen reaches ${String(shape)}`).not.toMatch(shape);
+    }
+    expect(code, 'the call bypasses the generated client (L6)').toMatch(/createPublicAuthApi\(\)/);
+  });
+});
+
+// ==========================================================================================================
+// The token's alphabet — a latent trap, measured
+// ==========================================================================================================
+
+describe('the token alphabet', () => {
+  it('round-trips a base64url token unchanged, including - and _', async () => {
+    const { sent } = installTransport();
+
+    await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    expect(TOKEN, 'this fixture no longer exercises the characters it was chosen for').toMatch(/[-_]/);
+    expect((JSON.parse(sent[0]!.body) as { token: string }).token).toBe(TOKEN);
+  });
+
+  it('PINS A LATENT TRAP - a `+` in a token would arrive as a space', async () => {
+    // NOT A DEFECT TODAY, AND THE CASE SAYS WHY IT IS HERE ANYWAY. `+` means "space" in a query string, so
+    // `useSearchParams` decodes it to one; a token containing `+` would be sent wrong and rejected, and the
+    // visitor would see task 49's failure with nothing anywhere explaining it.
+    //
+    // It cannot happen today because the server issues URL-SAFE base64:
+    // `VerificationTokenService.generateRawToken` (:189-193) is `Base64.getUrlEncoder().withoutPadding()`,
+    // whose alphabet is `A-Za-z0-9-_`. This case exists so that a change to a standard-alphabet encoder, or
+    // to any token containing `+`, fails HERE with this comment attached rather than in production as an
+    // unexplained verification failure. The assertion is on the DECODING, which is the part that would bite.
+    const { sent } = installTransport();
+
+    await arrive(`${VERIFY_PATH}?token=a+b`);
+
+    expect((JSON.parse(sent[0]!.body) as { token: string }).token,
+      'a `+` no longer decodes to a space - check whether the server still issues url-safe base64').toBe('a b');
+  });
+});

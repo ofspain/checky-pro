@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { createMemoryRouter, matchRoutes, RouterProvider, type RouteObject } from 'react-router';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from './AppShell';
 import { APP_BASENAME, appRoutes, AUTHENTICATED_ROUTE_PATHS, createAppRouter, PUBLIC_ROUTE_PATHS,
   SIGN_IN_PATH } from './routes';
@@ -24,6 +24,11 @@ const SCREENS_ATTACHED_SO_FAR = ['sign-in', 'callback',
   // task order: `register/sent` is the fourth entry in `PUBLIC_ROUTE_PATHS` and has been since task 16, so
   // it slots in here, between a screen from task 43 and one from task 37. Still additive; no case changed.
   'register/sent',
+  // TASK 48 - the verification screen. Fifth, because `verify` is the fifth entry in `PUBLIC_ROUTE_PATHS`,
+  // and the first entry here whose visitor arrives from an EMAIL rather than from inside the application.
+  // Still additive - but unlike the three entries above it, task 48 DID change a case below: see the
+  // transport stub on the emailed-link case, and why the whole-suite run could not prove it was needed.
+  'verify',
   'signed-out', // TASK 37 - the signed-out landing. Additive; every case below is task 16's, unchanged.
   // TASK 174 - the home screen, and the FIRST entry here that is not a public route. It goes last because
   // this list is in ROUTE ORDER and the authenticated paths sit after the public ones in the table, under
@@ -121,6 +126,12 @@ afterEach(async () => {
   toDispose?.dispose();
   toDispose = undefined;
   window.history.replaceState(null, '', '/');
+  // ADDED BY TASK 48, and it is hygiene rather than a measured fix: the emailed-link case below is the first
+  // in this file to stub a global, and without this line that stub would outlive it and be handed to every
+  // case that runs afterwards. Nothing here currently detects such a leak, which is precisely the argument
+  // for closing it now - the phase 5 survey found an unhandled rejection that the whole-suite run masked for
+  // exactly this reason, in the other direction.
+  vi.unstubAllGlobals();
 });
 
 describe('routesResolveUnderAppPrefixOnly', () => {
@@ -133,6 +144,33 @@ describe('routesResolveUnderAppPrefixOnly', () => {
   it('resolves an emailed link with a query string and keeps the query (AC1, AC5)', async () => {
     expect(leafPath(`${APP_BASENAME}/verify?token=abc`)).toBe('verify');
     expect(leafPath(`${APP_BASENAME}/reset?token=abc`)).toBe('reset');
+
+    // THE TRANSPORT IS STUBBED FROM TASK 48, AND THE WHOLE-SUITE RUN CANNOT PROVE IT IS NEEDED.
+    //
+    // This case asserts something about the ROUTER - that a query string survives resolution - but it gets
+    // there through `renderAt`, which mounts the REAL route table. Before task 48, `verify` had no element
+    // and mounting it did nothing. Now it mounts `VerifyScreen`, which POSTs the token on arrival, and this
+    // file stubs no transport of its own. Two consequences, both measured in task 48's phase 5 rather than
+    // predicted:
+    //
+    // 1. `new Request('/accounts/verify-email')` THROWS on a relative URL with no base, so the failure is
+    //    `ERR_INVALID_URL` and arrives as an UNHANDLED REJECTION - counted under vitest's `Errors`, failing
+    //    this FILE while every assertion in it passes. A reader who fixes only the "1 failed" above it would
+    //    leave it behind.
+    // 2. Running the whole suite DOES NOT SHOW IT. Another file's global stub leaks into the shared
+    //    environment and masks it, so `pnpm test` goes green while this file alone goes red. That asymmetry
+    //    is why this stub is here rather than left to the aggregate, and why task 48's verification runs the
+    //    touched files individually.
+    //
+    // The `Request` subclass resolves relative URLs against the document, which is what the registration
+    // suites already do; the handler answers 204 because this case is not about the response.
+    const NodeRequest = globalThis.Request;
+    vi.stubGlobal('Request', class extends NodeRequest {
+      constructor(input: RequestInfo | URL, init?: RequestInit) {
+        super(typeof input === 'string' ? new URL(input, window.location.href) : input, init);
+      }
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
 
     const { router } = await renderAt(`${APP_BASENAME}/verify?token=abc`);
     expect(router.state.location.pathname).toBe('/app/verify');

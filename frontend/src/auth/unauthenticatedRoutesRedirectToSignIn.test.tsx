@@ -284,7 +284,7 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
 
     it('renders eight of them without redirecting, and stays put (AC4, R28)', async () => {
       // `callback` is excluded and the file header says why: its screen acts on arrival, and that is task 6's
-      // behaviour, not task 41's. FOUR of the eight have no element yet, so "not redirected" is the claim -
+      // behaviour, not task 41's. THREE of the eight have no element yet, so "not redirected" is the claim -
       // the location is unchanged and the action is the initial POP.
       //
       // THIS NUMBER WAS ALREADY WRONG BEFORE TASK 47 TOUCHED IT (T47 phase 7, F5). It said six, which was
@@ -293,8 +293,9 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       // the case passes either way, because what it asserts is that none of the eight redirects, not how
       // many of them render. The count is kept rather than deleted because it is the thing a reader uses to
       // decide whether "not redirected" is a weak claim or a strong one, and a task that attaches a screen
-      // should edit it here. The remaining four are `verify`, `resend-verification`, `reset/request`
-      // and `reset` - tasks 48 to 54.
+      // should edit it here. Task 48 attached `verify`, so the remaining THREE are `resend-verification`,
+      // `reset/request` and `reset` - tasks 50 to 54. The count has now been corrected by the task that
+      // moved it twice running, which is the only reason it is right.
       for (const path of PUBLIC_ROUTE_PATHS.filter((candidate) => candidate !== CALLBACK_PATH)) {
         const { router } = await arrive(`${APP_BASENAME}/${path}`);
         expect(router.state.location.pathname, path).toBe(`${APP_BASENAME}/${path}`);
@@ -958,9 +959,9 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       // rather than being frozen at what task 42 saw: this case's interest is that the layout and `Banner`
       // are PINNED somewhere the counts are exact, and a count that stopped moving would stop being exact.
       // GROWN AGAIN BY TASK 47, which added one render site and no primitive.
-      expect(only, 'the render-site count no longer says nine').toMatch(/toHaveLength\(9\)/);
+      expect(only, 'the render-site count no longer says ten').toMatch(/toHaveLength\(10\)/);
       expect(only, 'the primitive count still says nine').toMatch(/toHaveLength\(13\)/);
-      expect(only, 'the union pin no longer says twenty-two').toMatch(/\.toBe\(22\)/);
+      expect(only, 'the union pin no longer says twenty-three').toMatch(/\.toBe\(23\)/);
     });
 
     it('OQ-T36-5: the end-session suite names this layout as its first permitted importer', async () => {

@@ -610,9 +610,9 @@ describe('AC7 the screen renders no element of its own, and the pinned lists nam
     // THE NUMBERS MOVED WITH TASK 47 AND THE CLAIM DID NOT. A ninth render site was added there, so the
     // length pin says nine and the declared union says twenty-two. The primitive count is untouched: the
     // acknowledgement composes existing primitives and adds none.
-    expect(only, 'the render-site count no longer says nine').toMatch(/toHaveLength\(9\)/);
+    expect(only, 'the render-site count no longer says ten').toMatch(/toHaveLength\(10\)/);
     expect(only, 'the primitive count still says nine').toMatch(/toHaveLength\(13\)/);
-    expect(only, 'the union pin no longer says twenty-two').toMatch(/\.toBe\(22\)/);
+    expect(only, 'the union pin no longer says twenty-three').toMatch(/\.toBe\(23\)/);
   });
 
   it('is named in the credential table that task 16 built, with the reason', async () => {

@@ -137,6 +137,29 @@ export const en = {
   registerSent: {
     heading: 'Check your email',
   },
+  // THE VERIFICATION SCREEN - R3, task 48, and the destination of every verification email the platform has
+  // ever sent. `/app/verify` has been a declared route with no element since task 16, so until now that link
+  // landed on a blank document.
+  //
+  // `heading` IS SHOWN IN EVERY STATE, including while the request is in flight and when the link carried no
+  // token at all, because the screen has only one heading and it names the screen rather than the outcome.
+  // That it still reads as an instruction after the email is verified is OQ-T48-5, raised at the freeze and
+  // the owner's to settle - focus lands here (L11), so it is the first thing announced.
+  //
+  // `success` IS ANNOUNCED RATHER THAN MERELY RENDERED, and that is a property of HOW it is rendered, not of
+  // the words. It goes inside a `StatusRegion` that is mounted empty on arrival and filled when the 204
+  // lands; that primitive's own header explains why the order matters - a live region mounted at the same
+  // moment its text arrives is a new element with content already in it, and a screen reader announces
+  // nothing. There is deliberately NO `verifying` key (D3): R3 covers the success state only, and the region
+  // has to be mounted and empty anyway for the announcement to work, so its absence costs nothing
+  // structurally.
+  //
+  // No failure key lives here. Task 49 owns R4's one uniform failure message, and inventing its copy now
+  // would pre-empt a requirement this task is scoped out of.
+  verify: {
+    heading: 'Verify email',
+    success: 'Your email has been verified.',
+  },
   shell: {
     // Not invented either: the mirror of `signedOut.action`'s 'Sign in', so the two directions of the same
     // journey are spelled the same way. Not 'Log out' - nothing in this catalogue says 'log'.

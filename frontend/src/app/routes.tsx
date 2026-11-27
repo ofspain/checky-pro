@@ -14,6 +14,7 @@ import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
 import { RegisterScreen } from '../features/account/RegisterScreen';
 import { RegisterSentScreen } from '../features/account/RegisterSentScreen';
+import { VerifyScreen } from '../features/account/VerifyScreen';
 import { AuthenticatedLayout } from './AuthenticatedLayout';
 import { HomeScreen } from './HomeScreen';
 
@@ -40,6 +41,14 @@ export const REGISTER_PATH = 'register';
  * be attached by matching a constant. */
 export const REGISTER_SENT_PATH = 'register/sent';
 
+/** Where an emailed verification link lands (R3, task 48). The token rides a query parameter -
+ * `/app/verify?token=<token>` - which is not this task's invention: `design.md:145` is an author-confirmed
+ * note fixing that shape, notification-service builds the link from it, and its own integration test asserts
+ * the email body contains it. A bare literal here from task 16 until this task attached an element, for the
+ * same reason `REGISTER_SENT_PATH` was: L14 attaches a path by matching a constant, and the spelling is now
+ * referred to by name from more than one place. */
+export const VERIFY_PATH = 'verify';
+
 /** Where SAS returns the browser after the end-session call (R19, task 36). Published in task 37, which is why
  * `endSession.ts` no longer declares it privately: one spelling, and `post_logout_redirect_uri` is built from it. */
 export const SIGNED_OUT_PATH = 'signed-out';
@@ -51,7 +60,7 @@ export const PUBLIC_ROUTE_PATHS = [
   CALLBACK_PATH,
   REGISTER_PATH,
   REGISTER_SENT_PATH,
-  'verify',
+  VERIFY_PATH,
   'resend-verification',
   'reset/request',
   'reset',
@@ -100,6 +109,11 @@ export const appRoutes: RouteObject[] = [
         // that case chose against navigating to a path with no element, and this line is the condition it
         // named. It is also why the literal above became a constant: the form navigates to this spelling.
         if (path === REGISTER_SENT_PATH) return { path, element: <RegisterSentScreen /> };
+        // TASK 48 - the verification screen, the sixth, and the first element on a path that an EMAIL points
+        // at rather than a link inside the application. Nothing in the SPA navigates here; the visitor
+        // arrives from their inbox with a one-time token in the query string, which is why this screen reads
+        // a search parameter and `RegisterSentScreen` is forbidden to.
+        if (path === VERIFY_PATH) return { path, element: <VerifyScreen /> };
         return { path };
       }),
       // TASK 40 - the auth gate (R28's first clause). ONE pathless layout route decides for all eleven, so
