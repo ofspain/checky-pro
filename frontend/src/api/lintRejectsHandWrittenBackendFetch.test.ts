@@ -112,11 +112,29 @@ describe('lintRejectsHandWrittenBackendFetch', () => {
     expect(code, output).toBe(0);
   }, 30_000);
 
-  it('passes today\'s frontend/src through the lint script, running only the two L6 rules (AC4)', async () => {
+  it('passes today\'s frontend/src through the lint script with no diagnostic at all (AC4)', async () => {
     const { code, output } = await lint(['--no-ignore', '-c', '.oxlintrc.json', 'src']);
     expect(code, output).toBe(0);
-    expect(output).toContain('Found 0 warnings and 0 errors');
-    expect(output).toContain('with 2 rules');
+    // ASSERT THE ABSENCE OF OUTPUT, NOT THE PRESENCE OF A SUMMARY. This case used to read
+    // `toContain('Found 0 warnings and 0 errors')` and `toContain('with 2 rules')`. oxlint 1.87.0
+    // prints NEITHER - measured directly, it emits no summary line on any run, clean or failing -
+    // so both assertions asserted chatter the tool had stopped producing and the case could never
+    // pass. It had been failing on that alone, which is why the L6 gate looked dead when it was not:
+    // the rule itself still fires, and the `BANNED` table above is what proves it.
+    //
+    // Empty output is the stronger claim anyway. `code === 0` alone would pass with WARNINGS
+    // printed, because oxlint exits 0 for them; this says nothing was reported at any severity.
+    // `lint()` concatenates stdout and stderr, so a diagnostic on either stream fails this.
+    //
+    // It is deliberately brittle against the tool: if a future oxlint restores a summary line this
+    // breaks immediately and loudly, which is exactly the signal the old assertion failed to give
+    // when the summary was REMOVED. A pinned version (AC2 asserts `1.87.0`) is what makes that safe.
+    expect(output.trim(), 'oxlint reported something against today\'s src').toBe('');
+    // THE "only the two L6 rules" HALF OF THE OLD NAME LIVES IN AC5, and lives there better: that
+    // case reads `.oxlintrc.json` and asserts the enabled rules BY NAME - `no-restricted-globals`
+    // and `no-restricted-properties` - where `with 2 rules` only ever asserted a count, which two
+    // entirely different rules would have satisfied. Restating it here would duplicate the claim
+    // without strengthening it; this name no longer makes it.
   }, 30_000);
 
   it('runs lint first in build, with no ignore files honoured (AC2)', async () => {
