@@ -387,12 +387,15 @@
 <h2>7. Status — the topology, as actually deployed</h2>
 
 <p>
-  Sections 4 and 5 describe a topology. As of <strong>2026-11-26</strong> a reduced form of it is
-  running on the public internet at <a href="https://checkychain.com.ng">checkychain.com.ng</a>,
-  which is the first time any of these language and boundary decisions has been tested by something
-  other than a test suite. The full infrastructure record — every file, every command, and the
-  failures that only deploying could find — is <code>docs/demo-deployment.pdf</code>; this section
-  records only what it means for <em>this</em> document's claims.
+  Sections 4 and 5 describe a topology. On <strong>2026-11-26</strong> a reduced form of it ran on
+  the public internet at <a href="https://checkychain.com.ng">checkychain.com.ng</a> — the first time
+  any of these language and boundary decisions had been tested by something other than a test suite —
+  and was torn down the same day, because rebuilding it costs about twenty minutes and leaving it up
+  costs about USD 35 a month. <strong>What it measured stands whether or not the box is up</strong>,
+  which is the only reason this section is worth keeping. The full infrastructure record — every
+  file, every command, and the failures that only deploying could find — is
+  <code>docs/demo-deployment.pdf</code>, whose §12 is the rebuild; this section records only what the
+  deployment means for <em>this</em> document's claims.
 </p>
 
 <h3>7.1 What the deployment confirms about these choices</h3>
@@ -432,11 +435,11 @@
 
 <h3>7.3 What is deployed, and what is not</h3>
 <p>
-  The running system is deliberately a reduced form of Figure 1, and the gap is worth stating plainly
-  so this document is not read as describing something that exists. Postgres and Kafka run as
-  containers rather than RDS and MSK; there is one box rather than EKS; there is no gateway, no
-  ingress-nginx and no load balancer, with Caddy terminating TLS directly; and the public surface is
-  a single page with one endpoint, because the frontend is at task 46 of its plan. The
+  What ran was deliberately a reduced form of Figure 1, and the gap is worth stating plainly so this
+  document is not read as describing something that exists. Postgres and Kafka ran as containers
+  rather than RDS and MSK; there was one box rather than EKS; there was no gateway, no ingress-nginx
+  and no load balancer, with Caddy terminating TLS directly; and the public surface was a single page
+  with one endpoint, because the frontend has task 46 closed and 47 not yet started. The
   <em>contracts</em> in §4 survive that reduction unchanged — one database per service, migrations
   run outside the services that use them, pull-only registry access, least-privilege IAM, and a
   single public ingress with default-deny — and those are what a production move preserves. Only the
@@ -452,7 +455,11 @@
 
 <footer>
   Themistra Engineering · Documentation pattern: HTML working draft → rendered PDF as the concrete artifact ·
-  Source: <code>docs/service-languages.html</code> · Changes require an ADR in <code>docs/adr/</code>
+  Source: <code>docs/service-languages.html</code> · Changes require an ADR in <code>docs/adr/</code><br>
+  The deployment behind §7 was built on <code>demo/onchain-verification</code> and folded into
+  <code>spec/service-specs-and-ai-framework</code> on 2026-11-27. Work continues on the spec branch;
+  the demo branch is kept frozen as the snapshot of what was actually deployed. §7 was measured
+  against the record in <code>docs/demo-deployment.pdf</code>.
 </footer>
 
 </body>

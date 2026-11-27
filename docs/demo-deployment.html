@@ -117,7 +117,7 @@
 <body>
 
 <div class="cover">
-  <div class="kicker">Checkychain · Infrastructure Record · Branch <code>demo/onchain-verification</code></div>
+  <div class="kicker">Checkychain · Infrastructure Record · <code>demo/onchain-verification</code> → <code>spec/service-specs-and-ai-framework</code></div>
   <h1>Public Verification Demo</h1>
   <div class="sub">Everything provisioned, configured and measured to put one on-chain check on the public internet — and the eight failures that only appeared once it was there.</div>
   <div class="meta">2026-11-26 · AWS eu-west-1 · CDK (Python) + Ansible (SSM) + Docker Compose · Status: proven at <code>checkychain.com.ng</code> behind Cloudflare, then torn down — rebuildable in ~20 min (§12)</div>
@@ -1567,11 +1567,14 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
 
 <h3>10.1 Where we are</h3>
 <p>
-  The demo is <strong>live on the public internet at
+  The demo <strong>ran on the public internet at
   <a href="https://checkychain.com.ng">checkychain.com.ng</a></strong>, served through Cloudflare,
   with the origin closed to everything except Cloudflare's published ranges. A real Sepolia
   transaction was verified through that path and settled <code>AGREED</code> at 6.1425 USDC with
-  3035 confirmations. §11 is the record of how it got there.
+  3035 confirmations. It was then <strong>torn down the same day</strong>, because leaving it up
+  costs about USD 35 a month to serve one page to nobody. §11 is the record of how it got there;
+  §12 is what brings it back, in about twenty minutes. Nothing below is conditional on the box
+  being up — it was all measured while it was.
 </p>
 <p>What exists today:</p>
 <ul>
@@ -1579,7 +1582,7 @@ themistra.crypto.providers.chains[1].providers[2].url=localhost:9906</code></pre
   <li>An idempotent Ansible playbook that configures the box over SSM with no SSH, ships the TLS keypair, and gates its own success on live HTTPS checks that identify <em>our</em> server rather than merely finding a 200.</li>
   <li>A production compose topology with a single public ingress, real service-to-service auth, out-of-service migrations and pull-only registry access.</li>
   <li>A real domain behind a real edge: Cloudflare DNS and proxy, Universal SSL to visitors, a pinned Cloudflare Origin CA certificate on the box, and a security group that makes the proxy mandatory rather than optional.</li>
-  <li>Backend services (auth, crypto, payment, notification) complete and heavily tested; the frontend at task 46 of its plan, which is why the deployed surface is one page rather than the product.</li>
+  <li>Backend services (auth, crypto, payment, notification) complete and heavily tested; the frontend with task 46 closed and 47 not yet started, which is why the deployed surface is one page rather than the product.</li>
 </ul>
 
 <div class="note">
@@ -2217,10 +2220,16 @@ cd ../cdk &amp;&amp; ./cdk destroy</code></pre>
 
 <footer>
   Checkychain · Public Verification Demo · Infrastructure Record · 2026-11-26<br>
-  Branch <code>demo/onchain-verification</code>. Figures and outcomes in this document were measured
-  against the deployed stack, not estimated. The stack was destroyed again once this record was
-  complete; §12 is what brings it back, and was written and its scripts exercised against the live
-  stack before it was torn down, rather than from memory afterwards.
+  The work recorded here was done on <code>demo/onchain-verification</code> and fast-forwarded into
+  <code>spec/service-specs-and-ai-framework</code> on 2026-11-27, so both branches carry it. Work
+  continues on the spec branch, where the frontend task pipeline advances alongside this and reveals
+  the interface incrementally; the demo branch is kept frozen as the snapshot of what was actually
+  deployed. The fold-in was a fast-forward, not a merge, and touched nothing under
+  <code>frontend/</code>, <code>spec/</code> or <code>.ai/</code>.<br>
+  Figures and outcomes in this document were measured against the deployed stack, not estimated. The
+  stack was destroyed again once this record was complete; §12 is what brings it back, and was
+  written and its scripts exercised against the live stack before it was torn down, rather than from
+  memory afterwards.
 </footer>
 
 </body>
