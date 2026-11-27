@@ -275,6 +275,98 @@ describe('registrationAcknowledgementIsIdenticalForExistingAndNewEmails', () => 
 });
 
 // ==========================================================================================================
+// PHASE 10 — the criteria no mutant had aimed at
+// ==========================================================================================================
+
+describe('phase 10: the claims the implementation left structural', () => {
+  it('renders IDENTICALLY on a cold arrival and at the end of a submit (AC2, AC8)', async () => {
+    // THE STRONGEST FORM OF "IT HAS NO INPUTS", and the one the suite was missing. Every other identical
+    // case compares two JOURNEYS, which differ only in what the server said; this compares a journey with
+    // NO JOURNEY AT ALL. A screen that took anything from the submit - a prop, router state, a flag in
+    // storage - renders differently for a visitor who pasted the URL, and nothing above this line could
+    // tell. AC8 asserted the cold arrival renders; this asserts it renders THE SAME THING.
+    const cold = (await arrive(REGISTER_SENT_PATH)).innerHTML;
+
+    await act(async () => mounted!.root.unmount());
+    mounted!.container.remove();
+    mounted = undefined;
+    router?.dispose?.();
+
+    const afterSubmit = (await registerWith(ALREADY_REGISTERED)).innerHTML;
+
+    expect(afterSubmit, 'the acknowledgement depends on how the visitor arrived').toBe(cold);
+    expect(cold, 'the cold arrival rendered nothing, so this comparison is vacuous')
+      .toContain(en.registerSent.heading);
+  }, 30_000);
+
+  it('is identical for a reply that is not JSON at all (AC2, AC4)', async () => {
+    // THE BOUNDARY THE PROBE TABLE DOES NOT REACH. `NEW_ADDRESS` and `ALREADY_REGISTERED` are both
+    // well-formed JSON objects, and the contract says `message` is REQUIRED - so a client that parsed the
+    // body would work for every row above and fall over here. An empty body is what a 202 with no content
+    // actually looks like on the wire, and it is the shape `JSON.parse` throws on.
+    const container = await registerWith({ status: 202, body: '' });
+
+    expect(container.textContent).toBe(`${en.registerSent.heading}${en.register.success}`);
+    expect(router?.state.location.pathname).toBe(`${APP_BASENAME}/${REGISTER_SENT_PATH}`);
+  }, 30_000);
+
+  it('renders exactly one heading, so the document outline has no gap (L11)', async () => {
+    const container = await arrive(REGISTER_SENT_PATH);
+
+    // `Heading` HAS NO `level` PROP, and its own header says why: a level prop's first use would be a
+    // second `<h1>` or an `<h2>` with no `<h1>` above it. This is the case that would notice.
+    expect(container.querySelectorAll('h1')).toHaveLength(1);
+    expect(container.querySelectorAll('h2, h3, h4, h5, h6'),
+      'a subheading appeared with no Subheading primitive to own it').toHaveLength(0);
+  });
+
+  it('OPEN QUESTION PINNED - the acknowledgement offers nowhere to go (D3, OQ-T47-4)', async () => {
+    // THIS CASE MUST FAIL WHEN OQ-T47-4 IS ANSWERED YES, and that is its entire job. The freeze deferred
+    // the sign-in link on the grounds that R2 does not need one and that adding it would introduce
+    // catalogue keys and navigation R2 never asked for. A deferral nobody can see is indistinguishable
+    // from an oversight, so the decision is written here as an assertion: the day someone adds a
+    // `TextLink`, this breaks and names the open question instead of letting a quiet change answer it.
+    const container = await arrive(REGISTER_SENT_PATH);
+
+    expect(container.querySelectorAll('a, button, input, select, textarea'),
+      'the acknowledgement grew a control - if that is intended, answer OQ-T47-4 and delete this case')
+      .toHaveLength(0);
+    // The one focusable node is the heading, and it is not a tab stop.
+    expect([...container.querySelectorAll('[tabindex]')].map((node) => `${node.tagName}:${node.getAttribute('tabindex')}`))
+      .toEqual(['H1:-1']);
+  });
+
+  it('OPEN QUESTION PINNED - a double submit sends TWO requests (OQ-T43-11)', async () => {
+    // MEASURED, NOT ASSUMED, AND IT IS THE UNHAPPY ANSWER. Two presses before the first reply send two
+    // POSTs, which means two verification emails for one registration. Nothing in this task or task 43
+    // guards it - no disable, no in-flight latch - and OQ-T43-11 is where that is recorded as the owner's
+    // call rather than a bug anyone has authorised fixing.
+    //
+    // The case pins TODAY'S behaviour so the question cannot be closed silently in either direction: it
+    // fails if a guard appears (and should then be rewritten to assert one request), and it fails if the
+    // navigation starts happening twice. What it also proves is the half that IS safe - the journey still
+    // ends in one place, once, with the history entry replaced rather than stacked.
+    const { sent } = installTransport(ALREADY_REGISTERED);
+    const container = await arrive(REGISTER_PATH);
+    await type(field(container, 'email'), 'visitor@example.test');
+    await type(field(container, 'password'), 'a'.repeat(12));
+    const control = container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    await act(async () => {
+      control.click();
+      control.click();
+    });
+    await settle();
+
+    expect(sent, 'a double submit no longer sends two requests - OQ-T43-11 has been answered')
+      .toHaveLength(2);
+    expect(router?.state.location.pathname, 'the second submit navigated somewhere else')
+      .toBe(`${APP_BASENAME}/${REGISTER_SENT_PATH}`);
+    expect(router?.state.historyAction, 'the second navigation stacked a history entry').toBe('REPLACE');
+    expect(container.textContent).toBe(`${en.registerSent.heading}${en.register.success}`);
+  }, 30_000);
+});
+
+// ==========================================================================================================
 // AC4 / AC5 — nothing is read and nothing is delayed
 // ==========================================================================================================
 

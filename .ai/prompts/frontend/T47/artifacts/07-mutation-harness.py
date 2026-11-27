@@ -73,6 +73,16 @@ THE ROWS:
                                             decision was not load-bearing and the cases are not measuring
                                             the form at all.
 
+PHASE 10 ADDED TWO ROWS, both for criteria that were written down and never aimed at:
+
+  TR18  a TextLink appears on the screen  - OQ-T47-4 answered by edit rather than by decision. A deferral
+                                            nobody can see is indistinguishable from an oversight, so
+                                            phase 10 pinned the absence and this row is what proves the pin
+                                            bites.
+  TR19  a second `<h1>`                   - the document outline. `Heading` has no `level` prop precisely
+                                            because its first use would be this, and nothing counted
+                                            headings until phase 10.
+
 FOUR OUTCOMES, AND EVERY ROW PREDICTS ONE: `own` (killed with a named failure in a file this task wrote
 or grew), `inherited` (killed only elsewhere), `phase 10` (expected to survive now and be closed there),
 `unfalsifiable` (no observable effect).
@@ -191,6 +201,22 @@ MUTANTS = [
      "own"),
     ("TR17 CANARY the held transport answers at once, inverting phase 6's own decision",
      ACCEPTS, HOLD_BODY, "  return installTransport(() => ACCEPTED);", "own"),
+    # --- PHASE 10's two rows, for the criteria nothing above had aimed at -----------------------------
+    # OQ-T47-4 ANSWERED QUIETLY, which is the thing a deferral cannot survive. The freeze deferred the
+    # sign-in link; a later edit adding one would be a decision taken by whoever happened to be in the
+    # file. An EXISTING catalogue key is reused on purpose, so the kill comes from the control pin rather
+    # than from the key-set pin noticing a new word - a mutant must isolate the hole it records.
+    ("TR18 the acknowledgement grows a TextLink, answering OQ-T47-4 by edit",
+     SENT, ("import { Heading, Screen, Text } from '../../app/ui';", TEXT_LINE),
+     ("import { Heading, Screen, Text, TextLink } from '../../app/ui';",
+      "      <Text>{t('register.success')}</Text>\n"
+      "      <TextLink to=\"/sign-in\">{t('register.heading')}</TextLink>"), "own"),
+    # The document outline, which `Heading`'s own header says a `level` prop would break first. Two `<h1>`
+    # elements is what that failure looks like, and until phase 10 nothing counted them.
+    ("TR19 a second heading appears, so the document has two h1 elements",
+     SENT, TEXT_LINE,
+     "      <Text>{t('register.success')}</Text>\n"
+     "      <Heading>{t('register.heading')}</Heading>", "own"),
 ]
 
 def as_tuple(value):
