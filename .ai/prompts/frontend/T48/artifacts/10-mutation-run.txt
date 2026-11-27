@@ -1,0 +1,160 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 0 failed of 2048, exit 0
+baseline failing cases (excluded from every attribution below): []
+
+  KILLED    own            TR01 the focus move is deleted, so arrival announces nothing  (2 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ moves focus to the heading on arrival (AC6, L11)
+            └ moves focus even when the link carried no token (AC6)
+  KILLED    own            TR02 the heading never receives the ref, so the effect focuses nothing  (2 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ moves focus to the heading on arrival (AC6, L11)
+            └ moves focus even when the link carried no token (AC6)
+  KILLED    own            TR03 the guard is set AFTER the request, so StrictMode sends two  (2 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ sends exactly one request under StrictMode double invocation (AC7)
+            └ sets the guard BEFORE the request, not after (AC7)
+  KILLED    own            TR04 the guard is deleted, so every re-render re-verifies  (2 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ sends exactly one request under StrictMode double invocation (AC7)
+            └ sets the guard BEFORE the request, not after (AC7)
+  KILLED    own            TR05 the guard is set BEFORE the token check, latching on a tokenless arrival  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ a token arriving AFTER a tokenless visit is still sent (AC7, AC12)
+  KILLED    own            TR06 the screen reads the wrong query parameter  (14 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ renders the success state for a 204 at /app/verify?token=... (AC1, AC4)
+            └ sends the token FROM THE URL, as the body of one public POST (AC2, AC3)
+            └ carries NO Authorization header, because the operation is security: [] (AC3, L6)
+            └ sends exactly one request
+            └ sends exactly one request under StrictMode double invocation (AC7)
+            └ a token arriving AFTER a tokenless visit is still sent (AC7, AC12)
+            └ PINS A LIMIT - idle is one rendering for three different situations (task 49 owns this)
+            └ renders nothing the server sent (AC5)
+            └ never renders the token, in ANY state (L16, and L3's instinct)
+            └ sends a POST with a JSON content type, as the contract declares (AC3)
+            └ verifies from a link with a trailing slash (AC1)
+            └ takes the FIRST token when a link carries two (AC2)
+            └ round-trips a base64url token unchanged, including - and _
+            └ PINS A LATENT TRAP - a `+` in a token would arrive as a space
+  KILLED    own            TR07 the empty-token check is dropped, so an empty token is posted  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ sends nothing when the token is present but empty
+  KILLED    own            TR08 the null-token check is dropped, so a bare /app/verify posts nothing useful  (4 failed of 2048, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ a token arriving AFTER a tokenless visit is still sent (AC7, AC12)
+            └ sends nothing when the link carries no token at all
+            └ PINS A LIMIT - idle is one rendering for three different situations (task 49 owns this)
+  KILLED    own            TR09 the response is ignored, so any answer shows success  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ PINS A LIMIT - idle is one rendering for three different situations (task 49 owns this)
+  KILLED    own            TR10 `response.ok` narrowed to `=== 204`  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ renders nothing the server sent (AC5)
+  KILLED    own            TR11 a bearer is attached to a security: [] operation  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ carries NO Authorization header, because the operation is security: [] (AC3, L6)
+  KILLED    own            TR12 the attach branch is removed, so /app/verify has no element again  (24 failed of 2048, exit 1)
+            └ in: ['src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ renders the success state for a 204 at /app/verify?token=... (AC1, AC4)
+            └ sends the token FROM THE URL, as the body of one public POST (AC2, AC3)
+            └ carries NO Authorization header, because the operation is security: [] (AC3, L6)
+            └ sends exactly one request
+            └ sends exactly one request under StrictMode double invocation (AC7)
+            └ a token arriving AFTER a tokenless visit is still sent (AC7, AC12)
+            └ sends nothing when the link carries no token at all
+            └ sends nothing when the token is present but empty
+            └ PINS A LIMIT - idle is one rendering for three different situations (task 49 owns this)
+            └ renders nothing the server sent (AC5)
+            └ moves focus to the heading on arrival (AC6, L11)
+            └ moves focus even when the link carried no token (AC6)
+            └ announces the success sentence by filling a region that was already mounted (AC6)
+            └ adds no tab stop: the heading is focusable but not tabbable (AC6, L11)
+            └ is attached by matching the constant, not by a literal (AC9, L14)
+            └ never renders the token, in ANY state (L16, and L3's instinct)
+            └ logs nothing at all, so the token cannot reach a console (L16)
+            └ sends a POST with a JSON content type, as the contract declares (AC3)
+            └ verifies from a link with a trailing slash (AC1)
+            └ takes the FIRST token when a link carries two (AC2)
+            └ round-trips a base64url token unchanged, including - and _
+            └ PINS A LATENT TRAP - a `+` in a token would arrive as a space
+  KILLED    own            TR13 VERIFY_PATH is respelled, so the declared set changes  (9 failed of 2048, exit 1)
+            └ in: ['src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ changes no declared path set: `verify` was already there, with no element (AC9)
+  KILLED    own            TR14 StatusRegion is mounted only on success, so nothing is announced  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ announces the success sentence by filling a region that was already mounted (AC6)
+  KILLED    own            TR15 the two catalogue keys are swapped  (6 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ renders the success state for a 204 at /app/verify?token=... (AC1, AC4)
+            └ sends exactly one request under StrictMode double invocation (AC7)
+            └ a token arriving AFTER a tokenless visit is still sent (AC7, AC12)
+            └ sends nothing when the link carries no token at all
+            └ sends nothing when the token is present but empty
+            └ verifies from a link with a trailing slash (AC1)
+  KILLED    own            TR16 the token is written to sessionStorage  (6 failed of 2048, exit 1)
+            └ in: ['src/auth/sessionStorageHoldsOnlyTheL16Items.test.tsx', 'src/auth/tokensAreNeverWrittenToAnyStorage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ writes no storage, and the token appears in none of it (AC8, L16)
+            └ reaches for no storage, no bare fetch and no timer (AC8, module boundaries)
+  KILLED    own            TR17 focus moves only when a token is present, merging the two effects  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ moves focus even when the link carried no token (AC6)
+  KILLED    own            TR18 CANARY the PINS A LIMIT case is handed a 204, so its two arms genuinely differ  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ PINS A LIMIT - idle is one rendering for three different situations (task 49 owns this)
+  KILLED    own            TR19 CANARY the storage control spies on an instance, which is T42's exact bug  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ CONTROL: the storage spy really does intercept
+  KILLED    own            TR21 the token is rendered into the heading, where anyone can read it  (6 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ renders the success state for a 204 at /app/verify?token=... (AC1, AC4)
+            └ sends exactly one request under StrictMode double invocation (AC7)
+            └ a token arriving AFTER a tokenless visit is still sent (AC7, AC12)
+            └ PINS A LIMIT - idle is one rendering for three different situations (task 49 owns this)
+            └ never renders the token, in ANY state (L16, and L3's instinct)
+            └ verifies from a link with a trailing slash (AC1)
+  KILLED    own            TR22 the token is logged through an aliased console, evading the source scan  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ logs nothing at all, so the token cannot reach a console (L16)
+  KILLED    own            TR23 the content type is overridden, so the server cannot parse the body  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ sends a POST with a JSON content type, as the contract declares (AC3)
+  KILLED    own            TR24 every repeated token is joined instead of taking the first  (1 failed of 2048, exit 1)
+            └ in: ['src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ takes the FIRST token when a link carries two (AC2)
+  SURVIVED  -              TR20 UNFALSIFIABLE useEffect -> useLayoutEffect for the focus move  (0 failed of 2048, exit 0)
+
+regressions: 21/21 killed
+canaries:    ['TR18', 'TR19'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
+unfalsifiable: ['TR20'] - no observable effect to detect
+survivors:   ['TR20']
+broken:      none
+
+--- expectation vs outcome ---
+  TR01   expected own           got KILLED/own       as expected
+  TR02   expected own           got KILLED/own       as expected
+  TR03   expected own           got KILLED/own       as expected
+  TR04   expected own           got KILLED/own       as expected
+  TR05   expected own           got KILLED/own       as expected
+  TR06   expected own           got KILLED/own       as expected
+  TR07   expected own           got KILLED/own       as expected
+  TR08   expected own           got KILLED/own       as expected
+  TR09   expected own           got KILLED/own       as expected
+  TR10   expected own           got KILLED/own       as expected
+  TR11   expected own           got KILLED/own       as expected
+  TR12   expected own           got KILLED/own       as expected
+  TR13   expected own           got KILLED/own       as expected
+  TR14   expected own           got KILLED/own       as expected
+  TR15   expected own           got KILLED/own       as expected
+  TR16   expected own           got KILLED/own       as expected
+  TR17   expected own           got KILLED/own       as expected
+  TR18   expected own           got KILLED/own       as expected
+  TR19   expected own           got KILLED/own       as expected
+  TR20   expected unfalsifiable got SURVIVED         as expected
+  TR21   expected own           got KILLED/own       as expected
+  TR22   expected own           got KILLED/own       as expected
+  TR23   expected own           got KILLED/own       as expected
+  TR24   expected own           got KILLED/own       as expected
+
+disagreements: none
