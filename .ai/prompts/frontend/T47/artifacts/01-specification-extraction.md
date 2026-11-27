@@ -149,7 +149,8 @@ artifact and quote it rather than infer it from a downstream comment.
   absent (the repo pins `pnpm@12.14.0` via `packageManager`; Node 26 removed corepack, which used to
   supply it). `pnpm@12.14.0` was then installed, and the end-to-end case passes again.
 
-  **Baseline for this task is therefore 1991 / 1992**, which matches T46's recorded close exactly.
+  **Baseline for this task is 1992 / 1992** — fully green, lint and typecheck clean. It was briefly
+  1991 / 1992 (matching T46's recorded close) until the remaining failure was fixed; see below.
 
   The one remaining failure is **a stale assertion, not a dead gate**, and the distinction matters
   because this file is the only instrument enforcing L6. Measured directly: **oxlint 1.87.0 prints no
@@ -158,8 +159,9 @@ artifact and quote it rather than infer it from a downstream comment.
   (line 119) assert strings the tool no longer emits. **The L6 rule itself still fires**: a
   hand-written `fetch` to a backend route produces
   `error eslint(no-restricted-globals) ... Call the backend through @themistra/api-client (L6)` and
-  exit 1. So the protection is intact and only the assertion about the tool's chatter is stale.
-  Recorded as **FU-T47-1**; fixing it is outside T47's mandate.
+  exit 1. So the protection was intact and only the assertion about the tool's chatter was stale.
+  Recorded as **FU-T47-1** and then **fixed as its own change outside this pipeline** (`9c711680`),
+  at the author's instruction — not inside T47, which has no mandate over that file.
 
 ---
 

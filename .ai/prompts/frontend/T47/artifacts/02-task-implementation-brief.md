@@ -174,11 +174,13 @@ recorded close. `pnpm` had been missing (Node 26 dropped corepack; the repo pins
 which failed two cases in `src/api/lintRejectsHandWrittenBackendFetch.test.ts` with
 `spawn pnpm ENOENT`; `pnpm@12.14.0` was installed and the end-to-end case passes again.
 
-The one remaining failure is **a stale assertion, not a dead gate.** oxlint 1.87.0 emits no summary
-line on any run, so lines 118–119 assert strings (`'Found 0 warnings and 0 errors'`, `'with 2 rules'`)
-the tool no longer prints. **The L6 rule still fires** — a hand-written backend `fetch` is reported
-and exits 1, measured directly. Phase 6 should expect exactly this one failure and must not treat it
-as licence for a second. Fixing it is outside T47's mandate.
+The one remaining failure was **a stale assertion, not a dead gate**: oxlint 1.87.0 emits no summary
+line on any run, so lines 118–119 asserted strings the tool no longer prints, while the L6 rule itself
+still fired. **Fixed on 2026-11-27 as its own change (`9c711680`), outside this pipeline**, by
+asserting the absence of output instead of the presence of a summary, and verified capable of failing.
+
+**The baseline for Phase 6 is therefore 1992 / 1992 — fully green, with lint and typecheck both
+exiting 0. Any failure Phase 6 sees is its own.**
 
 ---
 
