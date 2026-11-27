@@ -54,6 +54,24 @@ THE ROWS:
                                             it is not proving the real spy intercepts.
   TR20  UNFALSIFIABLE useEffect -> useLayoutEffect for focus - no observable difference. A KILL here
                                             would mean a case had started pinning the hook.
+
+PHASE 10 ADDED FOUR ROWS, for the brief's security constraints that had no instrument. The brief says the
+token is "not stored, not logged, not sent to analytics, not rendered" and only the first had a case.
+
+  TR21  the token rendered in the heading - a credential on screen is shoulder-surfable and lands in every
+                                            DOM snapshot and screenshot.
+  TR22  the token logged via an ALIAS      - written to EVADE the source scan on purpose. The scan forbids
+                                            the literal `console.`; an alias does not contain it, so only a
+                                            runtime console watcher can see this. A mutant that died to the
+                                            scan would measure the scan, not the new case.
+  TR23  the content type overridden        - the contract's call shape. A body the server cannot parse is a
+                                            uniform failure the visitor cannot tell from a bad token.
+  TR24  repeated tokens joined             - `?token=a&token=b` is a URL anyone can build; `get` takes the
+                                            first and `getAll().join()` sends "a,b".
+
+ONE PHASE 10 ASSERTION IS UNFALSIFIABLE AND GETS NO ROW: that the request is a POST. openapi-fetch exposes
+the verb as the method name and the contract declares no GET for this path, so a mutant changing it cannot
+typecheck - and a mutant that cannot compile measures nothing. Declared here rather than dressed up.
 """
 import os
 import re
@@ -179,6 +197,24 @@ MUTANTS = [
      NAMED, PROTOTYPE_SPY,
      """    const setItem = vi.spyOn(sessionStorage, 'setItem');
     sessionStorage.setItem('probe', 'value');""", "own"),
+
+    # --- PHASE 10's rows, for the brief's security constraints that had no instrument ----------------
+    ("TR21 the token is rendered into the heading, where anyone can read it",
+     SCREEN, HEADING_LINE,
+     "      <Heading ref={headingRef}>{t('verify.heading')}{params.get('token')}</Heading>", "own"),
+    # THIS MUTANT DELIBERATELY EVADES THE SOURCE SCAN, which is what makes it measure the behavioural case
+    # rather than the structural one. The scan forbids the literal `console.`; an ALIAS does not contain it,
+    # so only a case that watches the console at runtime can see this. A mutant that died to the scan would
+    # have told us nothing about whether the behavioural assertion works.
+    ("TR22 the token is logged through an aliased console, evading the source scan",
+     SCREEN, GUARD,
+     "    handled.current = true;\n    const sink = console;\n    sink.log('verifying', token);", "own"),
+    ("TR23 the content type is overridden, so the server cannot parse the body",
+     SCREEN, POST_LINE,
+     "      .POST('/accounts/verify-email', { body: { token }, headers: { 'Content-Type': 'text/plain' } })",
+     "own"),
+    ("TR24 every repeated token is joined instead of taking the first",
+     SCREEN, TOKEN_READ, "    const token = params.getAll('token').join(',');", "own"),
 
     # --- unfalsifiable, declared -----------------------------------------------------------------------
     # TWO EDITS, BECAUSE ONE WOULD NOT COMPILE. `useLayoutEffect` has to be imported as well, and a

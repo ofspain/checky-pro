@@ -57,7 +57,7 @@ function installBrowserRequest(): void {
   });
 }
 
-type Sent = { path: string; body: string; authorization: string | null };
+type Sent = { path: string; body: string; authorization: string | null; method: string; contentType: string | null };
 
 /**
  * The body AND the headers are read inside the handler. The body because a `Request`'s body can be consumed
@@ -72,6 +72,11 @@ function installTransport(status = 204): { sent: Sent[] } {
       path: new URL(request.url).pathname,
       body: await request.clone().text(),
       authorization: request.headers.get('authorization'),
+      // THE METHOD AND CONTENT TYPE ARE RECORDED FROM PHASE 10. The contract fixes both, and nothing in the
+      // suite was looking at either: a call with the right body on the wrong verb, or with a content type
+      // the server will not parse, fails in production and passed here.
+      method: request.method,
+      contentType: request.headers.get('content-type'),
     });
     return new Response(null, { status });
   }));
@@ -438,6 +443,94 @@ describe('AC9/AC10 the path is declared and the screen is built from primitives'
       expect(code, `the verification screen reaches ${String(shape)}`).not.toMatch(shape);
     }
     expect(code, 'the call bypasses the generated client (L6)').toMatch(/createPublicAuthApi\(\)/);
+  });
+});
+
+// ==========================================================================================================
+// PHASE 10 — the constraints the brief wrote down and nothing aimed at
+// ==========================================================================================================
+
+describe('phase 10: the token is a credential, and the call has a shape', () => {
+  it('never renders the token, in ANY state (L16, and L3\'s instinct)', async () => {
+    // THE BRIEF SAYS THE TOKEN IS "NOT STORED, NOT LOGGED, NOT SENT TO ANALYTICS, NOT RENDERED" and only the
+    // first of those had an instrument. A rendered credential is shoulder-surfable, lands in every DOM
+    // snapshot and screenshot, and would be carried into any error report that serialises the page. The
+    // success path happens to be covered by the equality assertions elsewhere; `idle` was not covered at
+    // all, and `idle` is the state a visitor sits in while the request is in flight.
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+
+    const inFlight = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+    expect(inFlight.innerHTML, 'the token is in the DOM while the request is in flight').not.toContain(TOKEN);
+
+    await act(async () => mounted!.root.unmount());
+    mounted!.container.remove();
+    mounted = undefined;
+    router?.dispose?.();
+
+    installTransport(204);
+    const succeeded = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+    expect(succeeded.innerHTML, 'the token is in the DOM after success').not.toContain(TOKEN);
+    expect(succeeded.textContent, 'this arm did not actually reach the success state')
+      .toContain(en.verify.success);
+  });
+
+  it('logs nothing at all, so the token cannot reach a console (L16)', async () => {
+    // BEHAVIOURAL, where the source scan is structural, and the two catch different things. The scan forbids
+    // the literal `console.`; this forbids a console call however it is spelled - through an alias, a
+    // re-export, or a logger a later edit introduces. `tokensAreNeverWrittenToAnyStorage` does the same for
+    // access tokens, and the reasoning transfers: a credential in a log is a credential in a log aggregator.
+    const spies = {
+      log: vi.spyOn(console, 'log').mockImplementation(() => {}),
+      warn: vi.spyOn(console, 'warn').mockImplementation(() => {}),
+      error: vi.spyOn(console, 'error').mockImplementation(() => {}),
+      debug: vi.spyOn(console, 'debug').mockImplementation(() => {}),
+      info: vi.spyOn(console, 'info').mockImplementation(() => {}),
+    };
+    installTransport(204);
+
+    await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    const logged = Object.values(spies).flatMap((spy) => spy.mock.calls.flat()).map(String).join('\n');
+    expect(logged, 'the verification path logged something, and the token is in scope where it did').toBe('');
+  });
+
+  it('sends a POST with a JSON content type, as the contract declares (AC3)', async () => {
+    const { sent } = installTransport();
+
+    await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+    // `POST /accounts/verify-email` with `VerifyEmailRequest`. A GET with the token in the query would be a
+    // credential in a URL the server logs; a content type the server will not parse is a uniform failure the
+    // visitor cannot distinguish from a bad token.
+    expect(sent[0]!.method).toBe('POST');
+    expect(sent[0]!.contentType, 'the body will not be parsed as VerifyEmailRequest')
+      .toMatch(/^application\/json/);
+  });
+
+  it('verifies from a link with a trailing slash (AC1)', async () => {
+    // `publicRouteSetIsExactlyTheDeclaredSet` already pins that `/app/verify/` RESOLVES, but it does so
+    // against a synthetic table of probes, because when that case was written this path had no element.
+    // It has one now, so the claim can be made end to end: a mail client that appends a slash still gets a
+    // verified account rather than a uniform failure.
+    const { sent } = installTransport(204);
+
+    const container = await arrive(`${VERIFY_PATH}/?token=${TOKEN}`);
+
+    expect(sent, 'a trailing slash stopped the verification').toHaveLength(1);
+    expect(container.textContent).toBe(`${en.verify.heading}${en.verify.success}`);
+  });
+
+  it('takes the FIRST token when a link carries two (AC2)', async () => {
+    // PINNED RATHER THAN DISCOVERED LATER. `?token=a&token=b` is a URL anyone can construct, and
+    // `URLSearchParams.get` returns the first while `getAll` returns both - so the difference between this
+    // screen sending one token and sending "a,b" is one method name. First-wins is also the safer of the
+    // two: a token appended to a legitimate link is ignored rather than concatenated into something the
+    // server might parse.
+    const { sent } = installTransport();
+
+    await arrive(`${VERIFY_PATH}?token=${TOKEN}&token=SECOND-TOKEN-APPENDED`);
+
+    expect((JSON.parse(sent[0]!.body) as { token: string }).token).toBe(TOKEN);
   });
 });
 
