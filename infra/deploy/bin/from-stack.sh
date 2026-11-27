@@ -41,9 +41,24 @@ for f in origin.pem origin.key; do
 done
 
 echo "Reading outputs from $STACK in $REGION ..." >&2
-OUTPUTS=$(aws_cli cloudformation describe-stacks \
+# `set -e` would abort here on a missing stack, leaving only the AWS CLI's own ValidationError.
+# That is accurate but says nothing about what to do, and "stack does not exist" is the NORMAL
+# state between demos - this script is step 2 of a rebuild, so reaching it before step 1 is the
+# single likeliest way to run it wrongly.
+if ! OUTPUTS=$(aws_cli cloudformation describe-stacks \
   --stack-name "$STACK" --region "$REGION" \
-  --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' --output text)
+  --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' --output text 2>&1); then
+  case "$OUTPUTS" in
+    *"does not exist"*)
+      echo "error: the $STACK stack is not deployed, so it has no outputs to read." >&2
+      echo "       This is step 2 of a rebuild. Run step 1 first:" >&2
+      echo "         (cd $(dirname "$DEPLOY")/deploy/cdk && ./cdk deploy)   # ~4 min" >&2
+      echo "       See ../REBUILD.md." >&2
+      ;;
+    *) echo "$OUTPUTS" >&2 ;;
+  esac
+  exit 1
+fi
 
 get() { printf '%s\n' "$OUTPUTS" | awk -v k="$1" '$1==k {print $2}'; }
 
