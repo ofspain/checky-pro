@@ -168,6 +168,12 @@ describe('registrationAcknowledgementIsIdenticalForExistingAndNewEmails', () => 
     // COMPARED AS MARKUP, NOT AS TEXT, because R2 says "copy AND layout": a screen that reordered its
     // elements or changed a tag would pass a textContent comparison while looking different to anyone
     // reading it, and different again to a screen reader walking the tree.
+    // THE PROBES MUST DIFFER OR EVERY LINE BELOW IS VACUOUS (phase 7, F2; harness row TR16). The server
+    // answers 202 both times, so two identical mocks would prove only that the same input gives the same
+    // output - and nothing else in this file noticed if someone edited one body to match the other. Trap 1
+    // was defended by a comment until this assertion existed; now the probe and the claim cannot drift apart.
+    expect(ALREADY_REGISTERED.body, 'the two probe replies are identical, so "identical" measures nothing')
+      .not.toBe(NEW_ADDRESS.body);
     expect(forExisting, 'the acknowledgement differs between a new and an existing address').toBe(forNew);
     expect(landedNew, 'the two cases landed in different places').toBe(router?.state.location.pathname);
     expect(forNew, 'the acknowledgement rendered empty, so identical means nothing').toContain(
@@ -200,6 +206,28 @@ describe('registrationAcknowledgementIsIdenticalForExistingAndNewEmails', () => 
     expect(router?.state.location.pathname, 'the form did not reach the acknowledgement')
       .toBe(`${APP_BASENAME}/${REGISTER_SENT_PATH}`);
   });
+
+  it('REPLACES the form in history, so Back cannot resubmit the address (AC3)', async () => {
+    // PHASE 7's F1, AND IT WAS A REAL HOLE: the plan chose `replace` over a push with a stated reason -
+    // Back from the acknowledgement must not return to a filled form whose resubmission posts the same
+    // address again - and nothing asserted it. Harness row TR10 dropped `replace: true` and survived all
+    // 2010 cases, which is what turned an argument into a finding.
+    const container = await registerWith(NEW_ADDRESS);
+
+    // THE FLAG, which is the cheap half.
+    expect(router?.state.historyAction, 'the acknowledgement was PUSHED, so Back returns to the form')
+      .toBe('REPLACE');
+
+    // AND THE CONSEQUENCE, which is the half worth having. A visitor pressing Back must not arrive at a
+    // form that would send the same address a second time - two verification emails for one registration,
+    // which is OQ-T43-11's shape reached by the browser's own control rather than a double click.
+    await act(async () => {
+      await router?.navigate(-1);
+    });
+
+    expect(container.querySelector('form'), 'Back reached the registration form, which could resubmit')
+      .toBeNull();
+  }, 30_000);
 
   it('renders the catalogue sentence and NOT the message the server sent (AC6, trap 3)', async () => {
     const container = await registerWith(ALREADY_REGISTERED);

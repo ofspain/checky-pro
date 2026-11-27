@@ -43,9 +43,12 @@ THE ROWS:
                                             the form's end rather than the screen's.
   TR09  the navigation is RELATIVE        - no leading slash, so it lands on /register/register/sent.
                                             The failure mode the plan predicted and chose against.
-  TR10  `replace: true` dropped           - PREDICTED SURVIVOR. Nothing in this task asserts the history
-                                            entry, so Back would return to a filled form whose
-                                            resubmission posts the same address again. Phase 7 finding.
+  TR10  `replace: true` dropped           - PREDICTED SURVIVOR IN PHASE 7, AND IT SURVIVED ALL 2010 CASES.
+                                            That is what turned the plan's argument for `replace` into a
+                                            finding (F1). Phase 9 added the case, so the expectation moved
+                                            from `phase 10` to `own` - and the case asserts the CONSEQUENCE
+                                            (Back must not reach a form that would resubmit) as well as the
+                                            flag, because a flag assertion pins today's spelling.
   TR11  the screen READS THE STATUS       - navigates only on 202. THE R2 ROW: the three re-aimed AC11
                                             rows (202, 409, 500) are what must catch it, and if they do
                                             not, re-aiming them instead of deleting them bought nothing.
@@ -60,9 +63,10 @@ THE ROWS:
                                             tell, and a KILL would mean a case is pinning the hook.
   TR16  CANARY the two probes made IDENTICAL - the suite mocks a new address and an already-registered one
                                             with DIFFERENT bodies, because identical mocks make an
-                                            identical-output claim vacuous (trap 1). Nothing asserts that
-                                            they differ, so this is expected to SURVIVE and to be closed
-                                            in phase 10 by an assertion that the two replies are not equal.
+                                            identical-output claim vacuous (trap 1). It SURVIVED in phase 7:
+                                            trap 1 was defended by a comment and not by an instrument.
+                                            Phase 9 added the inequality assertion, so this now expects
+                                            `own`. A canary that dies is the canary working.
   TR17  CANARY the held transport answers - `holdTransportInFlight` resolves immediately, which is phase
                                             6's own decision inverted. Thirty-five re-aimed cases in two
                                             closed suites depend on it; if this does not kill loudly, the
@@ -157,7 +161,7 @@ MUTANTS = [
      "() => setStatus('idle'));", "own"),
     ("TR10 `replace: true` is dropped, so Back returns to a form that would resubmit",
      SCREEN, SEND,
-     "      .then(() => navigate(`/${REGISTER_SENT_PATH}`), () => setStatus('idle'));", "phase 10"),
+     "      .then(() => navigate(`/${REGISTER_SENT_PATH}`), () => setStatus('idle'));", "own"),
     ("TR11 the screen READS THE STATUS and navigates only on a 202",
      SCREEN, SEND,
      "      .then((reply) => { if (reply.response.status === 202) "
@@ -184,7 +188,7 @@ MUTANTS = [
      NAMED, NEW_MOCK,
      "const NEW_ADDRESS: Reply = { status: 202, "
      "body: JSON.stringify({ message: 'This address is already registered; no action taken.' }) };",
-     "phase 10"),
+     "own"),
     ("TR17 CANARY the held transport answers at once, inverting phase 6's own decision",
      ACCEPTS, HOLD_BODY, "  return installTransport(() => ACCEPTED);", "own"),
 ]
