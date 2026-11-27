@@ -99,6 +99,10 @@ const RENDER_SITES = [
   // being perfectly visible to the tag sweep. Adding it here is what surfaced that, because the scan's
   // equality is against THIS list.
   'features/account/RegisterScreen.tsx',
+  // TASK 47 - the acknowledgement screen, the NINTH render site and the second under `features/`. It needed
+  // no change to the barrel-import scan that task 43 had to fix: that scan now matches any depth, so this
+  // file was visible to it immediately and the equality below is what demanded this line.
+  'features/account/RegisterSentScreen.tsx',
 ] as const;
 
 /**
@@ -251,9 +255,16 @@ afterEach(async () => {
 
 describe('T173 AC2/AC3: only the primitives render bare elements', () => {
   it('pins both lists at the sizes the brief froze, with nothing in both (§6e(1))', () => {
-    // SIX SINCE TASK 174. The number is pinned rather than derived on purpose - a list that counted itself
-    // would accept any edit - so each task that adds a screen moves it here, deliberately, once.
-    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(8);
+    // SIX SINCE TASK 174, NINE SINCE TASK 47. The number is pinned rather than derived on purpose - a list
+    // that counted itself would accept any edit - so each task that adds a screen moves it here,
+    // deliberately, once.
+    //
+    // THIS FILE HOLDS FOUR SEPARATE PINS A NEW SCREEN TRIPS, and task 47 was told about one. Its phase 3
+    // named `RENDER_SITES` 8 -> 9 and nothing else; the key-set pin, this length and the union below all
+    // failed on the first run after the screen landed. That is the same blind spot the F9 paragraph further
+    // down records against task 42, now earned a second time, which is why both notes are left standing.
+    // A task adding a screen should expect to edit four lines here, not one.
+    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(9);
     expect(PRIMITIVES, 'the primitive list changed size without the brief changing').toHaveLength(13);
     expect(new Set(PRIMITIVES).size).toBe(PRIMITIVES.length);
     expect(PRIMITIVES, 'the primitive list is not sorted, so a duplicate is easy to miss')
@@ -287,8 +298,12 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // `bearing`: that is 12, because `TextLink` bears no tag. I7's trap has a second floor, and I fell
     // through it writing the case that disarms the first - thirteen is a statement about what the two lists
     // DECLARE, never about what the sweep FINDS.
+    // TWENTY-TWO SINCE TASK 47, and the sweep below still finds TWELVE: `RegisterSentScreen` renders no
+    // lowercase tag of its own, so it joins the DECLARED union without joining the files that bear a tag.
+    // That is the second floor of I7's trap holding exactly as the comment above predicted - the two numbers
+    // are allowed to move apart, and this one moved alone.
     expect(new Set([...PRIMITIVE_FILES, ...RENDER_SITES]).size,
-      'the union of the two pinned lists is no longer twenty-one').toBe(21);
+      'the union of the two pinned lists is no longer twenty-two').toBe(22);
     // and every file the sweep found is in one of them, which is the cross-check §6e(2) actually asks for.
     for (const file of bearing) {
       expect([...PRIMITIVE_FILES, ...RENDER_SITES], `${file} renders an element and is in neither list`)
@@ -933,6 +948,17 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
       // TASK 42's one, admitted for the same reason and on the same terms: it is the authenticated chrome's
       // own word, not a primitive's. `Banner` carries no copy - the case below this one is what says so.
       'shell.signOut',
+      // TASK 47's one, AND THE WARNING ABOVE CAME TRUE EXACTLY AS WRITTEN. The paragraph on F9 says "the next
+      // task that adds a word will meet the same surprise", and it did: task 47's phase 3 listed this file
+      // under its files-to-touch for `RENDER_SITES` 8 -> 9 and said nothing about the key-set pin living in
+      // the same file, which is the identical blind spot one task later. Left standing as a second data point
+      // rather than reworded: a warning that has now been earned twice is worth more than a tidy one.
+      //
+      // `register.success` STAYS IN THE LIST ABOVE AND MOVED SCREENS. It is rendered by `RegisterSentScreen`
+      // now rather than by the form, which this pin cannot see and does not claim to - it counts keys and
+      // forbids a primitive or a restyling quietly editing or dropping a string. Both halves of that claim
+      // are untouched by the move, and the spelled-out pin further down still holds its exact words.
+      'registerSent.heading',
     ].sort());
   });
 

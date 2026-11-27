@@ -34,7 +34,7 @@ import { AuthenticatedLayout } from './AuthenticatedLayout';
 import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
 import { APP_BASENAME, AUTHENTICATED_ROUTE_PATHS, HOME_PATH, PUBLIC_ROUTE_PATHS, REGISTER_PATH,
-  SIGNED_OUT_PATH, SIGN_IN_PATH, appRoutes } from './routes';
+  REGISTER_SENT_PATH, SIGNED_OUT_PATH, SIGN_IN_PATH, appRoutes } from './routes';
 
 /** The words, spelled once here so a silent catalogue edit fails rather than passes. */
 const COPY = {
@@ -707,8 +707,8 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
   });
 
-  describe('AC9 exactly five screens are attached', () => {
-    it('attaches an element to sign-in, callback, register, signed-out and home, and to nothing else', () => {
+  describe('AC9 exactly six screens are attached', () => {
+    it('attaches an element to sign-in, callback, register, register/sent, signed-out and home, and to nothing else', () => {
       // A deliberate COUNT PIN, and it will fail the day the next screen is attached - which is the handoff
       // working, exactly as task 16's did for this task. Whoever attaches the next one extends this list and
       // task 16's SCREENS_ATTACHED_SO_FAR together.
@@ -741,8 +741,15 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // own number: four screens became five. `REGISTER_PATH` sits third because `walk` reads the public
       // branch in `PUBLIC_ROUTE_PATHS` order and `register` is its third entry - before `signed-out`, which
       // is its last.
+      // GROWN BY TASK 47, the third time, and the title's number moved again: five screens became six.
+      // `REGISTER_SENT_PATH` sits fourth for the same ordering reason as `register` sits third - `walk`
+      // reads the public branch in `PUBLIC_ROUTE_PATHS` order, and `register/sent` is its fourth entry. It
+      // had been declared there since task 16 and carried no element until now, which is exactly the state
+      // this pin exists to make visible: the path was always in the set, and only today is it a screen.
       const attached = appRoutes.flatMap(walk);
-      expect(attached).toEqual(['sign-in', 'callback', REGISTER_PATH, SIGNED_OUT_PATH, HOME_PATH, '*']);
+      expect(attached).toEqual([
+        'sign-in', 'callback', REGISTER_PATH, REGISTER_SENT_PATH, SIGNED_OUT_PATH, HOME_PATH, '*',
+      ]);
 
       // CONTROL, the one task 16's case has and this one was missing: `walk` must COUNT, rather than return a
       // list that happens to match. Given two attached routes - one nested, one carrying an errorElement

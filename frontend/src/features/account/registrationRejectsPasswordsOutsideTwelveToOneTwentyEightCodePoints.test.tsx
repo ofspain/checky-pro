@@ -82,6 +82,25 @@ function installTransport(respond: (request: Request) => Reply | Promise<Reply>)
 
 const ACCEPTED: Reply = { status: 202, body: JSON.stringify({ status: 'pending_verification' }) };
 
+/**
+ * A transport that records the request and NEVER ANSWERS, which is the window this whole file lives in.
+ *
+ * TASK 47 MADE THIS NECESSARY AND TOOK NOTHING AWAY. Every case here submits and then asks the FORM a
+ * question - what describes the password field, whether the sentence is still there after a keystroke, which
+ * bounds it renders. Until task 47 the screen stayed put after the reply, so `settle()` was a safe place to
+ * stand; it now navigates to the acknowledgement, which unmounts the field these cases interrogate. They did
+ * not begin to fail, they began to CRASH on a null control, and a crash says the case is broken where a
+ * failure would say the screen is.
+ *
+ * Holding the reply restores the state each case was always describing: the request has left, the advisory
+ * mark and its sentence are on screen, and nothing has navigated yet. R1 is unaffected either way - the
+ * check is synchronous and runs before the request is made, which is why none of these assertions ever
+ * needed the answer. `sent` is still populated, because the request is recorded when it is made.
+ */
+function holdTransportInFlight(): Sent[] {
+  return installTransport(() => new Promise<Reply>(() => undefined));
+}
+
 const settle = () => act(async () => {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 });
@@ -209,7 +228,7 @@ const OUT_OF_RANGE: ReadonlyArray<{ name: string; password: string; codePoints: 
 
 describe('AC1/AC2 a password outside the advisory range shows the guidance', () => {
   it.each(OUT_OF_RANGE)('shows the guidance for $name', async ({ password, codePoints }) => {
-    const sent = installTransport(() => ACCEPTED);
+    const sent = holdTransportInFlight();
     const container = await renderScreen();
 
     await fillAndSubmit(container, 'visitor@example.test', password);
@@ -263,7 +282,7 @@ describe('AC3 a password inside the range shows no guidance', () => {
     { name: 'the upper bound itself', password: 'a'.repeat(ADVISORY_MAXIMUM_CODE_POINTS) },
     { name: '128 astral code points, which are 256 UTF-16 units', password: '\u{1F44D}'.repeat(128) },
   ])('shows nothing for $name', async ({ password }) => {
-    installTransport(() => ACCEPTED);
+    holdTransportInFlight();
     const container = await renderScreen();
 
     await fillAndSubmit(container, 'visitor@example.test', password);
@@ -281,7 +300,7 @@ describe('AC3 a password inside the range shows no guidance', () => {
     // against a password that must produce a sentence. Without this, every assertion in this describe
     // block would pass against a screen with no guidance feature at all, which is exactly what this task
     // started from. T42's AC11 was vacuous for seven tasks for the want of four lines like these.
-    installTransport(() => ACCEPTED);
+    holdTransportInFlight();
     const container = await renderScreen();
 
     expect(describedElement(container), 'nothing describes the field before a submit').toBeNull();
@@ -298,7 +317,7 @@ describe('AC3 a password inside the range shows no guidance', () => {
 
 describe('AC4 the guidance is attached to the password field', () => {
   it('points the field at the element that holds the sentence, and at nothing else', async () => {
-    installTransport(() => ACCEPTED);
+    holdTransportInFlight();
     const container = await renderScreen();
     await fillAndSubmit(container, 'visitor@example.test', 'a'.repeat(11));
     await settle();
@@ -343,7 +362,7 @@ describe('AC4 the guidance is attached to the password field', () => {
     // on the next submit, and if the sentence outlived the mark the field would be described as invalid
     // while reading as acceptable - the worst of the three possible disagreements, because assistive
     // technology would announce a rule the screen no longer thinks is broken.
-    installTransport(() => ACCEPTED);
+    holdTransportInFlight();
     const container = await renderScreen();
 
     await fillAndSubmit(container, 'visitor@example.test', 'a'.repeat(11));
@@ -371,7 +390,7 @@ describe('AC5 the guidance is a submit-time answer, not a running commentary', (
     { name: 'three characters', password: 'abc' },
     { name: 'two hundred characters', password: 'a'.repeat(200) },
   ])('shows nothing while $name are typed', async ({ password }) => {
-    installTransport(() => ACCEPTED);
+    holdTransportInFlight();
     const container = await renderScreen();
 
     await type(emailInput(container), 'visitor@example.test');
@@ -395,7 +414,7 @@ describe('AC5 the guidance outlives the typing that corrects it, until the next 
     // the screen extends it to the sentence; this case pins it rather than leaving it to be rediscovered
     // as a bug report. Whether the sentence SHOULD clear on edit is the owner's call - OQ-T45-5 - and if
     // it changes, this case is where the change announces itself.
-    installTransport(() => ACCEPTED);
+    holdTransportInFlight();
     const container = await renderScreen();
 
     await fillAndSubmit(container, 'visitor@example.test', 'a'.repeat(11));
@@ -430,7 +449,7 @@ const VERDICT_WORDS = ['short', 'long', 'invalid', 'wrong', 'error', 'failed'];
 
 describe('AC7 the sentence names the rule, from the catalogue, with the real bounds', () => {
   it('renders the two bounds, and they ARE the constants the check uses', async () => {
-    installTransport(() => ACCEPTED);
+    holdTransportInFlight();
     const container = await renderScreen();
     await fillAndSubmit(container, 'visitor@example.test', 'a'.repeat(11));
     await settle();

@@ -13,6 +13,7 @@ import { SignInScreen } from '../auth/SignInScreen';
 import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
 import { RegisterScreen } from '../features/account/RegisterScreen';
+import { RegisterSentScreen } from '../features/account/RegisterSentScreen';
 import { AuthenticatedLayout } from './AuthenticatedLayout';
 import { HomeScreen } from './HomeScreen';
 
@@ -32,6 +33,13 @@ export const HOME_PATH = 'home';
  * screen, the route table and the suites that pin the set all need one spelling of it. */
 export const REGISTER_PATH = 'register';
 
+/** Where a submitted registration lands (R2, task 47). Published for the same reason as the five above, and for
+ * one more: the form NAVIGATES here, so the spelling is now in a `navigate()` call as well as in the route
+ * table and the suites that pin the set. It was a bare literal in `PUBLIC_ROUTE_PATHS` from task 16 until this
+ * task attached an element - which is exactly the state L14's house rule exists to end, since a path can only
+ * be attached by matching a constant. */
+export const REGISTER_SENT_PATH = 'register/sent';
+
 /** Where SAS returns the browser after the end-session call (R19, task 36). Published in task 37, which is why
  * `endSession.ts` no longer declares it privately: one spelling, and `post_logout_redirect_uri` is built from it. */
 export const SIGNED_OUT_PATH = 'signed-out';
@@ -42,7 +50,7 @@ export const PUBLIC_ROUTE_PATHS = [
   SIGN_IN_PATH,
   CALLBACK_PATH,
   REGISTER_PATH,
-  'register/sent',
+  REGISTER_SENT_PATH,
   'verify',
   'resend-verification',
   'reset/request',
@@ -84,8 +92,14 @@ export const appRoutes: RouteObject[] = [
         if (path === SIGNED_OUT_PATH) return { path, element: <SignedOutScreen /> };
         // TASK 43 - the registration screen, the fourth public path to get an element. The conditional is
         // the one that was already here: a path is attached by matching its constant, never by adding one
-        // (L14), and `register/sent` stays element-less because task 47 owns the acknowledgement.
+        // (L14).
         if (path === REGISTER_PATH) return { path, element: <RegisterScreen /> };
+        // TASK 47 - the acknowledgement, the fifth, and the end of the sentence above: this file said
+        // `register/sent` "stays element-less because task 47 owns the acknowledgement" from task 43 until
+        // now. Attaching it is what let task 43's `does not navigate` case be inverted rather than deleted -
+        // that case chose against navigating to a path with no element, and this line is the condition it
+        // named. It is also why the literal above became a constant: the form navigates to this spelling.
+        if (path === REGISTER_SENT_PATH) return { path, element: <RegisterSentScreen /> };
         return { path };
       }),
       // TASK 40 - the auth gate (R28's first clause). ONE pathless layout route decides for all eleven, so

@@ -81,9 +81,21 @@ export const en = {
     emailLabel: 'Email address',
     passwordLabel: 'Password',
     submit: 'Create account',
-    // The two things the screen says after the submit (task 43, D7). `success` says nothing about whether
-    // the address was already registered - R2 and L4 require the same words either way, and task 47's
-    // acknowledgement screen is where that claim gets its own suite.
+    // THE TWO THINGS THE SCREEN SAID AFTER THE SUBMIT - and after task 47 only `submitting` is still one of
+    // them. `success` is rendered by `RegisterSentScreen` now, which the form navigates to once the call
+    // settles, so the words a visitor reads at the end of a registration live one screen away from the form.
+    // The key keeps its name and its group: renaming it would churn four pins for no behavioural gain, and
+    // this group is where its reservation was written.
+    //
+    // THAT RESERVATION IS SPENT, AND IT WAS KEPT RATHER THAN REPLACED. Task 43 wrote that "task 47's
+    // acknowledgement screen is where that claim gets its own suite"; task 47's phase 3 then proposed a
+    // second pair of keys with new wording instead, which would have left this string rendered nowhere while
+    // two pins in `screensRenderThroughDesignSystemPrimitivesOnly` still named it - one of them pinning these
+    // exact words. The freeze reused it, so this sentence is the one the named suite proves identical for a
+    // new address and an already-registered one.
+    //
+    // It says nothing about whether the address was already registered, which is R2 and L4: the same words
+    // either way, because the server answers 202 either way.
     submitting: 'Creating your account…',
     success: 'Check your email to finish creating your account.',
     /**
@@ -107,6 +119,23 @@ export const en = {
      * every visitor a term they do not know to save a few the surprise that the server resolves anyway.
      */
     passwordGuidance: 'Use a password of {{min}} to {{max}} characters.',
+  },
+  // The acknowledgement (task 47), and ONE KEY rather than two. The sentence under this heading is
+  // `register.success`, reused from the group above rather than rewritten here: task 43 reserved those words
+  // for this screen in writing, and a second sentence would have left the first rendered nowhere.
+  //
+  // 'Check your email' IS AN INSTRUCTION AND NOT A REPORT, which is the whole reason it can be identical for
+  // both cases. A heading that reported - 'Account created', or 'Already registered' - would disclose exactly
+  // what the server withholds: R2 and L4 exist so a visitor who submits someone else's address learns nothing
+  // about whether it has an account. This names what to do next and nothing else.
+  //
+  // IT REPEATS THE FIRST FOUR WORDS OF THE SENTENCE BELOW IT, DELIBERATELY. Focus moves to this heading on
+  // arrival (L11), so it is the first and sometimes the only thing a screen-reader user hears before acting -
+  // which means the essential instruction has to be complete inside it, not completed by the paragraph after
+  // it. The sentence then supplies the reason. A heading trimmed to avoid the overlap - 'Almost there' - would
+  // announce the arrival and leave the instruction to a line the visitor may never reach.
+  registerSent: {
+    heading: 'Check your email',
   },
   shell: {
     // Not invented either: the mirror of `signedOut.action`'s 'Sign in', so the two directions of the same

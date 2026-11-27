@@ -49,7 +49,7 @@ import { en } from '../i18n/catalogue';
 import { createI18n } from '../i18n/i18n';
 import { RegisterScreen } from '../features/account/RegisterScreen';
 import { HomeScreen } from './HomeScreen';
-import { APP_BASENAME, appRoutes, HOME_PATH, SIGN_IN_PATH } from './routes';
+import { APP_BASENAME, appRoutes, HOME_PATH, REGISTER_SENT_PATH, SIGN_IN_PATH } from './routes';
 
 // Lets act() flush React 19 renders synchronously, the shape eleven of the eighteen mounting suites use
 // (`routesResolveUnderAppPrefixOnly.test.tsx:10`). Added at phase 11, for a measured reason: without it this
@@ -343,11 +343,13 @@ describe('AC7 the instruments this task was obliged to grow', () => {
     expect(source).toContain("'app/HomeScreen.tsx',");
     // GROWN BY T42, which added the seventh render site AND the ninth primitive, so the union moved by two.
     // GROWN AGAIN BY T43, which added one render site and FOUR primitives, so it moved by five to 21.
-    // The number is this task's only interest in it - that HomeScreen.tsx is PINNED somewhere the union
-    // counts - so the claim is kept and the count follows the two lists rather than being frozen at a
-    // figure task 174 happened to see.
-    expect(source, 'the union pin no longer says twenty-one, so a render site or a primitive is unpinned')
-      .toMatch(/\.toBe\(21\)/);
+    // GROWN AGAIN BY T47, which added one render site and no primitive, so it moved by one to 22 - and this
+    // is the THIRD file holding that one number, after the list itself and task 43's suite. The number is
+    // this task's only interest in it - that HomeScreen.tsx is PINNED somewhere the union counts - so the
+    // claim is kept and the count follows the two lists rather than being frozen at a figure task 174
+    // happened to see.
+    expect(source, 'the union pin no longer says twenty-two, so a render site or a primitive is unpinned')
+      .toMatch(/\.toBe\(22\)/);
   });
 
   it('names home in the attached-element pin, which is read from the route table itself', () => {
@@ -421,7 +423,7 @@ describe('AC9 tabIndex is set inside the primitive, not accepted from a consumer
   });
 });
 
-describe('phase 8 I9: no OTHER screen takes focus, now that every heading can', () => {
+describe('phase 8 I9: the screens that mount in place leave focus alone, now that every heading can take it', () => {
   // THIS TASK OPENED THE HOLE AND SO MUST CLOSE IT. Before task 174 a `.focus()` added to any screen was
   // inert, because no `<h1>` was focusable; `Heading` now makes all of them focusable, so the same edit
   // would silently start moving a screen-reader user's focus on mount. The guard lives HERE, in the suite
@@ -430,6 +432,15 @@ describe('phase 8 I9: no OTHER screen takes focus, now that every heading can', 
   // `<body>` is the correct expectation for all four: none of them is an arrival from a redirect, and the
   // sign-in screen in particular must NOT grab focus - a visitor who tabbed to its button and came back
   // would be thrown out of position.
+  //
+  // THE LOOP KEEPS ITS FOUR AND ITS REASON; TASK 47 ADDED AN EXCEPTION, NOT A FIFTH ENTRY. Its
+  // `RegisterSentScreen` is reached by a client-side navigation from the registration form, so it does the
+  // OPPOSITE of this loop's claim and could never have joined it. Task 47's phase 3 proposed rewriting the
+  // sentence above on the grounds that it was the first redirect arrival in the application; it is not -
+  // `HomeScreen` has been one since task 17, when `CallbackScreen` started navigating to it - and the four
+  // screens listed below are still every screen that mounts in place. What WAS false is the assertion
+  // message, which named task 174's screen as the only one allowed to take focus, and the title of this
+  // block. Both are corrected; the reason is not, because it was never wrong.
   //
   // GROWN BY TASK 43, AND THAT TASK'S OWN PLAN HAD SAID SO. Phase 6 grew the union pin in this file and
   // missed this loop, which is the other half of the same row; phase 7's harness then reported the mutant
@@ -459,10 +470,27 @@ describe('phase 8 I9: no OTHER screen takes focus, now that every heading can', 
       mounted = { root, container };
 
       expect(container.querySelector('h1'), `${name} rendered no heading, so this measures nothing`).not.toBeNull();
-      expect(document.activeElement, `${name} took focus on mount, which only task 174's screen may do`)
+      expect(document.activeElement,
+        `${name} took focus on mount, which only a screen ARRIVED AT by a navigation may do`)
         .toBe(document.body);
     });
   }
+
+  it('and the exception does the opposite: RegisterSentScreen takes focus (task 47)', async () => {
+    // THE EXCEPTION IS MEASURED HERE, BESIDE THE RULE IT EXCEPTS. Task 47 owns the screen and proves the
+    // focus move in its own named suite; this case exists so that the guard above cannot be read as "no
+    // screen but task 174's may take focus" when that is no longer true. A list of four with a corrected
+    // message would still leave the next reader to discover the fifth screen's behaviour somewhere else.
+    //
+    // Through the REAL table, because that is the only arrival this screen actually has.
+    const { container } = await mountRealTable(REGISTER_SENT_PATH);
+    const heading = container.querySelector('h1');
+
+    expect(heading, 'the acknowledgement rendered no heading, so this measures nothing').not.toBeNull();
+    expect(document.activeElement, 'the acknowledgement left focus where the submit button used to be')
+      .toBe(heading);
+    expect(heading?.textContent).toBe(en.registerSent.heading);
+  });
 });
 
 describe('AC10 the focus move survives StrictMode double invocation', () => {

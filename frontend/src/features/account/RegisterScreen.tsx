@@ -1,6 +1,8 @@
 import { useState, type ReactElement } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router';
 import { createPublicAuthApi } from '../../api/client';
+import { REGISTER_SENT_PATH } from '../../app/routes';
 import { EmailField, Form, Heading, PasswordField, Screen, StatusRegion, SubmitButton, Text } from '../../app/ui';
 import { ADVISORY_MAXIMUM_CODE_POINTS, ADVISORY_MINIMUM_CODE_POINTS, countCodePoints } from './passwordLength';
 
@@ -32,16 +34,34 @@ import { ADVISORY_MAXIMUM_CODE_POINTS, ADVISORY_MINIMUM_CODE_POINTS, countCodePo
  * with no sentence is incomplete on purpose; a check with no consumer would have been worse, and the freeze's
  * own prediction that removing the check would be unobservable (D17) was the symptom of that shape.
  *
- * **IT ANNOUNCES ITS RESULT AND DOES NOT NAVIGATE** (D1, OQ-T43-5). `POST /accounts` always answers 202, and
- * task 47 owns both the acknowledgement screen and `register/sent` - which is a declared path with no element
- * today, so navigating there would hand the visitor a blank document. Instead the `StatusRegion` is mounted
- * from the start and filled afterwards, which is the order that gets a live region announced at all, and
- * which `StatusRegion`'s own header makes the rule.
+ * **IT NAVIGATES NOW, AND TASK 43 IS WHAT SAYS IT MAY** (task 47; was D1, OQ-T43-5). This paragraph read "IT
+ * ANNOUNCES ITS RESULT AND DOES NOT NAVIGATE" for four tasks, and the reason it gave was conditional: task 47
+ * "owns both the acknowledgement screen and `register/sent` - which is a declared path with no element today,
+ * so navigating there would hand the visitor a blank document". The condition was the path having no element.
+ * `RegisterSentScreen` is that element, so the decision is spent rather than reversed, and task 43's
+ * `does not navigate` case is INVERTED in its own file rather than deleted - a case whose premise a later task
+ * was always going to retire.
  *
- * **NOTHING BRANCHES ON THE RESPONSE** (R2, L4). The handler awaits the call and reports success; it does not
- * read the body, does not look at the status, does not retry and adds no delay. Registration is
- * enumeration-safe at the server by design - the same 202 whether or not the address was already registered -
- * and a client that distinguished outcomes would reintroduce exactly the difference R2 removes.
+ * The navigation is ABSOLUTE and REPLACES. Absolute because a relative `navigate('register/sent')` resolves
+ * against this route and would land on `/register/register/sent`; `CallbackScreen` writes `/${SIGN_IN_PATH}`
+ * for the same reason. `replace` because Back from the acknowledgement must not return to a filled form whose
+ * resubmission posts the same address again - pushing would turn the browser's Back button into a retry
+ * control nobody designed.
+ *
+ * **THE `StatusRegion` STAYS, AND IT NOW SAYS ONE THING RATHER THAN TWO.** It is still mounted from the start
+ * and filled afterwards, which is the order that gets a live region announced at all and which
+ * `StatusRegion`'s own header makes the rule. What it no longer holds is the success sentence: that is
+ * `register.success`, rendered by `RegisterSentScreen` one navigation away. The in-flight word is the only
+ * thing this screen still announces, and the live region is the only thing that can announce it, because a
+ * visitor who cannot see the control needs to know the press was heard.
+ *
+ * **NOTHING BRANCHES ON THE RESPONSE** (R2, L4), and that is still exactly true after the navigation landed.
+ * The handler awaits the call and leaves; it does not read the body, does not look at the status, does not
+ * retry and adds no delay. **A navigation taken on SETTLE is not a branch on the RESPONSE** - the same single
+ * destination is reached for a 202, a 409 and a 500, which is what the three rows of task 43's AC11 assert and
+ * why those rows were re-aimed at the destination rather than retired. Registration is enumeration-safe at the
+ * server by design - the same 202 whether or not the address was already registered - and a client that
+ * distinguished outcomes would reintroduce exactly the difference R2 removes.
  *
  * It holds `email`, `password` and a status in local `useState` (D9). L13's TanStack Query and Zustand are
  * still uninstalled after 42 tasks, and a one-shot public mutation has no cache to invalidate and no state to
@@ -60,9 +80,10 @@ const GUIDANCE_ID = 'register-password-guidance';
 
 export function RegisterScreen(): ReactElement {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [status, setStatus] = useState<'idle' | 'submitting' | 'sent'>('idle');
+  const [status, setStatus] = useState<'idle' | 'submitting'>('idle');
   const [advisory, setAdvisory] = useState<'unchecked' | 'in-range' | 'out-of-range'>('unchecked');
 
   function submit(): void {
@@ -72,7 +93,7 @@ export function RegisterScreen(): ReactElement {
     setStatus('submitting');
     // The advisory result is deliberately NOT consulted here: R1 sends the form either way.
     void createPublicAuthApi().POST('/accounts', { body: { email, password } })
-      .then(() => setStatus('sent'), () => setStatus('idle'));
+      .then(() => navigate(`/${REGISTER_SENT_PATH}`, { replace: true }), () => setStatus('idle'));
   }
 
   // THE BOUNDS COME FROM THE MODULE THAT ENFORCES THEM, never from the sentence. A catalogue string with
@@ -103,9 +124,11 @@ export function RegisterScreen(): ReactElement {
         {advisory === 'out-of-range' ? <Text id={GUIDANCE_ID}>{guidance}</Text> : null}
         <SubmitButton>{t('register.submit')}</SubmitButton>
       </Form>
-      <StatusRegion>
-        {status === 'idle' ? null : t(status === 'submitting' ? 'register.submitting' : 'register.success')}
-      </StatusRegion>
+      {/* ONE WORD NOW, NOT TWO. The success sentence moved to `RegisterSentScreen`; what is left is the
+          in-flight word, and the region still renders unconditionally so the SAME node is filled rather
+          than replaced - a region swapped between renders is a new one to the accessibility tree, and a
+          case in task 43's suite asserts that identity. */}
+      <StatusRegion>{status === 'submitting' ? t('register.submitting') : null}</StatusRegion>
     </Screen>
   );
 }

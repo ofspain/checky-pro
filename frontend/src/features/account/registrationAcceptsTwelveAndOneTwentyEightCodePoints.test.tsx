@@ -30,11 +30,12 @@ import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { accessToken } from '../../auth/accessToken';
 import { APP_BASENAME, appRoutes, AUTHENTICATED_ROUTE_PATHS, PUBLIC_ROUTE_PATHS,
-  REGISTER_PATH } from '../../app/routes';
+  REGISTER_PATH, REGISTER_SENT_PATH } from '../../app/routes';
 import { en } from '../../i18n/catalogue';
 import { createI18n } from '../../i18n/i18n';
 import { ADVISORY_MAXIMUM_CODE_POINTS, ADVISORY_MINIMUM_CODE_POINTS, countCodePoints } from './passwordLength';
 import { RegisterScreen } from './RegisterScreen';
+import { RegisterSentScreen } from './RegisterSentScreen';
 
 // Lets act() flush React 19 renders synchronously - the shape eleven of the mounting suites use, and task
 // 174's phase 11 recorded why it is written in every one of them rather than relied on from a neighbour.
@@ -59,6 +60,22 @@ function installBrowserRequest(): void {
       }
     },
   );
+}
+
+/**
+ * A transport that records the request and NEVER ANSWERS, for the cases whose subject is the form itself.
+ *
+ * TASK 47 MADE THIS NECESSARY AND THE CASES NO WEAKER. Until then the screen stayed on this path after a
+ * reply, so a row could submit, `settle()`, and still ask the control whether it was disabled. The screen now
+ * navigates to the acknowledgement, which unmounts the form - so those rows did not start failing, they
+ * started CRASHING on a null control, which is a worse signal: a crash says the case is broken where a
+ * failure would say the screen is. Holding the reply puts each row back inside the window it was always
+ * describing - the request has left the tab and the form is still on screen - and R1's advisory mark is
+ * either there or it is not. The reply is deliberately never released: nothing after the mark is this row's
+ * business, and releasing it would navigate away from the thing being measured.
+ */
+function holdTransportInFlight(): Sent[] {
+  return installTransport(() => new Promise<Reply>(() => undefined));
 }
 
 /** T05's fake transport, narrowed to what this file needs: every request recorded, every reply the test's. */
@@ -95,7 +112,15 @@ let mounted: { root: Root; container: HTMLElement; router: ReturnType<typeof cre
 async function renderScreen(): Promise<HTMLElement> {
   const container = document.createElement('div');
   document.body.append(container);
-  const router = createMemoryRouter([{ path: `/${REGISTER_PATH}`, element: <RegisterScreen /> }], {
+  // TWO ROUTES SINCE TASK 47, AND THE SECOND ONE IS WHAT KEEPS THIS SUITE'S CLAIMS MEASURABLE. The screen
+  // navigates to the acknowledgement once the call settles, so a one-route harness would land on a path this
+  // router cannot match: the assertions below would then be reading an empty container and "the success
+  // sentence is rendered" would be unprovable here rather than false. Adding the destination is what let
+  // every success assertion in this file be RE-AIMED instead of deleted (task 47, OQ-T47-5).
+  const router = createMemoryRouter([
+    { path: `/${REGISTER_PATH}`, element: <RegisterScreen /> },
+    { path: `/${REGISTER_SENT_PATH}`, element: <RegisterSentScreen /> },
+  ], {
     initialEntries: [`/${REGISTER_PATH}`],
   });
   const root = createRoot(container);
@@ -267,11 +292,10 @@ const PASSWORDS: ReadonlyArray<{ name: string; password: string; codePoints: num
 
 describe('AC2/AC3/AC4 the advisory range marks and never blocks', () => {
   it.each(PASSWORDS)('sends $name to the server either way', async ({ password, codePoints, inRange }) => {
-    const sent = installTransport(() => ACCEPTED);
+    const sent = holdTransportInFlight();
     const container = await renderScreen();
 
     await fillAndSubmit(container, 'visitor@example.test', password);
-    await settle();
 
     // THE CLAIM WITH TEETH, and it is the same for every row: R1 makes the check advisory, so the request
     // goes out whether the password is 11 code points or 12. A blocking check would pass every other case in
@@ -313,11 +337,10 @@ describe('AC2/AC3/AC4 the advisory range marks and never blocks', () => {
     // NOT TASK 46'S WORK DONE EARLY: task 46 owns the claim that the counter counts code points in general.
     // What this case owns is that the SCREEN accepts a password at the upper bound when the two units
     // disagree about whether it is there.
-    const sent = installTransport(() => ACCEPTED);
+    const sent = holdTransportInFlight();
     const container = await renderScreen();
 
     await fillAndSubmit(container, 'visitor@example.test', '👍'.repeat(128));
-    await settle();
 
     expect(passwordInput(container).value.length, 'jsdom stopped measuring UTF-16 units').toBe(256);
     expect(countCodePoints(passwordInput(container).value)).toBe(128);
@@ -374,7 +397,7 @@ describe('AC2/AC3/AC4 the advisory range marks and never blocks', () => {
     // accident - a visitor pressing the button on an untouched form. R1 puts the authority on the server
     // for both fields, and `noValidate` (D13) is what stops the browser from inventing a rejection of its
     // own, so the request goes exactly as it does for an 11-code-point password.
-    const sent = installTransport(() => ACCEPTED);
+    const sent = holdTransportInFlight();
     const container = await renderScreen();
 
     await act(async () => {
@@ -513,9 +536,19 @@ describe('AC6 the screen says what the catalogue says, and never a key', () => {
     // with the catalogue cannot distinguish a lookup from a literal. Only the source can, and it is
     // asserted in both directions - every key is reached, and no sentence is spelled.
     for (const key of ['register.heading', 'register.emailLabel', 'register.passwordLabel',
-      'register.submit', 'register.submitting', 'register.success', 'register.passwordGuidance']) {
+      'register.submit', 'register.submitting', 'register.passwordGuidance']) {
       expect(code, `the screen does not reach the catalogue for ${key}`).toContain(`'${key}'`);
     }
+    // `register.success` LEFT THIS LIST AND DID NOT LEAVE THE APPLICATION (task 47). It is rendered by
+    // `RegisterSentScreen` now, which this screen navigates to, so asserting it HERE would pin a lookup this
+    // screen no longer makes. The claim follows the key rather than being dropped - the same check, one file
+    // along - which is what stops the move from quietly becoming a deletion.
+    const acknowledgement = (await read('features/account/RegisterSentScreen.tsx'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
+    expect(acknowledgement, 'the acknowledgement does not reach the catalogue for register.success')
+      .toContain("'register.success'");
+    expect(code, 'this screen still spells a key it no longer renders')
+      .not.toContain("'register.success'");
     // A WORD-BOUNDARY MATCH, NOT A SUBSTRING, AND THE TRAP BIT A SECOND TIME TO TEACH IT. Written as a
     // plain `toContain` this failed instantly: 'Password' is the catalogue's one single-word string and it
     // is a substring of `PasswordField` in this screen's own import. T173's copy scan was corrected for
@@ -529,14 +562,20 @@ describe('AC6 the screen says what the catalogue says, and never a key', () => {
     }
   });
 
-  it('renders the success sentence from the catalogue after the submit, as literal English', async () => {
+  it('renders the success sentence from the catalogue at the end of the submit, as literal English', async () => {
     installTransport(() => ACCEPTED);
     const container = await renderScreen();
 
     await fillAndSubmit(container, 'visitor@example.test', 'a'.repeat(12));
     await settle();
 
-    expect(statusRegion(container).textContent).toBe(en.register.success);
+    // RE-AIMED, NOT RETIRED (task 47). This read the live region until the screen began navigating. The
+    // sentence is the same sentence and the catalogue is the same catalogue, so the case follows it to where
+    // it is now rendered instead of being deleted as somebody else's problem. What it measured - that the
+    // words a visitor sees at the end of a registration come from `en.register.success`, as literal English
+    // rather than a key - is unchanged.
+    expect(container.textContent, 'the success sentence is nowhere at the end of the submit')
+      .toContain(en.register.success);
     expect(en.register.success).toBe('Check your email to finish creating your account.');
     // R2's words, where this suite can see them: the sentence says to check the mail and says nothing about
     // whether the address was already registered. Task 47's acknowledgement screen owns the full claim.
@@ -568,9 +607,12 @@ describe('AC7 the screen renders no element of its own, and the pinned lists nam
     for (const primitive of ['EmailField', 'Form', 'PasswordField', 'SubmitButton']) {
       expect(only, `the primitive list does not name ${primitive}`).toContain(`'${primitive}',`);
     }
-    expect(only, 'the render-site count still says seven').toMatch(/toHaveLength\(8\)/);
+    // THE NUMBERS MOVED WITH TASK 47 AND THE CLAIM DID NOT. A ninth render site was added there, so the
+    // length pin says nine and the declared union says twenty-two. The primitive count is untouched: the
+    // acknowledgement composes existing primitives and adds none.
+    expect(only, 'the render-site count no longer says nine').toMatch(/toHaveLength\(9\)/);
     expect(only, 'the primitive count still says nine').toMatch(/toHaveLength\(13\)/);
-    expect(only, 'the union pin no longer says twenty-one').toMatch(/\.toBe\(21\)/);
+    expect(only, 'the union pin no longer says twenty-two').toMatch(/\.toBe\(22\)/);
   });
 
   it('is named in the credential table that task 16 built, with the reason', async () => {
@@ -755,7 +797,9 @@ describe('AC10 the journey writes no storage and leaves no password in the docum
   });
 
   it('leaves the password nowhere but the field that holds it, before or after the submit', async () => {
-    installTransport(() => ACCEPTED);
+    // HELD IN FLIGHT (task 47): "after the submit" is now the window between the request leaving and the
+    // acknowledgement replacing the form, because that is the last moment the form exists to be searched.
+    holdTransportInFlight();
     const container = await renderScreen();
     const password = 'correct horse battery';
 
@@ -817,7 +861,17 @@ describe('AC11 the same result is rendered whatever the server answers (R2, L4)'
     // registered, so a screen that read the status would be building a distinction the server removed - and
     // the 500 row is the honest consequence, recorded rather than hidden: this screen reports success it
     // cannot know. OQ-T43-9 carries it, and task 45 owns the failure state.
-    expect(statusRegion(container).textContent, 'the screen branched on the response').toBe(en.register.success);
+    //
+    // RE-AIMED BY TASK 47 AND IT IS STILL THIS FILE'S SHARPEST ROW. The outcome used to be a sentence in the
+    // live region and is now a destination plus the same sentence rendered there, so BOTH halves are
+    // asserted: a screen that read the status would send one of these three replies somewhere else, or show
+    // something different on arrival, and either way this row fails. Deleting it and letting task 47's own
+    // suite carry R2 was the alternative, and it would have retired the only instrument that watches THIS
+    // screen for a branch while leaving every other case in the file green.
+    expect(mounted?.router.state.location.pathname, 'the screen branched on the response')
+      .toBe(`/${REGISTER_SENT_PATH}`);
+    expect(container.textContent, 'the acknowledgement did not render the words it owns')
+      .toContain(en.register.success);
     expect(container.textContent, 'a status code leaked into the copy').not.toMatch(/\b(409|500|202)\b/);
   });
 
@@ -880,7 +934,12 @@ describe('the transport itself fails, which is not a response (phase 7 F2, phase
     });
     await settle();
     expect(sent, 'the form was left in a state that cannot submit again').toHaveLength(1);
-    expect(statusRegion(container).textContent).toBe(en.register.success);
+    // The retry's SUCCESS is now the acknowledgement, not a sentence in the region this form no longer
+    // carries. What this row claims is unchanged: a transport failure leaves a form that can really be
+    // submitted again, and the second attempt really does finish.
+    expect(mounted?.router.state.location.pathname, 'the retry did not finish')
+      .toBe(`/${REGISTER_SENT_PATH}`);
+    expect(container.textContent).toContain(en.register.success);
     expect(escaped, 'something escaped during the retry').toEqual([]);
 
     // THE CONTROL, in the same case so the two cannot drift apart. An empty list means nothing until the
@@ -894,9 +953,13 @@ describe('the transport itself fails, which is not a response (phase 7 F2, phase
   });
 });
 
-describe('D1/D7 the result is announced in place, and the screen does not navigate', () => {
+describe('D7 the in-flight word is announced in place, and the submit ends at the acknowledgement', () => {
   it('mounts the live region before the submit, empty, so the fill is an announcement (D1)', async () => {
-    installTransport(() => ACCEPTED);
+    // HELD IN FLIGHT BY TASK 47, AND THE SAME-NODE CLAIM IS WHY. The fill this case measures is now
+    // `idle -> submitting`: the success sentence left this screen, so a settled reply would unmount the very
+    // region whose IDENTITY across renders is the whole point. Held, the region is filled exactly as it was
+    // before - same node, new text - which is the property `StatusRegion`'s header makes a rule.
+    holdTransportInFlight();
     const container = await renderScreen();
 
     // THE ORDER IS THE CLAIM. A live region that appears WITH its text is not announced by most screen
@@ -914,10 +977,10 @@ describe('D1/D7 the result is announced in place, and the screen does not naviga
     // THE SAME NODE, which is what makes it an announcement rather than a new region: a region replaced
     // between renders is a new one to the accessibility tree.
     expect(statusRegion(container), 'the live region was replaced rather than filled').toBe(region);
-    expect(region.textContent).toBe(en.register.success);
+    expect(region.textContent).toBe(en.register.submitting);
   });
 
-  it('shows the submitting word while the request is in flight, then the success one (D7)', async () => {
+  it('shows the submitting word while the request is in flight, then the acknowledgement (D7)', async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -940,22 +1003,37 @@ describe('D1/D7 the result is announced in place, and the screen does not naviga
     release();
     await settle();
 
-    expect(statusRegion(container).textContent).toBe(en.register.success);
+    // AND THEN IT LEAVES. The second half of this case used to read the success sentence out of the same
+    // region; the region goes with the form now, so the half that remains is where the submit ENDS. Both
+    // halves still measure a window only a deferred reply can hold open - the in-flight word above exists
+    // for no other moment, and this line is what proves the window closes.
+    expect(mounted?.router.state.location.pathname, 'the in-flight state never ended')
+      .toBe(`/${REGISTER_SENT_PATH}`);
+    expect(container.textContent).toContain(en.register.success);
   });
 
-  it('does not navigate: the location is still the registration path (D1, OQ-T43-5)', async () => {
+  it('NAVIGATES to the acknowledgement, which is what D1 chose against until there was one', async () => {
     installTransport(() => ACCEPTED);
     const container = await renderScreen();
 
     await fillAndSubmit(container, 'visitor@example.test', 'a'.repeat(12));
     await settle();
 
+    // INVERTED BY TASK 47, AND BY THIS CASE'S OWN REASON. It read "does not navigate: the location is still
+    // the registration path (D1, OQ-T43-5)" and justified that with: "Navigating to `register/sent` would
+    // hand the visitor a declared path with no element, which is exactly what D1 chose against." The
+    // condition was the path having no element. Task 47 attached `RegisterSentScreen` to it, so D1 is spent
+    // rather than overruled - and the case is inverted here, in the file that owns it, rather than deleted
+    // by the task that changed the behaviour. A closed task that writes down the circumstance under which its
+    // own choice should flip is the cheapest possible handover, and this is what collecting on it looks like.
+    //
     // `router.state.location.pathname`, NOT `useLocation().pathname` - T41's finding, and it cost production
     // code: the hook's value is basename-relative and the router's state is the one that carries the whole
-    // path. Navigating to `register/sent` would hand the visitor a declared path with no element, which is
-    // exactly what D1 chose against.
-    expect(mounted?.router.state.location.pathname, 'the screen navigated away from the form')
-      .toBe(`/${REGISTER_PATH}`);
-    expect(container.querySelector('form'), 'the form was unmounted, so something navigated').not.toBeNull();
+    // path. Unchanged by the inversion, because the instrument was never the thing that was wrong.
+    expect(mounted?.router.state.location.pathname, 'the submit did not reach the acknowledgement')
+      .toBe(`/${REGISTER_SENT_PATH}`);
+    expect(container.querySelector('form'), 'the form outlived the navigation').toBeNull();
+    expect(container.querySelector('h1')?.textContent, 'the acknowledgement rendered no heading')
+      .toBe(en.registerSent.heading);
   });
 });

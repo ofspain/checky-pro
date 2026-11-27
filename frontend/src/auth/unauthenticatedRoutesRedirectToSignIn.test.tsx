@@ -948,9 +948,10 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       // GROWN BY TASK 43, which added one render site and four primitives. The numbers follow the two lists
       // rather than being frozen at what task 42 saw: this case's interest is that the layout and `Banner`
       // are PINNED somewhere the counts are exact, and a count that stopped moving would stop being exact.
-      expect(only, 'the render-site count still says seven').toMatch(/toHaveLength\(8\)/);
+      // GROWN AGAIN BY TASK 47, which added one render site and no primitive.
+      expect(only, 'the render-site count no longer says nine').toMatch(/toHaveLength\(9\)/);
       expect(only, 'the primitive count still says nine').toMatch(/toHaveLength\(13\)/);
-      expect(only, 'the union pin no longer says twenty-one').toMatch(/\.toBe\(21\)/);
+      expect(only, 'the union pin no longer says twenty-two').toMatch(/\.toBe\(22\)/);
     });
 
     it('OQ-T36-5: the end-session suite names this layout as its first permitted importer', async () => {

@@ -20,6 +20,10 @@ const SCREENS_ATTACHED_SO_FAR = ['sign-in', 'callback',
   // order and `register` is the third entry in `PUBLIC_ROUTE_PATHS`: the walker reads the table, so a list
   // in task order would fail while nothing was wrong. Still additive; no case below changed.
   'register',
+  // TASK 47 - the acknowledgement, and the clearest demonstration this list is in ROUTE order rather than
+  // task order: `register/sent` is the fourth entry in `PUBLIC_ROUTE_PATHS` and has been since task 16, so
+  // it slots in here, between a screen from task 43 and one from task 37. Still additive; no case changed.
+  'register/sent',
   'signed-out', // TASK 37 - the signed-out landing. Additive; every case below is task 16's, unchanged.
   // TASK 174 - the home screen, and the FIRST entry here that is not a public route. It goes last because
   // this list is in ROUTE ORDER and the authenticated paths sit after the public ones in the table, under
