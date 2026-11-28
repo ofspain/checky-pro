@@ -96,7 +96,12 @@ OWN_TESTS = [
 ]
 
 CANARIES = {"TR19"}
-UNFALSIFIABLE = {"TR20"}
+# TR17 IS HERE BECAUSE A DECLARATION IN THE DOCSTRING IS NOT A DECLARATION. The first run reported it as
+# a disagreement, correctly: the prose said "DECLARED: survives" and the row was tagged `own`, so the
+# harness expected a kill and said so. Behaviourally the constant and the identical literal ARE the same
+# string, which is what makes this unfalsifiable rather than merely unkilled - and TR18, the rename, is
+# what measures the difference the constant actually buys.
+UNFALSIFIABLE = {"TR17", "TR20"}
 
 FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 
@@ -207,11 +212,18 @@ MUTANTS = [
       </StatusRegion>""", "own"),
     # EVADES THE SOURCE SCAN ON PURPOSE: `const sink = console;` does not contain the literal
     # `console.`, so only the derived console spy can see this.
+    #
+    # RE-AIMED AFTER THE FIRST RUN, AND THE FIRST AIM IS THE FINDING. It injected the log into the
+    # TOKENLESS branch, where `token` is `null` or `''` BY DEFINITION - so the mutant could not leak a
+    # credential even in principle, and the console case, which arrives WITH a token, never ran that
+    # branch. It survived 2083 cases and measured nothing about the hole it claimed to record. The
+    # instrument was never the problem: re-aimed at the failure settle path, where the real token is in
+    # closure scope, it dies in exactly one case.
     ("TR16 the token is logged through an aliased console in the failure path",
-     SCREEN, TOKENLESS_BRANCH,
-     "    const sink = console;\n"
-     "    if (token === null || token === '') {\n"
-     "      sink.table({ token });\n      setStatus('failure');\n      return;\n    }", "own"),
+     SCREEN, SETTLE,
+     "        const sink = console;\n"
+     "        if (!response.ok) sink.table({ token });\n"
+     "        setStatus(response.ok ? 'success' : 'failure');", "own"),
 
     # --- declared to survive, and the row that gives it meaning --------------------------------------
     ("TR17 the path constant is replaced by the identical bare literal (DECLARED: survives)",
