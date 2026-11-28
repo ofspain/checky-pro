@@ -4,7 +4,7 @@ One task folder per implementation task in [`spec/frontend/tasks.md`](../../../s
 
 **Spec package:** [`spec/frontend/`](../../../spec/frontend/) — `package.md` · `requirements.md` · `design.md` · `tasks.md` · `agents.md`
 
-**Tasks (174):**
+**Tasks (175):**
 
 | Task | Title | Section |
 |---|---|---|
@@ -61,6 +61,7 @@ One task folder per implementation task in [`spec/frontend/tasks.md`](../../../s
 | [T49](T49/) | Verify failure is uniform | Phase 1 — Auth & account: registration and reset |
 | [T50](T50/) | Resend is public | Phase 1 — Auth & account: registration and reset |
 | [T51](T51/) | Resend acknowledgement is uniform | Phase 1 — Auth & account: registration and reset |
+| [T175](T175/) | A reply the client cannot parse is not a verification failure | Phase 1 — Auth & account: registration and reset |
 | [T52](T52/) | Reset request is uniform | Phase 1 — Auth & account: registration and reset |
 | [T53](T53/) | Reset success is same-device | Phase 1 — Auth & account: registration and reset |
 | [T54](T54/) | Reset failure is uniform | Phase 1 — Auth & account: registration and reset |

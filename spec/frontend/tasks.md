@@ -83,6 +83,21 @@ now and expensive after task 42, which is the first unit to render a screen beyo
 49. **Verify failure is uniform.** Invalid, expired, used, or deleted-account tokens show one uniform failure. Verifies `verifyFailureShowsOneUniformMessage`. Cites R4.
 50. **Resend is public.** The resend form works without a session. Verifies `resendVerificationAcknowledgementIsUniformAndNeedsNoSession`. Cites R5.
 51. **Resend acknowledgement is uniform.** The resend ack is identical whatever the outcome. Verifies `resendVerificationAcknowledgementIsUniformAndNeedsNoSession`. Cites R5.
+
+**Numbered 175 although it executes here (added 2026-11-28).** Append-only numbering, as the Phase 1 —
+Foundation banner explains: the number is an identifier and document order is the execution position.
+
+**Why it exists.** Task 51 found, by measurement, that `openapi-fetch` parses a reply body itself and
+**rejects** when it is not valid JSON, so a screen that passes `.then(ok, fail)` cannot tell an unparseable
+body from a dropped connection. Task 51 fixed its own screen. `VerifyScreen` has the same shape and a worse
+consequence, measured with a **valid** token: a `200` carrying an HTML error page or JSON truncated
+mid-document renders *"This verification link is not valid."* — so a visitor whose verification **succeeded**
+is told it failed, and R4's uniform failure then offers them a resend they do not need. `RegisterScreen`
+navigates on resolve, so the same reply leaves its form hanging instead. Task 51 did not widen to cover
+either, because the fix requires deciding what R4's *"fails for any reason"* means when the failure is the
+**body** rather than the token, and that is a requirements question rather than a one-line change.
+
+175. **A reply the client cannot parse is not a verification failure.** `VerifyScreen` reaches its success or failure state by what the server answered, not by whether the reply body happened to parse, and `RegisterScreen` does not strand a visitor on an unparseable reply. Verifies `verifyFromLinkShowsSuccessState`, `verifyFailureShowsOneUniformMessage`. Cites R3, R4, L4. Execute after 51.
 52. **Reset request is uniform.** Any email shows the same reset-request acknowledgement. Verifies `passwordResetRequestAcknowledgementIsUniform`. Cites R14.
 53. **Reset success is same-device.** The reset success message says sign in on this device only. Verifies `passwordResetSuccessSaysSignInOnThisDeviceOnly`. Cites R15.
 54. **Reset failure is uniform.** A reset with a bad, expired, used, or deleted-account token shows the uniform failure. Verifies `passwordResetFailureUsesSameUniformMessage`. Cites R15, R4.
