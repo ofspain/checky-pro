@@ -1,0 +1,13 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+Traceback (most recent call last):
+  File "/Users/macbookpro/personal/crypto-dispute/.ai/prompts/frontend/T49/artifacts/07-mutation-harness.py", line 509, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/macbookpro/personal/crypto-dispute/.ai/prompts/frontend/T49/artifacts/07-mutation-harness.py", line 406, in main
+    install_signal_reverts()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/macbookpro/personal/crypto-dispute/.ai/prompts/frontend/T49/artifacts/07-mutation-harness.py", line 316, in install_signal_reverts
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+                ^^^^^^
+NameError: name 'signal' is not defined. Did you forget to import 'signal'?
