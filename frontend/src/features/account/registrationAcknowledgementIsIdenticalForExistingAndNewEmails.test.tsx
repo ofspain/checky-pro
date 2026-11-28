@@ -81,6 +81,20 @@ function installTransport(reply: Reply): { sent: Sent[] } {
   return { sent };
 }
 
+/**
+ * A transport that never answers, for the OTHER arm of the same `.then` task 175 edited.
+ *
+ * Phase 8 (Kimi I12) asked whether `RegisterScreen`'s reject arm is tested and could not tell. It was not:
+ * of the SEVEN suites that render this screen, not one installed a failing transport, so
+ * `() => setStatus('idle')` had no case at all. With `parseAs: 'stream'` it is now reachable ONLY this way,
+ * which makes it the whole of the screen's failure behaviour rather than a shared path.
+ */
+function installTransportFailure(): { calls: () => number } {
+  const fetchMock = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));
+  vi.stubGlobal('fetch', fetchMock);
+  return { calls: () => fetchMock.mock.calls.length };
+}
+
 beforeEach(() => {
   installBrowserRequest();
 });
@@ -614,5 +628,48 @@ describe('task 175 · AC7/AC8/AC9 an acknowledgement the client could not parse 
 
     expect(renderings, 'the acknowledgement differs depending on whether the reply body happened to parse')
       .toEqual([renderings[0]!, renderings[0]!, renderings[0]!]);
+  });
+
+  // ========================================================================================================
+  // The reject arm — the half of the same `.then` that task 175 did NOT change, and that nothing measured
+  // ========================================================================================================
+
+  it('returns the form on a dropped connection, saying NOTHING - pinned so a fix is a visible change', async () => {
+    const { calls } = installTransportFailure();
+    const container = await arrive(REGISTER_PATH);
+    await type(field(container, 'email'), 'visitor@example.test');
+    await type(field(container, 'password'), 'a'.repeat(12));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    });
+    await settle();
+
+    // THE REQUEST WAS REALLY ATTEMPTED, so what follows is the failure path and not a form that never
+    // submitted - the baseline guard this case would otherwise be missing.
+    expect(calls(), 'the submit never reached the transport, so nothing below is about the reject arm')
+      .toBe(1);
+
+    expect(container.querySelector('form'), 'the form is gone, so the visitor cannot retry').not.toBeNull();
+    expect(router?.state.location.pathname, 'a failed registration navigated to the acknowledgement')
+      .toBe(`${APP_BASENAME}/${REGISTER_PATH}`);
+    expect(container.textContent, 'the acknowledgement appeared for a registration that never happened')
+      .not.toContain(en.register.success);
+
+    // AND THE IN-FLIGHT LINE IS GONE, WHICH IS THE WHOLE OF WHAT `setStatus('idle')` DOES - `status` feeds
+    // nothing but this region. So the screen's entire response to a dropped connection is to stop saying
+    // "sending" and look exactly as it did before the visitor pressed the button.
+    const region = container.querySelector('[role="status"]');
+    expect(region?.textContent, 'the screen still claims the registration is in flight')
+      .not.toContain(en.register.submitting);
+    expect(region?.textContent?.trim(), 'the screen now says something on failure, which is OQ-T175-8 being '
+      + 'answered - update this case and name the owner decision rather than loosening it').toBe('');
+
+    // ^ THAT EMPTY STRING IS PINNED ON PURPOSE, AND IT IS NOT AN ENDORSEMENT. It is the third occurrence of
+    // a posture this owner has reversed TWICE: task 49's tokenless arrival rendered nothing and was
+    // reversed, and D-T50-1 reversed the identical `'idle'` choice on the resend screen, whose own header
+    // records that its design "matched `RegisterScreen`" before the reversal - so the precedent was set
+    // AGAINST this screen and never applied TO it. Fixing it needs a catalogue key and an owner decision,
+    // which is outside a task about unparseable bodies (OQ-T175-8). Pinning today's behaviour is what makes
+    // that decision a visible change to a named case instead of a silent one.
   });
 });

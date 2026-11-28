@@ -41,6 +41,9 @@ const SRC = dirname(dirname(new URL(import.meta.url).pathname));
  * a case rather than silently shrinking its reach.
  */
 const FACTORY = /\bcreate\w*(?:Api|Client)\s*\(/;
+/** Relative to the repository root, which is two levels above `frontend/src`. A move breaks the read, and a
+ *  failed read is the correct outcome: the audit below cannot be allowed to silently stop happening. */
+const PACKAGE_INDEX = 'libs/ts/api-client/src/index.ts';
 const CLIENT_TYPES = ['AuthApi', 'OidcApi'];
 
 type Site = { file: string; method: string; kind: 'reader' | 'non-reader'; streams: boolean };
@@ -130,6 +133,91 @@ describe('generatedClientCallsDoNotParseBodiesTheyNeverRead', () => {
     const types = [...client.matchAll(/export type (\w+) = ReturnType</g)].map((m) => m[1]!).sort();
     expect(types, 'api/client.ts exports a client type this scan has never been told about')
       .toEqual([...CLIENT_TYPES].sort());
+
+    // AND THE PACKAGE'S OWN FACTORIES, which is the hole phase 7 reported on itself as OQ-T175-7 and Kimi
+    // confirmed as its only Medium. `codeExchange` does not import from `api/client.ts` at all - it takes
+    // `createOidcClient` straight from `@themistra/api-client` - so auditing only the local module left the
+    // package free to grow a factory that widened the surface without breaking a case.
+    const pkg = stripComments(await readFile(join(SRC, '..', '..', PACKAGE_INDEX), 'utf8'));
+    const packaged = [...pkg.matchAll(/export function (create\w+)\s*\(/g)].map((m) => m[1]!).sort();
+    expect(packaged, '@themistra/api-client exports a factory this scan has never been told about')
+      .toEqual(['createAuthClient', 'createOidcClient']);
+    for (const factory of packaged) {
+      expect(`${factory}(`, `${factory} does not match the factory pattern, so calls through it are invisible`)
+        .toMatch(FACTORY);
+    }
+  });
+
+  it('classifies each call SHAPE the way it is documented to, measured on source rather than reasoned about', () => {
+    // WHY A FIXTURE AND NOT A WIDER REGEX. Kimi's phase 8 (I11) noticed that `.then((r) => r.data)` reads the
+    // body and is classified a NON-READER here, and recommended broadening the reader test to `.data`
+    // anywhere in the statement. That was declined, and the asymmetry is the reason:
+    //
+    //   a false NON-READER demands `parseAs` on a call that reads the body - it FAILS LOUDLY, and someone
+    //     must look at it (Kimi's own phase 3 design erred this way, and phase 6 caught it);
+    //   a false READER is EXEMPT FROM THE RULE - the scan goes green and the defect that cost three screens
+    //     can ship a fourth time.
+    //
+    // A safety scan must err toward the loud mistake, so the narrow test stays. What this case adds is the
+    // thing a regex argument cannot give: the classifier measured on source, one row per shape, so the day
+    // someone widens it they must change a case that records what the old answer was.
+    //
+    // It also exercises `.PUT`, `.PATCH` and `.DELETE`, which NO PRODUCTION CALL SITE USES (Kimi I13). Those
+    // branches of the pattern were matched against nothing at all, and a pattern aimed at nothing is what
+    // task 37 paid to learn - its forbidden-call regex turned out to forbid an impossible call shape.
+    const fixture = [
+      "import { createAuthClient } from '@themistra/api-client';",
+      "import type { AuthApi } from './client';",
+      '',
+      'export async function readsByAwait() {',
+      "  const { data } = await createAuthClient().GET('/a');",
+      '  return data;',
+      '}',
+      '',
+      'export async function readsByDestructuredThen() {',
+      "  return createAuthClient().PUT('/b').then(({ data }) => data);",
+      '}',
+      '',
+      'export function readsByPropertyAccess() {',
+      "  return createAuthClient().PATCH('/c').then((r) => r.data);",
+      '}',
+      '',
+      'export function takesClientAsAParameter(api: AuthApi) {',
+      "  void api.DELETE('/d');",
+      '}',
+      '',
+      'export function neverReads() {',
+      "  void createAuthClient().POST('/e', { body: {} });",
+      '}',
+      '',
+      'export function neverReadsButStreams() {',
+      "  void createAuthClient().POST('/f', { body: {}, parseAs: 'stream' });",
+      '}',
+      '',
+      'export function notAClientAtAll(thing: SomethingElse) {',
+      "  void thing.POST('/g');",
+      '}',
+      '',
+    ].join('\n');
+
+    expect(sitesIn(join(SRC, 'fixture.ts'), fixture), 'a documented call shape classifies differently now')
+      .toEqual([
+        { file: 'fixture.ts', method: 'GET', kind: 'reader', streams: false },
+        { file: 'fixture.ts', method: 'PUT', kind: 'reader', streams: false },
+        // THE SHAPE KIMI NAMED, pinned as a NON-reader on purpose. If this row ever reads `reader`, someone
+        // has widened the classifier into the silent-failure direction and must say why here.
+        { file: 'fixture.ts', method: 'PATCH', kind: 'non-reader', streams: false },
+        { file: 'fixture.ts', method: 'DELETE', kind: 'non-reader', streams: false },
+        { file: 'fixture.ts', method: 'POST', kind: 'non-reader', streams: false },
+        { file: 'fixture.ts', method: 'POST', kind: 'non-reader', streams: true },
+      ]);
+
+    // AND IT DOES NOT OVER-MATCH. `thing.POST('/g')` is a call on something that is neither a factory result
+    // nor typed as a client, and it must be absent - seven calls in the fixture, six rows. A scan that
+    // matched every `.POST(` in the tree would be unusable, and would hide its own imprecision behind a
+    // green census.
+    expect(sitesIn(join(SRC, 'fixture.ts'), fixture).length, 'a non-client call was counted as a client call')
+      .toBe(6);
   });
 
   it('finds every generated-client call, and the census is ASSERTED so an empty scan fails (AC10)', async () => {
