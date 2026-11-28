@@ -410,6 +410,99 @@ describe('a transport failure shows the neutral retry line (AC16, D-T50-1)', () 
 });
 
 // ==========================================================================================================
+// PHASE 10 — the two AC11 clauses that had no instrument, and the journey D-T50-1 exists to enable
+// ==========================================================================================================
+
+describe('phase 10: the email goes nowhere it was not sent, and a retry can succeed', () => {
+  it('puts the email in no URL - not the path, not a query string, not a hash', async () => {
+    // AC11 READS "the email in no URL and no console" AND ONLY THE STORAGE CLAUSE HAD AN INSTRUMENT. The
+    // brief was doing an assertion's job (phase 7 F5, Kimi I3/I11). The acknowledgement case nearby asserts
+    // the PATHNAME is unchanged, which says nothing about `?email=` or `#email=`.
+    //
+    // An email is not a credential the way a token is, but it is the one piece of personal data this screen
+    // handles, and L4's whole subject is not disclosing who has an account. A URL is the worst place for it:
+    // browser history, autocomplete, and the `Referer` of whatever loads next - the same reasoning task 49
+    // applied to its resend link, which is where this screen's visitors arrive from.
+    const { sent } = installTransport();
+    const container = await arrive(RESEND_VERIFICATION_PATH);
+
+    await send(container);
+
+    const { pathname, search, hash } = router!.state.location;
+    expect(search, 'a query string appeared, and the only value here to put in one is the email').toBe('');
+    expect(hash, 'a hash fragment appeared').toBe('');
+    expect(pathname, 'the email reached the path').not.toContain(EMAIL);
+    // The local-part alone, in case an encoder splits it: `visitor` would be enough to identify a person.
+    expect(`${pathname}${search}${hash}`, 'part of the email reached the URL').not.toContain('visitor');
+
+    // AND IT IS WHERE IT BELONGS, which is what makes the four assertions above a claim about PLACEMENT
+    // rather than an accident of the email never being used at all.
+    expect(JSON.parse(sent[0]!.body)).toEqual({ email: EMAIL });
+    expect(sent[0]!.path, 'the email reached the request URL').not.toContain('visitor');
+  });
+
+  it('logs nothing anywhere on console, over a DERIVED method list that is asserted non-empty', async () => {
+    // THE SECOND CLAUSE WITH NO INSTRUMENT. This suite did not spy on `console` at all, where task 49's
+    // derives every function on it. A `console.info(email)` left behind by a debugging session would ship
+    // silently and no case in the repository would notice.
+    //
+    // DERIVED AT RUNTIME, NOT ENUMERATED, and the derivation is asserted first - a reflection that found
+    // nothing would make every assertion below vacuous, which is the T48 F4 lesson. The eight names are the
+    // NON-VACUITY GUARD rather than the coverage: the spies cover every function on `console`, including any
+    // a future runtime adds.
+    const methods = (Object.keys(console) as (keyof Console)[])
+      .filter((name) => typeof console[name] === 'function');
+    expect(methods, 'the console reflection found nothing, so the assertions below are vacuous')
+      .toEqual(expect.arrayContaining(['log', 'warn', 'error', 'debug', 'info', 'table', 'dir', 'trace']));
+    const spies = Object.fromEntries(methods.map((name) =>
+      [name, vi.spyOn(console, name as 'log').mockImplementation(() => {})]));
+
+    installTransport();
+    const container = await arrive(RESEND_VERIFICATION_PATH);
+    await send(container);
+
+    for (const [name, spy] of Object.entries(spies)) {
+      const logged = spy.mock.calls.flat().map((arg) => String(arg)).join(' ');
+      expect(logged, `console.${name} was given the email`).not.toContain('visitor');
+    }
+
+    // CONTROL, because every assertion above is negative and a spy that does not intercept passes them all.
+    console.info('control', EMAIL);
+    expect(spies.info!.mock.calls.flat().map(String).join(' '),
+      'the console spy does not intercept, so the assertions above were vacuous').toContain('visitor');
+  });
+
+  it('acknowledges a retry that succeeds after a dropped connection', async () => {
+    // THE JOURNEY D-T50-1 EXISTS TO ENABLE, and nothing drove it end to end. AC16's clearing case submits
+    // again with a hanging transport and asserts the stale line is gone MID-FLIGHT; this one lets the second
+    // attempt answer. Without it, "the form stays mounted so retrying is one click" was a claim about the
+    // DOM rather than about the outcome.
+    //
+    // The state machine makes this hard to get wrong, which is exactly the argument that was wrong about
+    // task 42's storage spy - so it is measured rather than reasoned about.
+    installTransportFailure();
+    const container = await arrive(RESEND_VERIFICATION_PATH);
+    await send(container);
+    expect(container.textContent, 'the first attempt did not fail as set up').toContain(en.resend.unsent);
+
+    // The same field, the same button, a transport that now answers. The email is still in the field, so the
+    // retry needs no retyping - which is the other half of keeping the form mounted.
+    const { sent } = installTransport();
+    expect(emailField(container).value, 'the typed email was lost, so a retry means retyping it').toBe(EMAIL);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    });
+    await settle();
+
+    expect(sent, 'the retry sent nothing').toHaveLength(1);
+    expect(JSON.parse(sent[0]!.body)).toEqual({ email: EMAIL });
+    expect(container.textContent, 'the successful retry did not acknowledge').toBe(ACK_TEXT);
+    expect(container.textContent, 'the retry line survived a successful send')
+      .not.toContain(en.resend.unsent);
+  });
+});
+
+// ==========================================================================================================
 // AC9 — catalogue copy only, and the response body is never read
 // ==========================================================================================================
 

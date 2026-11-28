@@ -73,6 +73,16 @@ THE ROWS:
   TR19  CANARY: the acknowledgement renders nothing at all.
   TR20  UNFALSIFIABLE useEffect -> useLayoutEffect for focus - no observable difference, inherited
                                             from tasks 48 and 49.
+
+PHASE 10 ADDED THREE ROWS, ONE PER FROZEN CLAUSE THAT HAD NO INSTRUMENT.
+
+  TR21  the email carried into the URL     - AC11 said "the email in no URL and no console" and only the
+                                            storage clause was held. A URL is the worst place for it:
+                                            history, autocomplete, and the Referer of the next load.
+  TR22  the email logged to the console    - the other half of the same clause. The suite did not spy on
+                                            console at all before this row existed.
+  TR23  a failed send can never be retried - the journey D-T50-1 exists to enable, which AC16's clearing
+                                            case only drove as far as mid-flight.
 """
 import os
 import re
@@ -102,7 +112,7 @@ UNFALSIFIABLE = {"TR20"}
 FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 KNOWN_ENVIRONMENTAL_FAILURES = set()  # nothing excused, so nothing an excused file could hide
 
-EXPECTED_BASELINE_FAILURES = 0  # of 2113
+EXPECTED_BASELINE_FAILURES = 0  # of 2116
 
 SETTLE = ".then(() => setStatus('acknowledged'), () => setStatus('unsent'));"
 HEADING_BLOCK = """      <Heading ref={headingRef}>
@@ -216,6 +226,21 @@ MUTANTS = [
      "    submit: 'Send link',",
      "    heading: 'Send a new verification email',\n    emailLabel: 'Email address',\n"
      "    submit: 'Send link',", "own"),
+    # --- PHASE 10's rows ------------------------------------------------------------------------------
+    # Each one is aimed at a clause the FROZEN BRIEF stated and nothing measured until phase 10.
+    ("TR21 the email is carried into the URL, where it enters browser history",
+     SCREEN, "    void createPublicAuthApi()",
+     "    window.history.replaceState(null, '', `?email=${encodeURIComponent(email)}`);\n"
+     "    void createPublicAuthApi()", "own"),
+    ("TR22 the email is logged to the console, as a debugging session would leave it",
+     SCREEN, "    setStatus('submitting');",
+     "    setStatus('submitting');\n    console.info('resend requested for', email);", "own"),
+    # THE JOURNEY D-T50-1 EXISTS TO ENABLE. A one-shot guard is the shape a later reader would add by
+    # copying VerifyScreen's `handled` ref without noticing that a RETRY is the whole point here.
+    ("TR23 a failed send can never be retried - the form is mounted and the button does nothing",
+     SCREEN, "  function submit(): void {\n    setStatus('submitting');",
+     "  function submit(): void {\n    if (status === 'unsent') return;\n    setStatus('submitting');", "own"),
+
     ("TR19 CANARY the acknowledgement renders nothing at all",
      SCREEN, "        <Text>{t('resend.acknowledgedText')}</Text>", "        <Text>{''}</Text>", "own"),
     ("TR20 UNFALSIFIABLE useEffect -> useLayoutEffect for the focus move",
