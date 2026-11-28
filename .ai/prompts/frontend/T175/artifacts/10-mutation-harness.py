@@ -211,8 +211,13 @@ MUTANTS = [
     # in `registrationAcceptsTwelveAndOneTwentyEightCodePoints` that has owned this arm since task 43 -
     # stronger than the one this task had just written, since it also catches the rejection ESCAPING the
     # handler. The duplicate was withdrawn and TR39 now dies by the owner, which is the right outcome.
+    #
+    # TAGGED `inherited`, AND THE LABEL CHANGING IS ITSELF THE RECORD. It was `own` while this task's
+    # duplicate existed, and withdrawing the duplicate made it inherited the same minute - the arm is
+    # measured, just not by anything here. An expectation label is a claim like any other, and this one
+    # tracked a real change in who owns the coverage.
     ("TR39 the reject arm stops running, so the screen keeps claiming the registration is in flight",
-     REGISTER, "() => setStatus('idle'));", "() => undefined);", "own"),
+     REGISTER, "() => setStatus('idle'));", "() => undefined);", "inherited"),
 
     # TR40 measures the ATTRIBUTION rather than the behaviour. Having declined the duplicate, the only thing
     # that can silently un-cover this arm is the owning case being renamed - so the pin that names it has to

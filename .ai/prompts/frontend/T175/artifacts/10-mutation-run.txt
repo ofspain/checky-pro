@@ -95,11 +95,14 @@ baseline failing cases (excluded from every attribution below): []
   KILLED    own            TR38 the reader test is widened the way phase 8 recommended, exempting a call that only touches .data  (1 failed of 2148, exit 1)
             └ in: ['src/api/generatedClientCallsDoNotParseBodiesTheyNeverRead.test.ts']
             └ classifies each call SHAPE the way it is documented to, measured on source rather than reasoned about
-  KILLED    own            TR39 the reject arm stops running, so the screen keeps claiming the registration is in flight  (2 failed of 2148, exit 1)
-            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
-            └ returns the form on a dropped connection, saying NOTHING - pinned so a fix is a visible change
+  KILLED    inherited      TR39 the reject arm stops running, so the screen keeps claiming the registration is in flight  (1 failed of 2148, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx']
+            └ returns the form to its idle state when the send rejects, and claims nothing
+  KILLED    own            TR40 the owning case is renamed, so a comment-only attribution would have gone stale silently  (1 failed of 2148, exit 1)
+            └ in: ['src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ leaves the reject arm to the case that already owns it, and fails if that case is renamed away
 
-regressions: 8/8 killed
+regressions: 9/9 killed
 canaries:    ['TR36'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
 survivors:   none
 broken:      none
@@ -113,6 +116,7 @@ broken:      none
   TR36   expected own           got KILLED/own       as expected
   TR37   expected own           got KILLED/own       as expected
   TR38   expected own           got KILLED/own       as expected
-  TR39   expected own           got KILLED/own       as expected
+  TR39   expected inherited     got KILLED/inherited as expected
+  TR40   expected own           got KILLED/own       as expected
 
 disagreements: none

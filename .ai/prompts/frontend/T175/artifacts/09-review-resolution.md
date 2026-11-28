@@ -44,40 +44,52 @@ synthetic source. That is strictly better than widening a regex on reasoning: it
 classify as what, including the `.then((r) => r.data)` shape Kimi named, so the day someone widens the rule
 they must change a case that says what the old answer was.
 
-## I12 — **MEASURED.** Kimi guessed and said so; the answer is *no case exists*
+## I12 — **I ANSWERED IT WRONG, AND PHASE 10's HARNESS CAUGHT ME**
 
-> *"…do not appear to test transport failure … the original T43 registration suite may have tested it."*
+> ⚠️ **This section originally read "MEASURED. Kimi guessed and said so; the answer is *no case exists*."**
+> **It was false.** It is rewritten rather than deleted, because the instrument that produced it is the
+> finding.
 
-**It did not.** Of the seven suites that render `RegisterScreen`, **none installs a failing transport** — the
-only `installTransportFailure` in `features/account/` belongs to the resend suite. Phase 7's F6 said *"I do
-not know, and not knowing is the reason to look."* Looked:
+Kimi hedged — *"the original T43 registration suite may have tested it"* — and **Kimi was closer to the
+truth than my measurement.** The case exists:
 
 ```
-grep -rln RegisterScreen src --include=*.test.tsx   → 7 suites, 0 with a failing transport
+registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx:899
+  it('returns the form to its idle state when the send rejects, and claims nothing')
 ```
 
-**Phase 10 adds the case.** Its observable surface is small but real: `status` feeds nothing but the live
-region, so the arm's whole effect is *the in-flight line clears and the form comes back*.
+**It has owned that arm since task 43**, and it is comprehensively stronger than the one I wrote to replace
+it: besides the empty region it catches the rejection **escaping the handler** via
+`process.on('unhandledRejection')` — half of the original defect, and invisible to any assertion on the
+rendering — then proves the retry is a *real* retry that reaches the acknowledgement.
 
-### And the measurement surfaced something larger than the gap — **OQ-T175-8**
+### Why the survey could not have seen it
 
-**On a dropped connection, `RegisterScreen` tells the visitor nothing at all.** The region empties, the form
-returns, and the screen looks exactly as it did before they pressed the button.
+```
+grep -n "reject\|Failure\|…" "$f" | head -4        ← per file, truncated to four lines
+```
 
-**That is the third occurrence of a posture this owner has now reversed twice:**
+The owning case is at **line 899 of a 1000-line file**, and the four lines the pipe let through were all
+from the first 400. **A survey used as a completeness claim cannot be truncated** — which task 33 established
+in this very project, and which I re-learned by writing a weaker copy of an existing case. The first grep
+had also been swallowed whole by zsh (`no matches found` for one glob aborts the whole expansion), so the
+"measurement" rested on nothing at all.
 
-| | |
-|---|---|
-| **T49** | the tokenless arrival rendered nothing → reversed |
-| **T50 / D-T50-1** | resend's dropped connection returned to `'idle'` showing nothing → reversed, with the reason *"a visitor who presses a button and sees the screen go back to how it looked has been told nothing at all"* |
-| **`RegisterScreen`** | **unchanged, and it is the screen the other two were compared against** |
+**Nothing caught it until TR39 killed two cases instead of one.** The count was the tell, and only reading
+*which* cases died turned it into the finding.
 
-`ResendVerificationScreen`'s own header records that its design *"matched `RegisterScreen`"* before being
-reversed — so the precedent was set **against** this screen and never applied **to** it. It needs an owner
-decision and a catalogue key, so it is **out of T175's scope**, which is unparseable bodies.
+### What Phase 10 did instead
 
-But the new case is not neutral about it: by pinning *today's* behaviour it makes that decision a **visible
-change to a named case** rather than a silent one.
+The duplicate was **withdrawn**, and in its place a pin that makes the attribution **executable** — because
+an attribution in a comment is not enforced, and the one thing that can silently un-cover this arm is the
+owning case being renamed. **TR40 renames it and the pin fails.**
+
+### **OQ-T175-8 is withdrawn**
+
+It duplicates **OQ-T43-9**, which the owning case already cites by name. The observation stands — a dropped
+connection still leaves `RegisterScreen` saying nothing, the third instance of a posture reversed in T49 and
+D-T50-1 — but it belongs to an open question that already existed. **I filed a duplicate open question
+about a duplicate case, from the same truncated survey.**
 
 ## I13 — **ACCEPTED, and done more thoroughly than asked**
 
