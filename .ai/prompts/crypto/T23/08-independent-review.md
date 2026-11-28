@@ -8,7 +8,7 @@
 | **Task** | T23 — Contracts |
 | **Spec section** | Contracts, sidecar contract, hardening |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/07-self-review.md` |
+| **Consumes** | `artifacts/06-implementation-notes.md`, `artifacts/07-self-review.md` |
 | **Produces** | `artifacts/08-independent-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/crypto-service/tasks.md`, task 23):**

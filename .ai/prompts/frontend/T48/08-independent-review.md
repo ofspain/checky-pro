@@ -8,7 +8,7 @@
 | **Task** | T48 — Verify success state |
 | **Spec section** | Phase 1 — Auth & account: registration and reset |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/07-self-review.md` |
+| **Consumes** | `artifacts/06-implementation-notes.md`, `artifacts/07-self-review.md` |
 | **Produces** | `artifacts/08-independent-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 48):**

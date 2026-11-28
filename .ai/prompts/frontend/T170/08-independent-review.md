@@ -8,7 +8,7 @@
 | **Task** | T170 — Unguessable identifier |
 | **Spec section** | Cross-phase — Capability links (DRAFT, narrowed 2026-10-10) |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/07-self-review.md` |
+| **Consumes** | `artifacts/06-implementation-notes.md`, `artifacts/07-self-review.md` |
 | **Produces** | `artifacts/08-independent-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 170):**

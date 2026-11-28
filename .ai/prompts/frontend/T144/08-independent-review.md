@@ -8,7 +8,7 @@
 | **Task** | T144 — Collected evidence labelled |
 | **Spec section** | Phase 2 — Intelligence engine (DEFERRED, see banner above) |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/07-self-review.md` |
+| **Consumes** | `artifacts/06-implementation-notes.md`, `artifacts/07-self-review.md` |
 | **Produces** | `artifacts/08-independent-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 144):**

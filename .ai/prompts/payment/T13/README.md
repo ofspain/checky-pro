@@ -1,7 +1,7 @@
 # payment · T13 — Amount & poisoning integrity
 
 Complete 14-phase prompt workflow for **Task 13** of the `payment-service` spec package.
-Run the phases in order. Each writes exactly one artifact of its own and reads its predecessor's, and four phases read one earlier artifact as well - the Consumes column below is authoritative.
+Run the phases in order. Each writes exactly one artifact of its own and reads its predecessor's, and five phases read one earlier artifact as well - the Consumes column below is authoritative.
 
 **Task (verbatim, `spec/payment-service/tasks.md` task 13):**
 > **Amount & poisoning integrity.** On match, compute under/overpayment against invoice amount in base units and set `amount_discrepancy` (R15, Q1); persist and surface the address-poisoning flag from the observation (R16).
@@ -22,7 +22,7 @@ Run the phases in order. Each writes exactly one artifact of its own and reads i
 | 5 | [`05-implementation-plan.md`](05-implementation-plan.md) | Implementation Plan | Claude Sonnet | `04-frozen-task-brief.md` | `artifacts/05-implementation-plan.md` | after artifact written |
 | 6 | [`06-implementation.md`](06-implementation.md) | Implementation | Claude Sonnet | `04-frozen-task-brief.md`, `05-implementation-plan.md` | `artifacts/06-implementation-notes.md` | after artifact written |
 | 7 | [`07-self-review.md`](07-self-review.md) | Self Review | Claude Sonnet | `06-implementation-notes.md` | `artifacts/07-self-review.md` | after artifact written |
-| 8 | [`08-independent-review.md`](08-independent-review.md) | Independent Code Review | Kimi 2.7 | `07-self-review.md` | `artifacts/08-independent-review.md` | after artifact written |
+| 8 | [`08-independent-review.md`](08-independent-review.md) | Independent Code Review | Kimi 2.7 | `06-implementation-notes.md`, `07-self-review.md` | `artifacts/08-independent-review.md` | after artifact written |
 | 9 | [`09-review-resolution.md`](09-review-resolution.md) | Review Resolution | Human Approval | `07-self-review.md`, `08-independent-review.md` | `artifacts/09-review-resolution.md` | after human sign-off |
 | 10 | [`10-test-generation.md`](10-test-generation.md) | Test Generation | Claude Sonnet | `04-frozen-task-brief.md`, `09-review-resolution.md` | `artifacts/10-test-generation.md` | after artifact written |
 | 11 | [`11-test-review.md`](11-test-review.md) | Test Review | Kimi 2.7 | `09-review-resolution.md`, `10-test-generation.md` | `artifacts/11-test-review.md` | after artifact written |

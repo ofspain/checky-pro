@@ -57,7 +57,7 @@ PHASES = [
 # at the frozen acceptance criteria, and Phase 12's own body text has always said "Consume all prior
 # artifacts" while its header named one.
 #
-# PHASE 11'S ENTRY IS A DEFECT FIX, not a tidy-up. It was given the Phase 10 manifest ALONE, so it could not
+# PHASES 8 AND 11 ARE DEFECT FIXES, not tidy-ups. It was given the Phase 10 manifest ALONE, so it could not
 # see Phase 9, and three consecutive Kimi test reviews (frontend T47 F6, T48 F9, T49 F6) each reported
 # deviations that Phase 9 had ALREADY RATIFIED. That is a false finding caused by the prompt rather than by
 # the reviewer, and it cost a decline-with-evidence every time.
@@ -65,6 +65,11 @@ PHASES = [
 # A phase's predecessor is always included and never listed here.
 EXTRA_CONSUMES: dict[int, tuple[str, ...]] = {
     6:  ("artifacts/04-frozen-task-brief.md",),
+    # PHASE 8'S ENTRY IS THE SECOND HALF OF THE SAME DEFECT, added after frontend T50 demonstrated it. An
+    # independent CODE review was given the self-review alone, so it was reviewing a summary of the change
+    # rather than the record of it - and it listed 7 of the 12 files that task touched, missing exactly the
+    # three recorded only in the implementation notes. Reviewing a summary is not reviewing the change.
+    8:  ("artifacts/06-implementation-notes.md",),
     9:  ("artifacts/07-self-review.md",),
     10: ("artifacts/04-frozen-task-brief.md",),
     11: ("artifacts/09-review-resolution.md",),
@@ -540,7 +545,7 @@ def render_task_readme(svc: dict, task: dict) -> str:
         f"# {svc['short']} · T{tid} — {task['title']}\n\n"
         f"Complete 14-phase prompt workflow for **Task {task['num']}** of the `{d}` spec package.\n"
         f"Run the phases in order. Each writes exactly one artifact of its own and reads its predecessor's, "
-        f"and four phases read one earlier artifact as well - the Consumes column below is authoritative.\n\n"
+        f"and five phases read one earlier artifact as well - the Consumes column below is authoritative.\n\n"
         f"**Task (verbatim, `spec/{d}/tasks.md` task {task['num']}):**\n> {task['text']}\n\n"
         f"**Spec section:** {task['section'] or '—'}\n\n"
         f"**Scoped IDs** — requirements: {fmt_scoped(task, 'rids', 'derive in Phase 1', 'none (process step)')} · "
@@ -613,8 +618,9 @@ review packet. {MODEL_NOTE}
 
 Each task folder (`.ai/prompts/<service>/T##/`) carries the 14 prompts plus an `artifacts/`
 directory. Phase _n_ writes `artifacts/n-…` and reads `artifacts/(n-1)-…`, plus any earlier artifact
-named in its **Consumes** header: Phase 6 and Phase 10 also read the frozen brief, Phase 9 also reads the
-self-review, **Phase 11 also reads the review resolution** so a test review cannot report an
+named in its **Consumes** header: Phase 6 and Phase 10 also read the frozen brief, **Phase 8 also reads the
+implementation notes** so a code review sees the record of the change and not only its summary, Phase 9 also
+reads the self-review, **Phase 11 also reads the review resolution** so a test review cannot report an
 already-ratified deviation as outstanding, and Phase 12 reads the whole chain. The implementation
 (Phase 6) and tests (Phase 10) additionally land in `services/<service>/`. The terminal
 artifact is `artifacts/13-pr-preparation.md`, gated on a Phase 12 **PASS**.
@@ -694,7 +700,7 @@ It contains **no application code** and never edits the specs — only the frame
 1. Pick a task. Open `.ai/prompts/<service>/T##/README.md`.
 2. Run the phases `00 → 13` in order, each with the model named in its header comment.
 3. Each phase writes exactly one new artifact under `artifacts/` and reads the ones its **Consumes**
-   header names - always its predecessor, and for four phases one earlier artifact too.
+   header names - always its predecessor, and for five phases one earlier artifact too.
 4. Stop at the Human Approval gates (Phases 4 and 9) until a person signs off.
 5. Ship only after Phase 12 returns **PASS**; Phase 13 produces the commit package.
 

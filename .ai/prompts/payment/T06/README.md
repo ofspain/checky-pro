@@ -1,7 +1,7 @@
 # payment · T06 — Invoice API + watch registration
 
 Complete 14-phase prompt workflow for **Task 6** of the `payment-service` spec package.
-Run the phases in order. Each writes exactly one artifact of its own and reads its predecessor's, and four phases read one earlier artifact as well - the Consumes column below is authoritative.
+Run the phases in order. Each writes exactly one artifact of its own and reads its predecessor's, and five phases read one earlier artifact as well - the Consumes column below is authoritative.
 
 **Task (verbatim, `spec/payment-service/tasks.md` task 6):**
 > **Invoice API + watch registration.** Add `InvoiceController` `POST /api/v1/invoices`, register the watch via `CryptoClient` (design §4c), and emit `invoice.created` through the outbox in the same transaction (R1, R2). Move tracking to `CREATED`, then `WATCHING` on watch-ack (R6).
@@ -22,7 +22,7 @@ Run the phases in order. Each writes exactly one artifact of its own and reads i
 | 5 | [`05-implementation-plan.md`](05-implementation-plan.md) | Implementation Plan | Claude Sonnet | `04-frozen-task-brief.md` | `artifacts/05-implementation-plan.md` | after artifact written |
 | 6 | [`06-implementation.md`](06-implementation.md) | Implementation | Claude Sonnet | `04-frozen-task-brief.md`, `05-implementation-plan.md` | `artifacts/06-implementation-notes.md` | after artifact written |
 | 7 | [`07-self-review.md`](07-self-review.md) | Self Review | Claude Sonnet | `06-implementation-notes.md` | `artifacts/07-self-review.md` | after artifact written |
-| 8 | [`08-independent-review.md`](08-independent-review.md) | Independent Code Review | Kimi 2.7 | `07-self-review.md` | `artifacts/08-independent-review.md` | after artifact written |
+| 8 | [`08-independent-review.md`](08-independent-review.md) | Independent Code Review | Kimi 2.7 | `06-implementation-notes.md`, `07-self-review.md` | `artifacts/08-independent-review.md` | after artifact written |
 | 9 | [`09-review-resolution.md`](09-review-resolution.md) | Review Resolution | Human Approval | `07-self-review.md`, `08-independent-review.md` | `artifacts/09-review-resolution.md` | after human sign-off |
 | 10 | [`10-test-generation.md`](10-test-generation.md) | Test Generation | Claude Sonnet | `04-frozen-task-brief.md`, `09-review-resolution.md` | `artifacts/10-test-generation.md` | after artifact written |
 | 11 | [`11-test-review.md`](11-test-review.md) | Test Review | Kimi 2.7 | `09-review-resolution.md`, `10-test-generation.md` | `artifacts/11-test-review.md` | after artifact written |

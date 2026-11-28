@@ -8,7 +8,7 @@
 | **Task** | T23 — RFC 9457 errors |
 | **Spec section** | Exports, contracts, hardening |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/07-self-review.md` |
+| **Consumes** | `artifacts/06-implementation-notes.md`, `artifacts/07-self-review.md` |
 | **Produces** | `artifacts/08-independent-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/payment-service/tasks.md`, task 23):**

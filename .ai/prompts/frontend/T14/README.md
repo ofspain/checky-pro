@@ -1,7 +1,7 @@
 # frontend · T14 — PKCE verifier
 
 Complete 14-phase prompt workflow for **Task 14** of the `frontend` spec package.
-Run the phases in order. Each writes exactly one artifact of its own and reads its predecessor's, and four phases read one earlier artifact as well - the Consumes column below is authoritative.
+Run the phases in order. Each writes exactly one artifact of its own and reads its predecessor's, and five phases read one earlier artifact as well - the Consumes column below is authoritative.
 
 **Task (verbatim, `spec/frontend/tasks.md` task 14):**
 > **PKCE verifier.** The code verifier is 43–128 characters from the RFC 7636 unreserved set, and its S256 challenge is sent on authorize. Verifies `pkceVerifierMeetsRfc7636`. Cites R6, L1.
@@ -22,7 +22,7 @@ Run the phases in order. Each writes exactly one artifact of its own and reads i
 | 5 | [`05-implementation-plan.md`](05-implementation-plan.md) | Implementation Plan | Claude Sonnet | `04-frozen-task-brief.md` | `artifacts/05-implementation-plan.md` | after artifact written |
 | 6 | [`06-implementation.md`](06-implementation.md) | Implementation | Claude Sonnet | `04-frozen-task-brief.md`, `05-implementation-plan.md` | `artifacts/06-implementation-notes.md` | after artifact written |
 | 7 | [`07-self-review.md`](07-self-review.md) | Self Review | Claude Sonnet | `06-implementation-notes.md` | `artifacts/07-self-review.md` | after artifact written |
-| 8 | [`08-independent-review.md`](08-independent-review.md) | Independent Code Review | Kimi 2.7 | `07-self-review.md` | `artifacts/08-independent-review.md` | after artifact written |
+| 8 | [`08-independent-review.md`](08-independent-review.md) | Independent Code Review | Kimi 2.7 | `06-implementation-notes.md`, `07-self-review.md` | `artifacts/08-independent-review.md` | after artifact written |
 | 9 | [`09-review-resolution.md`](09-review-resolution.md) | Review Resolution | Human Approval | `07-self-review.md`, `08-independent-review.md` | `artifacts/09-review-resolution.md` | after human sign-off |
 | 10 | [`10-test-generation.md`](10-test-generation.md) | Test Generation | Claude Sonnet | `04-frozen-task-brief.md`, `09-review-resolution.md` | `artifacts/10-test-generation.md` | after artifact written |
 | 11 | [`11-test-review.md`](11-test-review.md) | Test Review | Kimi 2.7 | `09-review-resolution.md`, `10-test-generation.md` | `artifacts/11-test-review.md` | after artifact written |

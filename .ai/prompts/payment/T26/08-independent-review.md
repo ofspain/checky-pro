@@ -8,7 +8,7 @@
 | **Task** | T26 — End-to-end integration test |
 | **Spec section** | Final verification |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/07-self-review.md` |
+| **Consumes** | `artifacts/06-implementation-notes.md`, `artifacts/07-self-review.md` |
 | **Produces** | `artifacts/08-independent-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/payment-service/tasks.md`, task 26):**

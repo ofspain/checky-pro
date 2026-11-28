@@ -8,7 +8,7 @@
 | **Task** | T01 — Module skeleton |
 | **Spec section** | Phase 0 — Skeleton |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/07-self-review.md` |
+| **Consumes** | `artifacts/06-implementation-notes.md`, `artifacts/07-self-review.md` |
 | **Produces** | `artifacts/08-independent-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 1):**

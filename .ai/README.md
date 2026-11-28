@@ -30,7 +30,7 @@ It contains **no application code** and never edits the specs — only the frame
 1. Pick a task. Open `.ai/prompts/<service>/T##/README.md`.
 2. Run the phases `00 → 13` in order, each with the model named in its header comment.
 3. Each phase writes exactly one new artifact under `artifacts/` and reads the ones its **Consumes**
-   header names - always its predecessor, and for four phases one earlier artifact too.
+   header names - always its predecessor, and for five phases one earlier artifact too.
 4. Stop at the Human Approval gates (Phases 4 and 9) until a person signs off.
 5. Ship only after Phase 12 returns **PASS**; Phase 13 produces the commit package.
 
