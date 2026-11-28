@@ -69,6 +69,15 @@ token is "not stored, not logged, not sent to analytics, not rendered" and only 
   TR24  repeated tokens joined             - `?token=a&token=b` is a URL anyone can build; `get` takes the
                                             first and `getAll().join()` sends "a,b".
 
+PHASE 11 ADDED ONE ROW. Kimi's F4 observed that the behavioural log case spied on five console methods
+while nine exist, so `console.table(token)` would leak a credential while the case passed. The spy list is
+now DERIVED from `console` at runtime instead of listed, and the derivation is itself asserted so it cannot
+come back empty and make the claim vacuous.
+
+  TR25  the token logged via `console.table` THROUGH AN ALIAS - two evasions in one mutant: the alias dodges
+                                            the source scan's literal, and `table` dodged the old spy list.
+                                            Against the phase 10 suite it would have survived everything.
+
 ONE PHASE 10 ASSERTION IS UNFALSIFIABLE AND GETS NO ROW: that the request is a POST. openapi-fetch exposes
 the verb as the method name and the contract declares no GET for this path, so a mutant changing it cannot
 typecheck - and a mutant that cannot compile measures nothing. Declared here rather than dressed up.
@@ -215,6 +224,14 @@ MUTANTS = [
      "own"),
     ("TR24 every repeated token is joined instead of taking the first",
      SCREEN, TOKEN_READ, "    const token = params.getAll('token').join(',');", "own"),
+
+    # --- PHASE 11's row: the half of the log claim the first spy list could not see ------------------
+    # TWO EVASIONS IN ONE MUTANT, and both are deliberate. It logs through an ALIAS, so the source scan's
+    # literal `console.` does not match it; and it logs through `table`, which the first version of the
+    # behavioural case did not spy on. Against the phase 10 suite this would have survived everything.
+    ("TR25 the token is logged via console.table through an alias, which the old spy list missed",
+     SCREEN, GUARD,
+     "    handled.current = true;\n    const sink = console;\n    sink.table({ token });", "own"),
 
     # --- unfalsifiable, declared -----------------------------------------------------------------------
     # TWO EDITS, BECAUSE ONE WOULD NOT COMPILE. `useLayoutEffect` has to be imported as well, and a

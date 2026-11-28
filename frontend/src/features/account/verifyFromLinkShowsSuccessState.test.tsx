@@ -479,13 +479,21 @@ describe('phase 10: the token is a credential, and the call has a shape', () => 
     // the literal `console.`; this forbids a console call however it is spelled - through an alias, a
     // re-export, or a logger a later edit introduces. `tokensAreNeverWrittenToAnyStorage` does the same for
     // access tokens, and the reasoning transfers: a credential in a log is a credential in a log aggregator.
-    const spies = {
-      log: vi.spyOn(console, 'log').mockImplementation(() => {}),
-      warn: vi.spyOn(console, 'warn').mockImplementation(() => {}),
-      error: vi.spyOn(console, 'error').mockImplementation(() => {}),
-      debug: vi.spyOn(console, 'debug').mockImplementation(() => {}),
-      info: vi.spyOn(console, 'info').mockImplementation(() => {}),
-    };
+    // EVERY FUNCTION ON `console`, DERIVED RATHER THAN LISTED (phase 11, F4). The first version spied on
+    // log/warn/error/debug/info, and Kimi pointed out that `table`, `dir`, `trace`, `group` and four more
+    // exist and were unwatched - so `console.table(token)` would have leaked a credential while this case
+    // passed. A hand-written list is a list that goes stale; deriving it means a console method added by a
+    // future runtime is covered the day it appears.
+    //
+    // THE DERIVATION IS ITSELF ASSERTED, because a list built by reflection can quietly come back empty and
+    // an empty list makes the negative assertion below vacuous - which is the failure mode this project has
+    // now hit three times from the other direction.
+    const methods = (Object.keys(console) as (keyof Console)[])
+      .filter((name) => typeof console[name] === 'function');
+    expect(methods, 'the console reflection found nothing, so the assertion below is vacuous')
+      .toEqual(expect.arrayContaining(['log', 'warn', 'error', 'debug', 'info', 'table', 'dir', 'trace']));
+    const spies = Object.fromEntries(methods.map((name) =>
+      [name, vi.spyOn(console, name as 'log').mockImplementation(() => {})]));
     installTransport(204);
 
     await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
