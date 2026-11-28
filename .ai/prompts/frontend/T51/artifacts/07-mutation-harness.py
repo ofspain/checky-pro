@@ -99,6 +99,10 @@ CATALOGUE = "frontend/src/i18n/catalogue.ts"
 ATTACHED = "frontend/src/app/routesResolveUnderAppPrefixOnly.test.tsx"
 CREDENTIALS = "frontend/src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx"
 
+# TR30 mutates this task's own suite, and a mutation target needs the repo-relative path with
+# the `frontend/` prefix that OWN_TESTS entries do not carry - they are vitest-relative.
+OWN_SUITE = "frontend/" + "src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx"
+
 REVERT_PATHS = ["frontend/src"]
 
 OWN_TESTS = [
@@ -111,7 +115,7 @@ UNFALSIFIABLE = set()
 FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
 KNOWN_ENVIRONMENTAL_FAILURES = set()  # nothing excused, so nothing an excused file could hide
 
-EXPECTED_BASELINE_FAILURES = 0  # of 2133
+EXPECTED_BASELINE_FAILURES = 0  # of 2137
 
 POST = ".POST('/accounts/resend-verification', { body: { email }, parseAs: 'stream' })"
 SETTLE = ".then(() => setStatus('acknowledged'), () => setStatus('unsent'));"
@@ -171,6 +175,19 @@ MUTANTS = [
     ("TR27 a behaviourally inert timer - caught TREE-WIDE, which is why D-T51-3 was retired",
      SCREEN, "    setStatus('submitting');",
      "    setStatus('submitting');\n    setTimeout(() => undefined, 0);", "inherited"),
+
+    # ======================================================================================================
+    # PHASE 10'S TWO ROWS. TR30 mutates this task's OWN test file, which is correct for a coverage pin: the
+    # thing it holds is a property OF the arm list, so the only way to falsify it is to change that list.
+    # ======================================================================================================
+    ("TR29 a retry sends a different body than a first attempt",
+     SCREEN, POST,
+     ".POST('/accounts/resend-verification', { body: { email: status === 'unsent' ? `${email} ` : email }, "
+     "parseAs: 'stream' })", "own"),
+    ("TR30 a wordless arm is added, so AC10 silently covers fewer arms than its case claims",
+     OWN_SUITE, "  { label: '304 with no body', status: 304, body: null, contentType: null },\n];",
+     "  { label: '304 with no body', status: 304, body: null, contentType: null },\n"
+     "  { label: '418 with no body', status: 418, body: null, contentType: null },\n];", "own"),
 
     ("TR28 CANARY the acknowledgement renders nothing at all",
      SCREEN, "<Text>{t('resend.acknowledgedText')}</Text>", "<Text>{''}</Text>", "own"),
