@@ -554,8 +554,13 @@ describe('every word comes from the catalogue and none from the server (AC9)', (
     const source = await read('features/account/ResendVerificationScreen.tsx');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
 
+    // TASK 51 ADDED THE TWO TIMER PATTERNS, and L4's fourth clause is why: it requires "copy, redirects,
+    // styling, and TIMING" to be identical, and `agents.md:44` narrows that to "the SPA's own rendering
+    // only" - which is exactly what a timer in this file would be. Until this task the clause had NO
+    // instrument here. Task 51's phase 1 claimed one already existed and that was false; the scan it was
+    // describing is task 47's, for a different screen. The patterns are cheap and the clause is now held.
     for (const forbidden of [/\bresponse\b/, /\bdata\b/, /\berror\b/, /\.ok\b/, /\.status\b/, /statusText/,
-      /\.json\s*\(/, /\.text\s*\(/, /\.message\b/]) {
+      /\.json\s*\(/, /\.text\s*\(/, /\.message\b/, /setTimeout/, /setInterval/]) {
       expect(code, `the screen reads the response (${String(forbidden)})`).not.toMatch(forbidden);
     }
 
@@ -697,5 +702,235 @@ describe('the screen composes primitives and keeps one document outline (AC12, D
     const login = await read('auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx');
     expect(login, 'the credential table does not name this screen')
       .toContain("file: 'features/account/ResendVerificationScreen.tsx',");
+  });
+});
+
+// ==========================================================================================================
+// TASK 51 — R5's remaining clause: "the same acknowledgement regardless of outcome"
+//
+// Task 50 built this screen and proved the call, the sessionless half and that the handler never reads the
+// response. It deliberately left the uniformity proof here, and its one outcome case says so in its own
+// comment: "that is task 51's, across the whole range."
+//
+// WHAT PHASE 2 MEASURED, BEFORE ANY OF THIS WAS WRITTEN: eleven of twelve arms rendered byte-identical
+// markup and one did not. A `200` whose body is not valid JSON rendered the FORM again, under "We could not
+// send that just now" - because `openapi-fetch` parses the body itself and its promise REJECTS with a
+// SyntaxError, which `.then(acknowledge, unsent)` cannot tell apart from a dropped connection. The server
+// said the email was sent; the visitor was told it was not.
+//
+// AND THE SOURCE SCAN ABOVE WAS GREEN THROUGHOUT. It forbids nine ways of reading the response and asserts
+// the handler's argument-less shape, and it could not see this, because THE PARSE HAPPENS INSIDE THE LIBRARY
+// AND NOT IN THIS SCREEN'S SOURCE. Never reading the response was necessary and not sufficient: a source
+// scan cannot see a dependency the source does not name. These cases are the behavioural half it needed.
+// ==========================================================================================================
+
+/** A transport whose content type varies, which `installTransport` cannot do - it hardcodes JSON. The arms
+ *  below need `text/html` and `text/plain`, because phase 2 measured that the content type DOES NOT GATE the
+ *  parse: an HTML body, a plain-text body and a body with no content type at all all take the failure arm. */
+function installTypedTransport(status: number, body: string | null, contentType: string | null): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(body, { status, headers: contentType ? { 'Content-Type': contentType } : {} })),
+  );
+}
+
+/** Discards the mounted screen so a case can arrive twice and compare the two renderings.
+ *
+ *  PORTED FROM TASK 49'S SUITE, where it is the only copy. Phase 0 of this task claimed it was already here
+ *  "carried over from T49 with the helpers" and that was simply false - `grep -rln teardownCurrent src/`
+ *  returns one file, and it is not this one. Task 50's suite unmounts in `afterEach`, so a case could arrive
+ *  exactly once, and every comparison below needs two arrivals in ONE case. (FU-T43-2 is the open follow-up
+ *  for the shared test-util module none of these copies live in; this is the second copy of this helper.) */
+async function teardownCurrent(): Promise<void> {
+  await act(async () => mounted!.root.unmount());
+  mounted!.container.remove();
+  mounted = undefined;
+  router?.dispose?.();
+  router = undefined;
+}
+
+type Arm = {
+  readonly label: string;
+  readonly status: number;
+  readonly body: string | null;
+  readonly contentType: string | null;
+  /** A sentence from this arm's body, so a case can assert the server's words never reach the DOM. */
+  readonly serverWords?: string;
+};
+
+/** The only reply the contract actually promises: `auth.yaml` declares ONE response for this operation, a
+ *  `200` whose `RegistrationAcknowledgement` body has `required: [message]`. Every other arm is compared
+ *  against this one, because it is the baseline a visitor is meant to get. */
+const DECLARED: Arm = {
+  label: '200 with the declared JSON body',
+  status: 200,
+  body: JSON.stringify({ message: 'Verification email sent.' }),
+  contentType: 'application/json',
+  serverWords: 'Verification email sent.',
+};
+
+/** THIRTEEN ARMS, written to differ in every way the contract allows - task 47's phrase for the same
+ *  property on the neighbouring endpoint.
+ *
+ *  THEY ARE NOT ACCOUNT STATES, AND THAT IS DELIBERATE. L4 lists uniformity "across unknown or missing,
+ *  locked, suspended, and deleted accounts", and THIS CLIENT CANNOT OBSERVE ANY OF THEM: the server answers
+ *  every account state with the one declared `200`, and `resendVerificationIfPending` never throws for a
+ *  non-match. There is no reply the SPA could receive that says "that address is locked", so an arm seeded as
+ *  a locked account would be fiction. What a server, proxy or edge CAN actually put on the wire is a
+ *  different status, a different body, no body, or a body that is not JSON - so those are the arms. */
+const ARMS: readonly Arm[] = [
+  DECLARED,
+  { label: '200 with a DIFFERENT message, the field the contract makes required', status: 200,
+    body: JSON.stringify({ message: 'No account with that address; nothing was sent.' }),
+    contentType: 'application/json', serverWords: 'No account with that address' },
+  { label: '200 with no body at all', status: 200, body: null, contentType: 'application/json' },
+  { label: '200 with an empty-string body', status: 200, body: '', contentType: 'application/json' },
+  // The three arms phase 2 measured as the defect. An edge interstitial carrying 200 is exactly this shape,
+  // and this project's edge is Cloudflare.
+  { label: '200 with an HTML body, as an edge error page sends', status: 200,
+    body: '<html><body>502 Bad Gateway</body></html>', contentType: 'text/html', serverWords: '502 Bad Gateway' },
+  { label: '200 with a plain-text body', status: 200, body: 'OK', contentType: 'text/plain' },
+  { label: '200 with JSON truncated mid-document', status: 200, body: '{"message":"Verification em',
+    contentType: 'application/json', serverWords: 'Verification em' },
+  { label: '204 with no content', status: 204, body: null, contentType: null },
+  { label: '400', status: 400, body: JSON.stringify({ message: 'malformed' }), contentType: 'application/json',
+    serverWords: 'malformed' },
+  { label: '404, the status an enumerating backend would reach for', status: 404,
+    body: JSON.stringify({ message: 'No such account.' }), contentType: 'application/json',
+    serverWords: 'No such account' },
+  { label: '429, which the dormant rate-limit notice would key off', status: 429,
+    body: JSON.stringify({ message: 'Too many requests.' }), contentType: 'application/json',
+    serverWords: 'Too many requests' },
+  { label: '500', status: 500, body: JSON.stringify({ message: 'boom' }), contentType: 'application/json',
+    serverWords: 'boom' },
+  { label: '503', status: 503, body: null, contentType: 'application/json' },
+];
+
+type Rendering = {
+  readonly html: string;
+  readonly pathname: string;
+  readonly focus: string;
+  readonly region: string;
+  readonly text: string;
+};
+
+/** Drives one arm end to end and captures everything L4 names: the markup (copy AND styling, since a class
+ *  that varied by outcome is as much a channel as a word that did), the pathname (redirects), and the two
+ *  things serialised markup CANNOT see - which element holds focus, and what the live region is announcing. */
+async function renderArm(arm: Arm, email = EMAIL): Promise<Rendering> {
+  installTypedTransport(arm.status, arm.body, arm.contentType);
+  const container = await arrive(RESEND_VERIFICATION_PATH);
+  await send(container, email);
+  const active = document.activeElement;
+  const rendering: Rendering = {
+    html: container.innerHTML,
+    pathname: router!.state.location.pathname,
+    // The tag alone would call <h1>Check your email</h1> and <h1>Resend verification email</h1> the same
+    // element, and those are two different states. The text comes with it.
+    focus: `${active?.tagName ?? 'NONE'}:${active?.textContent ?? ''}`,
+    region: container.querySelector('[role="status"]')?.textContent ?? '(no region mounted)',
+    text: container.textContent ?? '',
+  };
+  await teardownCurrent();
+  return rendering;
+}
+
+describe('task 51 · AC2/AC3/AC4/AC9/AC10 every outcome renders ONE acknowledgement', () => {
+  for (const arm of ARMS) {
+    it(`renders markup identical to the declared reply for: ${arm.label}`, async () => {
+      // THE BASELINE IS CAPTURED, NOT HARDCODED. A hardcoded string would have to be edited whenever the
+      // design system changes a class, and that edit would silently redefine what "identical" means.
+      const declared = await renderArm(DECLARED);
+
+      // AND THE CAPTURE IS GUARDED BEFORE ANYTHING IS COMPARED AGAINST IT, because a captured expectation is
+      // satisfied by a UNIFORMLY BROKEN screen: if every arm rendered nothing, every comparison below would
+      // pass and this suite would certify silence as uniformity. Five empty lists satisfied a sameness pin in
+      // task 173 for the same reason.
+      expect(declared.html.length, 'the baseline rendering is empty, so every comparison below is vacuous')
+        .toBeGreaterThan(100);
+      expect(declared.text, 'the baseline is not the acknowledgement, so this case compares the wrong thing')
+        .toBe(ACK_TEXT);
+      expect(declared.html, 'the baseline still has a form, so the submit never settled').not.toContain('<form');
+
+      const actual = await renderArm(arm);
+
+      expect(actual.html, `this outcome renders different markup from the declared reply (${arm.label})`)
+        .toBe(declared.html);
+      expect(actual.pathname, 'this outcome navigated somewhere else - L4 names redirects explicitly')
+        .toBe(declared.pathname);
+      expect(actual.text, 'the retry line reached a screen the SERVER answered, so unsent is not only for a '
+        + 'request that never arrived').not.toContain(en.resend.unsent);
+      if (arm.serverWords !== undefined) {
+        expect(actual.html, `the server's own words reached the DOM (${arm.serverWords})`)
+          .not.toContain(arm.serverWords);
+      }
+    });
+  }
+});
+
+describe('task 51 · AC7/AC8 the two channels serialised markup cannot see', () => {
+  // innerHTML DOES NOT CARRY FOCUS. `document.activeElement` is not part of serialised markup, so a screen
+  // that moved focus to the heading for a 200 and left it on <body> for a 404 would compare byte-identical
+  // and pass every case above - while a screen reader announced the difference. Phase 2 measured the axis is
+  // real: focus=H1 on every uniform arm, focus=BODY on the one that was not.
+  //
+  // Both cases COLLECT every arm and compare the whole list at once, rather than asserting inside the loop.
+  // An assertion inside the loop stops at the first disagreeing arm, so the arms after it would be
+  // unmeasured - and the failure would name one arm when the truth might be nine.
+  it('ends with focus on the same element for every outcome', async () => {
+    const seen: string[] = [];
+    for (const arm of ARMS) seen.push(`${arm.label} -> ${(await renderArm(arm)).focus}`);
+
+    const expected = seen[0]!.split(' -> ')[1]!;
+    expect(expected, 'nothing holds focus even for the declared reply, so this case asserts nothing')
+      .not.toBe('NONE:');
+    expect(expected, 'focus is on the document body, which is the FAILURE shape phase 2 measured')
+      .not.toMatch(/^BODY:/);
+    expect(seen, 'focus lands differently depending on the outcome, which a screen reader announces')
+      .toEqual(ARMS.map((arm) => `${arm.label} -> ${expected}`));
+  });
+
+  it('ends with the live region saying the same thing for every outcome', async () => {
+    const seen: string[] = [];
+    for (const arm of ARMS) seen.push(`${arm.label} -> ${(await renderArm(arm)).region}`);
+
+    const expected = seen[0]!.split(' -> ')[1]!;
+    expect(expected, 'the region is not mounted at all, so there is no channel here to compare')
+      .not.toBe('(no region mounted)');
+    expect(seen, 'the live region announces something different depending on the outcome')
+      .toEqual(ARMS.map((arm) => `${arm.label} -> ${expected}`));
+  });
+});
+
+describe('task 51 · AC5/AC6 the boundary, from both sides', () => {
+  // OQ-T50-5, the obligation task 50 handed over. D-T50-1 put a SECOND possible message on this surface, so
+  // uniformity is not "one message always" - it is "one message for every answer the server gives, and the
+  // retry line only when there was no answer". The cases above hold the first half for thirteen arms; this
+  // holds the second, and the two must be read together or either could pass while the boundary moved.
+  it('shows the retry line ONLY when the request never completed', async () => {
+    installTransportFailure();
+    const container = await arrive(RESEND_VERIFICATION_PATH);
+    await send(container);
+
+    expect(container.textContent, 'a dropped connection no longer says anything about itself')
+      .toContain(en.resend.unsent);
+    expect(container.querySelector('form'), 'the form is gone, so the retry D-T50-1 exists for is impossible')
+      .not.toBeNull();
+    expect(container.textContent, 'a request that never arrived claims a link was sent')
+      .not.toContain(en.resend.acknowledgedText);
+  });
+
+  it('renders the same acknowledgement whatever address was typed', async () => {
+    // R5's uniformity is about outcomes, and THIS is the enumeration claim underneath it: the server cannot
+    // tell this client which address is registered, so the only way the typed address could change the
+    // rendering is if the SCREEN put it there.
+    const first = await renderArm(DECLARED, 'visitor@example.test');
+    const second = await renderArm(DECLARED, 'someone.else@other.example');
+
+    expect(second.html, 'the acknowledgement differs by the address typed into it').toBe(first.html);
+    expect(first.html, 'the submitted address is rendered back into the acknowledgement')
+      .not.toContain('visitor');
+    expect(second.html, 'the submitted address is rendered back into the acknowledgement')
+      .not.toContain('someone.else');
   });
 });

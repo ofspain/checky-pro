@@ -75,7 +75,21 @@ export function ResendVerificationScreen(): ReactElement {
   function submit(): void {
     setStatus('submitting');
     void createPublicAuthApi()
-      .POST('/accounts/resend-verification', { body: { email } })
+      // `parseAs: 'stream'` IS THE WHOLE OF TASK 51'S PRODUCTION CHANGE, and R5's uniformity depends on it.
+      //
+      // Without it `openapi-fetch` parses the body itself, and a `200` whose body is not valid JSON - an edge
+      // interstitial, a response truncated mid-document, a plain-text answer from a proxy - makes the promise
+      // REJECT with a SyntaxError. The reject arm below cannot tell that apart from a dropped connection, so
+      // the visitor was told "we could not send that" about an email the server had just sent.
+      //
+      // Worse than wrong: the rendering then depended on the SHAPE OF THE RESPONSE BODY, so a proxy or a
+      // future backend answering differently-shaped bodies for different account states would have turned
+      // this public form into the enumeration oracle L4 exists to close.
+      //
+      // The option states this screen's actual contract - IT HAS NO INTEREST IN THE BODY - where a catch on
+      // SyntaxError would have described a symptom. Measured at phase 2: thirteen outcome arms collapse to one
+      // rendering, and a dropped connection still shows the retry line, which is the half that must not move.
+      .POST('/accounts/resend-verification', { body: { email }, parseAs: 'stream' })
       .then(() => setStatus('acknowledged'), () => setStatus('unsent'));
   }
 
