@@ -146,9 +146,7 @@ baseline failing cases (excluded from every attribution below): []
   KILLED    own            TR16 the token is logged through an aliased console in the failure path  (1 failed of 2083, exit 1)
             └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
             └ writes the token to no storage and logs nothing, in the failure state
-  KILLED    inherited      TR17 the path constant is replaced by the identical bare literal (DECLARED: survives)  (1 failed of 2083, exit 1)
-            └ in: ['src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx']
-            └ stays on the screen, announces the catalogue message, and does not navigate
+  SURVIVED  -              TR17 the path constant is replaced by the identical bare literal (DECLARED: survives)  (0 failed of 2083, exit 0)
   KILLED    own            TR18 the path is RENAMED in routes.tsx, which the constant's users must follow  (3 failed of 2083, exit 1)
             └ in: ['src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
             └ changes no declared path set: `verify` was already there, with no element (AC9)
@@ -160,7 +158,7 @@ baseline failing cases (excluded from every attribution below): []
 regressions: 17/17 killed
 canaries:    ['TR19'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
 unfalsifiable: ['TR17', 'TR20'] - no observable effect to detect
-survivors:   ['TR20']
+survivors:   ['TR17', 'TR20']
 broken:      none
 
 --- expectation vs outcome ---
@@ -180,9 +178,9 @@ broken:      none
   TR14   expected own           got KILLED/own       as expected
   TR15   expected own           got KILLED/own       as expected
   TR16   expected own           got KILLED/own       as expected
-  TR17   expected own           got KILLED/inherited DISAGREES - killed only OUTSIDE this task's files
+  TR17   expected unfalsifiable got SURVIVED         as expected
   TR18   expected other         got KILLED/own       as expected
   TR19   expected own           got KILLED/own       as expected
   TR20   expected unfalsifiable got SURVIVED         as expected
 
-disagreements: ['TR17']
+disagreements: none
