@@ -74,8 +74,8 @@ baseline failing cases (excluded from every attribution below): []
             └ shows no failure copy while a valid token is in flight
             └ clears an earlier failure while the next token is in flight (the step-5 line)
             └ mounts the live region empty before the failure fills it
-  KILLED    own            TR08 the resend link is deleted, so R4's action is gone  (24 failed of 2083, exit 1)
-            └ in: ['src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+  KILLED    own            TR08 the resend link is deleted, so R4's action is gone  (23 failed of 2083, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
             └ sends nothing when the link carries no token at all
             └ sends nothing when the token is present but empty
             └ shows the same failure for a tokenless link, and sends NOTHING (D-T49-2)
@@ -143,8 +143,12 @@ baseline failing cases (excluded from every attribution below): []
             └ sends exactly one request under StrictMode and still fails uniformly
             └ puts the failure sentence inside that same region
             └ renders the token nowhere when the server rejects it
-  SURVIVED  -              TR16 the token is logged through an aliased console in the failure path  (0 failed of 2083, exit 0)
-  SURVIVED  -              TR17 the path constant is replaced by the identical bare literal (DECLARED: survives)  (0 failed of 2083, exit 0)
+  KILLED    own            TR16 the token is logged through an aliased console in the failure path  (1 failed of 2083, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ writes the token to no storage and logs nothing, in the failure state
+  KILLED    inherited      TR17 the path constant is replaced by the identical bare literal (DECLARED: survives)  (1 failed of 2083, exit 1)
+            └ in: ['src/auth/signInStartsAuthorizationCodeFlowWithPkceAndRendersNoPasswordField.test.tsx']
+            └ stays on the screen, announces the catalogue message, and does not navigate
   KILLED    own            TR18 the path is RENAMED in routes.tsx, which the constant's users must follow  (3 failed of 2083, exit 1)
             └ in: ['src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
             └ changes no declared path set: `verify` was already there, with no element (AC9)
@@ -153,10 +157,10 @@ baseline failing cases (excluded from every attribution below): []
             └ renders both new keys as literal English
   SURVIVED  -              TR20 UNFALSIFIABLE useEffect -> useLayoutEffect for the focus move  (0 failed of 2083, exit 0)
 
-regressions: 16/18 killed
+regressions: 17/17 killed
 canaries:    ['TR19'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
-unfalsifiable: ['TR20'] - no observable effect to detect
-survivors:   ['TR16', 'TR17', 'TR20']
+unfalsifiable: ['TR17', 'TR20'] - no observable effect to detect
+survivors:   ['TR20']
 broken:      none
 
 --- expectation vs outcome ---
@@ -175,10 +179,10 @@ broken:      none
   TR13   expected own           got KILLED/own       as expected
   TR14   expected own           got KILLED/own       as expected
   TR15   expected own           got KILLED/own       as expected
-  TR16   expected own           got SURVIVED         DISAGREES - nothing detects it
-  TR17   expected own           got SURVIVED         DISAGREES - nothing detects it
+  TR16   expected own           got KILLED/own       as expected
+  TR17   expected own           got KILLED/inherited DISAGREES - killed only OUTSIDE this task's files
   TR18   expected other         got KILLED/own       as expected
   TR19   expected own           got KILLED/own       as expected
   TR20   expected unfalsifiable got SURVIVED         as expected
 
-disagreements: ['TR16', 'TR17']
+disagreements: ['TR17']

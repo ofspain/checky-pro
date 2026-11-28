@@ -228,7 +228,7 @@ MUTANTS = [
     # --- declared to survive, and the row that gives it meaning --------------------------------------
     ("TR17 the path constant is replaced by the identical bare literal (DECLARED: survives)",
      SCREEN, "<TextLink to={`/${RESEND_VERIFICATION_PATH}`}>",
-     '<TextLink to="/resend-verification">', "own"),
+     '<TextLink to="/resend-verification">', "unfalsifiable"),
     ("TR18 the path is RENAMED in routes.tsx, which the constant's users must follow",
      ROUTES, PATH_CONST, "export const RESEND_VERIFICATION_PATH = 'resend-verify';", "other"),
 
