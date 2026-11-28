@@ -37,9 +37,10 @@ baseline failing cases (excluded from every attribution below): []
             └ renders markup identical to the declared reply for: 500
             └ renders markup identical to the declared reply for: 503
             └ renders the same acknowledgement whatever address was typed
-  KILLED    own            TR27 CONTROL a behaviourally inert timer, which only the source scan can see  (3 failed of 2133, exit 1)
-            └ in: ['src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
-            └ reads no part of the response anywhere in its source
+  KILLED    inherited      TR27 a behaviourally inert timer - caught TREE-WIDE, which is why D-T51-3 was retired  (2 failed of 2133, exit 1)
+            └ in: ['src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx']
+            └ finds no timer outside the three permitted modules
+            └ the permitted rows describe exactly the timers that exist, with no slack
   KILLED    own            TR28 CANARY the acknowledgement renders nothing at all  (19 failed of 2133, exit 1)
             └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
             └ acknowledges IN PLACE: no navigation, and the path is unchanged afterwards
@@ -71,7 +72,7 @@ broken:      none
   TR24   expected own           got KILLED/own       as expected
   TR25   expected own           got KILLED/own       as expected
   TR26   expected own           got KILLED/own       as expected
-  TR27   expected own           got KILLED/own       as expected
+  TR27   expected inherited     got KILLED/inherited as expected
   TR28   expected own           got KILLED/own       as expected
 
 disagreements: none
