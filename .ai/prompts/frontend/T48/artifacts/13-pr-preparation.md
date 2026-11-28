@@ -145,7 +145,39 @@ measures nothing). No analytics assertion was written at all, because the SPA ha
 | **LOCKED** | **L4** enumeration-safe UI *(among failure reasons)* · **L6** generated client only · **L9** single origin · **L11** accessibility, i18n, managed focus, catalogue-only copy · **L14** SPA route set under `/app`, `?token=<token>` author-confirmed at `design.md:145` · **L16** the only sessionStorage carve-out · **L17** service-worker boundaries |
 | **Design** | **D7** every rendered catalogue key is measured |
 | **Deviations** | D1, D2, D3, D-T48-1, D-T48-2 — all ratified; see Phase 9 and Phase 12 |
-| **Blocks** | **task 49** is blocked on **OQ-T48-4**: `auth.yaml` declares `204` and nothing else for `verifyEmail`, so R4's uniform failure cannot be specified from the contract |
+| **Blocks** | **Nothing — corrected below.** `auth.yaml` declares `204` and nothing else for `verifyEmail`, but the backend already returns one uniform `400` for every rejection reason, and R4 forbids task 49 from reading the body anyway |
 | **Open for the owner** | **R-T48-1** (the gateway hazard), **OQ-T48-5** (the heading after success), **FU-T48-1** (closed-task count pins), **FU-T48-2** (a false comment in `tokensAreNeverWrittenToAnyStorage`), **FU-T43-2** (no shared test utils) |
 
 **Phase 13 complete. T48 is ready for merge.**
+
+---
+
+## Correction to this artifact, after measuring the backend (2026-11-28)
+
+**I recorded OQ-T48-4 as blocking task 49. That is too strong, and the difference changes what happens
+next, so it is corrected here rather than left to be discovered.**
+
+`contracts/api/auth.yaml` really does declare `'204'` and nothing else for `verifyEmail`. But the behaviour
+task 49 needs already exists and is already uniform **at the backend**:
+
+| Evidence | |
+|---|---|
+| `AccountExceptionHandler.java:46-52` | **One** mapping for `VerificationTokenRejectedException` → a fixed `400`, fixed `ProblemTypes.INVALID_TOKEN`, fixed title, and a javadoc that says it *"never distinguishes 'not found' from 'expired' from 'already used' from 'wrong account state'"* |
+| `AccountService.java:38, :46, :47-48` | All three paths throw **the same** exception: token missing/expired/consumed, account missing, and account not `PENDING_VERIFICATION` — the last covering already-verified, suspended **and deleted** |
+
+So **all four of task 49's reasons** — invalid, expired, used, deleted-account — already produce one
+indistinguishable response. R4's uniformity is enforced server-side, which is the right place for it.
+
+**And the frontend does not need the contract to declare the 400.** `VerifyScreen` branches on
+`response.ok`; openapi-fetch resolves on HTTP errors and rejects only on transport failure, so a `400`
+arrives as `!response.ok` whether or not the contract documents it. The missing declaration would only matter
+to code that wanted to *type and read* the error body — and **R4 forbids task 49 from doing that**, since
+reading `type` or `title` is how uniform failure stops being uniform.
+
+**The contract gap is harmless here precisely because R4 forbids using what is missing.** Task 49 is
+therefore **not blocked**: it can be specified and built against measured behaviour.
+
+**What remains** is a documentation defect worth fixing by whoever owns `contracts/api/auth.yaml` (not this
+task — `spec/` and `contracts/` are not mine to edit): an undeclared `400` means the generated client has no
+error schema for an endpoint that really does fail. Recorded as **OQ-T48-4, reclassified from blocking to a
+contract-accuracy defect.**

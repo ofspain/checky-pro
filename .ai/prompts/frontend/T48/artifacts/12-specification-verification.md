@@ -100,7 +100,7 @@ violation.
 | Risk | Reading |
 |---|---|
 | **R-T48-1 — a JavaScript-executing email gateway burns the token before the human clicks** | **The task's real-world risk, and it is not hypothetical**: `markConsumed` is durable, so the account verifies and the human is then shown task 49's uniform failure, which R4 forbids task 49 from explaining. Owner-decided because R3's wording compels on-arrival; the mitigation is one effect in one file. **This is the item I would put in front of the owner first.** |
-| **OQ-T48-4 — `auth.yaml` declares no failure response for `verifyEmail`** | **Blocks task 49**, which cannot be specified from the contract alone. Found here, owed there. |
+| **OQ-T48-4 — `auth.yaml` declares no failure response for `verifyEmail`** | **A contract-accuracy defect, NOT a blocker — corrected below after measuring the backend.** |
 | `idle` is one rendering for three situations | By design, pinned, and the pin must fail when task 49 lands. |
 | TR20, and the `POST` assertion | Both declared unfalsifiable at the point of use rather than hidden in a score. |
 | **FU-T48-1** | Two consecutive tasks have edited a closed suite for source-text count pins. A process fix, not a code one. |
@@ -110,3 +110,35 @@ violation.
 ---
 
 **PASS** — R3 is implemented end to end from the emailed link, all twelve ACs hold with 2048/2048 green and 22/22 mutants killed, no LOCKED decision is violated, and the one material risk (R-T48-1) was measured against the backend rather than assumed and is owner-decided with its mitigation point documented in the code.
+
+---
+
+## Correction to this artifact, after measuring the backend (2026-11-28)
+
+**I recorded OQ-T48-4 as blocking task 49. That is too strong, and the difference changes what happens
+next, so it is corrected here rather than left to be discovered.**
+
+`contracts/api/auth.yaml` really does declare `'204'` and nothing else for `verifyEmail`. But the behaviour
+task 49 needs already exists and is already uniform **at the backend**:
+
+| Evidence | |
+|---|---|
+| `AccountExceptionHandler.java:46-52` | **One** mapping for `VerificationTokenRejectedException` → a fixed `400`, fixed `ProblemTypes.INVALID_TOKEN`, fixed title, and a javadoc that says it *"never distinguishes 'not found' from 'expired' from 'already used' from 'wrong account state'"* |
+| `AccountService.java:38, :46, :47-48` | All three paths throw **the same** exception: token missing/expired/consumed, account missing, and account not `PENDING_VERIFICATION` — the last covering already-verified, suspended **and deleted** |
+
+So **all four of task 49's reasons** — invalid, expired, used, deleted-account — already produce one
+indistinguishable response. R4's uniformity is enforced server-side, which is the right place for it.
+
+**And the frontend does not need the contract to declare the 400.** `VerifyScreen` branches on
+`response.ok`; openapi-fetch resolves on HTTP errors and rejects only on transport failure, so a `400`
+arrives as `!response.ok` whether or not the contract documents it. The missing declaration would only matter
+to code that wanted to *type and read* the error body — and **R4 forbids task 49 from doing that**, since
+reading `type` or `title` is how uniform failure stops being uniform.
+
+**The contract gap is harmless here precisely because R4 forbids using what is missing.** Task 49 is
+therefore **not blocked**: it can be specified and built against measured behaviour.
+
+**What remains** is a documentation defect worth fixing by whoever owns `contracts/api/auth.yaml` (not this
+task — `spec/` and `contracts/` are not mine to edit): an undeclared `400` means the generated client has no
+error schema for an endpoint that really does fail. Recorded as **OQ-T48-4, reclassified from blocking to a
+contract-accuracy defect.**
