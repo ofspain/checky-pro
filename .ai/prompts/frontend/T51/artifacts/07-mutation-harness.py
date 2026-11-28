@@ -156,14 +156,21 @@ MUTANTS = [
      "<Text>{`${t('resend.acknowledgedText')} ${email}`}</Text>", "own"),
 
     # ======================================================================================================
-    # TR27 IS THE CONTROL FOR D-T51-3, and it is deliberately BEHAVIOURALLY INERT. A timer that changed the
-    # status killed 23 cases and proved nothing about the scan, because the scan's kill was buried among 22
-    # behavioural ones. `() => undefined` is invisible to all 46 other cases, so if the two patterns this task
-    # added to the scan were ever removed, this row would survive and say so.
+    # TR27 WAS WRITTEN AS THE CONTROL FOR D-T51-3 AND IT RETIRED THAT DEVIATION INSTEAD.
+    #
+    # It is deliberately BEHAVIOURALLY INERT: a timer that changed the status killed 23 cases and proved
+    # nothing about any scan, because the scan's kill was buried among 22 behavioural ones. `() => undefined`
+    # is invisible to all 46 behavioural cases, so it isolates whatever structural instrument exists.
+    #
+    # It then killed THREE cases in TWO files, and the second file was one nothing in this task had
+    # mentioned: `identityErrorsIndistinguishableAcrossAccountStates` already owns a TREE-WIDE timer scan
+    # with a pinned allow-list. So L4's timing clause was held all along, D-T51-3's two patterns were a
+    # duplicate, and they were removed. The row is INHERITED now, which is the honest tag: it measures an
+    # instrument this task did not write, and it is kept precisely to keep that instrument visible here.
     # ======================================================================================================
-    ("TR27 CONTROL a behaviourally inert timer, which only the source scan can see",
+    ("TR27 a behaviourally inert timer - caught TREE-WIDE, which is why D-T51-3 was retired",
      SCREEN, "    setStatus('submitting');",
-     "    setStatus('submitting');\n    setTimeout(() => undefined, 0);", "own"),
+     "    setStatus('submitting');\n    setTimeout(() => undefined, 0);", "inherited"),
 
     ("TR28 CANARY the acknowledgement renders nothing at all",
      SCREEN, "<Text>{t('resend.acknowledgedText')}</Text>", "<Text>{''}</Text>", "own"),

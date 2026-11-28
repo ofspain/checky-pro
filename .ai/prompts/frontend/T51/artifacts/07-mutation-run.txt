@@ -1,0 +1,77 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 0 failed of 2133, exit 0
+baseline failing cases (excluded from every attribution below): []
+
+  KILLED    own            TR24 parseAs is removed, so openapi-fetch parses the body again and a 200 that is not JSON fails  (5 failed of 2133, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ renders markup identical to the declared reply for: 200 with an HTML body, as an edge error page sends
+            └ renders markup identical to the declared reply for: 200 with a plain-text body
+            └ renders markup identical to the declared reply for: 200 with JSON truncated mid-document
+            └ ends with focus on the same element for every outcome
+            └ ends with the live region saying the same thing for every outcome
+  KILLED    own            TR25 parseAs: 'json' - the same hole by the spelling a refactor would pick  (5 failed of 2133, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ renders markup identical to the declared reply for: 200 with an HTML body, as an edge error page sends
+            └ renders markup identical to the declared reply for: 200 with a plain-text body
+            └ renders markup identical to the declared reply for: 200 with JSON truncated mid-document
+            └ ends with focus on the same element for every outcome
+            └ ends with the live region saying the same thing for every outcome
+  KILLED    own            TR26 the acknowledgement interpolates the submitted address  (18 failed of 2133, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ shows the acknowledgement and removes the form
+            └ acknowledges on a non-200 resolve too, because the status is never consulted
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ renders nothing the server sent, even when the server sends a sentence
+            └ renders markup identical to the declared reply for: 200 with the declared JSON body
+            └ renders markup identical to the declared reply for: 200 with a DIFFERENT message, the field the contract makes required
+            └ renders markup identical to the declared reply for: 200 with no body at all
+            └ renders markup identical to the declared reply for: 200 with an empty-string body
+            └ renders markup identical to the declared reply for: 200 with an HTML body, as an edge error page sends
+            └ renders markup identical to the declared reply for: 200 with a plain-text body
+            └ renders markup identical to the declared reply for: 200 with JSON truncated mid-document
+            └ renders markup identical to the declared reply for: 204 with no content
+            └ renders markup identical to the declared reply for: 400
+            └ renders markup identical to the declared reply for: 404, the status an enumerating backend would reach for
+            └ renders markup identical to the declared reply for: 429, which the dormant rate-limit notice would key off
+            └ renders markup identical to the declared reply for: 500
+            └ renders markup identical to the declared reply for: 503
+            └ renders the same acknowledgement whatever address was typed
+  KILLED    own            TR27 CONTROL a behaviourally inert timer, which only the source scan can see  (3 failed of 2133, exit 1)
+            └ in: ['src/auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx', 'src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ reads no part of the response anywhere in its source
+  KILLED    own            TR28 CANARY the acknowledgement renders nothing at all  (19 failed of 2133, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ acknowledges IN PLACE: no navigation, and the path is unchanged afterwards
+            └ shows the acknowledgement and removes the form
+            └ acknowledges on a non-200 resolve too, because the status is never consulted
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ renders literal English for all seven keys, and no untranslated key
+            └ renders nothing the server sent, even when the server sends a sentence
+            └ renders markup identical to the declared reply for: 200 with the declared JSON body
+            └ renders markup identical to the declared reply for: 200 with a DIFFERENT message, the field the contract makes required
+            └ renders markup identical to the declared reply for: 200 with no body at all
+            └ renders markup identical to the declared reply for: 200 with an empty-string body
+            └ renders markup identical to the declared reply for: 200 with an HTML body, as an edge error page sends
+            └ renders markup identical to the declared reply for: 200 with a plain-text body
+            └ renders markup identical to the declared reply for: 200 with JSON truncated mid-document
+            └ renders markup identical to the declared reply for: 204 with no content
+            └ renders markup identical to the declared reply for: 400
+            └ renders markup identical to the declared reply for: 404, the status an enumerating backend would reach for
+            └ renders markup identical to the declared reply for: 429, which the dormant rate-limit notice would key off
+            └ renders markup identical to the declared reply for: 500
+            └ renders markup identical to the declared reply for: 503
+
+regressions: 4/4 killed
+canaries:    ['TR28'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
+survivors:   none
+broken:      none
+
+--- expectation vs outcome ---
+  TR24   expected own           got KILLED/own       as expected
+  TR25   expected own           got KILLED/own       as expected
+  TR26   expected own           got KILLED/own       as expected
+  TR27   expected own           got KILLED/own       as expected
+  TR28   expected own           got KILLED/own       as expected
+
+disagreements: none

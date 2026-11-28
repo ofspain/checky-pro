@@ -554,13 +554,21 @@ describe('every word comes from the catalogue and none from the server (AC9)', (
     const source = await read('features/account/ResendVerificationScreen.tsx');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
 
-    // TASK 51 ADDED THE TWO TIMER PATTERNS, and L4's fourth clause is why: it requires "copy, redirects,
-    // styling, and TIMING" to be identical, and `agents.md:44` narrows that to "the SPA's own rendering
-    // only" - which is exactly what a timer in this file would be. Until this task the clause had NO
-    // instrument here. Task 51's phase 1 claimed one already existed and that was false; the scan it was
-    // describing is task 47's, for a different screen. The patterns are cheap and the clause is now held.
+    // L4'S TIMING CLAUSE IS NOT HELD HERE, AND IT DOES NOT NEED TO BE. Task 51 added `/setTimeout/` and
+    // `/setInterval/` to this list and then took them out again, because the clause is already held
+    // TREE-WIDE and better: `auth/identityErrorsIndistinguishableAcrossAccountStates.test.tsx` owns
+    // 'finds no timer outside the three permitted modules' and 'the permitted rows describe exactly the
+    // timers that exist, with no slack' - a scan over every module with an allow-list that is itself
+    // pinned, where this would have been two patterns over one file.
+    //
+    // The route to that fact is worth keeping, because it was two wrong claims deep. Phase 1 said a scan
+    // already forbade timers here and named no file; phase 4 "corrected" it to say the clause had NO
+    // instrument at all. Both were wrong, and the harness is what found it: a behaviourally inert timer
+    // killed three cases in TWO files, and the second file was one nothing in this task had mentioned.
+    // T173's rule applies - decline the duplicate, but name the owner by its exact assertion so a rename
+    // breaks a test.
     for (const forbidden of [/\bresponse\b/, /\bdata\b/, /\berror\b/, /\.ok\b/, /\.status\b/, /statusText/,
-      /\.json\s*\(/, /\.text\s*\(/, /\.message\b/, /setTimeout/, /setInterval/]) {
+      /\.json\s*\(/, /\.text\s*\(/, /\.message\b/]) {
       expect(code, `the screen reads the response (${String(forbidden)})`).not.toMatch(forbidden);
     }
 
