@@ -50,14 +50,19 @@ export const REGISTER_SENT_PATH = 'register/sent';
  * referred to by name from more than one place. */
 export const VERIFY_PATH = 'verify';
 
-/** Where the resend-verification form lives (R5, tasks 50/51). **THIS TASK ADDS THE CONSTANT AND NOT THE
- * ELEMENT**, which is the reverse of how the five above arrived: each of them was promoted when its own task
- * attached a screen. Task 49 promotes this one because R4's uniform failure carries a resend action, so the
- * spelling is now referred to by name from more than one place - the second half of `VERIFY_PATH`'s own
- * rationale, and the house rule the only other link in the bundle already follows (`SignedOutScreen` links
- * through `SIGN_IN_PATH`, never a literal). The path stays element-less until task 50, so the link really
- * does land on a blank document today; that is a known interim state, recorded at the phase 4 gate, and the
- * alternative was deleting a requirement because its destination was not built yet. */
+/** Where the resend-verification form lives (R5, tasks 50/51).
+ *
+ * **PROMOTED BY TASK 49 WITHOUT AN ELEMENT, AND ATTACHED BY TASK 50** - the reverse of how the five above
+ * arrived, each of them promoted by the task that attached its screen. Task 49 needed the spelling by name
+ * before the screen existed, because R4's uniform failure carries a resend action: the second half of
+ * `VERIFY_PATH`'s own rationale, and the house rule the only other link in the bundle already follows
+ * (`SignedOutScreen` links through `SIGN_IN_PATH`, never a literal).
+ *
+ * This paragraph used to end "the path stays element-less until task 50, so the link really does land on a
+ * blank document today; that is a known interim state, recorded at the phase 4 gate". **That is now false,
+ * and it was falsified by an edit to this file** - task 50 attached the element forty lines below. It is
+ * rewritten rather than deleted because the interim state is the reason this constant reads the way it does,
+ * and because task 49's handoff case existed precisely to make someone come back here. */
 export const RESEND_VERIFICATION_PATH = 'resend-verification';
 
 /** Where SAS returns the browser after the end-session call (R19, task 36). Published in task 37, which is why
@@ -125,6 +130,10 @@ export const appRoutes: RouteObject[] = [
         // arrives from their inbox with a one-time token in the query string, which is why this screen reads
         // a search parameter and `RegisterSentScreen` is forbidden to.
         if (path === VERIFY_PATH) return { path, element: <VerifyScreen /> };
+        // TASK 50 - the resend form, the seventh, and the only one of them whose PATH was already public and
+        // already linked to before anything rendered on it. Task 49 promoted the constant above and
+        // deliberately attached nothing, so for one task R4's resend action pointed at a blank document; this
+        // line is what task 49's handoff case was written to force a reader back to.
         if (path === RESEND_VERIFICATION_PATH)
           return { path, element: <ResendVerificationScreen /> };
         return { path };
