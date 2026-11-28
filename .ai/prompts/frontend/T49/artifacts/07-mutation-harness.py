@@ -70,6 +70,18 @@ THE ROWS:
   TR20  UNFALSIFIABLE useEffect -> useLayoutEffect for focus - no observable difference, inherited
                                             from task 48. A KILL here would mean a case had started
                                             pinning the hook.
+
+PHASE 10 ADDED THREE ROWS.
+
+  TR21  the token carried into the resend link - AC10 covers the token in rendered TEXT; nothing covered it
+                                            in a NAVIGABLE URL, which is worse: browser history,
+                                            autocomplete, and the Referer of the next page load.
+  TR22  the tokenless branch moved above the guard - THE "FIX" FOR THE PINNED LIMIT, which the limit case
+                                            must refuse. It closes the in-flight-then-tokenless corner and
+                                            makes Back after a SUCCESSFUL verification say "not valid".
+  TR23  an element attached to resend-verification - what task 50 will do, in miniature. If this SURVIVES,
+                                            the handoff case cannot see task 50 landing, which is the only
+                                            reason that case exists.
 """
 
 import os
@@ -134,6 +146,13 @@ REGION_BLOCK = """      <StatusRegion>
 LINK_BLOCK = """      {status === 'failure' ? (
         <TextLink to={`/${RESEND_VERIFICATION_PATH}`}>{t('verify.failureAction')}</TextLink>
       ) : null}"""
+GUARD_THEN_TOKEN = """    if (handled.current) return;
+    const token = params.get('token');
+    if (token === null || token === '') {
+      setStatus('failure');
+      return;
+    }"""
+ATTACH_VERIFY = "        if (path === VERIFY_PATH) return { path, element: <VerifyScreen /> };"
 CATALOGUE_MESSAGE = "    failureMessage: 'This verification link is not valid.',"
 PATH_CONST = "export const RESEND_VERIFICATION_PATH = 'resend-verification';"
 
@@ -224,6 +243,29 @@ MUTANTS = [
      "        const sink = console;\n"
      "        if (!response.ok) sink.table({ token });\n"
      "        setStatus(response.ok ? 'success' : 'failure');", "own"),
+
+    # --- PHASE 10's rows ------------------------------------------------------------------------------
+    ("TR21 the token is carried into the resend link, where it enters browser history",
+     SCREEN, "<TextLink to={`/${RESEND_VERIFICATION_PATH}`}>",
+     "<TextLink to={`/${RESEND_VERIFICATION_PATH}?token=${params.get('token') ?? ''}`}>", "own"),
+    # THE "FIX" FOR THE PINNED LIMIT, which the limit case must refuse. Moving the tokenless branch above
+    # the one-request guard closes the in-flight-then-tokenless corner - and makes a Back navigation after a
+    # SUCCESSFUL verification display "this link is not valid", which is worse. A row that SHOULD die.
+    ("TR22 the tokenless branch is moved above the one-request guard",
+     SCREEN, GUARD_THEN_TOKEN,
+     """    const token = params.get('token');
+    if (token === null || token === '') {
+      setStatus('failure');
+      return;
+    }
+    if (handled.current) return;""", "own"),
+    # PROVES THE HANDOFF INSTRUMENT WORKS. This is what task 50 will do, in miniature: give
+    # `resend-verification` an element. If this row survives, the handoff case cannot see task 50 landing,
+    # which is the whole reason it exists.
+    ("TR23 an element is attached to resend-verification, as task 50 will",
+     ROUTES, ATTACH_VERIFY,
+     "        if (path === VERIFY_PATH) return { path, element: <VerifyScreen /> };\n"
+     "        if (path === RESEND_VERIFICATION_PATH) return { path, element: <VerifyScreen /> };", "own"),
 
     # --- declared to survive, and the row that gives it meaning --------------------------------------
     ("TR17 the path constant is replaced by the identical bare literal (DECLARED: survives)",

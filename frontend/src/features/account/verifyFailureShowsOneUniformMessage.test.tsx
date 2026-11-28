@@ -498,6 +498,95 @@ describe('AC9 one public call, and the body is never read', () => {
 });
 
 // ==========================================================================================================
+// PHASE 10 — the handoff, the credential in a navigable URL, and one limit
+// ==========================================================================================================
+
+describe('phase 10: what happens next, and what this screen does not do', () => {
+  it('HANDOFF TO TASK 50 - the resend target renders NOTHING today, so this case MUST FAIL then', async () => {
+    // THE INSTRUMENT PHASE 7 FOUND MISSING (F5), AND KIMI CONFIRMED (I4). R4's action is live and its
+    // destination is element-less until task 50, which the owner accepted at the phase 4 gate as a known
+    // interim state. Nothing in the repository would have failed when that element landed, so nothing would
+    // have prompted anyone to re-check that this screen's link still goes somewhere sensible.
+    //
+    // **WRITTEN AS A POSITIVE CLAIM THAT INVERTS, NOT AS A SAMENESS**, because phase 5 measured why that
+    // matters: task 48's `PINS A LIMIT` case was labelled a handoff and did NOT fail when this task landed,
+    // since its assertion was that two arms were identical and they stayed identical. What caught this task
+    // was two unlabelled cases asserting an EQUALITY against the full rendered text.
+    //
+    // WHOEVER CLOSES TASK 50: this failing is the point. Replace it with an assertion that the resend form
+    // renders, and check that `verify.failureAction`'s wording still describes what the visitor will find.
+    const container = document.createElement('div');
+    document.body.append(container);
+    const resendRouter = createMemoryRouter(appRoutes, {
+      basename: APP_BASENAME,
+      initialEntries: [`${APP_BASENAME}/${RESEND_VERIFICATION_PATH}`],
+    });
+    router = resendRouter;
+    const root = createRoot(container);
+    mounted = { root, container };
+    await act(async () => {
+      root.render(
+        <I18nextProvider i18n={createI18n()}>
+          <RouterProvider router={resendRouter} />
+        </I18nextProvider>,
+      );
+    });
+
+    // The path RESOLVES - it is a declared public route - and renders no element, so the visitor who follows
+    // the resend link today gets a blank document. Both halves are asserted: without the first, a typo in
+    // the constant would make this pass for the wrong reason.
+    expect(resendRouter.state.location.pathname, 'the resend path no longer resolves at all')
+      .toBe(`${APP_BASENAME}/${RESEND_VERIFICATION_PATH}`);
+    expect(container.innerHTML,
+      'the resend target renders something now - task 50 has landed, so re-check this screen\'s link')
+      .toBe('');
+  });
+
+  it('never puts the token in the resend link, where it would enter browser history', async () => {
+    installTransport(400);
+
+    const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+    const href = container.querySelector('a')!.getAttribute('href') ?? '';
+
+    // THE "HELPFUL" EDIT THIS FORBIDS is carrying the token over so the resend form can prefill something.
+    // A token in a link the visitor CLICKS is worse than one in a link they arrived on: it enters browser
+    // history, it is offered by autocomplete afterwards, and it goes in the Referer header of whatever the
+    // next page loads. AC10 covers the token in rendered TEXT; this covers it in a navigable URL, which no
+    // other case looks at.
+    expect(href, 'the resend link carries the verification token').not.toContain(TOKEN);
+    expect(href, 'the resend link carries a query string, and the only thing here to put in one is the token')
+      .not.toContain('?');
+  });
+
+  it('PINS A LIMIT - an in-flight token replaced by a tokenless URL leaves the heading alone', async () => {
+    // MEASURED, NOT ASSUMED, and recorded as a limit rather than fixed. Arrive with a token, then navigate
+    // to the same route WITHOUT one while the request is still in flight: the one-request guard is already
+    // latched, so the effect returns early and `status` stays `'idle'` - a heading and empty space, which is
+    // the exact defect this task exists to remove, surviving in a corner.
+    //
+    // **NOT REACHABLE IN THE PRODUCT TODAY**: nothing in the SPA navigates to `/app/verify`, and every real
+    // arrival is a fresh page load from an email, so `handled` is false. Only in-app navigation or a history
+    // move can produce this.
+    //
+    // **THE FIX WAS CONSIDERED AND REJECTED.** Moving the tokenless branch ABOVE the `handled` check would
+    // close it - that branch sends no request, so the guard does not need to cover it - but it would also
+    // mean a Back navigation after a SUCCESSFUL verification displays "This verification link is not valid",
+    // which is worse than a stale heading. So the guard keeps its position and this case documents the cost.
+    // If anyone closes this, the assertion below must fail first.
+    installNeverAnswering();
+    const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+    expect(container.textContent, 'the arrival did not reach the in-flight state').toBe(en.verify.heading);
+
+    await act(async () => { await router?.navigate(`/${VERIFY_PATH}`); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(container.textContent,
+      'the tokenless URL now shows the uniform failure - the limit is closed, so delete this case')
+      .toBe(en.verify.heading);
+  });
+});
+
+// ==========================================================================================================
 // AC10 — the token is a credential, and the failure state is new DOM
 // ==========================================================================================================
 
