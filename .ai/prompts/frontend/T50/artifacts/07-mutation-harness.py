@@ -111,6 +111,14 @@ HEADING_BLOCK = """      <Heading ref={headingRef}>
 ACK_BRANCH = """      {acknowledged ? (
         <Text>{t('resend.acknowledgedText')}</Text>
       ) : ("""
+FULL_BRANCH = """      {acknowledged ? (
+        <Text>{t('resend.acknowledgedText')}</Text>
+      ) : (
+        <Form onSubmit={submit}>
+          <EmailField label={t('resend.emailLabel')} value={email} onChange={setEmail} />
+          <SubmitButton>{t('resend.submit')}</SubmitButton>
+        </Form>
+      )}"""
 REGION = """      <StatusRegion>
         {status === 'submitting' ? t('resend.submitting') : null}
         {status === 'unsent' ? t('resend.unsent') : null}
@@ -156,12 +164,16 @@ MUTANTS = [
     ("TR08 the focus effect fires on arrival too, stealing focus from the form",
      SCREEN, "    if (status === 'acknowledged') headingRef.current?.focus();",
      "    headingRef.current?.focus();", "own"),
+    # ANCHORED ON THE WHOLE TERNARY. The first version replaced only its opening and left
+    # `{true ? ( <Form/> )}` behind - a ternary with no alternative - so A FILE DID NOT LOAD and 1506
+    # tests never ran. T48's lesson, met twice in this one harness: a JSX mutant must leave valid JSX.
     ("TR09 the form stays mounted after the acknowledgement, inviting a second send",
-     SCREEN, ACK_BRANCH,
-     """      {acknowledged ? (
-        <Text>{t('resend.acknowledgedText')}</Text>
-      ) : null}
-      {true ? (""", "own"),
+     SCREEN, FULL_BRANCH,
+     """      {acknowledged ? <Text>{t('resend.acknowledgedText')}</Text> : null}
+      <Form onSubmit={submit}>
+        <EmailField label={t('resend.emailLabel')} value={email} onChange={setEmail} />
+        <SubmitButton>{t('resend.submit')}</SubmitButton>
+      </Form>""", "own"),
     ("TR10 the frozen design's SECOND Heading is restored, giving the screen two h1 (D-T50-2)",
      SCREEN, ACK_BRANCH,
      """      {acknowledged ? (
@@ -195,7 +207,7 @@ MUTANTS = [
      "        if (path === 'never-matches-anything')\n"
      "          return { path, element: <ResendVerificationScreen /> };", "own"),
     ("TR16 the attached-screens handoff list loses the entry",
-     ATTACHED, "  'resend-verification',\n  'signed-out',", "  'signed-out',", "own"),
+     ATTACHED, "  'resend-verification',\n  'signed-out',", "  'signed-out',", "inherited"),
     ("TR17 the credential table row this task added is deleted",
      CREDENTIALS, "    file: 'features/account/ResendVerificationScreen.tsx',",
      "    file: 'features/account/ResendVerificationScreenRENAMED.tsx',", "own"),
@@ -210,7 +222,7 @@ MUTANTS = [
      SCREEN, ("import { useEffect, useRef, useState, type ReactElement } from 'react';",
               "  useEffect(() => {"),
      ("import { useLayoutEffect, useRef, useState, type ReactElement } from 'react';",
-      "  useLayoutEffect(() => {"), "own"),
+      "  useLayoutEffect(() => {"), "unfalsifiable"),
 ]
 
 
