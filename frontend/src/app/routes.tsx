@@ -14,6 +14,7 @@ import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
 import { RegisterScreen } from '../features/account/RegisterScreen';
 import { RegisterSentScreen } from '../features/account/RegisterSentScreen';
+import { ResendVerificationScreen } from '../features/account/ResendVerificationScreen';
 import { VerifyScreen } from '../features/account/VerifyScreen';
 import { AuthenticatedLayout } from './AuthenticatedLayout';
 import { HomeScreen } from './HomeScreen';
@@ -124,6 +125,8 @@ export const appRoutes: RouteObject[] = [
         // arrives from their inbox with a one-time token in the query string, which is why this screen reads
         // a search parameter and `RegisterSentScreen` is forbidden to.
         if (path === VERIFY_PATH) return { path, element: <VerifyScreen /> };
+        if (path === RESEND_VERIFICATION_PATH)
+          return { path, element: <ResendVerificationScreen /> };
         return { path };
       }),
       // TASK 40 - the auth gate (R28's first clause). ONE pathless layout route decides for all eleven, so

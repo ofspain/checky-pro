@@ -33,8 +33,19 @@ import { en } from '../i18n/catalogue';
 import { AuthenticatedLayout } from './AuthenticatedLayout';
 import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
-import { APP_BASENAME, AUTHENTICATED_ROUTE_PATHS, HOME_PATH, PUBLIC_ROUTE_PATHS, REGISTER_PATH,
-  REGISTER_SENT_PATH, SIGNED_OUT_PATH, SIGN_IN_PATH, appRoutes, VERIFY_PATH} from './routes';
+import {
+  APP_BASENAME,
+  AUTHENTICATED_ROUTE_PATHS,
+  HOME_PATH,
+  PUBLIC_ROUTE_PATHS,
+  REGISTER_PATH,
+  REGISTER_SENT_PATH,
+  RESEND_VERIFICATION_PATH,
+  SIGNED_OUT_PATH,
+  SIGN_IN_PATH,
+  VERIFY_PATH,
+  appRoutes,
+} from './routes';
 
 /** The words, spelled once here so a silent catalogue edit fails rather than passes. */
 const COPY = {
@@ -707,8 +718,8 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
   });
 
-  describe('AC9 exactly seven screens are attached', () => {
-    it('attaches an element to sign-in, callback, register, register/sent, verify, signed-out and home, and to nothing else', () => {
+  describe('AC9 exactly eight screens are attached', () => {
+    it('attaches an element to sign-in, callback, register, register/sent, verify, resend-verification, signed-out and home, and to nothing else', () => {
       // A deliberate COUNT PIN, and it will fail the day the next screen is attached - which is the handoff
       // working, exactly as task 16's did for this task. Whoever attaches the next one extends this list and
       // task 16's SCREENS_ATTACHED_SO_FAR together.
@@ -746,9 +757,16 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       // reads the public branch in `PUBLIC_ROUTE_PATHS` order, and `register/sent` is its fourth entry. It
       // had been declared there since task 16 and carried no element until now, which is exactly the state
       // this pin exists to make visible: the path was always in the set, and only today is it a screen.
+      // GROWN BY TASK 50, the fourth time: six screens became seven public ones plus home. The entry sits
+      // fifth-from-last rather than appended, because `walk` reads the public branch in
+      // `PUBLIC_ROUTE_PATHS` order and `resend-verification` is its sixth entry. Its previous state is the
+      // one this pin exists to make visible, and the clearest case of it yet: task 49 put the path's
+      // CONSTANT in the set and deliberately attached no element, so for a whole task this list named a
+      // declared public route that rendered a blank document.
       const attached = appRoutes.flatMap(walk);
       expect(attached).toEqual([
-        'sign-in', 'callback', REGISTER_PATH, REGISTER_SENT_PATH, VERIFY_PATH, SIGNED_OUT_PATH, HOME_PATH, '*',
+        'sign-in', 'callback', REGISTER_PATH, REGISTER_SENT_PATH, VERIFY_PATH, RESEND_VERIFICATION_PATH,
+        SIGNED_OUT_PATH, HOME_PATH, '*',
       ]);
 
       // CONTROL, the one task 16's case has and this one was missing: `walk` must COUNT, rather than return a

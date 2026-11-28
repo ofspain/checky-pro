@@ -304,6 +304,16 @@ const PERMITTED_CREDENTIAL_HITS: ReadonlyArray<{ file: string; what: string; cou
       + 'using the primitive is counted too. That is the better behaviour and is left alone - every place a '
       + 'form is mounted has to be named here, not only the place one is declared.',
   },
+  {
+    file: 'features/account/ResendVerificationScreen.tsx',
+    what: 'a form element',
+    count: 1,
+    why: 'TASK 50. The second `<Form>` RENDER SITE, for the same reason as the row above it: the pattern is '
+      + 'case-insensitive, so mounting the primitive counts. R5 collects an EMAIL and nothing else - there '
+      + 'is no password field, no one-time-code input and no credential of any kind on this screen, and the '
+      + 'address is an identifier the server already treats as public (`security: []`). L2 is untouched '
+      + 'because nothing here is a login step: the request creates no session and presents no bearer.',
+  },
 ];
 
 function unexplainedCredentialHits(hits: ReadonlyArray<{ file: string; what: string }>): string[] {
@@ -883,7 +893,10 @@ describe('no credential input and no second-factor logic ship in the SPA (AC2, A
       .filter((row) => actual.get(`${row.file}|${row.what}`) !== row.count)
       .map((row) => `${row.file}: expected ${row.count} x ${row.what}, found ${actual.get(`${row.file}|${row.what}`) ?? 0}`);
     expect(stale).toEqual([]);
-    expect(PERMITTED_CREDENTIAL_HITS, 'the credential exception table changed size').toHaveLength(3);
+    // FOUR SINCE TASK 50. The `stale` check above is what makes the new row worth having: it asserts the
+    // row describes a tree that REALLY HAS one form element in that file, so a row added to silence this
+    // scan without the screen existing - or with the wrong count - fails here rather than excusing something.
+    expect(PERMITTED_CREDENTIAL_HITS, 'the credential exception table changed size').toHaveLength(4);
   });
 
   it('excuses no autofill hint and no one-time-code anywhere, which is the half L2 owns', async () => {

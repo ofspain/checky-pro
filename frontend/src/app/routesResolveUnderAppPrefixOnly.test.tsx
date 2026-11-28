@@ -29,6 +29,12 @@ const SCREENS_ATTACHED_SO_FAR = ['sign-in', 'callback',
   // Still additive - but unlike the three entries above it, task 48 DID change a case below: see the
   // transport stub on the emailed-link case, and why the whole-suite run could not prove it was needed.
   'verify',
+  // TASK 50 - the resend form, and the first entry here that was a DECLARED PUBLIC ROUTE RENDERING NOTHING
+  // for a whole task. Task 49 promoted its path constant and deliberately attached no element, so R4's
+  // resend link landed on a blank document; this list said so by omission and task 49's own handoff case
+  // said so out loud. Sixth, because `resend-verification` is the sixth entry in `PUBLIC_ROUTE_PATHS` and
+  // this list is in ROUTE order - a task-ordered entry would fail while nothing was wrong.
+  'resend-verification',
   'signed-out', // TASK 37 - the signed-out landing. Additive; every case below is task 16's, unchanged.
   // TASK 174 - the home screen, and the FIRST entry here that is not a public route. It goes last because
   // this list is in ROUTE ORDER and the authenticated paths sit after the public ones in the table, under

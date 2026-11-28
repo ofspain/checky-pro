@@ -502,19 +502,20 @@ describe('AC9 one public call, and the body is never read', () => {
 // ==========================================================================================================
 
 describe('phase 10: what happens next, and what this screen does not do', () => {
-  it('HANDOFF TO TASK 50 - the resend target renders NOTHING today, so this case MUST FAIL then', async () => {
-    // THE INSTRUMENT PHASE 7 FOUND MISSING (F5), AND KIMI CONFIRMED (I4). R4's action is live and its
-    // destination is element-less until task 50, which the owner accepted at the phase 4 gate as a known
-    // interim state. Nothing in the repository would have failed when that element landed, so nothing would
-    // have prompted anyone to re-check that this screen's link still goes somewhere sensible.
+  it('the resend link lands on a form whose heading is the words the link promised (task 50)', async () => {
+    // **THE HANDOFF FIRED, AND THIS IS WHAT REPLACED IT.** Task 49 wrote this case to assert the resend
+    // target rendered NOTHING, with a failure message telling whoever attached an element to come back here.
+    // Task 50 attached one and the case failed, exactly as designed - the instrument task 49's phase 7 found
+    // missing (F5) and Kimi confirmed (I4), written as a positive claim that INVERTS rather than a sameness,
+    // because task 48's LABELLED handoff case had asserted two arms were identical and stayed green when
+    // task 49 changed both of them.
     //
-    // **WRITTEN AS A POSITIVE CLAIM THAT INVERTS, NOT AS A SAMENESS**, because phase 5 measured why that
-    // matters: task 48's `PINS A LIMIT` case was labelled a handoff and did NOT fail when this task landed,
-    // since its assertion was that two arms were identical and they stayed identical. What caught this task
-    // was two unlabelled cases asserting an EQUALITY against the full rendered text.
-    //
-    // WHOEVER CLOSES TASK 50: this failing is the point. Replace it with an assertion that the resend form
-    // renders, and check that `verify.failureAction`'s wording still describes what the visitor will find.
+    // **IT IS NOT REPLACED BY "THE FORM RENDERS", WHICH WOULD BE THE WEAK VERSION.** What matters about this
+    // link is not that its destination exists but that the destination is the thing the link SAID it was.
+    // `verify.failureAction` is the only promise R4 makes to a visitor whose link failed, and it is kept by
+    // a screen in another feature whose words live in another catalogue group. So the assertion below pins
+    // the link's label to the destination's heading: change either sentence alone and this fails, which is
+    // the only way anyone editing one of them learns about the other.
     const container = document.createElement('div');
     document.body.append(container);
     const resendRouter = createMemoryRouter(appRoutes, {
@@ -532,14 +533,21 @@ describe('phase 10: what happens next, and what this screen does not do', () => 
       );
     });
 
-    // The path RESOLVES - it is a declared public route - and renders no element, so the visitor who follows
-    // the resend link today gets a blank document. Both halves are asserted: without the first, a typo in
-    // the constant would make this pass for the wrong reason.
+    // The path resolves, asserted first: without it a typo in the constant would make the rest pass for the
+    // wrong reason, which is the hole the version of this case written in task 49 was careful to close.
     expect(resendRouter.state.location.pathname, 'the resend path no longer resolves at all')
       .toBe(`${APP_BASENAME}/${RESEND_VERIFICATION_PATH}`);
-    expect(container.innerHTML,
-      'the resend target renders something now - task 50 has landed, so re-check this screen\'s link')
-      .toBe('');
+
+    // It renders a form that asks for an email, so the action R4 offers can actually be taken.
+    expect(container.querySelector('form'), 'the resend destination renders no form').not.toBeNull();
+    expect(container.querySelector('input[type="email"]'),
+      'the resend destination renders no email field, so the action R4 promises cannot be taken').not.toBeNull();
+
+    // AND ITS HEADING IS THE LINK'S OWN WORDS. Two catalogue groups, two features, one sentence - held here
+    // rather than by either screen, because neither screen can see the other.
+    expect(container.querySelector('h1')?.textContent,
+      'the resend screen no longer says what the link on THIS screen promised it would')
+      .toBe(en.verify.failureAction);
   });
 
   it('never puts the token in the resend link, where it would enter browser history', async () => {

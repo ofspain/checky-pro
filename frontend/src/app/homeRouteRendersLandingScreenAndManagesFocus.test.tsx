@@ -348,8 +348,11 @@ describe('AC7 the instruments this task was obliged to grow', () => {
     // this task's only interest in it - that HomeScreen.tsx is PINNED somewhere the union counts - so the
     // claim is kept and the count follows the two lists rather than being frozen at a figure task 174
     // happened to see.
-    expect(source, 'the union pin no longer says twenty-two, so a render site or a primitive is unpinned')
-      .toMatch(/\.toBe\(23\)/);
+    // GROWN AGAIN BY TASK 50, which added one render site and no primitive, so the union moved by one to 24
+    // - and this is one of FOUR files holding that number, which is why a task bumping it in only some of
+    // them leaves the rest failing rather than silently stale. That is the pin working.
+    expect(source, 'the union pin no longer says twenty-four, so a render site or a primitive is unpinned')
+      .toMatch(/\.toBe\(24\)/);
   });
 
   it('names home in the attached-element pin, which is read from the route table itself', () => {

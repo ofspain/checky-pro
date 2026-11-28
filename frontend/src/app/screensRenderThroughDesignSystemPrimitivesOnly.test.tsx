@@ -106,6 +106,12 @@ const RENDER_SITES = [
   // TASK 48 - the verification screen, the tenth render site. The first whose visitor arrives from an EMAIL
   // rather than from a link inside the application, which is why it is the first to read a query parameter.
   'features/account/VerifyScreen.tsx',
+  // TASK 50 - the resend form, the eleventh render site and the first whose PATH existed, publicly and
+  // declared, for a whole task before anything rendered on it. It is also the second file in the bundle to
+  // mount a `<Form>`, which is why task 50 had to widen a pin outside this suite entirely: the credential
+  // scan in `auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback` matches case-insensitively, so a
+  // screen rendering the Form PRIMITIVE counts as a form element there.
+  'features/account/ResendVerificationScreen.tsx',
 ] as const;
 
 /**
@@ -272,7 +278,9 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // plan predicted the catalogue step alone would leave the suite green, reasoning about the pin that
     // checks every key is RENDERED. The key-set pin below is set equality against the catalogue itself, so
     // it fires the moment a key exists, rendered or not - two steps earlier than the plan expected.
-    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(10);
+    // TASK 50 moved it to eleven, and the four lines above went on being right: the catalogue step alone
+    // fired the key-set pin two steps before this task's plan expected a red suite, exactly as task 48 said.
+    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(11);
     expect(PRIMITIVES, 'the primitive list changed size without the brief changing').toHaveLength(13);
     expect(new Set(PRIMITIVES).size).toBe(PRIMITIVES.length);
     expect(PRIMITIVES, 'the primitive list is not sorted, so a duplicate is easy to miss')
@@ -310,8 +318,15 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // lowercase tag of its own, so it joins the DECLARED union without joining the files that bear a tag.
     // That is the second floor of I7's trap holding exactly as the comment above predicted - the two numbers
     // are allowed to move apart, and this one moved alone.
+    //
+    // TWENTY-FOUR SINCE TASK 50, AND THE SWEEP STILL FINDS TWELVE - the third time this has happened and the
+    // second in a row, so it is the pattern rather than an exception. `ResendVerificationScreen` composes
+    // primitives only, so it is a declared render site that bears no tag. The name of this case still says
+    // twelve, and that is not stale: the twelve is a statement about the SWEEP, and only the union below
+    // counts declarations. A task that bumped both numbers together would have broken the distinction the
+    // comment above exists to protect.
     expect(new Set([...PRIMITIVE_FILES, ...RENDER_SITES]).size,
-      'the union of the two pinned lists is no longer twenty-three').toBe(23);
+      'the union of the two pinned lists is no longer twenty-four').toBe(24);
     // and every file the sweep found is in one of them, which is the cross-check §6e(2) actually asks for.
     for (const file of bearing) {
       expect([...PRIMITIVE_FILES, ...RENDER_SITES], `${file} renders an element and is in neither list`)
@@ -989,6 +1004,17 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
       // and the instrument was not, so the keys changed shape rather than the scan (D-T49-4).
       'verify.failureAction',
       'verify.failureMessage',
+      // TASK 50's seven (R5). This pin is the reason the task touched this file at all: it is a SET EQUALITY
+      // against the catalogue, so any new key fires it and the suite cannot be green otherwise. Task 49
+      // recorded the same thing as D-T49-3 after its own freeze had named this file untouchable, having
+      // measured only the render-site pins and been blind to this one in the same file.
+      'resend.acknowledgedHeading',
+      'resend.acknowledgedText',
+      'resend.emailLabel',
+      'resend.heading',
+      'resend.submit',
+      'resend.submitting',
+      'resend.unsent',
     ].sort());
   });
 

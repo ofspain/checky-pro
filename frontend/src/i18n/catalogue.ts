@@ -180,6 +180,26 @@ export const en = {
     failureMessage: 'This verification link is not valid.',
     failureAction: 'Resend verification email',
   },
+  // R5, TASKS 50/51. Flat, like every group here: task 49 measured that a nested group CRASHES the copy scan
+  // in `screensRenderThroughDesignSystemPrimitivesOnly`, which flattens the catalogue exactly one level and
+  // then calls `.replace` on each value (D-T49-4).
+  //
+  // `acknowledgedHeading` IS THE SAME SENTENCE AS `registerSent.heading`, AND IS DELIBERATELY ITS OWN KEY.
+  // Measured: no pin in this repository forbids two keys sharing a sentence. Task 47's precedent for reusing
+  // one - `register.success`, borrowed by `RegisterSentScreen` - held only because the catalogue itself had
+  // RESERVED those words for that screen; nothing reserves anything for resend. Coupling the two would mean
+  // an owner editing registration's wording silently changed this screen too.
+  resend: {
+    heading: 'Resend verification email',
+    emailLabel: 'Email address',
+    submit: 'Send link',
+    submitting: 'Sending…',
+    acknowledgedHeading: 'Check your email',
+    acknowledgedText: 'If your email is registered, a verification link has been sent.',
+    // D-T50-1, THE OWNER'S REVERSAL. Shown only when the request never reached the server, never for an
+    // outcome the server reported. It says nothing about the address, because there is nothing it could know.
+    unsent: 'We could not send that just now. Try again.',
+  },
   shell: {
     // Not invented either: the mirror of `signedOut.action`'s 'Sign in', so the two directions of the same
     // journey are spelled the same way. Not 'Log out' - nothing in this catalogue says 'log'.
