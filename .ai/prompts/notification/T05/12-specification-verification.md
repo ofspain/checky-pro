@@ -8,7 +8,7 @@
 | **Task** | T05 — Contact projection (Q1/O1) |
 | **Spec section** | Consumers & idempotency |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/11-test-review.md` |
+| **Consumes** | every prior artifact under `artifacts/`, plus the `spec/notification-service/` package |
 | **Produces** | `artifacts/12-specification-verification.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/notification-service/tasks.md`, task 5):**

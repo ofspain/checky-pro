@@ -8,7 +8,7 @@
 | **Task** | T22 — Scope-boundary test for R19 |
 | **Spec section** | Phase 4 — Evidence integrity analysis (R15-R19) — no crypto-service dependency |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/05-implementation-plan.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 22):**

@@ -8,7 +8,7 @@
 | **Task** | T09 — Audit wiring for upload |
 | **Spec section** | Phase 1 — Evidence upload & storage (R1-R5) — no crypto-service dependency |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/11-test-review.md` |
+| **Consumes** | every prior artifact under `artifacts/`, plus the `spec/intelligence-service/` package |
 | **Produces** | `artifacts/12-specification-verification.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 9):**

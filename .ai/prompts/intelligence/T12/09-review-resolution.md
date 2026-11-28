@@ -8,7 +8,7 @@
 | **Task** | T12 — Polling scheduler |
 | **Spec section** | Phase 2 — Automatic evidence collection (R6-R10) — **blocked on `spec/crypto-service` task 30** |
 | **Model** | Human Approval |
-| **Consumes** | `artifacts/08-independent-review.md` |
+| **Consumes** | `artifacts/07-self-review.md`, `artifacts/08-independent-review.md` |
 | **Produces** | `artifacts/09-review-resolution.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 12):**

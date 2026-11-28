@@ -8,7 +8,7 @@
 | **Task** | T24 — Sidecar-as-provider test |
 | **Spec section** | Contracts, sidecar contract, hardening |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/10-test-generation.md` |
+| **Consumes** | `artifacts/09-review-resolution.md`, `artifacts/10-test-generation.md` |
 | **Produces** | `artifacts/11-test-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/crypto-service/tasks.md`, task 24):**

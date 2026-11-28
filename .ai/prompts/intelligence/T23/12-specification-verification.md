@@ -8,7 +8,7 @@
 | **Task** | T23 — `EvidenceGraph` creation/update |
 | **Spec section** | Phase 5 — Multi-evidence correlation (R20-R23) — depends on Phases 1-4's own data existing |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/11-test-review.md` |
+| **Consumes** | every prior artifact under `artifacts/`, plus the `spec/intelligence-service/` package |
 | **Produces** | `artifacts/12-specification-verification.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 23):**

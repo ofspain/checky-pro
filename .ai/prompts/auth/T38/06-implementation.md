@@ -8,7 +8,7 @@
 | **Task** | T38 — Review against gap analysis defect catalogue |
 | **Spec section** | Final verification |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/05-implementation-plan.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/auth-service/tasks.md`, task 38):**

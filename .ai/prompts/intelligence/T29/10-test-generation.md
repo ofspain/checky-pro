@@ -8,7 +8,7 @@
 | **Task** | T29 — Auth/401 sweep |
 | **Spec section** | Phase 6 — Publishing, docs, contract & final hardening |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/09-review-resolution.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/09-review-resolution.md` |
 | **Produces** | `artifacts/10-test-generation.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 29):**

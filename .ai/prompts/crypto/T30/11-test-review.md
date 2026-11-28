@@ -8,7 +8,7 @@
 | **Task** | T30 — On-demand tx-hash lookup endpoint (R29, L16) |
 | **Spec section** | Phase 2 prerequisite (added 2026-10-10, discovered authoring `spec/intelligence-service`) |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/10-test-generation.md` |
+| **Consumes** | `artifacts/09-review-resolution.md`, `artifacts/10-test-generation.md` |
 | **Produces** | `artifacts/11-test-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/crypto-service/tasks.md`, task 30):**

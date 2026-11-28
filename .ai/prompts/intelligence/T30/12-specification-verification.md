@@ -8,7 +8,7 @@
 | **Task** | T30 — ADR + spec status bump |
 | **Spec section** | Phase 6 — Publishing, docs, contract & final hardening |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/11-test-review.md` |
+| **Consumes** | every prior artifact under `artifacts/`, plus the `spec/intelligence-service/` package |
 | **Produces** | `artifacts/12-specification-verification.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 30):**

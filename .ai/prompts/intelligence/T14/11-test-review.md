@@ -8,7 +8,7 @@
 | **Task** | T14 — Audit wiring for polling |
 | **Spec section** | Phase 2 — Automatic evidence collection (R6-R10) — **blocked on `spec/crypto-service` task 30** |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/10-test-generation.md` |
+| **Consumes** | `artifacts/09-review-resolution.md`, `artifacts/10-test-generation.md` |
 | **Produces** | `artifacts/11-test-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 14):**

@@ -48,6 +48,45 @@ PHASES = [
     ("13-pr-preparation.md",           "PR / Commit Preparation",    "Claude Sonnet",  "artifacts/13-pr-preparation.md"),
 ]
 
+# Extra artifacts a phase consumes BEYOND its immediate predecessor, by phase index.
+#
+# DERIVED FROM PRACTICE, NOT INVENTED. Phases 6, 9, 10 and 12 had each been declaring these inputs in
+# their own artifacts already, identically across frontend T47, T48 and T49, because the phase cannot do
+# its job without them: an implementation works from the FROZEN brief and not only from the plan, a review
+# resolution needs the self-review it is resolving as well as the independent one, test generation is aimed
+# at the frozen acceptance criteria, and Phase 12's own body text has always said "Consume all prior
+# artifacts" while its header named one.
+#
+# PHASE 11'S ENTRY IS A DEFECT FIX, not a tidy-up. It was given the Phase 10 manifest ALONE, so it could not
+# see Phase 9, and three consecutive Kimi test reviews (frontend T47 F6, T48 F9, T49 F6) each reported
+# deviations that Phase 9 had ALREADY RATIFIED. That is a false finding caused by the prompt rather than by
+# the reviewer, and it cost a decline-with-evidence every time.
+#
+# A phase's predecessor is always included and never listed here.
+EXTRA_CONSUMES: dict[int, tuple[str, ...]] = {
+    6:  ("artifacts/04-frozen-task-brief.md",),
+    9:  ("artifacts/07-self-review.md",),
+    10: ("artifacts/04-frozen-task-brief.md",),
+    11: ("artifacts/09-review-resolution.md",),
+}
+
+# Phases that genuinely read the whole chain, so naming one predecessor would understate them.
+ALL_PRIOR_CONSUMES = frozenset({12})
+
+
+def consumes_for(i: int, spec_dir: str, compact: bool = False) -> str:
+    """What phase `i` consumes, for the prompt header and the task README - one source so they cannot drift."""
+    if i == 0:
+        return "—" if compact else "— (entry phase)"
+    if i in ALL_PRIOR_CONSUMES:
+        return ("all prior artifacts" if compact
+                else f"every prior artifact under `artifacts/`, plus the `spec/{spec_dir}/` package")
+    refs = sorted({*EXTRA_CONSUMES.get(i, ()), PHASES[i - 1][3]})
+    if compact:
+        return ", ".join(f"`{r.split('/')[-1]}`" for r in refs)
+    return ", ".join(f"`{r}`" for r in refs)
+
+
 MODEL_NOTE = ("Sonnet is the default working model; escalate to Opus/Fable ONLY when a phase needs "
               "architectural reasoning beyond the frozen brief. Kimi 2.7 runs the adversarial review "
               "phases (3, 8, 11). Human Approval gates (4, 9) are decisions, not model runs.")
@@ -298,7 +337,7 @@ def header(svc: dict, task: dict, i: int) -> str:
     contracts = fmt_list(svc["contracts"], "see `design.md` §4c / §6")
     agents = f"`spec/{d}/agents.md` is authoritative — never restate or violate it." if svc["has_agents"] \
         else "no `agents.md` for this service; use `ARCHITECTURE.md` + `docs/`."
-    prevref = f"`{prev}`" if i > 0 else "— (entry phase)"
+    prevref = consumes_for(i, d)
     return (
         f"<!-- MODEL: {model} — Phase {i} ({name}). {MODEL_NOTE} -->\n\n"
         f"# {svc['short']} · T{tid} · Phase {i} — {name}\n\n"
@@ -473,7 +512,10 @@ def body(i: int) -> str:
         13: (
             "Consume the verification (Phase 12) — proceed only if it is **PASS**. Prepare the task for merge. "
             "Produce, in the artifact: **Commit title**, **Commit message** (imperative; end with the "
-            "`Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer), **Files changed**, "
+            "`Co-Authored-By:` trailer naming THE MODEL YOU ARE ACTUALLY RUNNING AS - e.g. "
+            "`Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` - and never a model name you have not "
+            "verified, since a hardcoded one here went stale and three tasks in a row had to decline it), "
+            "**Files changed**, "
             "**Summary**, **Testing performed**, and **Specification references** (task number + the requirement "
             "and LOCKED-decision IDs from the header). No code. Branch off `main`; `main` stays deployable."
         ),
@@ -490,14 +532,15 @@ def render_task_readme(svc: dict, task: dict) -> str:
     d = svc["dir"]
     rows = []
     for i, (fn, name, model, art) in enumerate(PHASES):
-        prev = PHASES[i - 1][3].split("/")[-1] if i > 0 else "—"
         when = "human sign-off" if model == "Human Approval" else "artifact written"
-        rows.append(f"| {i} | [`{fn}`]({fn}) | {name} | {model} | `{prev}` | `{art}` | after {when} |")
+        rows.append(f"| {i} | [`{fn}`]({fn}) | {name} | {model} | {consumes_for(i, d, compact=True)} "
+                    f"| `{art}` | after {when} |")
     table = "\n".join(rows)
     return (
         f"# {svc['short']} · T{tid} — {task['title']}\n\n"
         f"Complete 14-phase prompt workflow for **Task {task['num']}** of the `{d}` spec package.\n"
-        f"Run the phases in order; each consumes the previous phase's artifact and writes exactly one of its own.\n\n"
+        f"Run the phases in order. Each writes exactly one artifact of its own and reads its predecessor's, "
+        f"and four phases read one earlier artifact as well - the Consumes column below is authoritative.\n\n"
         f"**Task (verbatim, `spec/{d}/tasks.md` task {task['num']}):**\n> {task['text']}\n\n"
         f"**Spec section:** {task['section'] or '—'}\n\n"
         f"**Scoped IDs** — requirements: {fmt_scoped(task, 'rids', 'derive in Phase 1', 'none (process step)')} · "
@@ -507,7 +550,8 @@ def render_task_readme(svc: dict, task: dict) -> str:
         f"| # | Prompt | Phase | Responsible agent | Input | Output artifact | When to stop |\n"
         f"|---|---|---|---|---|---|---|\n{table}\n\n"
         f"- **Purpose:** turn task {task['num']} of `{d}` into merged, spec-verified code with a full audit trail.\n"
-        f"- **Inputs:** the `spec/{d}/` package (+ `agents.md`) and, per phase, the prior artifact under `artifacts/`.\n"
+        f"- **Inputs:** the `spec/{d}/` package (+ `agents.md`) and, per phase, the artifacts named in its own "
+        f"**Consumes** header - its predecessor, plus an earlier one where the phase needs it.\n"
         f"- **Outputs:** the 14 artifacts under `artifacts/`, plus the implementation + tests in `services/{svc['short']}/`.\n"
         f"- **Expected final artifact:** `artifacts/13-pr-preparation.md` (a merge-ready commit package), gated on a "
         f"Phase 12 **PASS**.\n"
@@ -568,7 +612,10 @@ review packet. {MODEL_NOTE}
 ## Artifact chain
 
 Each task folder (`.ai/prompts/<service>/T##/`) carries the 14 prompts plus an `artifacts/`
-directory. Phase _n_ reads `artifacts/(n-1)-…` and writes `artifacts/n-…`. The implementation
+directory. Phase _n_ writes `artifacts/n-…` and reads `artifacts/(n-1)-…`, plus any earlier artifact
+named in its **Consumes** header: Phase 6 and Phase 10 also read the frozen brief, Phase 9 also reads the
+self-review, **Phase 11 also reads the review resolution** so a test review cannot report an
+already-ratified deviation as outstanding, and Phase 12 reads the whole chain. The implementation
 (Phase 6) and tests (Phase 10) additionally land in `services/<service>/`. The terminal
 artifact is `artifacts/13-pr-preparation.md`, gated on a Phase 12 **PASS**.
 
@@ -646,7 +693,8 @@ It contains **no application code** and never edits the specs — only the frame
 **New engineer or agent:**
 1. Pick a task. Open `.ai/prompts/<service>/T##/README.md`.
 2. Run the phases `00 → 13` in order, each with the model named in its header comment.
-3. Each phase consumes the previous artifact and writes exactly one new one under `artifacts/`.
+3. Each phase writes exactly one new artifact under `artifacts/` and reads the ones its **Consumes**
+   header names - always its predecessor, and for four phases one earlier artifact too.
 4. Stop at the Human Approval gates (Phases 4 and 9) until a person signs off.
 5. Ship only after Phase 12 returns **PASS**; Phase 13 produces the commit package.
 

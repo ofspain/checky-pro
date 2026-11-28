@@ -8,7 +8,7 @@
 | **Task** | T42 — Authenticated shell |
 | **Spec section** | Phase 1 — Auth & account: routes |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/11-test-review.md` |
+| **Consumes** | every prior artifact under `artifacts/`, plus the `spec/frontend/` package |
 | **Produces** | `artifacts/12-specification-verification.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 42):**

@@ -43,7 +43,10 @@ review packet. Sonnet is the default working model; escalate to Opus/Fable ONLY 
 ## Artifact chain
 
 Each task folder (`.ai/prompts/<service>/T##/`) carries the 14 prompts plus an `artifacts/`
-directory. Phase _n_ reads `artifacts/(n-1)-…` and writes `artifacts/n-…`. The implementation
+directory. Phase _n_ writes `artifacts/n-…` and reads `artifacts/(n-1)-…`, plus any earlier artifact
+named in its **Consumes** header: Phase 6 and Phase 10 also read the frozen brief, Phase 9 also reads the
+self-review, **Phase 11 also reads the review resolution** so a test review cannot report an
+already-ratified deviation as outstanding, and Phase 12 reads the whole chain. The implementation
 (Phase 6) and tests (Phase 10) additionally land in `services/<service>/`. The terminal
 artifact is `artifacts/13-pr-preparation.md`, gated on a Phase 12 **PASS**.
 

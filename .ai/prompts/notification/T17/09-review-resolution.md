@@ -8,7 +8,7 @@
 | **Task** | T17 — End-to-end integration test |
 | **Spec section** | Final verification |
 | **Model** | Human Approval |
-| **Consumes** | `artifacts/08-independent-review.md` |
+| **Consumes** | `artifacts/07-self-review.md`, `artifacts/08-independent-review.md` |
 | **Produces** | `artifacts/09-review-resolution.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/notification-service/tasks.md`, task 17):**

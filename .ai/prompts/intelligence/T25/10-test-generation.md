@@ -8,7 +8,7 @@
 | **Task** | T25 — On-chain-wins response shaping |
 | **Spec section** | Phase 5 — Multi-evidence correlation (R20-R23) — depends on Phases 1-4's own data existing |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/09-review-resolution.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/09-review-resolution.md` |
 | **Produces** | `artifacts/10-test-generation.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 25):**

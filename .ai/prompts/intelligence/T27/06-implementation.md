@@ -8,7 +8,7 @@
 | **Task** | T27 — Outbox-published event |
 | **Spec section** | Phase 6 — Publishing, docs, contract & final hardening |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/05-implementation-plan.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 27):**

@@ -8,7 +8,7 @@
 | **Task** | T08 — Evidence read endpoints |
 | **Spec section** | Phase 1 — Evidence upload & storage (R1-R5) — no crypto-service dependency |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/10-test-generation.md` |
+| **Consumes** | `artifacts/09-review-resolution.md`, `artifacts/10-test-generation.md` |
 | **Produces** | `artifacts/11-test-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 8):**

@@ -8,7 +8,7 @@
 | **Task** | T17 — Receipt issuance — FINALIZED only |
 | **Spec section** | Attestation, receipts, and ledger |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/05-implementation-plan.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/payment-service/tasks.md`, task 17):**

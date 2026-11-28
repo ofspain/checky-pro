@@ -8,7 +8,7 @@
 | **Task** | T135 — Accessibility gate |
 | **Spec section** | Phase 1 — Release gate |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/09-review-resolution.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/09-review-resolution.md` |
 | **Produces** | `artifacts/10-test-generation.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 135):**

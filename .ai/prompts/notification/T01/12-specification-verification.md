@@ -8,7 +8,7 @@
 | **Task** | T01 — Service skeleton & POM |
 | **Spec section** | Foundation |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/11-test-review.md` |
+| **Consumes** | every prior artifact under `artifacts/`, plus the `spec/notification-service/` package |
 | **Produces** | `artifacts/12-specification-verification.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/notification-service/tasks.md`, task 1):**

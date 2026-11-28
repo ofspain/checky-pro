@@ -8,7 +8,7 @@
 | **Task** | T24 — Sidecar-as-provider test |
 | **Spec section** | Contracts, sidecar contract, hardening |
 | **Model** | Human Approval |
-| **Consumes** | `artifacts/08-independent-review.md` |
+| **Consumes** | `artifacts/07-self-review.md`, `artifacts/08-independent-review.md` |
 | **Produces** | `artifacts/09-review-resolution.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/crypto-service/tasks.md`, task 24):**

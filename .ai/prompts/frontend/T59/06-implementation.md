@@ -8,7 +8,7 @@
 | **Task** | T59 — Identical across token states |
 | **Spec section** | Phase 1 — Auth & account: enumeration safety |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/05-implementation-plan.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 59):**

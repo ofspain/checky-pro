@@ -8,7 +8,7 @@
 | **Task** | T16 — Receipt digest (Q5, resolved, design.md O4) |
 | **Spec section** | Attestation, receipts, and ledger |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/09-review-resolution.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/09-review-resolution.md` |
 | **Produces** | `artifacts/10-test-generation.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/payment-service/tasks.md`, task 16):**

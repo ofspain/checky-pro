@@ -8,7 +8,7 @@
 | **Task** | T157 — Smart-contract failure observed |
 | **Spec section** | Phase 3 — Dispute resolution (DEFERRED, see banner above) |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/10-test-generation.md` |
+| **Consumes** | `artifacts/09-review-resolution.md`, `artifacts/10-test-generation.md` |
 | **Produces** | `artifacts/11-test-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 157):**

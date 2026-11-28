@@ -8,7 +8,7 @@
 | **Task** | T149 — Claim status |
 | **Spec section** | Phase 3 — Dispute resolution (DEFERRED, see banner above) |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/09-review-resolution.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/09-review-resolution.md` |
 | **Produces** | `artifacts/10-test-generation.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 149):**

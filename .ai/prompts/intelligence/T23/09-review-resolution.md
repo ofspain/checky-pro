@@ -8,7 +8,7 @@
 | **Task** | T23 — `EvidenceGraph` creation/update |
 | **Spec section** | Phase 5 — Multi-evidence correlation (R20-R23) — depends on Phases 1-4's own data existing |
 | **Model** | Human Approval |
-| **Consumes** | `artifacts/08-independent-review.md` |
+| **Consumes** | `artifacts/07-self-review.md`, `artifacts/08-independent-review.md` |
 | **Produces** | `artifacts/09-review-resolution.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 23):**

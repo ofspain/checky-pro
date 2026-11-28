@@ -8,7 +8,7 @@
 | **Task** | T18 — Response-shape enforcement |
 | **Spec section** | Phase 3 — AI evidence interpretation (R11-R14) — no crypto-service dependency |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/10-test-generation.md` |
+| **Consumes** | `artifacts/09-review-resolution.md`, `artifacts/10-test-generation.md` |
 | **Produces** | `artifacts/11-test-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 18):**

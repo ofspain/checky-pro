@@ -8,7 +8,7 @@
 | **Task** | T171 — No PII on link |
 | **Spec section** | Cross-phase — Capability links (DRAFT, narrowed 2026-10-10) |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/05-implementation-plan.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 171):**

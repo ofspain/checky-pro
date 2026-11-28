@@ -8,7 +8,7 @@
 | **Task** | T11 — Bare-tx-hash submission endpoint |
 | **Spec section** | Phase 2 — Automatic evidence collection (R6-R10) — **blocked on `spec/crypto-service` task 30** |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/05-implementation-plan.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 11):**

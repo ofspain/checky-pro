@@ -8,7 +8,7 @@
 | **Task** | T12 — Email channel (O2/Q2) |
 | **Spec section** | Preferences, rendering, delivery |
 | **Model** | Human Approval |
-| **Consumes** | `artifacts/08-independent-review.md` |
+| **Consumes** | `artifacts/07-self-review.md`, `artifacts/08-independent-review.md` |
 | **Produces** | `artifacts/09-review-resolution.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/notification-service/tasks.md`, task 12):**

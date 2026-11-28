@@ -8,7 +8,7 @@
 | **Task** | T16 — Extraction pipeline |
 | **Spec section** | Phase 3 — AI evidence interpretation (R11-R14) — no crypto-service dependency |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/05-implementation-plan.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 16):**

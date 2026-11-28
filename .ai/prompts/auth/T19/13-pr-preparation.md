@@ -24,7 +24,7 @@
 
 ---
 
-Consume the verification (Phase 12) — proceed only if it is **PASS**. Prepare the task for merge. Produce, in the artifact: **Commit title**, **Commit message** (imperative; end with the `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer), **Files changed**, **Summary**, **Testing performed**, and **Specification references** (task number + the requirement and LOCKED-decision IDs from the header). No code. Branch off `main`; `main` stays deployable.
+Consume the verification (Phase 12) — proceed only if it is **PASS**. Prepare the task for merge. Produce, in the artifact: **Commit title**, **Commit message** (imperative; end with the `Co-Authored-By:` trailer naming THE MODEL YOU ARE ACTUALLY RUNNING AS - e.g. `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` - and never a model name you have not verified, since a hardcoded one here went stale and three tasks in a row had to decline it), **Files changed**, **Summary**, **Testing performed**, and **Specification references** (task number + the requirement and LOCKED-decision IDs from the header). No code. Branch off `main`; `main` stays deployable.
 ---
 
 ## Guardrails (apply to every phase)

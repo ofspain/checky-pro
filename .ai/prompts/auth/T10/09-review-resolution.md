@@ -8,7 +8,7 @@
 | **Task** | T10 — Enumeration safety tests |
 | **Spec section** | Account module extensions |
 | **Model** | Human Approval |
-| **Consumes** | `artifacts/08-independent-review.md` |
+| **Consumes** | `artifacts/07-self-review.md`, `artifacts/08-independent-review.md` |
 | **Produces** | `artifacts/09-review-resolution.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/auth-service/tasks.md`, task 10):**

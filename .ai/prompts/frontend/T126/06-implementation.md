@@ -8,7 +8,7 @@
 | **Task** | T126 — Stream auth without token in URL |
 | **Spec section** | Phase 1 — Payment verification & invoicing: notifications |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/05-implementation-plan.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 126):**

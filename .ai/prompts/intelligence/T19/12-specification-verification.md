@@ -8,7 +8,7 @@
 | **Task** | T19 — In-house EXIF extraction |
 | **Spec section** | Phase 4 — Evidence integrity analysis (R15-R19) — no crypto-service dependency |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/11-test-review.md` |
+| **Consumes** | every prior artifact under `artifacts/`, plus the `spec/intelligence-service/` package |
 | **Produces** | `artifacts/12-specification-verification.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 19):**

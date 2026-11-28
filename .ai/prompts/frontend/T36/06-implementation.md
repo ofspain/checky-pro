@@ -8,7 +8,7 @@
 | **Task** | T36 — Sign-out ends the SAS session |
 | **Spec section** | Phase 1 — Auth & account (gatekeeper): OIDC and session |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/05-implementation-plan.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/05-implementation-plan.md` |
 | **Produces** | `artifacts/06-implementation-notes.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 36):**

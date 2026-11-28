@@ -8,7 +8,7 @@
 | **Task** | T30 — ADR + spec status bump |
 | **Spec section** | Phase 6 — Publishing, docs, contract & final hardening |
 | **Model** | Human Approval |
-| **Consumes** | `artifacts/08-independent-review.md` |
+| **Consumes** | `artifacts/07-self-review.md`, `artifacts/08-independent-review.md` |
 | **Produces** | `artifacts/09-review-resolution.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 30):**

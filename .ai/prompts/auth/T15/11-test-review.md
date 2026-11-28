@@ -8,7 +8,7 @@
 | **Task** | T15 — Indistinguishable login response test |
 | **Spec section** | Lockout and authentication |
 | **Model** | Kimi 2.7 |
-| **Consumes** | `artifacts/10-test-generation.md` |
+| **Consumes** | `artifacts/09-review-resolution.md`, `artifacts/10-test-generation.md` |
 | **Produces** | `artifacts/11-test-review.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/auth-service/tasks.md`, task 15):**

@@ -8,7 +8,7 @@
 | **Task** | T10 — `TransactionLookupClient` interface + fake |
 | **Spec section** | Phase 2 — Automatic evidence collection (R6-R10) — **blocked on `spec/crypto-service` task 30** |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/11-test-review.md` |
+| **Consumes** | every prior artifact under `artifacts/`, plus the `spec/intelligence-service/` package |
 | **Produces** | `artifacts/12-specification-verification.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 10):**

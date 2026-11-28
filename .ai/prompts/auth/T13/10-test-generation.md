@@ -8,7 +8,7 @@
 | **Task** | T13 — Login failure/success tracking |
 | **Spec section** | Lockout and authentication |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/09-review-resolution.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/09-review-resolution.md` |
 | **Produces** | `artifacts/10-test-generation.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/auth-service/tasks.md`, task 13):**

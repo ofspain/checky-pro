@@ -8,7 +8,7 @@
 | **Task** | T121 — Address-poisoning warning on payment |
 | **Spec section** | Phase 1 — Payment verification & invoicing: wallets and address safety |
 | **Model** | Human Approval |
-| **Consumes** | `artifacts/08-independent-review.md` |
+| **Consumes** | `artifacts/07-self-review.md`, `artifacts/08-independent-review.md` |
 | **Produces** | `artifacts/09-review-resolution.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/frontend/tasks.md`, task 121):**

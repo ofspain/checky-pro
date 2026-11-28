@@ -8,7 +8,7 @@
 | **Task** | T17 — Failure handling |
 | **Spec section** | Phase 3 — AI evidence interpretation (R11-R14) — no crypto-service dependency |
 | **Model** | Claude Sonnet |
-| **Consumes** | `artifacts/09-review-resolution.md` |
+| **Consumes** | `artifacts/04-frozen-task-brief.md`, `artifacts/09-review-resolution.md` |
 | **Produces** | `artifacts/10-test-generation.md` (write it here; exactly one artifact) |
 
 **Task statement (verbatim from `spec/intelligence-service/tasks.md`, task 17):**
