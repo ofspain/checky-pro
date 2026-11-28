@@ -1,0 +1,205 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 0 failed of 2086, exit 0
+baseline failing cases (excluded from every attribution below): []
+
+  KILLED    own            TR01 a tokenless link sets no failure, back to task 48's blank screen  (8 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ sends nothing when the link carries no token at all
+            └ sends nothing when the token is present but empty
+            └ a tokenless arrival and a rejected token render the SAME uniform failure (R4, T49)
+            └ shows the same failure for a tokenless link, and sends NOTHING (D-T49-2)
+            └ shows the same failure for an empty token, and sends nothing
+            └ offers the identical action for every failure, including one the server never answered
+            └ clears an earlier failure while the next token is in flight (the step-5 line)
+            └ reaches success after an earlier failure, with no failure copy left behind
+  KILLED    own            TR02 the empty-token case falls through, so `{ token: '' }` is posted  (2 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ sends nothing when the token is present but empty
+            └ shows the same failure for an empty token, and sends nothing
+  KILLED    own            TR03 a non-ok response sets idle, so no HTTP failure ever shows the message  (20 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ a tokenless arrival and a rejected token render the SAME uniform failure (R4, T49)
+            └ shows the failure message when the server rejects the token
+            └ renders the uniform failure for 400
+            └ renders the uniform failure for 401
+            └ renders the uniform failure for 403
+            └ renders the uniform failure for 404
+            └ renders the uniform failure for 409
+            └ renders the uniform failure for 410
+            └ renders the uniform failure for 429
+            └ renders the uniform failure for 500
+            └ renders the uniform failure for 503
+            └ renders the same thing whether or not the server sent a problem document
+            └ offers a resend link that resolves under the app basename
+            └ offers the identical action for every failure, including one the server never answered
+            └ sends exactly one request under StrictMode and still fails uniformly
+            └ puts the failure sentence inside that same region
+            └ keeps the resend link OUTSIDE the live region
+            └ keeps the resend link keyboard-reachable with an accessible name
+            └ renders both new keys as literal English
+            └ never puts the token in the resend link, where it would enter browser history
+  KILLED    own            TR04 the rejection arm is emptied, back to task 48's `() => {}`  (2 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ renders the uniform failure when the transport never answers at all (AC3)
+            └ offers the identical action for every failure, including one the server never answered
+  KILLED    own            TR05 the response is ignored, so a rejected token reads as verified  (22 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ a tokenless arrival and a rejected token render the SAME uniform failure (R4, T49)
+            └ shows the failure message when the server rejects the token
+            └ renders the uniform failure for 400
+            └ renders the uniform failure for 401
+            └ renders the uniform failure for 403
+            └ renders the uniform failure for 404
+            └ renders the uniform failure for 409
+            └ renders the uniform failure for 410
+            └ renders the uniform failure for 429
+            └ renders the uniform failure for 500
+            └ renders the uniform failure for 503
+            └ renders the same thing whether or not the server sent a problem document
+            └ offers a resend link that resolves under the app basename
+            └ offers the identical action for every failure, including one the server never answered
+            └ sends exactly one request under StrictMode and still fails uniformly
+            └ puts the failure sentence inside that same region
+            └ keeps the resend link OUTSIDE the live region
+            └ keeps the resend link keyboard-reachable with an accessible name
+            └ renders both new keys as literal English
+            └ names no failure reason anywhere on screen (L4)
+            └ never reads the response body, which is what keeps the failure uniform
+            └ never puts the token in the resend link, where it would enter browser history
+  KILLED    own            TR06 `setStatus('idle')` deleted, so a stale failure survives into the next request  (1 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ clears an earlier failure while the next token is in flight (the step-5 line)
+  KILLED    own            TR07 idle renders the failure message, so every successful visitor sees it first  (5 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ announces the success sentence by filling a region that was already mounted (AC6)
+            └ shows no failure copy while a valid token is in flight
+            └ clears an earlier failure while the next token is in flight (the step-5 line)
+            └ mounts the live region empty before the failure fills it
+            └ PINS A LIMIT - an in-flight token replaced by a tokenless URL leaves the heading alone
+  KILLED    own            TR08 the resend link is deleted, so R4's action is gone  (24 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ sends nothing when the link carries no token at all
+            └ sends nothing when the token is present but empty
+            └ shows the same failure for a tokenless link, and sends NOTHING (D-T49-2)
+            └ shows the same failure for an empty token, and sends nothing
+            └ renders the uniform failure for 400
+            └ renders the uniform failure for 401
+            └ renders the uniform failure for 403
+            └ renders the uniform failure for 404
+            └ renders the uniform failure for 409
+            └ renders the uniform failure for 410
+            └ renders the uniform failure for 429
+            └ renders the uniform failure for 500
+            └ renders the uniform failure for 503
+            └ renders the same thing whether or not the server sent a problem document
+            └ renders the uniform failure when the transport never answers at all (AC3)
+            └ offers a resend link that resolves under the app basename
+            └ offers the identical action for every failure, including one the server never answered
+            └ clears an earlier failure while the next token is in flight (the step-5 line)
+            └ reaches success after an earlier failure, with no failure copy left behind
+            └ sends exactly one request under StrictMode and still fails uniformly
+            └ keeps the resend link OUTSIDE the live region
+            └ keeps the resend link keyboard-reachable with an accessible name
+            └ renders both new keys as literal English
+            └ never puts the token in the resend link, where it would enter browser history
+  KILLED    own            TR09 the link is moved INSIDE the live region, so it is re-announced on every change  (2 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ puts the failure sentence inside that same region
+            └ keeps the resend link OUTSIDE the live region
+  KILLED    own            TR10 the failure message is moved OUT of the live region, so it is never announced  (1 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ puts the failure sentence inside that same region
+  KILLED    own            TR11 the link is shown on success too, offering a resend to someone just verified  (6 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ renders the success state for a 204 at /app/verify?token=... (AC1, AC4)
+            └ sends exactly one request under StrictMode double invocation (AC7)
+            └ a token arriving AFTER a tokenless visit is still sent (AC7, AC12)
+            └ verifies from a link with a trailing slash (AC1)
+            └ has no control in the success state
+            └ reaches success after an earlier failure, with no failure copy left behind
+  KILLED    own            TR12 focus is moved to the resend link when the failure lands  (2 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ moves focus even when the link carried no token (AC6)
+            └ leaves focus on the heading when the failure lands
+  KILLED    own            TR13 the catalogue message names a reason, which is exactly what L4 forbids  (3 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ renders the same thing whether or not the server sent a problem document
+            └ renders both new keys as literal English
+            └ names no failure reason anywhere on screen (L4)
+  KILLED    own            TR14 the response body is read, the first step towards a reason-specific message  (1 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ never reads the response body, which is what keeps the failure uniform
+  KILLED    own            TR15 the token is rendered into the failure message, where anyone can read it  (15 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ a tokenless arrival and a rejected token render the SAME uniform failure (R4, T49)
+            └ renders the uniform failure for 400
+            └ renders the uniform failure for 401
+            └ renders the uniform failure for 403
+            └ renders the uniform failure for 404
+            └ renders the uniform failure for 409
+            └ renders the uniform failure for 410
+            └ renders the uniform failure for 429
+            └ renders the uniform failure for 500
+            └ renders the uniform failure for 503
+            └ renders the same thing whether or not the server sent a problem document
+            └ renders the uniform failure when the transport never answers at all (AC3)
+            └ sends exactly one request under StrictMode and still fails uniformly
+            └ puts the failure sentence inside that same region
+            └ renders the token nowhere when the server rejects it
+  KILLED    own            TR16 the token is logged through an aliased console in the failure path  (1 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ writes the token to no storage and logs nothing, in the failure state
+  KILLED    own            TR21 the token is carried into the resend link, where it enters browser history  (4 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ offers a resend link that resolves under the app basename
+            └ offers the identical action for every failure, including one the server never answered
+            └ never puts the token in the resend link, where it would enter browser history
+            └ renders the token nowhere when the server rejects it
+  KILLED    own            TR22 the tokenless branch is moved above the one-request guard  (1 failed of 2086, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ PINS A LIMIT - an in-flight token replaced by a tokenless URL leaves the heading alone
+  KILLED    own            TR23 an element is attached to resend-verification, as task 50 will  (3 failed of 2086, exit 1)
+            └ in: ['src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ HANDOFF TO TASK 50 - the resend target renders NOTHING today, so this case MUST FAIL then
+  SURVIVED  -              TR17 the path constant is replaced by the identical bare literal (DECLARED: survives)  (0 failed of 2086, exit 0)
+  KILLED    own            TR18 the path is RENAMED in routes.tsx, which the constant's users must follow  (3 failed of 2086, exit 1)
+            └ in: ['src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ changes no declared path set: `verify` was already there, with no element (AC9)
+  KILLED    own            TR19 CANARY the failure message is blanked in the catalogue  (3 failed of 2086, exit 1)
+            └ in: ['src/app/screensRenderThroughDesignSystemPrimitivesOnly.test.tsx', 'src/auth/unauthenticatedRoutesRedirectToSignIn.test.tsx', 'src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ renders both new keys as literal English
+  SURVIVED  -              TR20 UNFALSIFIABLE useEffect -> useLayoutEffect for the focus move  (0 failed of 2086, exit 0)
+
+regressions: 20/20 killed
+canaries:    ['TR19'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
+unfalsifiable: ['TR17', 'TR20'] - no observable effect to detect
+survivors:   ['TR17', 'TR20']
+broken:      none
+
+--- expectation vs outcome ---
+  TR01   expected own           got KILLED/own       as expected
+  TR02   expected own           got KILLED/own       as expected
+  TR03   expected own           got KILLED/own       as expected
+  TR04   expected own           got KILLED/own       as expected
+  TR05   expected own           got KILLED/own       as expected
+  TR06   expected own           got KILLED/own       as expected
+  TR07   expected own           got KILLED/own       as expected
+  TR08   expected own           got KILLED/own       as expected
+  TR09   expected own           got KILLED/own       as expected
+  TR10   expected own           got KILLED/own       as expected
+  TR11   expected own           got KILLED/own       as expected
+  TR12   expected own           got KILLED/own       as expected
+  TR13   expected own           got KILLED/own       as expected
+  TR14   expected own           got KILLED/own       as expected
+  TR15   expected own           got KILLED/own       as expected
+  TR16   expected own           got KILLED/own       as expected
+  TR17   expected unfalsifiable got SURVIVED         as expected
+  TR18   expected other         got KILLED/own       as expected
+  TR19   expected own           got KILLED/own       as expected
+  TR20   expected unfalsifiable got SURVIVED         as expected
+  TR21   expected own           got KILLED/own       as expected
+  TR22   expected own           got KILLED/own       as expected
+  TR23   expected own           got KILLED/own       as expected
+
+disagreements: none
