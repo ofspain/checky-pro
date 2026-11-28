@@ -797,7 +797,10 @@ const ARMS: readonly Arm[] = [
   // and this project's edge is Cloudflare.
   { label: '200 with an HTML body, as an edge error page sends', status: 200,
     body: '<html><body>502 Bad Gateway</body></html>', contentType: 'text/html', serverWords: '502 Bad Gateway' },
-  { label: '200 with a plain-text body', status: 200, body: 'OK', contentType: 'text/plain' },
+  // The body carries distinctive words rather than 'OK' so this arm can hold AC10 too (Kimi I9). A proxy
+  // answering in plain text is exactly the kind of thing that would say WHY, and why is what must not render.
+  { label: '200 with a plain-text body', status: 200, body: 'no account matched: nothing queued',
+    contentType: 'text/plain', serverWords: 'no account matched' },
   { label: '200 with JSON truncated mid-document', status: 200, body: '{"message":"Verification em',
     contentType: 'application/json', serverWords: 'Verification em' },
   { label: '204 with no content', status: 204, body: null, contentType: null },
@@ -812,6 +815,15 @@ const ARMS: readonly Arm[] = [
   { label: '500', status: 500, body: JSON.stringify({ message: 'boom' }), contentType: 'application/json',
     serverWords: 'boom' },
   { label: '503', status: 503, body: null, contentType: 'application/json' },
+  // KIMI'S I8 SAID A REDIRECT ARM WAS NON-TRIVIAL "because `fetch` follows redirects automatically". THAT
+  // OBSTACLE DOES NOT EXIST AT THIS SEAM: the transport is stubbed, so nothing follows anything, and the
+  // screen simply sees a 3xx resolve. Measured before being written - `new Response(body, { status: 302 })`
+  // constructs fine. Both are here because a 302 carries a body and a 304 may not, and an edge redirecting
+  // a POST is a real deployment shape rather than a hypothetical.
+  { label: '302 with a body and a Location, as an edge redirect sends', status: 302,
+    body: JSON.stringify({ message: 'moved; try the new host' }), contentType: 'application/json',
+    serverWords: 'moved; try the new host' },
+  { label: '304 with no body', status: 304, body: null, contentType: null },
 ];
 
 type Rendering = {
@@ -879,6 +891,31 @@ describe('task 51 · AC2/AC3/AC4/AC9/AC10 every outcome renders ONE acknowledgem
   }
 });
 
+describe('task 51 · AC10 how many arms actually hold the no-leak claim', () => {
+  it('names the arms that carry server words, so the limit is MEASURED and not implied', () => {
+    // PHASE 7 RECORDED THIS AS A GAP AND KIMI'S I9 NAMED IT AGAIN: `serverWords` is optional, so the
+    // "the server's own words never reach the DOM" assertion runs only for the arms that have words. The
+    // count was implied by the data and stated nowhere, which is the shape of a claim that quietly erodes -
+    // someone adds an arm without words and AC10's coverage silently drops.
+    //
+    // Three arms genuinely cannot carry words, and that is a FACT about them rather than a gap: a null body
+    // and an empty-string body have no words, and 304 is forbidden one. Naming them here means adding a
+    // fourth wordless arm breaks this case and has to be argued for.
+    const wordless = ARMS.filter((arm) => arm.serverWords === undefined).map((arm) => arm.label);
+
+    expect(wordless, 'an arm carries no server words, so AC10 does not cover it - say why here')
+      .toEqual([
+        '200 with no body at all',
+        '200 with an empty-string body',
+        '204 with no content',
+        '503',
+        '304 with no body',
+      ]);
+    expect(ARMS.length - wordless.length, 'AC10 is held by fewer arms than the comment above claims')
+      .toBe(10);
+  });
+});
+
 describe('task 51 · AC7/AC8 the two channels serialised markup cannot see', () => {
   // innerHTML DOES NOT CARRY FOCUS. `document.activeElement` is not part of serialised markup, so a screen
   // that moved focus to the heading for a 200 and left it on <body> for a 404 would compare byte-identical
@@ -910,6 +947,48 @@ describe('task 51 · AC7/AC8 the two channels serialised markup cannot see', () 
       .not.toBe('(no region mounted)');
     expect(seen, 'the live region announces something different depending on the outcome')
       .toEqual(ARMS.map((arm) => `${arm.label} -> ${expected}`));
+  });
+});
+
+describe('task 51 · what the SPA SENDS, and the two comparisons that cannot fail', () => {
+  // KIMI'S I10 AND THE CROSS-ARM HALF OF I11 ARE DECLINED, AND THE REASON IS TEMPORAL RATHER THAN A
+  // JUDGEMENT CALL.
+  //
+  // I10 asks whether the live region announces the same thing MID-FLIGHT across arms. I11 asks whether the
+  // request is identical across arms. Both are already settled by sequence: the arms differ ONLY in the
+  // reply, and the request is built - and the in-flight render has happened - BEFORE any reply exists. No
+  // mutant on this screen can make either vary by outcome, because at the moment they happen the outcome
+  // has not been decided. Writing them would add two cases that cannot fail.
+  //
+  // "Identical by construction" is normally the phrase that precedes a vacuous case in this project, so it
+  // is worth being exact about why it holds here: it is not that the screen is CAREFUL to treat the arms
+  // alike, it is that nothing about the arm is KNOWABLE yet. Only post-settle state can vary by outcome, so
+  // only post-settle state earns a cross-arm comparison. T50's 'mounts the live region EMPTY and fills it
+  // only while submitting' owns the in-flight claim for one arm, which is the right number for it.
+  //
+  // What CAN vary is the request a RETRY sends, because by then one outcome has already been seen and the
+  // screen has state. That is the half of I11 with content, so that is the half that gets a case.
+  it('sends a byte-identical request when a failed attempt is retried', async () => {
+    const failing = installTransportFailure();
+    const container = await arrive(RESEND_VERIFICATION_PATH);
+    await send(container);
+    expect(container.textContent, 'the first attempt did not fail, so there is no retry to measure')
+      .toContain(en.resend.unsent);
+    expect(failing.calls(), 'the first attempt never reached the transport').toBe(1);
+
+    // The second attempt answers, so the case also proves the retry is a REAL send and not a re-render.
+    const { sent } = installTransport();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    });
+    await settle();
+
+    expect(sent, 'the retry sent no request at all').toHaveLength(1);
+    expect(sent[0]!.body, 'the retry sends a different body than a first attempt would')
+      .toBe(JSON.stringify({ email: EMAIL }));
+    expect(sent[0]!.path, 'the retry goes somewhere else').toBe('/accounts/resend-verification');
+    expect(sent[0]!.method, 'the retry uses a different method').toBe('POST');
+    expect(sent[0]!.authorization, 'the retry carries a bearer the first attempt did not').toBeNull();
   });
 });
 
