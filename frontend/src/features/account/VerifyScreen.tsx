@@ -100,10 +100,25 @@ export function VerifyScreen(): ReactElement {
       .POST('/accounts/verify-email', { body: { token } })
       // `response.ok` rather than `=== 204`: the contract declares one success response and AC4 is about
       // reaching the success state, not about the number. openapi-fetch does NOT reject on an HTTP error - it
-      // resolves with `error` and `response` set - so the rejection arm below sees transport failures only.
-      // Task 49 filled that arm: it was `() => {}` under task 48, which kept a transport failure from
-      // becoming an unhandled rejection but left the visitor on a blank screen. R4 says "fails for any
-      // reason", and a network that never answered is a reason.
+      // resolves with `error` and `response` set. Task 49 filled the rejection arm: it was `() => {}` under
+      // task 48, which kept a transport failure from becoming an unhandled rejection but left the visitor on
+      // a blank screen. R4 says "fails for any reason", and a network that never answered is a reason.
+      //
+      // THIS COMMENT USED TO END "so the rejection arm below sees transport failures ONLY", AND THAT IS
+      // FALSE. Task 51 measured it: openapi-fetch parses the body itself, so a reply whose body is not valid
+      // JSON makes the promise REJECT with a SyntaxError, and the arm below cannot tell that from a dropped
+      // connection. Measured consequence, on this screen, with a VALID token:
+      //
+      //   204, no body (the declared success)  -> "Your email has been verified."
+      //   200, valid JSON                      -> "Your email has been verified."
+      //   200, HTML body (an edge error page)  -> "This verification link is not valid."   <-- WRONG
+      //   200, JSON truncated mid-document     -> "This verification link is not valid."   <-- WRONG
+      //
+      // So a visitor whose verification succeeded can be told their link is invalid and sent to resend a
+      // link they do not need. It is NOT fixed here: `tasks.md` gives task 51 the resend acknowledgement
+      // only, and this screen's fix belongs to a task that can also decide what R4's "fails for any reason"
+      // should mean when the failure is the body rather than the token. Recorded as OQ-T51-6, with the
+      // measurement, so the next reader does not have to rediscover it.
       .then(({ response }) => {
         setStatus(response.ok ? 'success' : 'failure');
       }, () => {
