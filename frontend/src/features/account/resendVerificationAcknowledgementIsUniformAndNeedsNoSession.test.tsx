@@ -824,7 +824,10 @@ async function renderArm(arm: Arm, email = EMAIL): Promise<Rendering> {
   const active = document.activeElement;
   const rendering: Rendering = {
     html: container.innerHTML,
-    pathname: router!.state.location.pathname,
+    // THE WHOLE LOCATION, not just the pathname. A `navigate('?sent=1')` on acknowledgement leaves the
+    // pathname untouched and renders the same screen, so a pathname-only assertion could not see it - and
+    // D-T51-4 added this to NAME L4's redirects clause rather than leave it held incidentally.
+    pathname: `${router!.state.location.pathname}${router!.state.location.search}${router!.state.location.hash}`,
     // The tag alone would call <h1>Check your email</h1> and <h1>Resend verification email</h1> the same
     // element, and those are two different states. The text comes with it.
     focus: `${active?.tagName ?? 'NONE'}:${active?.textContent ?? ''}`,
