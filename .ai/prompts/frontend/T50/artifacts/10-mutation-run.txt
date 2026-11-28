@@ -124,9 +124,9 @@ baseline failing cases (excluded from every attribution below): []
   KILLED    own            TR18 resend.heading no longer matches verify.failureAction, the cross-feature sentence  (1 failed of 2116, exit 1)
             └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
             └ the resend link lands on a form whose heading is the words the link promised (task 50)
-  KILLED    inherited      TR21 the email is carried into the URL, where it enters browser history  (1 failed of 2116, exit 1)
-            └ in: ['src/profile/profileIsReadFromUserinfoAndAccountStatusFromMe.test.tsx']
-            └ is the ONLY production file that names /accounts/me, scanned tree-wide
+  KILLED    own            TR21 the email is carried into the URL, where it enters browser history  (2 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx', 'src/profile/profileIsReadFromUserinfoAndAccountStatusFromMe.test.tsx']
+            └ puts the email in no URL - not the path, not a query string, not a hash
   KILLED    own            TR22 the email is logged to the console, as a debugging session would leave it  (2 failed of 2116, exit 1)
             └ in: ['src/auth/tokensAreNeverWrittenToAnyStorage.test.tsx', 'src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
             └ logs nothing anywhere on console, over a DERIVED method list that is asserted non-empty
@@ -171,8 +171,8 @@ broken:      none
   TR18   expected own           got KILLED/own       as expected
   TR19   expected own           got KILLED/own       as expected
   TR20   expected unfalsifiable got SURVIVED         as expected
-  TR21   expected own           got KILLED/inherited DISAGREES - killed only OUTSIDE this task's files
+  TR21   expected own           got KILLED/own       as expected
   TR22   expected own           got KILLED/own       as expected
   TR23   expected own           got KILLED/own       as expected
 
-disagreements: ['TR21']
+disagreements: none
