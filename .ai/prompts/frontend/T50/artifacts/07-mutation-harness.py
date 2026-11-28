@@ -99,6 +99,9 @@ OWN_TESTS = [
 CANARIES = {"TR19"}
 UNFALSIFIABLE = {"TR20"}
 
+FILES = []  # empty = the whole suite, so inherited kills anywhere are visible
+KNOWN_ENVIRONMENTAL_FAILURES = set()  # nothing excused, so nothing an excused file could hide
+
 EXPECTED_BASELINE_FAILURES = 0  # of 2113
 
 SETTLE = ".then(() => setStatus('acknowledged'), () => setStatus('unsent'));"
@@ -209,6 +212,21 @@ MUTANTS = [
      ("import { useLayoutEffect, useRef, useState, type ReactElement } from 'react';",
       "  useLayoutEffect(() => {"), "own"),
 ]
+
+
+# --- COPY SELF-CHECK -------------------------------------------------------------------------------
+# COPY 20 LOST TWO NAMES AND FOUND OUT 40 MINUTES INTO A RUN. This harness is carried forward by hand
+# every task, and the header is where it gets spliced: T48 lost `FRONTEND`, T49 lost `os`/`re`/`signal`,
+# and this copy lost `FILES` and `KNOWN_ENVIRONMENTAL_FAILURES` - the second time the loss was in the
+# CONSTANTS rather than the imports, which is why checking the imports alone was not enough.
+#
+# So the names the machinery below needs are asserted HERE, before a single mutant is applied, rather
+# than being discovered by a NameError after the baseline has been run.
+for _required in ("os", "re", "signal", "subprocess", "sys", "Path", "REPO", "FRONTEND", "REVERT_PATHS",
+                  "OWN_TESTS", "FILES", "KNOWN_ENVIRONMENTAL_FAILURES", "EXPECTED_BASELINE_FAILURES",
+                  "CANARIES", "UNFALSIFIABLE", "MUTANTS"):
+    if _required not in dir():
+        raise SystemExit(f"the copy lost `{_required}` - restore it before running anything")
 
 
 def as_tuple(value):

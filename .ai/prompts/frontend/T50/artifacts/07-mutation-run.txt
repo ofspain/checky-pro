@@ -1,0 +1,10 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+Traceback (most recent call last):
+  File "/Users/macbookpro/personal/crypto-dispute/.ai/prompts/frontend/T50/artifacts/07-mutation-harness.py", line 487, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/macbookpro/personal/crypto-dispute/.ai/prompts/frontend/T50/artifacts/07-mutation-harness.py", line 397, in main
+    code, failed, total, files_failed, base_cases, _ = run(FILES, verbose=True)
+                                                           ^^^^^
+NameError: name 'FILES' is not defined
