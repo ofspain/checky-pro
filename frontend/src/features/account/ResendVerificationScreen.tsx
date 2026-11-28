@@ -14,8 +14,14 @@ import { EmailField, Form, Heading, Screen, StatusRegion, SubmitButton, Text } f
  * declares exactly one response - a `200` whose own description is "Always returned regardless of whether the
  * email matches an account" - and `AccountService.resendVerificationIfPending` never throws for a non-match.
  * So the server hands back the same thing for a registered address, an unregistered one, a locked account and
- * a deleted one. The only way this screen could leak which of those happened is by looking, so it does not:
- * the settle handler takes no argument. **`response.ok` IS DELIBERATELY NOT CONSULTED** - the mirror image of
+ * a deleted one. This screen does not look at which it was: the settle handler takes no argument.
+ *
+ * THIS PARAGRAPH USED TO SAY "the only way this screen could leak which of those happened is by looking",
+ * AND TASK 51 DISPROVED IT. The screen leaked WITHOUT LOOKING: `openapi-fetch` parsed the body on its own
+ * behalf, so a reply that did not parse took the reject arm and rendered a different screen - and which
+ * reply parses is a property of the body the server chose to send. Not looking was necessary and not
+ * sufficient, because a dependency can arrive through a library the source never names. `parseAs: 'stream'`
+ * below is what actually closed it, and the thirteen-arm comparison in the suite is what holds it. **`response.ok` IS DELIBERATELY NOT CONSULTED** - the mirror image of
  * `VerifyScreen`, where R4 required failure to be distinguished and `ok` was the one thing read. A case scans
  * this file's source for any read of the response, because one uniform acknowledgement is a property a future
  * edit removes one `if` at a time.
