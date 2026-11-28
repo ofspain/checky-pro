@@ -537,3 +537,82 @@ describe('AC11 the acknowledgement renders through primitives only', () => {
     expect(code).toMatch(/from '\.\.\/\.\.\/app\/ui'/);
   });
 });
+
+// ==========================================================================================================
+// TASK 175 — a reply the client cannot parse is not a failed registration (R2)
+//
+// The same mechanism task 175 fixes on `VerifyScreen`, with a different and in one way worse consequence.
+// `openapi-fetch` parses the reply body itself, so a `202` whose body is not valid JSON makes its promise
+// REJECT, and `RegisterScreen` passes `.then(navigate, () => setStatus('idle'))` - so the reject arm returns
+// the form to idle and NOTHING HAPPENS. Measured before these cases were written:
+//
+//   202, valid JSON (declared)   -> "Check your email to finish"
+//   202, no body                 -> "Check your email to finish"
+//   202, HTML body               -> the form, unchanged           <-- WRONG
+//   202, JSON truncated          -> the form, unchanged           <-- WRONG
+//
+// R2 requires "the same 'check your email' screen ... with identical copy and layout", and SHOWING NO SCREEN
+// IS NOT SHOWING THAT SCREEN. There is no interpretive question here, unlike on the verify screen where R3
+// and R4 had to be read against each other.
+//
+// WHY IT IS WORSE THAN THE VERIFY CASE IN ONE RESPECT: the account WAS created and the verification email WAS
+// sent. A visitor who presses the button, sees nothing change, and presses it again is submitting a second
+// registration for an address that already exists. The verify case misinformed; this one invites an action.
+// ==========================================================================================================
+
+/** The three replies this task compares. The first is the declared one; the other two are what an
+ *  intermediary substitutes. The content type is irrelevant - task 175's phase 2 measured that it does not
+ *  gate the parse - so these go through the existing `installTransport` unchanged. */
+const EDGE_HTML: Reply = { status: 202, body: '<html><body>502 Bad Gateway</body></html>' };
+const TRUNCATED: Reply = { status: 202, body: '{"message":"Check your em' };
+
+describe('task 175 · AC7/AC8/AC9 an acknowledgement the client could not parse is still an acknowledgement', () => {
+  for (const arm of [
+    { label: 'an HTML error page served with 202, as an edge returns', reply: EDGE_HTML },
+    { label: 'JSON truncated mid-document, as a cut connection leaves', reply: TRUNCATED },
+  ]) {
+    it(`shows the acknowledgement for ${arm.label}`, async () => {
+      const container = await registerWith(arm.reply);
+
+      expect(container.querySelector('form'),
+        'the form is still mounted, so the visitor saw nothing happen and will submit again - for an address '
+        + 'the server has already registered').toBeNull();
+      // THE FULL TEXT, not a fragment: `registerSent.heading` names the screen and `register.success` is
+      // the sentence, and this file's own control case pins both spellings. (The first draft of this case
+      // asserted `en.registerSent.body`, WHICH DOES NOT EXIST - the key is `register.success`. It failed
+      // loudly here, but the same slip under a NEGATIVE assertion would have passed while measuring
+      // nothing, which is what a guessed key name did to a probe one day earlier.)
+      expect(container.textContent, 'the acknowledgement R2 requires was never shown')
+        .toBe(`${en.registerSent.heading}${en.register.success}`);
+      // `router.state.location.pathname` CARRIES THE BASENAME, where `useLocation().pathname` does not -
+      // the distinction task 41 paid for, and the one this assertion got wrong on its first draft.
+      expect(router?.state.location.pathname, 'the screen never reached the acknowledgement route')
+        .toBe(`${APP_BASENAME}/${REGISTER_SENT_PATH}`);
+    });
+  }
+
+  it('renders byte-identical markup for the declared reply and both unparseable ones (AC9, R2)', async () => {
+    // R2 says "identical copy AND LAYOUT", which is why this compares markup rather than text - the same
+    // reason the AC2/AC3 case above does. Three arms, so a fix that merely made the unparseable replies
+    // render SOMETHING would not pass: it has to render the same thing.
+    const renderings: string[] = [];
+    for (const reply of [NEW_ADDRESS, EDGE_HTML, TRUNCATED]) {
+      renderings.push((await registerWith(reply)).innerHTML);
+      await act(async () => mounted!.root.unmount());
+      mounted!.container.remove();
+      mounted = undefined;
+      router?.dispose?.();
+      router = undefined;
+    }
+
+    // THE BASELINE IS GUARDED BEFORE ANYTHING IS COMPARED TO IT, because three empty renderings are also
+    // identical - the trap that let five empty lists satisfy a sameness pin in task 173.
+    expect(renderings[0]!.length, 'the declared reply renders almost nothing, so every comparison below is '
+      + 'vacuous').toBeGreaterThan(100);
+    expect(renderings[0]!, 'the baseline is not the acknowledgement').toContain(en.register.success);
+    expect(renderings[0]!, 'the baseline still has a form, so the submit never settled').not.toContain('<form');
+
+    expect(renderings, 'the acknowledgement differs depending on whether the reply body happened to parse')
+      .toEqual([renderings[0]!, renderings[0]!, renderings[0]!]);
+  });
+});

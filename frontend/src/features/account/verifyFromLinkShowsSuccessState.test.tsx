@@ -602,3 +602,90 @@ describe('the token alphabet', () => {
       'a `+` no longer decodes to a space - check whether the server still issues url-safe base64').toBe('a b');
   });
 });
+
+// ==========================================================================================================
+// TASK 175 — a reply the client cannot parse is not a verification failure (R3)
+//
+// `openapi-fetch` parses the reply body on its own behalf, so a reply whose body is not valid JSON makes its
+// promise REJECT with a SyntaxError - and `VerifyScreen` passes `.then(ok, failure)`, which cannot tell that
+// from a dropped connection. Measured before these cases were written, with a VALID token:
+//
+//   204, no body (the declared success)  -> "Your email has been verified."
+//   200, valid JSON                      -> "Your email has been verified."
+//   200, HTML body (an edge error page)  -> "This verification link is not valid."   <-- WRONG
+//   200, JSON truncated mid-document     -> "This verification link is not valid."   <-- WRONG
+//
+// WHY FOUR TASKS OVER THIS SCREEN NEVER SAW IT: `auth.yaml` declares ONE response for `verifyEmail`, a `204`,
+// and A 204 CANNOT CARRY A BODY AT ALL - `new Response(body, { status: 204 })` throws. So there is nothing to
+// parse and a conforming server can never trigger this. It needs the 204 to have been REPLACED by something
+// with a body: an edge interstitial, a proxy error page, a 200 from an intermediary. The bug is not "the
+// server sent bad JSON"; it is "something other than the server answered, and this screen called that an
+// invalid token". It lives exactly where fixtures do not - between a conforming server and a conforming
+// client - which is why the arms below use 200 and why no fixture in this file could have caught it.
+//
+// AC3 (the declared 204 still renders success) GETS NO NEW CASE. It is already held, three times over, by
+// `renders the verified success state when the token is accepted` and its siblings above - all of which
+// assert `${en.verify.heading}${en.verify.success}` exactly. A fourth would be the duplicate instrument
+// T173's rule forbids; naming them here is what keeps the claim attributable.
+// ==========================================================================================================
+
+/** A transport that carries a BODY, which `installTransport` above cannot do - it always answers `null`, and
+ *  that is exactly why this defect was invisible to this file. The content type is settable but barely
+ *  matters: task 175's phase 2 measured that it DOES NOT GATE the parse, and an HTML body answered as
+ *  `application/json`, as `text/html`, or with no content type at all rejects every time. */
+function installBodiedTransport(status: number, body: string, contentType: string | null): { sent: Sent[] } {
+  const sent: Sent[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (request: Request) => {
+    sent.push({
+      path: new URL(request.url).pathname,
+      body: await request.clone().text(),
+      authorization: request.headers.get('authorization'),
+      method: request.method,
+      contentType: request.headers.get('content-type'),
+    });
+    return new Response(body, { status, headers: contentType ? { 'Content-Type': contentType } : {} });
+  }));
+  return { sent };
+}
+
+describe('task 175 · AC1/AC2 a success the client could not parse is still a success (R3)', () => {
+  for (const arm of [
+    { label: 'an HTML error page served with 200, as an edge returns', body: '<html><body>502 Bad Gateway</body></html>',
+      contentType: 'text/html' },
+    { label: 'JSON truncated mid-document, as a cut connection leaves', body: '{"message":"Email verif',
+      contentType: 'application/json' },
+  ]) {
+    it(`renders the success state for ${arm.label}`, async () => {
+      const { sent } = installBodiedTransport(200, arm.body, arm.contentType);
+
+      const container = await arrive(`${VERIFY_PATH}?token=${TOKEN}`);
+
+      // R3: "WHEN a visitor opens a verification link and the token is valid, THEN the SPA SHALL show the
+      // verified success state." The token IS valid here and the server DID verify it - a 200 says so. R4
+      // governs "IF THE VERIFICATION REQUEST fails", and this request did not fail: the SyntaxError is the
+      // CLIENT's, after the fact, to a body nothing needed. So R4 is not engaged and R3 is unopposed.
+      expect(container.textContent, 'a verification the server completed is reported as a failure')
+        .toBe(`${en.verify.heading}${en.verify.success}`);
+      expect(container.textContent, 'the uniform failure is shown for a token that was accepted')
+        .not.toContain(en.verify.failureMessage);
+
+      // AND THE REQUEST STILL HAPPENED THE SAME WAY. Without this the case could pass on a screen that had
+      // stopped sending anything at all and rendered success optimistically.
+      expect(sent, 'the token was not sent, so "success" here means nothing').toHaveLength(1);
+      expect(sent[0]!.body, 'the token sent is not the one in the link').toBe(JSON.stringify({ token: TOKEN }));
+      expect(sent[0]!.path, 'the request went somewhere else').toBe('/accounts/verify-email');
+    });
+  }
+
+  it('CONTROL a 204 cannot carry a body at all, which is why no fixture here could have caught this', () => {
+    // The declared success response is a 204, and 204/205/304 are null-body statuses: the Response
+    // constructor REFUSES a body for them. This is not trivia - it is the whole reason the defect survived
+    // four tasks over this screen, and it is why Kimi's phase 3 asked for two fixtures that cannot exist
+    // (D-T175-1). If this ever stops throwing, the arms above are no longer the only reachable shape and
+    // this file needs a 204-with-body arm.
+    expect(() => new Response('<html>x</html>', { status: 204 }),
+      'a 204 now accepts a body, so the declared success response can carry one too').toThrow();
+    expect(() => new Response(null, { status: 204 }),
+      'a 204 with no body stopped being constructible, which the suite above depends on').not.toThrow();
+  });
+});

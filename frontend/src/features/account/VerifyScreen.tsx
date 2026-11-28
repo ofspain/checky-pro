@@ -97,7 +97,14 @@ export function VerifyScreen(): ReactElement {
     handled.current = true;
     setStatus('idle');
     void createPublicAuthApi()
-      .POST('/accounts/verify-email', { body: { token } })
+      // `parseAs: 'stream'` IS TASK 175'S FIX, AND R3 IS WHY. Without it `openapi-fetch` parses the
+      // reply body on its own behalf, so a reply whose body is not valid JSON makes the promise REJECT
+      // with a SyntaxError and the arm below calls a VERIFIED email an invalid link. R4 governs "if the
+      // verification REQUEST fails"; a request the server answered did not fail, and the parse error is
+      // the client's, after the fact, to a body this screen never reads. So R4 is not engaged and R3 is
+      // unopposed. `response` survives the option - only `data` becomes a stream - which is what keeps
+      // the `ok` test below working and R4 intact for a genuine 4xx or a dropped connection.
+      .POST('/accounts/verify-email', { body: { token }, parseAs: 'stream' })
       // `response.ok` rather than `=== 204`: the contract declares one success response and AC4 is about
       // reaching the success state, not about the number. openapi-fetch does NOT reject on an HTTP error - it
       // resolves with `error` and `response` set. Task 49 filled the rejection arm: it was `() => {}` under

@@ -92,7 +92,12 @@ export function RegisterScreen(): ReactElement {
       ? 'in-range' : 'out-of-range');
     setStatus('submitting');
     // The advisory result is deliberately NOT consulted here: R1 sends the form either way.
-    void createPublicAuthApi().POST('/accounts', { body: { email, password } })
+    // `parseAs: 'stream'` IS TASK 175'S FIX, AND R2 IS WHY. Without it a `202` whose body is not valid
+    // JSON made `openapi-fetch` reject, the arm below returned the form to idle, and the visitor saw
+    // NOTHING HAPPEN - for a registration the server had accepted and emailed. R2 requires "the same
+    // 'check your email' screen ... with identical copy and layout", and showing no screen is not showing
+    // it. This screen reads nothing from the reply, so there is nothing the parse was for.
+    void createPublicAuthApi().POST('/accounts', { body: { email, password }, parseAs: 'stream' })
       .then(() => navigate(`/${REGISTER_SENT_PATH}`, { replace: true }), () => setStatus('idle'));
   }
 
