@@ -12,11 +12,19 @@
  * R2 asks it to render identically for two outcomes and an input is how two journeys would differ. R3 asks
  * this screen to act on the one input the visitor brought with them. Opposite requirements, adjacent files.
  *
- * **WHAT THIS SUITE DELIBERATELY CANNOT SEE.** `idle` is the rendering for three different situations - the
- * request in flight, no token in the link, and a request that failed - and task 48 does not distinguish them.
- * R4's single uniform failure message is task 49's, and inventing its copy here would pre-empt it. So the
- * cases below pin the no-token branch by its CONSEQUENCE (no request is sent) rather than by anything on
- * screen, which is the only part of it that is this task's to claim.
+ * **WHAT THIS SUITE COULD NOT SEE WHEN TASK 48 WROTE IT, AND CAN NOW.** This paragraph used to say that
+ * `idle` was the rendering for three different situations - the request in flight, no token in the link, and
+ * a request that failed - that R4's uniform failure message was task 49's, and that the cases below
+ * therefore pinned the no-token branch by its CONSEQUENCE (no request is sent) rather than by anything on
+ * screen. **All three clauses are now false**, and the third was falsified by this file's own edits: task 49
+ * split the state machine, so `idle` means in-flight and nothing else; it owns the failure copy, which
+ * exists; and the two AC12 cases below now assert the full rendered failure text, not just the silence.
+ *
+ * **Corrected in task 49's phase 12, having been walked past twice** - this file was edited in phase 6 and
+ * again in phase 10 while its header went on describing the screen it used to test. That is the shape this
+ * project keeps finding: a comment is the only part of a suite with no instrument, and the ones that rot are
+ * the ones whose assertions still pass for an unrelated reason. Every assertion here still passed, because
+ * none of them was ever about the sentence above.
  */
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
