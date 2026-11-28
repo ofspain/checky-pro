@@ -1,0 +1,118 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 0 failed of 2148, exit 0
+baseline failing cases (excluded from every attribution below): []
+
+  KILLED    own            TR31 parseAs removed from VerifyScreen, so a verified email is called an invalid link  (4 failed of 2148, exit 1)
+            └ in: ['src/api/generatedClientCallsDoNotParseBodiesTheyNeverRead.test.ts', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ finds every generated-client call, and the census is ASSERTED so an empty scan fails (AC10)
+            └ holds the invariant itself, so a new non-reading call fails even if the table above is edited
+            └ renders the success state for an HTML error page served with 200, as an edge returns
+            └ renders the success state for JSON truncated mid-document, as a cut connection leaves
+  KILLED    own            TR32 parseAs removed from RegisterScreen, so a registered visitor sees nothing happen  (5 failed of 2148, exit 1)
+            └ in: ['src/api/generatedClientCallsDoNotParseBodiesTheyNeverRead.test.ts', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ finds every generated-client call, and the census is ASSERTED so an empty scan fails (AC10)
+            └ holds the invariant itself, so a new non-reading call fails even if the table above is edited
+            └ shows the acknowledgement for an HTML error page served with 202, as an edge returns
+            └ shows the acknowledgement for JSON truncated mid-document, as a cut connection leaves
+            └ renders byte-identical markup for the declared reply and both unparseable ones (AC9, R2)
+  KILLED    own            TR33 CONTROL the ok test is inverted, so a real 4xx would report success  (31 failed of 2148, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ renders the success state for a 204 at /app/verify?token=... (AC1, AC4)
+            └ sends exactly one request under StrictMode double invocation (AC7)
+            └ a token arriving AFTER a tokenless visit is still sent (AC7, AC12)
+            └ a tokenless arrival and a rejected token render the SAME uniform failure (R4, T49)
+            └ renders nothing the server sent (AC5)
+            └ never renders the token, in ANY state (L16, and L3's instinct)
+            └ verifies from a link with a trailing slash (AC1)
+            └ renders the success state for an HTML error page served with 200, as an edge returns
+            └ renders the success state for JSON truncated mid-document, as a cut connection leaves
+            └ shows the failure message when the server rejects the token
+            └ renders the uniform failure for 400
+            └ renders the uniform failure for 401
+            └ renders the uniform failure for 403
+            └ renders the uniform failure for 404
+            └ renders the uniform failure for 409
+            └ renders the uniform failure for 410
+            └ renders the uniform failure for 429
+            └ renders the uniform failure for 500
+            └ renders the uniform failure for 503
+            └ renders the same thing whether or not the server sent a problem document
+            └ offers a resend link that resolves under the app basename
+            └ offers the identical action for every failure, including one the server never answered
+            └ has no control in the success state
+            └ reaches success after an earlier failure, with no failure copy left behind
+            └ sends exactly one request under StrictMode and still fails uniformly
+            └ puts the failure sentence inside that same region
+            └ keeps the resend link OUTSIDE the live region
+            └ keeps the resend link keyboard-reachable with an accessible name
+            └ renders both new keys as literal English
+            └ names no failure reason anywhere on screen (L4)
+            └ never puts the token in the resend link, where it would enter browser history
+  KILLED    own            TR34 the scan forgets a client type, so every call that takes its client as a PARAMETER goes unseen  (2 failed of 2148, exit 1)
+            └ in: ['src/api/generatedClientCallsDoNotParseBodiesTheyNeverRead.test.ts']
+            └ knows every factory and client type that api/client.ts exports, so its reach cannot shrink quietly
+            └ finds every generated-client call, and the census is ASSERTED so an empty scan fails (AC10)
+  KILLED    own            TR35 the census loses a row, so a call site could vanish from the scan unnoticed  (1 failed of 2148, exit 1)
+            └ in: ['src/api/generatedClientCallsDoNotParseBodiesTheyNeverRead.test.ts']
+            └ finds every generated-client call, and the census is ASSERTED so an empty scan fails (AC10)
+  KILLED    own            TR36 CANARY VerifyScreen renders neither state  (31 failed of 2148, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx', 'src/features/account/verifyFromLinkShowsSuccessState.test.tsx']
+            └ renders the success state for a 204 at /app/verify?token=... (AC1, AC4)
+            └ sends exactly one request under StrictMode double invocation (AC7)
+            └ a token arriving AFTER a tokenless visit is still sent (AC7, AC12)
+            └ a tokenless arrival and a rejected token render the SAME uniform failure (R4, T49)
+            └ renders nothing the server sent (AC5)
+            └ never renders the token, in ANY state (L16, and L3's instinct)
+            └ verifies from a link with a trailing slash (AC1)
+            └ renders the success state for an HTML error page served with 200, as an edge returns
+            └ renders the success state for JSON truncated mid-document, as a cut connection leaves
+            └ shows the failure message when the server rejects the token
+            └ renders the uniform failure for 400
+            └ renders the uniform failure for 401
+            └ renders the uniform failure for 403
+            └ renders the uniform failure for 404
+            └ renders the uniform failure for 409
+            └ renders the uniform failure for 410
+            └ renders the uniform failure for 429
+            └ renders the uniform failure for 500
+            └ renders the uniform failure for 503
+            └ renders the same thing whether or not the server sent a problem document
+            └ offers a resend link that resolves under the app basename
+            └ offers the identical action for every failure, including one the server never answered
+            └ has no control in the success state
+            └ reaches success after an earlier failure, with no failure copy left behind
+            └ sends exactly one request under StrictMode and still fails uniformly
+            └ puts the failure sentence inside that same region
+            └ keeps the resend link OUTSIDE the live region
+            └ keeps the resend link keyboard-reachable with an accessible name
+            └ renders both new keys as literal English
+            └ never reads the response body, which is what keeps the failure uniform
+            └ never puts the token in the resend link, where it would enter browser history
+  KILLED    own            TR37 the package grows a factory nobody told the scan about  (1 failed of 2148, exit 1)
+            └ in: ['src/api/generatedClientCallsDoNotParseBodiesTheyNeverRead.test.ts']
+            └ knows every factory and client type that api/client.ts exports, so its reach cannot shrink quietly
+  KILLED    own            TR38 the reader test is widened the way phase 8 recommended, exempting a call that only touches .data  (1 failed of 2148, exit 1)
+            └ in: ['src/api/generatedClientCallsDoNotParseBodiesTheyNeverRead.test.ts']
+            └ classifies each call SHAPE the way it is documented to, measured on source rather than reasoned about
+  KILLED    own            TR39 the reject arm stops running, so the screen keeps claiming the registration is in flight  (2 failed of 2148, exit 1)
+            └ in: ['src/features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx', 'src/features/account/registrationAcknowledgementIsIdenticalForExistingAndNewEmails.test.tsx']
+            └ returns the form on a dropped connection, saying NOTHING - pinned so a fix is a visible change
+
+regressions: 8/8 killed
+canaries:    ['TR36'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
+survivors:   none
+broken:      none
+
+--- expectation vs outcome ---
+  TR31   expected own           got KILLED/own       as expected
+  TR32   expected own           got KILLED/own       as expected
+  TR33   expected own           got KILLED/own       as expected
+  TR34   expected own           got KILLED/own       as expected
+  TR35   expected own           got KILLED/own       as expected
+  TR36   expected own           got KILLED/own       as expected
+  TR37   expected own           got KILLED/own       as expected
+  TR38   expected own           got KILLED/own       as expected
+  TR39   expected own           got KILLED/own       as expected
+
+disagreements: none

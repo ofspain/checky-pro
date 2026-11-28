@@ -81,20 +81,6 @@ function installTransport(reply: Reply): { sent: Sent[] } {
   return { sent };
 }
 
-/**
- * A transport that never answers, for the OTHER arm of the same `.then` task 175 edited.
- *
- * Phase 8 (Kimi I12) asked whether `RegisterScreen`'s reject arm is tested and could not tell. It was not:
- * of the SEVEN suites that render this screen, not one installed a failing transport, so
- * `() => setStatus('idle')` had no case at all. With `parseAs: 'stream'` it is now reachable ONLY this way,
- * which makes it the whole of the screen's failure behaviour rather than a shared path.
- */
-function installTransportFailure(): { calls: () => number } {
-  const fetchMock = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));
-  vi.stubGlobal('fetch', fetchMock);
-  return { calls: () => fetchMock.mock.calls.length };
-}
-
 beforeEach(() => {
   installBrowserRequest();
 });
@@ -631,45 +617,29 @@ describe('task 175 · AC7/AC8/AC9 an acknowledgement the client could not parse 
   });
 
   // ========================================================================================================
-  // The reject arm — the half of the same `.then` that task 175 did NOT change, and that nothing measured
+  // The reject arm — DECLINED AS A DUPLICATE, and the attribution is executable
   // ========================================================================================================
 
-  it('returns the form on a dropped connection, saying NOTHING - pinned so a fix is a visible change', async () => {
-    const { calls } = installTransportFailure();
-    const container = await arrive(REGISTER_PATH);
-    await type(field(container, 'email'), 'visitor@example.test');
-    await type(field(container, 'password'), 'a'.repeat(12));
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
-    });
-    await settle();
-
-    // THE REQUEST WAS REALLY ATTEMPTED, so what follows is the failure path and not a form that never
-    // submitted - the baseline guard this case would otherwise be missing.
-    expect(calls(), 'the submit never reached the transport, so nothing below is about the reject arm')
-      .toBe(1);
-
-    expect(container.querySelector('form'), 'the form is gone, so the visitor cannot retry').not.toBeNull();
-    expect(router?.state.location.pathname, 'a failed registration navigated to the acknowledgement')
-      .toBe(`${APP_BASENAME}/${REGISTER_PATH}`);
-    expect(container.textContent, 'the acknowledgement appeared for a registration that never happened')
-      .not.toContain(en.register.success);
-
-    // AND THE IN-FLIGHT LINE IS GONE, WHICH IS THE WHOLE OF WHAT `setStatus('idle')` DOES - `status` feeds
-    // nothing but this region. So the screen's entire response to a dropped connection is to stop saying
-    // "sending" and look exactly as it did before the visitor pressed the button.
-    const region = container.querySelector('[role="status"]');
-    expect(region?.textContent, 'the screen still claims the registration is in flight')
-      .not.toContain(en.register.submitting);
-    expect(region?.textContent?.trim(), 'the screen now says something on failure, which is OQ-T175-8 being '
-      + 'answered - update this case and name the owner decision rather than loosening it').toBe('');
-
-    // ^ THAT EMPTY STRING IS PINNED ON PURPOSE, AND IT IS NOT AN ENDORSEMENT. It is the third occurrence of
-    // a posture this owner has reversed TWICE: task 49's tokenless arrival rendered nothing and was
-    // reversed, and D-T50-1 reversed the identical `'idle'` choice on the resend screen, whose own header
-    // records that its design "matched `RegisterScreen`" before the reversal - so the precedent was set
-    // AGAINST this screen and never applied TO it. Fixing it needs a catalogue key and an owner decision,
-    // which is outside a task about unparseable bodies (OQ-T175-8). Pinning today's behaviour is what makes
-    // that decision a visible change to a named case instead of a silent one.
+  it('leaves the reject arm to the case that already owns it, and fails if that case is renamed away', async () => {
+    // THIS TASK WROTE A CASE HERE AND THEN DELETED IT, because the coverage it added already existed.
+    //
+    // Phase 8 (Kimi I12) could not tell whether `RegisterScreen`'s reject arm was tested and said so,
+    // guessing that "the original T43 registration suite may have tested it". Phase 9 answered "no case
+    // exists" and was WRONG: the survey behind that answer was a per-file grep piped through `head -4`, and
+    // the owning case is at line ~899 of a 1000-line file, so the instrument could not have seen it. A
+    // survey used as a completeness claim cannot be truncated - which task 33 established and this task
+    // re-learned the expensive way, by writing a weaker copy of an existing case and only finding out when
+    // the mutant killed TWO cases instead of one.
+    //
+    // The owning case is comprehensively stronger than the one written here: besides the empty region it
+    // catches the REJECTION ESCAPING THE HANDLER via `process.on('unhandledRejection')` - half of the
+    // original defect, and something no assertion on the rendering can see - and then proves the retry is a
+    // real retry that reaches the acknowledgement. So the duplicate went and this pin stays, because an
+    // attribution in a comment is not enforced and the one thing that would silently un-cover this arm is
+    // the owning case being renamed.
+    const owner = await read('features/account/registrationAcceptsTwelveAndOneTwentyEightCodePoints.test.tsx');
+    expect(owner, "the case that owns RegisterScreen's reject arm was renamed or removed, so this screen's "
+      + 'transport-failure behaviour may now be unmeasured - find it before relying on this comment')
+      .toContain("returns the form to its idle state when the send rejects, and claims nothing");
   });
 });
