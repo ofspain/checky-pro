@@ -234,6 +234,12 @@ describe('generatedClientCallsDoNotParseBodiesTheyNeverRead', () => {
       // THE THREE READERS. Exempt because for them a parse failure IS a failure: no token, no profile, no
       // account. Two of them take their client as a PARAMETER and name no factory at all.
       { file: 'auth/codeExchange.ts', method: 'POST', kind: 'reader', streams: false },
+      // TASK 52 - THE FIRST CALL IN THE BUNDLE WRITTEN WITH THE OPTION FROM BIRTH, which is what this scan
+      // was built for. The three rows around it were each retrofitted after a visitor-facing bug; this one
+      // arrived already correct, and the only case that fired when it appeared was the census below - not
+      // the invariant. That asymmetry is the scan working: a new non-reading call that STREAMS changes the
+      // census and nothing else, while one that does not would fail both.
+      { file: 'features/account/PasswordResetRequestScreen.tsx', method: 'POST', kind: 'non-reader', streams: true },
       { file: 'features/account/RegisterScreen.tsx', method: 'POST', kind: 'non-reader', streams: true },
       { file: 'features/account/ResendVerificationScreen.tsx', method: 'POST', kind: 'non-reader', streams: true },
       { file: 'features/account/VerifyScreen.tsx', method: 'POST', kind: 'non-reader', streams: true },

@@ -314,6 +314,20 @@ const PERMITTED_CREDENTIAL_HITS: ReadonlyArray<{ file: string; what: string; cou
       + 'address is an identifier the server already treats as public (`security: []`). L2 is untouched '
       + 'because nothing here is a login step: the request creates no session and presents no bearer.',
   },
+  {
+    file: 'features/account/PasswordResetRequestScreen.tsx',
+    what: 'a form element',
+    count: 1,
+    why: 'TASK 52. The THIRD `<Form>` render site, on the same terms as the two rows above: the pattern is '
+      + 'case-insensitive, so mounting the primitive counts. R14 collects an EMAIL and nothing else - this '
+      + 'is the screen a visitor reaches BECAUSE they cannot supply a credential, so a password field here '
+      + 'would be self-defeating as well as forbidden. The new password is collected on `/app/reset` '
+      + 'instead, against a possession token (R15, task 53), and L2 is untouched either way because '
+      + 'nothing here is a login step: the request creates no session and presents no bearer '
+      + "(`security: []`). The row task 50 added warned that \"every place a form is mounted has to be "
+      + 'named here" - this is the third time that has been true, and the second time a task knew it in '
+      + 'advance rather than finding out from a red suite.',
+  },
 ];
 
 function unexplainedCredentialHits(hits: ReadonlyArray<{ file: string; what: string }>): string[] {
@@ -896,7 +910,7 @@ describe('no credential input and no second-factor logic ship in the SPA (AC2, A
     // FOUR SINCE TASK 50. The `stale` check above is what makes the new row worth having: it asserts the
     // row describes a tree that REALLY HAS one form element in that file, so a row added to silence this
     // scan without the screen existing - or with the wrong count - fails here rather than excusing something.
-    expect(PERMITTED_CREDENTIAL_HITS, 'the credential exception table changed size').toHaveLength(4);
+    expect(PERMITTED_CREDENTIAL_HITS, 'the credential exception table changed size').toHaveLength(5);
   });
 
   it('excuses no autofill hint and no one-time-code anywhere, which is the half L2 owns', async () => {

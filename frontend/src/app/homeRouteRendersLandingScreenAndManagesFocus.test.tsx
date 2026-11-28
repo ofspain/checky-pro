@@ -352,7 +352,7 @@ describe('AC7 the instruments this task was obliged to grow', () => {
     // - and this is one of FOUR files holding that number, which is why a task bumping it in only some of
     // them leaves the rest failing rather than silently stale. That is the pin working.
     expect(source, 'the union pin no longer says twenty-four, so a render site or a primitive is unpinned')
-      .toMatch(/\.toBe\(24\)/);
+      .toMatch(/\.toBe\(25\)/);   // TASK 52 - one render site, no primitive: 12 + 13 = 25.
   });
 
   it('names home in the attached-element pin, which is read from the route table itself', () => {

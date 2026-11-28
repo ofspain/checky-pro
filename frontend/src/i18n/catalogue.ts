@@ -200,6 +200,27 @@ export const en = {
     // outcome the server reported. It says nothing about the address, because there is nothing it could know.
     unsent: 'We could not send that just now. Try again.',
   },
+  // TASK 52 - the password-reset REQUEST form (R14). The voice is `resend`'s exactly, which is correct
+  // rather than lazy: the two screens are the same surface - a public form that takes an email, asks the
+  // server to send a link, and must say the same thing whether or not the address belongs to an account.
+  // Diverging the wording would mean one of the two is phrased wrongly.
+  //
+  // `acknowledgedHeading` IS BYTE-IDENTICAL TO `registerSent.heading` AND TO `resend.acknowledgedHeading`,
+  // which is fine and already true of this catalogue before this task: nothing pins catalogue values as
+  // distinct, and three screens legitimately tell a visitor to check their email. Measured, not assumed.
+  //
+  // `acknowledgedText` is CONDITIONAL on purpose - "if your email is registered" - because L4 forbids the
+  // copy from differing by account state, and a sentence that asserted a link HAD been sent would be a
+  // claim the screen cannot make. It is the one thing in this section that is load-bearing for R14.
+  passwordResetRequest: {
+    heading: 'Reset your password',
+    emailLabel: 'Email address',
+    submit: 'Send reset link',
+    submitting: 'Sending…',
+    acknowledgedHeading: 'Check your email',
+    acknowledgedText: 'If your email is registered, a reset link has been sent.',
+    unsent: 'We could not send that just now. Try again.',
+  },
   shell: {
     // Not invented either: the mirror of `signedOut.action`'s 'Sign in', so the two directions of the same
     // journey are spelled the same way. Not 'Log out' - nothing in this catalogue says 'log'.

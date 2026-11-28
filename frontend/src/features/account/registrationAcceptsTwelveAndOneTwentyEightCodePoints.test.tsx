@@ -612,9 +612,9 @@ describe('AC7 the screen renders no element of its own, and the pinned lists nam
     // acknowledgement composes existing primitives and adds none.
     // AND THEY MOVED AGAIN WITH TASK 50, for the same reason and with the same exception: a render site was
     // added and no primitive, so the first and third move and the middle one does not.
-    expect(only, 'the render-site count no longer says eleven').toMatch(/toHaveLength\(11\)/);
+    expect(only, 'the render-site count no longer says twelve').toMatch(/toHaveLength\(12\)/);
     expect(only, 'the primitive count no longer says thirteen').toMatch(/toHaveLength\(13\)/);
-    expect(only, 'the union pin no longer says twenty-four').toMatch(/\.toBe\(24\)/);
+    expect(only, 'the union pin no longer says twenty-five').toMatch(/\.toBe\(25\)/);
   });
 
   it('is named in the credential table that task 16 built, with the reason', async () => {

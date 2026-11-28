@@ -960,9 +960,15 @@ describe('unauthenticatedRoutesRedirectToSignIn', () => {
       // are PINNED somewhere the counts are exact, and a count that stopped moving would stop being exact.
       // GROWN AGAIN BY TASK 47, which added one render site and no primitive.
       // GROWN AGAIN BY TASK 50, same shape: one render site, no primitive, so only two of the three move.
-      expect(only, 'the render-site count no longer says eleven').toMatch(/toHaveLength\(11\)/);
+      // GROWN AGAIN BY TASK 52, the same shape a third time. THIS CASE IS A SECOND WITNESS TO NUMBERS THAT
+      // LIVE IN ANOTHER FILE, which is why it fires on a task that never opens it: task 52's phase 4
+      // enumerated six files by their pins and this was not one of them, so the eighth file in the change
+      // was found by a red suite after all. The lesson the primitives file has been recording since task 45
+      // survives one more refinement - enumerating a file's own pins is not enough, because a number can be
+      // mirrored somewhere that names no list of its own.
+      expect(only, 'the render-site count no longer says twelve').toMatch(/toHaveLength\(12\)/);
       expect(only, 'the primitive count no longer says thirteen').toMatch(/toHaveLength\(13\)/);
-      expect(only, 'the union pin no longer says twenty-four').toMatch(/\.toBe\(24\)/);
+      expect(only, 'the union pin no longer says twenty-five').toMatch(/\.toBe\(25\)/);
     });
 
     it('OQ-T36-5: the end-session suite names this layout as its first permitted importer', async () => {

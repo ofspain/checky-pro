@@ -14,6 +14,7 @@ import { RedirectToSignIn } from '../auth/RedirectToSignIn';
 import { RequireSession } from '../auth/RequireSession';
 import { RegisterScreen } from '../features/account/RegisterScreen';
 import { RegisterSentScreen } from '../features/account/RegisterSentScreen';
+import { PasswordResetRequestScreen } from '../features/account/PasswordResetRequestScreen';
 import { ResendVerificationScreen } from '../features/account/ResendVerificationScreen';
 import { VerifyScreen } from '../features/account/VerifyScreen';
 import { AuthenticatedLayout } from './AuthenticatedLayout';
@@ -65,6 +66,17 @@ export const VERIFY_PATH = 'verify';
  * and because task 49's handoff case existed precisely to make someone come back here. */
 export const RESEND_VERIFICATION_PATH = 'resend-verification';
 
+/** TASK 52 - the password-reset request form (R14). The path was ALREADY in `PUBLIC_ROUTE_PATHS` below as a
+ * bare string literal, declared and public since the list was written and rendering an empty document, which is
+ * the state task 49 left `resend-verification` in and task 50 picked up. The difference is that task 49 LINKED
+ * to its path before anything rendered there, and nothing in this bundle links here: the screen is reachable by
+ * typing the URL only (OQ-T52-3, accepted at the phase 4 gate as a known demo-path hole, not an oversight).
+ *
+ * Promoted rather than left a literal because `PUBLIC_ROUTE_PATHS` and the element attachment below must
+ * agree on one spelling, and `routesResolveUnderAppPrefixOnly` hard-codes it a third time. `'reset'`, the
+ * token-bearing confirmation screen, stays a literal: it is task 53's. */
+export const PASSWORD_RESET_REQUEST_PATH = 'reset/request';
+
 /** Where SAS returns the browser after the end-session call (R19, task 36). Published in task 37, which is why
  * `endSession.ts` no longer declares it privately: one spelling, and `post_logout_redirect_uri` is built from it. */
 export const SIGNED_OUT_PATH = 'signed-out';
@@ -78,7 +90,7 @@ export const PUBLIC_ROUTE_PATHS = [
   REGISTER_SENT_PATH,
   VERIFY_PATH,
   RESEND_VERIFICATION_PATH,
-  'reset/request',
+  PASSWORD_RESET_REQUEST_PATH,
   'reset',
   SIGNED_OUT_PATH,
 ] as const;
@@ -136,6 +148,13 @@ export const appRoutes: RouteObject[] = [
         // line is what task 49's handoff case was written to force a reader back to.
         if (path === RESEND_VERIFICATION_PATH)
           return { path, element: <ResendVerificationScreen /> };
+        // TASK 52 - the password-reset request form (R14), the eighth public screen and the second whose
+        // PATH was already declared and public for longer than this route table has had an element for it.
+        // Unlike `resend-verification`, nothing in the bundle links here: `SignInScreen` has no "forgot
+        // password" affordance and `tasks.md` commissions none, so the screen is reachable by typing the URL
+        // only. That is OQ-T52-3, accepted at the phase 4 gate as a known hole in the demo path.
+        if (path === PASSWORD_RESET_REQUEST_PATH)
+          return { path, element: <PasswordResetRequestScreen /> };
         return { path };
       }),
       // TASK 40 - the auth gate (R28's first clause). ONE pathless layout route decides for all eleven, so

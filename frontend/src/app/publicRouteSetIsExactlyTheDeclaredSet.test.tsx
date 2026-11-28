@@ -37,6 +37,7 @@ import {
   APP_BASENAME,
   AUTHENTICATED_ROUTE_PATHS,
   HOME_PATH,
+  PASSWORD_RESET_REQUEST_PATH,
   PUBLIC_ROUTE_PATHS,
   REGISTER_PATH,
   REGISTER_SENT_PATH,
@@ -718,8 +719,8 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
     });
   });
 
-  describe('AC9 exactly eight screens are attached', () => {
-    it('attaches an element to sign-in, callback, register, register/sent, verify, resend-verification, signed-out and home, and to nothing else', () => {
+  describe('AC9 exactly nine screens are attached', () => {
+    it('attaches an element to sign-in, callback, register, register/sent, verify, resend-verification, reset/request, signed-out and home, and to nothing else', () => {
       // A deliberate COUNT PIN, and it will fail the day the next screen is attached - which is the handoff
       // working, exactly as task 16's did for this task. Whoever attaches the next one extends this list and
       // task 16's SCREENS_ATTACHED_SO_FAR together.
@@ -766,6 +767,11 @@ describe('publicRouteSetIsExactlyTheDeclaredSet', () => {
       const attached = appRoutes.flatMap(walk);
       expect(attached).toEqual([
         'sign-in', 'callback', REGISTER_PATH, REGISTER_SENT_PATH, VERIFY_PATH, RESEND_VERIFICATION_PATH,
+        // TASK 52 - the password-reset request form. In `PUBLIC_ROUTE_PATHS` order, so it follows
+        // `resend-verification`. Its previous state is the one this pin exists to make visible, and a
+        // sharper case of it than task 49's: that path at least had R4's resend link pointing at its blank
+        // document, while NOTHING in the bundle links here even now (OQ-T52-3).
+        PASSWORD_RESET_REQUEST_PATH,
         SIGNED_OUT_PATH, HOME_PATH, '*',
       ]);
 

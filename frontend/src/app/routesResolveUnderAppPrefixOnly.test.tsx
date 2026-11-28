@@ -35,6 +35,17 @@ const SCREENS_ATTACHED_SO_FAR = ['sign-in', 'callback',
   // said so out loud. Sixth, because `resend-verification` is the sixth entry in `PUBLIC_ROUTE_PATHS` and
   // this list is in ROUTE order - a task-ordered entry would fail while nothing was wrong.
   'resend-verification',
+  // TASK 52 - the password-reset request form, SEVENTH because `reset/request` is the seventh entry in
+  // `PUBLIC_ROUTE_PATHS` and this list is in ROUTE order. The second entry here that was a declared public
+  // route rendering nothing, and the first that NOTHING LINKED TO while it was blank: task 49 at least had
+  // R4's resend link pointing at its empty path, whereas no screen in the bundle offers a way here at all
+  // (OQ-T52-3). Omission is this list's way of saying that, and it said nothing, because a path with no
+  // element was indistinguishable from one nobody can reach.
+  //
+  // THIS FILE WAS NAMED "NOT TO MODIFY" BY TASK 52's OWN BRIEF AND FREEZE, on a measurement that was right
+  // about the spelling pin at line 242 and blind to THIS list in the same file - which is D-T49-3 exactly,
+  // one task after T52's phase 4 wrote that lesson down and claimed to have applied it.
+  'reset/request',
   'signed-out', // TASK 37 - the signed-out landing. Additive; every case below is task 16's, unchanged.
   // TASK 174 - the home screen, and the FIRST entry here that is not a public route. It goes last because
   // this list is in ROUTE ORDER and the authenticated paths sit after the public ones in the table, under

@@ -112,6 +112,17 @@ const RENDER_SITES = [
   // scan in `auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback` matches case-insensitively, so a
   // screen rendering the Form PRIMITIVE counts as a form element there.
   'features/account/ResendVerificationScreen.tsx',
+  // TASK 52 - the password-reset request form, the twelfth render site and the THIRD file in the bundle to
+  // mount a `<Form>`. Its arrival fired this file's barrel-import equality and nothing else here, which is
+  // what task 52's phase 5 predicted: the tag sweep above is untouched because this screen renders no
+  // lowercase tag at all, and the key-set pin had already been dealt with two steps earlier.
+  //
+  // It also fired a pin OUTSIDE this suite, exactly as task 50's entry warns: the credential scan in
+  // `auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback` matches `<form` case-INSENSITIVELY, so
+  // mounting the primitive counts as a form element there and needs its own allow-list row. Task 52's plan
+  // predicted that for the step that attaches the route element, and it was wrong about WHEN: that scan
+  // reads production source, so it fired the moment this file existed, with no route attached at all.
+  'features/account/PasswordResetRequestScreen.tsx',
 ] as const;
 
 /**
@@ -280,7 +291,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // it fires the moment a key exists, rendered or not - two steps earlier than the plan expected.
     // TASK 50 moved it to eleven, and the four lines above went on being right: the catalogue step alone
     // fired the key-set pin two steps before this task's plan expected a red suite, exactly as task 48 said.
-    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(11);
+    expect(RENDER_SITES, 'the render-site list changed size without the brief changing').toHaveLength(12);
     expect(PRIMITIVES, 'the primitive list changed size without the brief changing').toHaveLength(13);
     expect(new Set(PRIMITIVES).size).toBe(PRIMITIVES.length);
     expect(PRIMITIVES, 'the primitive list is not sorted, so a duplicate is easy to miss')
@@ -326,7 +337,7 @@ describe('T173 AC2/AC3: only the primitives render bare elements', () => {
     // counts declarations. A task that bumped both numbers together would have broken the distinction the
     // comment above exists to protect.
     expect(new Set([...PRIMITIVE_FILES, ...RENDER_SITES]).size,
-      'the union of the two pinned lists is no longer twenty-four').toBe(24);
+      'the union of the two pinned lists is no longer twenty-five').toBe(25);
     // and every file the sweep found is in one of them, which is the cross-check §6e(2) actually asks for.
     for (const file of bearing) {
       expect([...PRIMITIVE_FILES, ...RENDER_SITES], `${file} renders an element and is in neither list`)
@@ -1015,6 +1026,23 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
       'resend.submit',
       'resend.submitting',
       'resend.unsent',
+      // TASK 52's seven (R14), and the FIRST task to arrive here knowing it would. Every previous entry
+      // records the same surprise - task 45's F9 said this file needed no change, task 47 repeated it, task
+      // 48's plan predicted the catalogue step would stay green, and task 49's FROZEN brief listed the whole
+      // file as untouchable - because each measured the render-site pins and was blind to this one sitting
+      // beside them. T52's phase 4 enumerated this file's pins by case title before implementing, and its
+      // phase 5 went further: it looked for the "every key is RENDERED" instrument that line 279 refers to
+      // and FOUND THAT NO SUCH TREE-WIDE PIN EXISTS - every other catalogue pin names `en.signIn`,
+      // `en.callback` or `en.signedOut` and nothing else. So this set-equality case is the ONLY thing a new
+      // catalogue section fires, which is exactly what happened: one failure, this one, and no complaint
+      // about seven keys that were not yet rendered anywhere.
+      'passwordResetRequest.acknowledgedHeading',
+      'passwordResetRequest.acknowledgedText',
+      'passwordResetRequest.emailLabel',
+      'passwordResetRequest.heading',
+      'passwordResetRequest.submit',
+      'passwordResetRequest.submitting',
+      'passwordResetRequest.unsent',
     ].sort());
   });
 
