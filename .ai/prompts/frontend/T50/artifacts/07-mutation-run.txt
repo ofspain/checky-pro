@@ -47,7 +47,11 @@ baseline failing cases (excluded from every attribution below): []
   KILLED    own            TR08 the focus effect fires on arrival too, stealing focus from the form  (1 failed of 2113, exit 1)
             └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
             └ leaves focus alone on arrival, so the form is usable from the first keystroke
-  BROKEN    607 of 2113 ran  TR09 the form stays mounted after the acknowledgement, inviting a second send  -> 1506 tests never ran: a file did not LOAD, so nothing measured it
+  KILLED    own            TR09 the form stays mounted after the acknowledgement, inviting a second send  (3 failed of 2113, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ shows the acknowledgement and removes the form
+            └ acknowledges on a non-200 resolve too, because the status is never consulted
+            └ renders nothing the server sent, even when the server sends a sentence
   KILLED    own            TR10 the frozen design's SECOND Heading is restored, giving the screen two h1 (D-T50-2)  (4 failed of 2113, exit 1)
             └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
             └ shows the acknowledgement and removes the form
@@ -116,11 +120,11 @@ baseline failing cases (excluded from every attribution below): []
             └ renders nothing the server sent, even when the server sends a sentence
   SURVIVED  -              TR20 UNFALSIFIABLE useEffect -> useLayoutEffect for the focus move  (0 failed of 2113, exit 0)
 
-regressions: 17/18 killed  (1 BROKEN, not counted as killed)
+regressions: 18/18 killed
 canaries:    ['TR19'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
 unfalsifiable: ['TR20'] - no observable effect to detect
 survivors:   ['TR20']
-broken:      ['TR09 the form stays mounted after the acknowledgement, inviting a second send']
+broken:      none
 
 --- expectation vs outcome ---
   TR01   expected own           got KILLED/own       as expected
@@ -131,17 +135,17 @@ broken:      ['TR09 the form stays mounted after the acknowledgement, inviting a
   TR06   expected own           got KILLED/own       as expected
   TR07   expected own           got KILLED/own       as expected
   TR08   expected own           got KILLED/own       as expected
-  TR09   expected own           got BROKEN           DISAGREES - nothing ran, so this criterion is UNMEASURED
+  TR09   expected own           got KILLED/own       as expected
   TR10   expected own           got KILLED/own       as expected
   TR11   expected own           got KILLED/own       as expected
   TR12   expected own           got KILLED/own       as expected
   TR13   expected own           got KILLED/own       as expected
   TR14   expected own           got KILLED/own       as expected
   TR15   expected own           got KILLED/own       as expected
-  TR16   expected own           got KILLED/inherited DISAGREES - killed only OUTSIDE this task's files
+  TR16   expected inherited     got KILLED/inherited as expected
   TR17   expected own           got KILLED/own       as expected
   TR18   expected own           got KILLED/own       as expected
   TR19   expected own           got KILLED/own       as expected
-  TR20   expected own           got SURVIVED         DISAGREES - nothing detects it
+  TR20   expected unfalsifiable got SURVIVED         as expected
 
-disagreements: ['TR09', 'TR16', 'TR20']
+disagreements: none
