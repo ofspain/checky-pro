@@ -245,14 +245,24 @@ describe('AC7 one request per arrival', () => {
 // AC12 — no token, and an empty token, send nothing
 // ==========================================================================================================
 
-describe('AC12 a link with no usable token sends no request', () => {
+// THESE TWO CASES WERE THE REAL HANDOFF TO TASK 49, AND NEITHER SAID SO. Task 48 wrote a case further down
+// labelled `PINS A LIMIT`, whose comment claimed "when task 49 lands, this case MUST FAIL - that is its
+// purpose". Task 49 landed and it did not fail. These two did, loudly, because they pinned `textContent`
+// equal to the heading ALONE - which is exactly the claim task 49's D-T49-2 reverses. A case labelled as a
+// handoff was weaker than two cases that were not, and the label is not what made the difference: an
+// EQUALITY against the full rendered text is.
+//
+// What they still measure is the half that did not change: **no request is sent**. Task 49 renders the
+// uniform failure here WITHOUT asking the server, which is the whole point - there is no token to ask about.
+describe('AC12 a link with no usable token sends no request, and now says so (T49 D-T49-2)', () => {
   it('sends nothing when the link carries no token at all', async () => {
     const { sent } = installTransport();
 
     const container = await arrive(VERIFY_PATH);
 
     expect(sent, 'a tokenless arrival posted something').toHaveLength(0);
-    expect(container.textContent).toBe(en.verify.heading);
+    expect(container.textContent)
+      .toBe(`${en.verify.heading}${en.verify.failureMessage}${en.verify.failureAction}`);
   });
 
   it('sends nothing when the token is present but empty', async () => {
@@ -261,14 +271,22 @@ describe('AC12 a link with no usable token sends no request', () => {
     const container = await arrive(`${VERIFY_PATH}?token=`);
 
     expect(sent, 'an empty token was posted, and the server would reject it').toHaveLength(0);
-    expect(container.textContent).toBe(en.verify.heading);
+    expect(container.textContent)
+      .toBe(`${en.verify.heading}${en.verify.failureMessage}${en.verify.failureAction}`);
   });
 
-  it('PINS A LIMIT - idle is one rendering for three different situations (task 49 owns this)', async () => {
-    // DELIBERATE, AND THE CASE EXISTS SO IT CANNOT BE CLOSED BY ACCIDENT. A tokenless arrival and a failed
-    // request are indistinguishable on screen, because R4's single uniform failure message belongs to task
-    // 49 and task 48 may not invent it. When task 49 lands, this case MUST FAIL - that is its purpose - and
-    // whoever changes it should replace it with the uniform-failure assertions rather than delete it.
+  it('a tokenless arrival and a rejected token render the SAME uniform failure (R4, T49)', async () => {
+    // REWRITTEN, NOT DELETED, as task 48's own comment asked - and the rewrite is where the lesson is.
+    //
+    // Task 48 wrote this expecting it to FAIL when task 49 landed. **It passed.** Its assertion was that the
+    // two arms render identically, and that was true when both rendered NOTHING and is true again now that
+    // both render the uniform failure. A case written to detect a change survived the change, because what
+    // it asserted was a SAMENESS that the change preserved - and sameness between two screens says nothing
+    // about what is on either of them. Five empty strings are equal too; this project has had that bite
+    // before, on T173's five-state pin.
+    //
+    // So the third assertion below is the one that gives the other two meaning: both arms must CONTAIN the
+    // failure message. Without it, deleting the whole failure branch would leave this case green.
     const { sent } = installTransport(400);
 
     const noToken = (await arrive(VERIFY_PATH)).textContent;
@@ -279,8 +297,10 @@ describe('AC12 a link with no usable token sends no request', () => {
 
     const rejected = (await arrive(`${VERIFY_PATH}?token=${TOKEN}`)).textContent;
 
-    expect(rejected, 'a rejected token now renders differently from a tokenless arrival - task 49 has landed')
+    expect(rejected, 'a rejected token renders differently from a tokenless arrival, so R4 is not uniform')
       .toBe(noToken);
+    expect(noToken, 'both arms are identical and BOTH ARE MISSING the failure message, which is how this '
+      + 'case passed before task 49 landed').toContain(en.verify.failureMessage);
     expect(sent, 'the rejected arm did not actually send a request, so this proves nothing').toHaveLength(1);
   });
 });

@@ -49,6 +49,16 @@ export const REGISTER_SENT_PATH = 'register/sent';
  * referred to by name from more than one place. */
 export const VERIFY_PATH = 'verify';
 
+/** Where the resend-verification form lives (R5, tasks 50/51). **THIS TASK ADDS THE CONSTANT AND NOT THE
+ * ELEMENT**, which is the reverse of how the five above arrived: each of them was promoted when its own task
+ * attached a screen. Task 49 promotes this one because R4's uniform failure carries a resend action, so the
+ * spelling is now referred to by name from more than one place - the second half of `VERIFY_PATH`'s own
+ * rationale, and the house rule the only other link in the bundle already follows (`SignedOutScreen` links
+ * through `SIGN_IN_PATH`, never a literal). The path stays element-less until task 50, so the link really
+ * does land on a blank document today; that is a known interim state, recorded at the phase 4 gate, and the
+ * alternative was deleting a requirement because its destination was not built yet. */
+export const RESEND_VERIFICATION_PATH = 'resend-verification';
+
 /** Where SAS returns the browser after the end-session call (R19, task 36). Published in task 37, which is why
  * `endSession.ts` no longer declares it privately: one spelling, and `post_logout_redirect_uri` is built from it. */
 export const SIGNED_OUT_PATH = 'signed-out';
@@ -61,7 +71,7 @@ export const PUBLIC_ROUTE_PATHS = [
   REGISTER_PATH,
   REGISTER_SENT_PATH,
   VERIFY_PATH,
-  'resend-verification',
+  RESEND_VERIFICATION_PATH,
   'reset/request',
   'reset',
   SIGNED_OUT_PATH,

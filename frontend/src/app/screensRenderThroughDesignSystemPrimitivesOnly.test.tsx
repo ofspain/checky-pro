@@ -975,6 +975,20 @@ describe('T173 AC7/AC8: the design system changed no words', () => {
       // worth more than a plan that happened to be right.
       'verify.heading',
       'verify.success',
+      // TASK 49 - R4's uniform failure. THIS PIN CAUGHT THE SAME MISTAKE TWICE, ONE TASK APART. The comment
+      // above records task 48's plan predicting the catalogue step would stay green; task 49's FROZEN brief
+      // then listed this whole file under "Files NOT to Modify", on a measurement that was right about the
+      // render-site pins - `RENDER_SITES` is a list of files and `VerifyScreen.tsx` was already on it - and
+      // blind to this one, sitting in the same file. Knowing a file holds four pins is not knowing which one
+      // your change trips (D-T49-3).
+      //
+      // These two keys are FLAT because phase 3 designed them nested, as `verify.failure.message` and
+      // `verify.failure.action`, and phase 5's probe measured that shape CRASHING the copy scan below with
+      // `sentence.replace is not a function`: it flattens the catalogue one level and assumes strings, so a
+      // `failure` object would have been the first second-level group in the file. The nesting was cosmetic
+      // and the instrument was not, so the keys changed shape rather than the scan (D-T49-4).
+      'verify.failureAction',
+      'verify.failureMessage',
     ].sort());
   });
 

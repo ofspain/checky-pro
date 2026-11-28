@@ -154,11 +154,31 @@ export const en = {
   // has to be mounted and empty anyway for the announcement to work, so its absence costs nothing
   // structurally.
   //
-  // No failure key lives here. Task 49 owns R4's one uniform failure message, and inventing its copy now
-  // would pre-empt a requirement this task is scoped out of.
+  // TASK 49 ADDED THE FAILURE PAIR, and the sentence above - "no failure key lives here" - was task 48
+  // declining to invent R4's copy, not a claim that none would ever exist.
+  //
+  // **THE MESSAGE NAMES NO REASON, WHICH IS THE WHOLE REQUIREMENT.** L4 demands identical copy across bad,
+  // expired and used tokens and across unknown, locked, suspended and deleted accounts, so 'expired',
+  // 'already used', 'not found' and 'already verified' are all forbidden here - each would let a visitor
+  // distinguish two outcomes by reading one sentence. 'This verification link is not valid' states the
+  // outcome without diagnosing it. The backend already collapses every reason into one fixed 400
+  // (`AccountExceptionHandler:46-52`), so this copy is the client half of a uniformity the server enforces.
+  //
+  // **FLAT, NOT NESTED, AND THAT WAS MEASURED.** Phase 3 designed these as `verify.failure.message` and
+  // `verify.failure.action`. Phase 5's probe found that shape CRASHES the copy scan in
+  // `screensRenderThroughDesignSystemPrimitivesOnly` - `sentence.replace is not a function` - because it
+  // flattens this catalogue exactly one level and assumes every value is a string, and a `failure` object
+  // would have been the first second-level group in the file. Flat keys keep the grouping legible, keep the
+  // reuse path open, and leave the instrument working (D-T49-4).
+  //
+  // `failureMessage` is the half task 54 reuses: R15's own text says a failed reset "SHALL show the uniform
+  // failure of R4". `failureAction` is this screen's, because a reset failure does not offer to resend a
+  // verification email.
   verify: {
     heading: 'Verify email',
     success: 'Your email has been verified.',
+    failureMessage: 'This verification link is not valid.',
+    failureAction: 'Resend verification email',
   },
   shell: {
     // Not invented either: the mirror of `signedOut.action`'s 'Sign in', so the two directions of the same
