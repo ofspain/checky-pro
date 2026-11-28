@@ -428,12 +428,25 @@ describe('phase 10: the email goes nowhere it was not sent, and a retry can succ
 
     await send(container);
 
+    // THE ROUTER'S LOCATION IS NOT THE BROWSER'S, AND THE FIRST VERSION OF THIS CASE ONLY READ THE ROUTER.
+    // Found by TR21, which disagreed: the mutant put the email in the real URL with
+    // `window.history.replaceState`, and a MEMORY router never reads `window.history`, so
+    // `router.state.location.search` stayed empty and this case passed. The kill came from an unrelated
+    // tree-wide scan in the profile suite that happens to forbid a template literal before an `/accounts`
+    // path - a real kill, by an instrument with no interest in this claim.
+    //
+    // So both are asserted. The router's location is what the SPA believes; `window.location` is what the
+    // visitor's history, autocomplete and `Referer` actually carry, and it is the one that matters.
     const { pathname, search, hash } = router!.state.location;
     expect(search, 'a query string appeared, and the only value here to put in one is the email').toBe('');
     expect(hash, 'a hash fragment appeared').toBe('');
     expect(pathname, 'the email reached the path').not.toContain(EMAIL);
     // The local-part alone, in case an encoder splits it: `visitor` would be enough to identify a person.
     expect(`${pathname}${search}${hash}`, 'part of the email reached the URL').not.toContain('visitor');
+
+    expect(window.location.search, 'the email reached the real query string').toBe('');
+    expect(window.location.hash, 'the email reached the real hash fragment').toBe('');
+    expect(window.location.href, 'part of the email reached the real browser URL').not.toContain('visitor');
 
     // AND IT IS WHERE IT BELONGS, which is what makes the four assertions above a claim about PLACEMENT
     // rather than an accident of the email never being used at all.

@@ -1,0 +1,178 @@
+REPO = /Users/macbookpro/personal/crypto-dispute
+
+baseline whole suite: 0 failed of 2116, exit 0
+baseline failing cases (excluded from every attribution below): []
+
+  KILLED    own            TR01 the submitting reset is deleted, so a stale retry line survives into the next attempt  (2 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ clears the unsent line when a new send starts
+            └ mounts the live region EMPTY and fills it only while submitting
+  KILLED    own            TR02 the reject arm acknowledges, claiming a link was sent when nothing left the browser  (4 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ renders the unsent line and keeps the form mounted
+            └ clears the unsent line when a new send starts
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ reads no part of the response anywhere in its source
+  KILLED    own            TR03 the reject arm returns to idle - Kimi's phase 3 design, which the owner reversed  (4 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ renders the unsent line and keeps the form mounted
+            └ clears the unsent line when a new send starts
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ reads no part of the response anywhere in its source
+  KILLED    own            TR04 the handler reads response.ok, so the status decides what is shown  (2 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ acknowledges on a non-200 resolve too, because the status is never consulted
+            └ reads no part of the response anywhere in its source
+  KILLED    own            TR05 the server's message is read, held and rendered - T47's D2 undone  (4 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ shows the acknowledgement and removes the form
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ renders nothing the server sent, even when the server sends a sentence
+            └ reads no part of the response anywhere in its source
+  KILLED    own            TR06 the AUTHENTICATED client factory is used, so the request carries a bearer  (16 failed of 2116, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ acknowledges IN PLACE: no navigation, and the path is unchanged afterwards
+            └ POSTs to /accounts/resend-verification once, with the typed email as the whole body
+            └ carries no Authorization header EVEN WHEN A SESSION EXISTS
+            └ sends exactly one request however many times the effect could run (StrictMode)
+            └ shows the acknowledgement and removes the form
+            └ acknowledges on a non-200 resolve too, because the status is never consulted
+            └ renders the unsent line and keeps the form mounted
+            └ clears the unsent line when a new send starts
+            └ puts the email in no URL - not the path, not a query string, not a hash
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ renders literal English for all seven keys, and no untranslated key
+            └ renders nothing the server sent, even when the server sends a sentence
+            └ uses the generated client and no bare fetch (L6)
+            └ moves focus to the heading when the acknowledgement replaces the form
+            └ submits on Enter in the email field, not only on a click
+  KILLED    own            TR07 the focus effect is deleted, so focus falls to the body when the form is replaced  (2 failed of 2116, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ moves focus to the heading when the acknowledgement replaces the form
+  KILLED    own            TR08 the focus effect fires on arrival too, stealing focus from the form  (1 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ leaves focus alone on arrival, so the form is usable from the first keystroke
+  KILLED    own            TR09 the form stays mounted after the acknowledgement, inviting a second send  (4 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ shows the acknowledgement and removes the form
+            └ acknowledges on a non-200 resolve too, because the status is never consulted
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ renders nothing the server sent, even when the server sends a sentence
+  KILLED    own            TR10 the frozen design's SECOND Heading is restored, giving the screen two h1 (D-T50-2)  (5 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ shows the acknowledgement and removes the form
+            └ acknowledges on a non-200 resolve too, because the status is never consulted
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ renders nothing the server sent, even when the server sends a sentence
+            └ renders exactly one h1 in EVERY state, which the frozen design would not have
+  KILLED    own            TR11 a second field rides along in the request body  (4 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ POSTs to /accounts/resend-verification once, with the typed email as the whole body
+            └ puts the email in no URL - not the path, not a query string, not a hash
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ submits on Enter in the email field, not only on a click
+  KILLED    own            TR12 the live region is mounted only when it has text, so it announces nothing  (1 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ mounts the live region EMPTY and fills it only while submitting
+  KILLED    own            TR13 the two region lines are swapped: 'Sending' for a failure, the retry line in flight  (4 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ renders the unsent line and keeps the form mounted
+            └ clears the unsent line when a new send starts
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ mounts the live region EMPTY and fills it only while submitting
+  KILLED    own            TR14 the email field loses its label, leaving the control unnamed  (5 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ renders a heading, an email field and a submit control
+            └ is reached through the declared route set, not by a path this task invented
+            └ renders with nothing signed in and nothing in sessionStorage
+            └ renders literal English for all seven keys, and no untranslated key
+            └ labels the email field, so the control has an accessible name
+  KILLED    own            TR15 the route element is removed - back to the blank document task 49 left  (29 failed of 2116, exit 1)
+            └ in: ['src/api/lintRejectsHandWrittenBackendFetch.test.ts', 'src/app/publicRouteSetIsExactlyTheDeclaredSet.test.tsx', 'src/app/routesResolveUnderAppPrefixOnly.test.tsx', 'src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx', 'src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ renders a heading, an email field and a submit control
+            └ is reached through the declared route set, not by a path this task invented
+            └ acknowledges IN PLACE: no navigation, and the path is unchanged afterwards
+            └ renders with nothing signed in and nothing in sessionStorage
+            └ is not behind the session gate: the route is a direct child of the root
+            └ writes nothing to any storage, and a CONTROL proves the spy would see it
+            └ POSTs to /accounts/resend-verification once, with the typed email as the whole body
+            └ carries no Authorization header EVEN WHEN A SESSION EXISTS
+            └ sends exactly one request however many times the effect could run (StrictMode)
+            └ shows the acknowledgement and removes the form
+            └ shows no acknowledgement while the request is still in flight
+            └ acknowledges on a non-200 resolve too, because the status is never consulted
+            └ renders the unsent line and keeps the form mounted
+            └ clears the unsent line when a new send starts
+            └ puts the email in no URL - not the path, not a query string, not a hash
+            └ logs nothing anywhere on console, over a DERIVED method list that is asserted non-empty
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ renders literal English for all seven keys, and no untranslated key
+            └ renders nothing the server sent, even when the server sends a sentence
+            └ mounts the live region EMPTY and fills it only while submitting
+            └ moves focus to the heading when the acknowledgement replaces the form
+            └ leaves focus alone on arrival, so the form is usable from the first keystroke
+            └ submits on Enter in the email field, not only on a click
+            └ labels the email field, so the control has an accessible name
+            └ renders exactly one h1 in EVERY state, which the frozen design would not have
+            └ the resend link lands on a form whose heading is the words the link promised (task 50)
+  KILLED    inherited      TR16 the attached-screens handoff list loses the entry  (1 failed of 2116, exit 1)
+            └ in: ['src/app/routesResolveUnderAppPrefixOnly.test.tsx']
+            └ attaches a screen only to the routes whose task has run (L11, L12)
+  KILLED    own            TR17 the credential table row this task added is deleted  (3 failed of 2116, exit 1)
+            └ in: ['src/auth/loginChallengeRunsInsideSasFlowAndResumesAtCallback.test.tsx', 'src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ is named in the pinned render-site list (task 174's shape)
+  KILLED    own            TR18 resend.heading no longer matches verify.failureAction, the cross-feature sentence  (1 failed of 2116, exit 1)
+            └ in: ['src/features/account/verifyFailureShowsOneUniformMessage.test.tsx']
+            └ the resend link lands on a form whose heading is the words the link promised (task 50)
+  KILLED    inherited      TR21 the email is carried into the URL, where it enters browser history  (1 failed of 2116, exit 1)
+            └ in: ['src/profile/profileIsReadFromUserinfoAndAccountStatusFromMe.test.tsx']
+            └ is the ONLY production file that names /accounts/me, scanned tree-wide
+  KILLED    own            TR22 the email is logged to the console, as a debugging session would leave it  (2 failed of 2116, exit 1)
+            └ in: ['src/auth/tokensAreNeverWrittenToAnyStorage.test.tsx', 'src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ logs nothing anywhere on console, over a DERIVED method list that is asserted non-empty
+  KILLED    own            TR23 a failed send can never be retried - the form is mounted and the button does nothing  (2 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ clears the unsent line when a new send starts
+            └ acknowledges a retry that succeeds after a dropped connection
+  KILLED    own            TR19 CANARY the acknowledgement renders nothing at all  (6 failed of 2116, exit 1)
+            └ in: ['src/features/account/resendVerificationAcknowledgementIsUniformAndNeedsNoSession.test.tsx']
+            └ acknowledges IN PLACE: no navigation, and the path is unchanged afterwards
+            └ shows the acknowledgement and removes the form
+            └ acknowledges on a non-200 resolve too, because the status is never consulted
+            └ acknowledges a retry that succeeds after a dropped connection
+            └ renders literal English for all seven keys, and no untranslated key
+            └ renders nothing the server sent, even when the server sends a sentence
+  SURVIVED  -              TR20 UNFALSIFIABLE useEffect -> useLayoutEffect for the focus move  (0 failed of 2116, exit 0)
+
+regressions: 21/21 killed
+canaries:    ['TR19'] - scored apart; a SURVIVING canary means the instrument is inert: none survived
+unfalsifiable: ['TR20'] - no observable effect to detect
+survivors:   ['TR20']
+broken:      none
+
+--- expectation vs outcome ---
+  TR01   expected own           got KILLED/own       as expected
+  TR02   expected own           got KILLED/own       as expected
+  TR03   expected own           got KILLED/own       as expected
+  TR04   expected own           got KILLED/own       as expected
+  TR05   expected own           got KILLED/own       as expected
+  TR06   expected own           got KILLED/own       as expected
+  TR07   expected own           got KILLED/own       as expected
+  TR08   expected own           got KILLED/own       as expected
+  TR09   expected own           got KILLED/own       as expected
+  TR10   expected own           got KILLED/own       as expected
+  TR11   expected own           got KILLED/own       as expected
+  TR12   expected own           got KILLED/own       as expected
+  TR13   expected own           got KILLED/own       as expected
+  TR14   expected own           got KILLED/own       as expected
+  TR15   expected own           got KILLED/own       as expected
+  TR16   expected inherited     got KILLED/inherited as expected
+  TR17   expected own           got KILLED/own       as expected
+  TR18   expected own           got KILLED/own       as expected
+  TR19   expected own           got KILLED/own       as expected
+  TR20   expected unfalsifiable got SURVIVED         as expected
+  TR21   expected own           got KILLED/inherited DISAGREES - killed only OUTSIDE this task's files
+  TR22   expected own           got KILLED/own       as expected
+  TR23   expected own           got KILLED/own       as expected
+
+disagreements: ['TR21']
